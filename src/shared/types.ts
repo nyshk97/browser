@@ -267,7 +267,7 @@ export interface NemoUiApi {
   createWindow(): Promise<void>
   setSidebarVisible(visible: boolean): Promise<void>
   /** オーバーレイ（コマンドバー / 検索バー / ダウンロード）の表示切り替え。 */
-  setOverlay(kind: 'command-bar' | 'find' | 'downloads' | null): Promise<void>
+  setOverlay(kind: 'command-bar' | 'address-bar' | 'find' | 'downloads' | null): Promise<void>
   toggleDevTools(key: string): Promise<void>
   copyUrl(key: string): Promise<void>
 

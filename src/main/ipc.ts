@@ -313,7 +313,13 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('nemo:set-overlay', (event, kind: unknown) => {
     const win = requireWindow(event)
-    if (kind !== null && kind !== 'command-bar' && kind !== 'find' && kind !== 'downloads') {
+    if (
+      kind !== null &&
+      kind !== 'command-bar' &&
+      kind !== 'address-bar' &&
+      kind !== 'find' &&
+      kind !== 'downloads'
+    ) {
       throw new Error('invalid overlay')
     }
     win.setOverlay(kind)

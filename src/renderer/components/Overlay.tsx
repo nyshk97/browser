@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useCommand, useSharedState, useWindowState } from '../useNemo.js'
 import { PromptDialog } from './PromptDialog.js'
-import type { Prompt, Suggestion } from '../../shared/types.js'
+import type { Prompt, Suggestion, WindowState } from '../../shared/types.js'
 
 /**
  * オーバーレイ（コマンドバー / 検索バー / ダウンロード / ダイアログ）。
@@ -12,6 +12,13 @@ import type { Prompt, Suggestion } from '../../shared/types.js'
 export function Overlay(): React.JSX.Element | null {
   const [kind, setKind] = useState<string | null>(null)
   const [prompt, setPrompt] = useState<Prompt | null>(null)
+  /**
+   * 状態はここで持つ。
+   * バーの中で購読すると、**開いた瞬間はまだ `null`**（取得は IPC の往復）で、
+   * ⌘L が現在の URL ではなく空欄で開く。ここは常時マウントされているので、
+   * 開くころには必ず埋まっている。
+   */
+  const state = useWindowState()
 
   // push が先に届いていたら、後から返ってきた初期値で上書きしない
   const pushedKind = useRef(false)
@@ -55,8 +62,12 @@ export function Overlay(): React.JSX.Element | null {
   }, [close, prompt])
 
   if (prompt) return <PromptDialog prompt={prompt} />
-  if (kind === 'command-bar') return <CommandBar onClose={close} />
-  if (kind === 'find') return <FindBar onClose={close} />
+  // 同じコマンドバーだが、⌘T（新規タブ）と ⌘L（現在のタブ）で既定の行き先が違う。
+  // key を分けて、開き直すたびに入力を初期化する。
+  if (kind === 'command-bar') return <CommandBar key="command-bar" onClose={close} state={state} newTab />
+  if (kind === 'address-bar')
+    return <CommandBar key="address-bar" onClose={close} state={state} newTab={false} />
+  if (kind === 'find') return <FindBar onClose={close} state={state} />
   if (kind === 'downloads') return <Downloads onClose={close} />
   return null
 }
@@ -65,16 +76,28 @@ export function Overlay(): React.JSX.Element | null {
  * コマンドバー（⌘T / ⌘L）
  * ------------------------------------------------------------------ */
 
-function CommandBar({ onClose }: { onClose: () => void }): React.JSX.Element {
-  const state = useWindowState()
-  const [query, setQuery] = useState('')
+/**
+ * @param newTab 既定の行き先。⌘T / ＋ ボタンは新規タブ、⌘L は現在のタブ。
+ *   Shift を押しながら決定すると、その場で逆にできる。
+ */
+function CommandBar({
+  onClose,
+  state,
+  newTab
+}: {
+  onClose: () => void
+  state: WindowState | null
+  newTab: boolean
+}): React.JSX.Element {
   const [items, setItems] = useState<Suggestion[]>([])
   const [cursor, setCursor] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const activeTab = useMemo(() => state?.tabs.find((tab) => tab.key === state.activeTabKey) ?? null, [state])
 
-  // ⌘L は現在の URL を入れた状態で開く。⌘T は空。
+  // ⌘L は現在の URL を入れた状態で開く（コマンドが届く前に描画されても空欄にならないよう初期値で入れる）。
+  const [query, setQuery] = useState(() => (newTab ? '' : (activeTab?.url ?? '')))
+
   useCommand(
     useCallback(
       (command) => {
@@ -110,22 +133,30 @@ function CommandBar({ onClose }: { onClose: () => void }): React.JSX.Element {
       void window.nemo.selectTab(item.target.key)
       return
     }
-    // ⌘L 相当（既存タブで開く）と ⌘T 相当（新規タブ）を入力元で分けない。
-    // 「今のタブを置き換えたいか」は明示的な操作（Shift）で選べるようにする。
-    if (activeTab && !newTabRequested.current) void window.nemo.navigate(activeTab.key, item.target.url)
+    // どこで開くかは「開き方」で決まる（⌘T / ＋ は新規タブ、⌘L は現在のタブ）。
+    // Shift を押しながら決定したときだけ逆にする。
+    const wantsNewTab = newTab !== shiftHeld.current
+    if (activeTab && !wantsNewTab) void window.nemo.navigate(activeTab.key, item.target.url)
     else void window.nemo.createTab(item.target.url)
   }
 
-  const newTabRequested = useRef(false)
+  /** 決定時に Shift が押されていたか（既定の行き先を反転させる）。 */
+  const shiftHeld = useRef(false)
 
   return (
     <div className="backdrop" onMouseDown={onClose}>
-      <div className="cmd" onMouseDown={(event) => event.stopPropagation()}>
+      <div
+        className="cmd"
+        data-mode={newTab ? 'new-tab' : 'address'}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <input
           ref={inputRef}
           value={query}
           spellCheck={false}
-          placeholder="URL を開く / 検索する / タブを探す"
+          placeholder={
+            newTab ? '新しいタブで開く / 検索する / タブを探す' : 'URL を開く / 検索する / タブを探す'
+          }
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'ArrowDown') {
@@ -136,7 +167,7 @@ function CommandBar({ onClose }: { onClose: () => void }): React.JSX.Element {
               setCursor((current) => Math.max(current - 1, 0))
             } else if (event.key === 'Enter') {
               event.preventDefault()
-              newTabRequested.current = event.shiftKey
+              shiftHeld.current = event.shiftKey
               run(items[cursor])
             } else if (event.key === 'Escape') {
               onClose()
@@ -151,7 +182,7 @@ function CommandBar({ onClose }: { onClose: () => void }): React.JSX.Element {
               onMouseEnter={() => setCursor(index)}
               onMouseDown={(event) => {
                 event.preventDefault()
-                newTabRequested.current = event.shiftKey
+                shiftHeld.current = event.shiftKey
                 run(item)
               }}
             >
@@ -162,7 +193,9 @@ function CommandBar({ onClose }: { onClose: () => void }): React.JSX.Element {
           ))}
           {items.length === 0 ? <div className="sug dim">入力すると候補が出ます</div> : null}
         </div>
-        <div className="hint">Enter で現在のタブ / ⇧Enter で新規タブ</div>
+        <div className="hint">
+          {newTab ? 'Enter で新規タブ / ⇧Enter で現在のタブ' : 'Enter で現在のタブ / ⇧Enter で新規タブ'}
+        </div>
       </div>
     </div>
   )
@@ -181,8 +214,7 @@ const KIND_LABEL: Record<Suggestion['kind'], string> = {
  * ページ内検索（⌘F）
  * ------------------------------------------------------------------ */
 
-function FindBar({ onClose }: { onClose: () => void }): React.JSX.Element {
-  const state = useWindowState()
+function FindBar({ onClose, state }: { onClose: () => void; state: WindowState | null }): React.JSX.Element {
   const [query, setQuery] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
   const activeKey = state?.activeTabKey ?? null

@@ -75,7 +75,7 @@ export function isTransferring(contents: WebContents): boolean {
  * オーバーレイ（コマンドバー / 検索バー / ダイアログ / ダウンロード）
  * ------------------------------------------------------------------ */
 
-export type OverlayKind = 'command-bar' | 'find' | 'prompt' | 'downloads' | null
+export type OverlayKind = 'command-bar' | 'address-bar' | 'find' | 'prompt' | 'downloads' | null
 
 /** オーバーレイの種類ごとに、UI View が受け取る矩形を決める。 */
 function overlayBounds(
@@ -85,6 +85,7 @@ function overlayBounds(
 ): Electron.Rectangle {
   switch (kind) {
     case 'command-bar':
+    case 'address-bar':
       // モーダル。背景を暗くするため全面を覆う
       return { x: 0, y: 0, width: content.width, height: content.height }
     case 'find': {

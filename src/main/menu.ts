@@ -56,7 +56,9 @@ function runCommand(command: string): void {
       if (!win.getActiveTab()) return
       win.setOverlay('find')
     }
-    if (command === 'command-bar' || command === 'focus-address') win.setOverlay('command-bar')
+    // ⌘T は新規タブ / ⌘L は現在のタブ。どちらで開いたかを kind で持たせる
+    if (command === 'command-bar') win.setOverlay('command-bar')
+    if (command === 'focus-address') win.setOverlay('address-bar')
     if (command === 'show-downloads') win.setOverlay(win.overlay === 'downloads' ? null : 'downloads')
     sendToUi(win, command)
     return

@@ -73,6 +73,27 @@ function today() {
   return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
 }
 
+/**
+ * 配る資産を選ぶ。
+ *
+ * **今回のバージョンのものだけを配る**。`dist/` に前回のビルドが残っていると、
+ * 何も考えずに拾ったときに古い dmg が同じ Release に並ぶ（実際に 0.0.0 が混ざった）。
+ * ビルド前にディレクトリごと消してはいるが、取り違えは配ってからでは戻せないので
+ * ここでも名前で照合し、**余計なものがあれば失敗させる**。
+ *
+ * @param {string[]} names ディレクトリの中身
+ * @param {string} version 今回のバージョン
+ */
+export function selectAssets(names, version) {
+  const artifacts = names.filter((name) => /\.(dmg|zip|blockmap)$/.test(name))
+  const stale = artifacts.filter((name) => !name.includes(`-${version}-`))
+  if (stale.length > 0) {
+    throw new Error(`今回のバージョン以外の成果物が混ざっている: ${stale.join(', ')}`)
+  }
+  const feed = names.filter((name) => name === 'latest-mac.yml')
+  return [...artifacts, ...feed].sort()
+}
+
 /* ------------------------------------------------------------------ *
  * preflight
  * ------------------------------------------------------------------ */
@@ -146,110 +167,117 @@ function preflight(version, tag) {
  * 本体
  * ------------------------------------------------------------------ */
 
-const spec = process.argv[2] ?? 'patch'
-const currentVersion = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')).version
-const version = nextVersion(currentVersion, spec)
-const tag = `v${version}`
+/* ------------------------------------------------------------------ *
+ * CLI
+ *
+ * `import` しただけで走らないようにガードする（selectAssets をテストから読むため）。
+ * ------------------------------------------------------------------ */
 
-console.log(`=== Nemo ${currentVersion} → ${version} をリリースする`)
-preflight(version, tag)
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const spec = process.argv[2] ?? 'patch'
+  const currentVersion = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')).version
+  const version = nextVersion(currentVersion, spec)
+  const tag = `v${version}`
 
-/** bump commit を作る前の HEAD（push 前に失敗したらここへ戻す）。 */
-const baseCommit = capture('git', ['rev-parse', 'HEAD'])
-let bumped = false
-let draftCreated = false
-const notesPath = path.join(os.tmpdir(), `nemo-release-notes-${process.pid}.md`)
+  console.log(`=== Nemo ${currentVersion} → ${version} をリリースする`)
+  preflight(version, tag)
 
-try {
-  /* ---- 1. bump（ビルドの前に commit する） ---- */
-  // ビルド後に commit すると、成果物が dirty な作業ツリーから作られたことになり、
-  // 「どの commit のビルドか」を一意に指せなくなる。
-  const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'))
-  pkg.version = version
-  fs.writeFileSync(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`)
-  fs.writeFileSync(changelogPath, releaseSection(fs.readFileSync(changelogPath, 'utf8'), version, today()))
-  run('git', ['add', 'package.json', 'docs/CHANGELOG.md'])
-  run('git', ['commit', '-m', `chore(release): ${tag}`])
-  bumped = true
+  /** bump commit を作る前の HEAD（push 前に失敗したらここへ戻す）。 */
+  const baseCommit = capture('git', ['rev-parse', 'HEAD'])
+  let bumped = false
+  let draftCreated = false
+  const notesPath = path.join(os.tmpdir(), `nemo-release-notes-${process.pid}.md`)
 
-  /* ---- 2. ビルド → 署名 → notarize → staple → 検査 ---- */
-  console.log('\n=== ビルド（署名 + notarize つき。数分かかる）')
-  run(process.execPath, ['scripts/package.mjs', CHANNEL], {
-    env: { ...process.env, NEMO_SIGN: '1', NEMO_NOTARIZE: '1' }
-  })
+  try {
+    /* ---- 1. bump（ビルドの前に commit する） ---- */
+    // ビルド後に commit すると、成果物が dirty な作業ツリーから作られたことになり、
+    // 「どの commit のビルドか」を一意に指せなくなる。
+    const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'))
+    pkg.version = version
+    fs.writeFileSync(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`)
+    fs.writeFileSync(changelogPath, releaseSection(fs.readFileSync(changelogPath, 'utf8'), version, today()))
+    run('git', ['add', 'package.json', 'docs/CHANGELOG.md'])
+    run('git', ['commit', '-m', `chore(release): ${tag}`])
+    bumped = true
 
-  /* ---- 3. 配る資産を集める ---- */
-  const outDir = path.join(projectRoot, 'dist', CHANNEL)
-  const assets = fs
-    .readdirSync(outDir)
-    .filter((name) => /\.(dmg|zip|blockmap)$/.test(name) || name === 'latest-mac.yml')
-    .map((name) => path.join(outDir, name))
+    /* ---- 2. ビルド → 署名 → notarize → staple → 検査 ---- */
+    // 前回のビルドを持ち越さない。残っていると古い dmg を同じ Release に並べてしまう
+    fs.rmSync(path.join(projectRoot, 'dist', CHANNEL), { recursive: true, force: true })
+    console.log('\n=== ビルド（署名 + notarize つき。数分かかる）')
+    run(process.execPath, ['scripts/package.mjs', CHANNEL], {
+      env: { ...process.env, NEMO_SIGN: '1', NEMO_NOTARIZE: '1' }
+    })
 
-  const hasZip = assets.some((asset) => asset.endsWith('.zip'))
-  const hasFeed = assets.some((asset) => asset.endsWith('latest-mac.yml'))
-  const hasDmg = assets.some((asset) => asset.endsWith('.dmg'))
-  if (!hasZip || !hasFeed || !hasDmg) {
-    // zip と latest-mac.yml が無いと**アプリ内更新が動かない**（dmg だけでは更新できない）
-    throw new Error(`配る資産が足りない（dmg=${hasDmg} zip=${hasZip} latest-mac.yml=${hasFeed}）`)
-  }
-  console.log(`\n=== 配る資産:\n  ${assets.map((a) => path.basename(a)).join('\n  ')}`)
+    /* ---- 3. 配る資産を集める ---- */
+    const outDir = path.join(projectRoot, 'dist', CHANNEL)
+    const assets = selectAssets(fs.readdirSync(outDir), version).map((name) => path.join(outDir, name))
 
-  /* ---- 4. リリースノート ---- */
-  const notes = findSection(fs.readFileSync(changelogPath, 'utf8'), version)
-  if (!notes?.body) throw new Error(`CHANGELOG から [${version}] のノートを取り出せない`)
-  fs.writeFileSync(notesPath, `${notes.body}\n`)
-
-  /* ---- 5. push → draft Release → 資産 → publish（ここでタグが実体化する） ---- */
-  console.log('\n=== push')
-  run('git', ['push', 'origin', 'main'])
-
-  console.log('=== GitHub Release を draft で作る')
-  run('gh', [
-    'release',
-    'create',
-    tag,
-    '--repo',
-    REPO,
-    '--title',
-    `${PRODUCT_NAME} ${version}`,
-    '--notes-file',
-    notesPath,
-    '--target',
-    capture('git', ['rev-parse', 'HEAD']),
-    '--draft'
-  ])
-  draftCreated = true
-
-  console.log('=== 資産をアップロードする')
-  run('gh', ['release', 'upload', tag, '--repo', REPO, ...assets])
-
-  console.log('=== Release を公開する（ここでタグが作られる）')
-  run('gh', ['release', 'edit', tag, '--repo', REPO, '--draft=false'])
-  draftCreated = false
-
-  // 公開されたタグを手元にも取り込む
-  run('git', ['fetch', 'origin', '--tags', '--quiet'])
-
-  const url = capture('gh', ['release', 'view', tag, '--repo', REPO, '--json', 'url', '--jq', '.url'])
-  console.log(`\n[release] 完了: ${PRODUCT_NAME} ${version}\n${url}`)
-} catch (error) {
-  console.error(`\n[release] 失敗: ${error.message}`)
-
-  if (draftCreated) {
-    console.error('[release] 作りかけの draft Release を消す')
-    tryRun('gh', ['release', 'delete', tag, '--repo', REPO, '--yes'])
-  }
-
-  if (bumped) {
-    const pushed = tryRun('git', ['rev-list', `origin/main..HEAD`, '--count'])
-    if (pushed.stdout.trim() === '0') {
-      console.error('[release] push 済みなので bump は巻き戻さない（手で直す）')
-    } else {
-      console.error(`[release] bump commit を巻き戻す（${baseCommit.slice(0, 7)} へ）`)
-      tryRun('git', ['reset', '--hard', baseCommit])
+    const hasZip = assets.some((asset) => asset.endsWith('.zip'))
+    const hasFeed = assets.some((asset) => asset.endsWith('latest-mac.yml'))
+    const hasDmg = assets.some((asset) => asset.endsWith('.dmg'))
+    if (!hasZip || !hasFeed || !hasDmg) {
+      // zip と latest-mac.yml が無いと**アプリ内更新が動かない**（dmg だけでは更新できない）
+      throw new Error(`配る資産が足りない（dmg=${hasDmg} zip=${hasZip} latest-mac.yml=${hasFeed}）`)
     }
+    console.log(`\n=== 配る資産:\n  ${assets.map((a) => path.basename(a)).join('\n  ')}`)
+
+    /* ---- 4. リリースノート ---- */
+    const notes = findSection(fs.readFileSync(changelogPath, 'utf8'), version)
+    if (!notes?.body) throw new Error(`CHANGELOG から [${version}] のノートを取り出せない`)
+    fs.writeFileSync(notesPath, `${notes.body}\n`)
+
+    /* ---- 5. push → draft Release → 資産 → publish（ここでタグが実体化する） ---- */
+    console.log('\n=== push')
+    run('git', ['push', 'origin', 'main'])
+
+    console.log('=== GitHub Release を draft で作る')
+    run('gh', [
+      'release',
+      'create',
+      tag,
+      '--repo',
+      REPO,
+      '--title',
+      `${PRODUCT_NAME} ${version}`,
+      '--notes-file',
+      notesPath,
+      '--target',
+      capture('git', ['rev-parse', 'HEAD']),
+      '--draft'
+    ])
+    draftCreated = true
+
+    console.log('=== 資産をアップロードする')
+    run('gh', ['release', 'upload', tag, '--repo', REPO, ...assets])
+
+    console.log('=== Release を公開する（ここでタグが作られる）')
+    run('gh', ['release', 'edit', tag, '--repo', REPO, '--draft=false'])
+    draftCreated = false
+
+    // 公開されたタグを手元にも取り込む
+    run('git', ['fetch', 'origin', '--tags', '--quiet'])
+
+    const url = capture('gh', ['release', 'view', tag, '--repo', REPO, '--json', 'url', '--jq', '.url'])
+    console.log(`\n[release] 完了: ${PRODUCT_NAME} ${version}\n${url}`)
+  } catch (error) {
+    console.error(`\n[release] 失敗: ${error.message}`)
+
+    if (draftCreated) {
+      console.error('[release] 作りかけの draft Release を消す')
+      tryRun('gh', ['release', 'delete', tag, '--repo', REPO, '--yes'])
+    }
+
+    if (bumped) {
+      const pushed = tryRun('git', ['rev-list', `origin/main..HEAD`, '--count'])
+      if (pushed.stdout.trim() === '0') {
+        console.error('[release] push 済みなので bump は巻き戻さない（手で直す）')
+      } else {
+        console.error(`[release] bump commit を巻き戻す（${baseCommit.slice(0, 7)} へ）`)
+        tryRun('git', ['reset', '--hard', baseCommit])
+      }
+    }
+    process.exitCode = 1
+  } finally {
+    fs.rmSync(notesPath, { force: true })
   }
-  process.exitCode = 1
-} finally {
-  fs.rmSync(notesPath, { force: true })
 }

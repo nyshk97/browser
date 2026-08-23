@@ -77,3 +77,33 @@ test('実物の CHANGELOG に [Unreleased] があり、書き方のコード例�
   assert.ok(unreleased, '[Unreleased] セクションが無い')
   assert.ok(!unreleased.body.includes('```'), 'フェンスを本文として取り込んでいる')
 })
+
+/* ------------------------------------------------------------------ *
+ * リリースの資産選び
+ * ------------------------------------------------------------------ */
+
+test('配る資産は今回のバージョンのものだけ', async () => {
+  const { selectAssets } = await import('./release.mjs')
+  const names = [
+    'Nemo-0.1.0-arm64.dmg',
+    'Nemo-0.1.0-arm64.dmg.blockmap',
+    'Nemo-0.1.0-arm64-mac.zip',
+    'Nemo-0.1.0-arm64-mac.zip.blockmap',
+    'latest-mac.yml',
+    'mac-arm64',
+    'builder-debug.yml'
+  ]
+  assert.deepEqual(selectAssets(names, '0.1.0'), [
+    'Nemo-0.1.0-arm64-mac.zip',
+    'Nemo-0.1.0-arm64-mac.zip.blockmap',
+    'Nemo-0.1.0-arm64.dmg',
+    'Nemo-0.1.0-arm64.dmg.blockmap',
+    'latest-mac.yml'
+  ])
+})
+
+test('前回のビルドが残っていたら配らずに落とす', async () => {
+  const { selectAssets } = await import('./release.mjs')
+  // 実際に 0.0.0 の dmg が 0.1.0 の Release に並んだ（掃除の漏れを配る前に捕まえる）
+  assert.throws(() => selectAssets(['Nemo-0.0.0-arm64.dmg', 'Nemo-0.1.0-arm64.dmg'], '0.1.0'), /0\.0\.0/)
+})

@@ -287,6 +287,114 @@ await ui.ev(`window.nemo.addFavorite(${JSON.stringify(reopened)}).then(() => 'ok
 }
 
 /* ------------------------------------------------------------------ *
+ * 1-5b コマンドバーの決定先（⌘T は新規タブ / ⌘L は現在のタブ）
+ * ------------------------------------------------------------------ */
+
+/** オーバーレイのコマンドバーを開き、**開いた直後の**モードと入力値を返す。 */
+async function openCommandBar(kind) {
+  await ui.ev(`window.nemo.setOverlay(${JSON.stringify(kind)}).then(() => 'ok')`)
+  await waitFor(overlay, `document.querySelector('.cmd') ? 'open' : ''`)
+  // 開いた直後の姿を見る（`.cmd` が出てから読む。後から埋まる作りだと FAIL する）
+  return await overlay
+    .ev(
+      `(() => {
+        const c = document.querySelector('.cmd')
+        return JSON.stringify({ mode: c.dataset.mode, value: c.querySelector('input').value })
+      })()`
+    )
+    .then(JSON.parse)
+}
+
+/**
+ * コマンドバーを開いて入力し、Enter で決定する。
+ *
+ * React の制御 input なので `input.value = ...` では onChange が走らない。
+ * ネイティブの setter で書いてから `input` イベントを投げる。
+ */
+async function submitCommandBar(kind, text, { shift = false } = {}) {
+  const { mode } = await openCommandBar(kind)
+  await overlay.ev(`(() => {
+    const input = document.querySelector('.cmd input')
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+    setter.call(input, ${JSON.stringify(text)})
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    return 'ok'
+  })()`)
+  // 候補が出てからでないと Enter が空振りする（決定は候補に対して効く）
+  await waitFor(overlay, `document.querySelectorAll('.cmd .sug:not(.dim)').length`)
+  await overlay.ev(`(() => {
+    const input = document.querySelector('.cmd input')
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, shiftKey: ${shift} }))
+    return 'ok'
+  })()`)
+  await waitFor(overlay, `document.querySelector('.cmd') ? '' : 'closed'`)
+  return mode
+}
+
+{
+  const before = await state()
+  const beforeKey = before.activeTabKey
+  const beforeUrl = before.tabs.find((t) => t.key === beforeKey)?.url ?? ''
+
+  // ⌘L は「現在の URL を編集する」入り口なので、開いた時点で URL が入っていること。
+  // バーの中で状態を購読すると、開いた瞬間はまだ取得できておらず空欄になる（実際に踏んだ）。
+  {
+    const opened = await openCommandBar('address-bar')
+    check('⌘L のコマンドバーは現在の URL が入った状態で開く', opened.value === beforeUrl, opened.value)
+    await ui.ev(`window.nemo.setOverlay(null).then(() => 'ok')`)
+    const emptied = await openCommandBar('command-bar')
+    check('⌘T のコマンドバーは空で開く', emptied.value === '', emptied.value)
+    await ui.ev(`window.nemo.setOverlay(null).then(() => 'ok')`)
+  }
+
+  // ⌘T / ＋ ボタン: 今のタブを潰さず新しいタブで開く
+  const mode = await submitCommandBar('command-bar', `${PAGES}/index.html?probe=cmdbar-new`)
+  check('⌘T のコマンドバーは新規タブモードで開く', mode === 'new-tab', mode)
+  const after = await state()
+  check(
+    '⌘T のコマンドバーの Enter は新しいタブを開く',
+    after.tabs.length === before.tabs.length + 1 && after.activeTabKey !== beforeKey,
+    `tabs ${before.tabs.length}→${after.tabs.length}`
+  )
+  check(
+    '⌘T のコマンドバーは今のタブを上書きしない',
+    after.tabs.find((t) => t.key === beforeKey)?.url === beforeUrl,
+    after.tabs.find((t) => t.key === beforeKey)?.url ?? '(消えた)'
+  )
+
+  // ⌘L: 今のタブで開く
+  const openedKey = after.activeTabKey
+  const addressMode = await submitCommandBar('address-bar', `${PAGES}/index.html?probe=cmdbar-same`)
+  check('⌘L のコマンドバーはアドレスモードで開く', addressMode === 'address', addressMode)
+  const replaced = await state()
+  check(
+    '⌘L のコマンドバーの Enter は今のタブで開く',
+    replaced.tabs.length === after.tabs.length && replaced.activeTabKey === openedKey,
+    `tabs ${after.tabs.length}→${replaced.tabs.length}`
+  )
+  await waitFor(
+    ui,
+    `window.nemo.getWindowState().then(s => s.tabs.some(t => t.key === ${JSON.stringify(openedKey)} && t.url.includes('probe=cmdbar-same')))`
+  )
+
+  // ⇧Enter は既定の逆（アドレスモードなら新規タブ）
+  await submitCommandBar('address-bar', `${PAGES}/index.html?probe=cmdbar-shift`, { shift: true })
+  const shifted = await state()
+  check(
+    '⇧Enter は既定の逆に開く（アドレスモードでも新規タブ）',
+    shifted.tabs.length === replaced.tabs.length + 1 && shifted.activeTabKey !== openedKey,
+    `tabs ${replaced.tabs.length}→${shifted.tabs.length}`
+  )
+
+  // 後片付け（この検証で開いたタブを閉じる）
+  for (const tab of shifted.tabs) {
+    if (tab.url.includes('probe=cmdbar')) {
+      await ui.ev(`window.nemo.closeTab(${JSON.stringify(tab.key)}).then(() => 'ok')`)
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * 1-6 一日使うために必要な機能
  * ------------------------------------------------------------------ */
 

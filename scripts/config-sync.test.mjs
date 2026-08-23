@@ -476,3 +476,31 @@ test('origin を取得できないときは pull を中止する（古い JSON �
     const out = m.run(['pull', '--offline'])
     assert.match(out, /--offline/)
   }))
+
+test('内容が同じなら push は空コミットを積まない', () =>
+  withSandbox(async ({ root }) => {
+    const bare = path.join(root, 'origin-noop.git')
+    execFileSync('git', ['init', '--bare', '-b', 'main', bare], { stdio: 'ignore' })
+    const m = machine(root, 'noop', bare)
+    m.setFavorite('x', 'https://x.example.com/')
+    m.run(['init'])
+    m.run(['push'])
+
+    const count = () =>
+      Number(
+        execFileSync('git', ['rev-list', '--count', 'HEAD'], {
+          cwd: path.join(m.home, 'repo'),
+          encoding: 'utf8'
+        }).trim()
+      )
+    const before = count()
+    // manifest の updatedAt を毎回書くと、ここで必ず1つ増えてしまう
+    const out = m.run(['push'])
+    assert.match(out, /差分なし/)
+    assert.equal(count(), before)
+
+    // 中身が変われば commit される
+    m.setFavorite('y', 'https://y.example.com/')
+    m.run(['push'])
+    assert.equal(count(), before + 1)
+  }))

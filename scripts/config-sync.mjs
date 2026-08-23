@@ -324,7 +324,12 @@ function cmdPush() {
   }
 
   const files = buildSnapshot(userDataDir, { appVersion: appVersion() })
+
+  // manifest は **中身が変わったときだけ**書く。
+  // `updatedAt` を毎回書くと差分が必ず出て、内容が同じでも空コミットが積み上がる。
+  const manifest = files.find((file) => file.name === 'manifest.json')
   for (const file of files) {
+    if (file === manifest) continue
     fs.writeFileSync(path.join(stagingDir(), file.name), file.text)
     if (file.missing) info(`${file.name} が常用データに無いので既定値で書き出した`)
   }
@@ -337,6 +342,7 @@ function cmdPush() {
     if (head) writeBase(channel, head)
     return
   }
+  if (manifest) fs.writeFileSync(path.join(stagingDir(), manifest.name), manifest.text)
 
   // 管理対象だけを add する（`-A` にしない）
   git(['add', '--', ...managedFiles()])

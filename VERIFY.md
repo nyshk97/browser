@@ -258,25 +258,47 @@ mise run release 0.2.0               # preflight → bump → 署名 → notariz
 
 ```bash
 gh release view v0.2.0 --repo nyshk97/nemo --json assets --jq '.assets[].name'
-# → dmg / zip / *.blockmap / latest-mac.yml が揃っていること
-#   （zip と latest-mac.yml が無いとアプリ内更新が動かない）
+# → 今回の版の dmg / zip / *.blockmap と latest-mac.yml **だけ**が並ぶこと
+#   （zip と latest-mac.yml が無いとアプリ内更新が動かない。
+#     古い版の成果物が混ざっていたら dist/ の掃除が漏れている）
 
-# 公証が通っているか（ダウンロードした dmg に対して）
-spctl -a -t open --context context:primary-signature -v ~/Downloads/Nemo-0.2.0-arm64.dmg
-xcrun stapler validate /Applications/Nemo.app
+# **配ったものに対して**公証を見る。dmg と .app の両方を見ること
+# （.app だけ公証しても dmg には署名もチケットも無い、という状態を実際に踏んだ）
+gh release download v0.2.0 --repo nyshk97/nemo --pattern '*.dmg' --dir /tmp
+spctl -a -t open --context context:primary-signature -vv /tmp/Nemo-0.2.0-arm64.dmg
+xcrun stapler validate /tmp/Nemo-0.2.0-arm64.dmg
+# → accepted / source=Notarized Developer ID
 ```
 
-**アプリ内更新の通し確認は「1つ前の版を入れてから」やる**:
+### アプリ内更新の通し確認
 
-1. 1つ前の版の dmg を `/Applications` に入れて起動する（App Translocation を避けるため
-   ダウンロードフォルダから直接起動しない）
-2. メニューの `Nemo` → `アップデートを確認…` を選ぶ
-3. 落とし終えるとサイドバー左下のバージョン表示が `0.2.0 に更新` に変わる。押すと再起動して適用される
-4. 再起動後に `plutil -extract CFBundleShortVersionString raw /Applications/Nemo.app/Contents/Info.plist`
-   が新しい版になっていること
+**1つ前の版を `/Applications` に入れた状態から**やる（ダウンロードフォルダから直接起動すると
+App Translocation で更新が当たらない）。**メニュー操作は要らない**: 起動 30 秒後に自動チェックが走る。
 
-> 起動直後の自動チェックは 30 秒後に走る。24 時間ごとに再チェックする。
-> **dev 版（Nemo Dev）では更新の導線は動かない**（メニューから選ぶと「この版では確認できない」と出るのが正常）。
+```bash
+# 1. 旧版が入っている状態で入れ直す（再起動すると自動チェックが走る）
+osascript -e 'tell application "Nemo" to quit'
+open -a /Applications/Nemo.app
+
+# 2. 取得できたかをログで見る（30 秒ほどでチェック、そこから 143MB のダウンロード）
+LOG=~/Library/Application\ Support/Nemo/logs
+grep -h updater "$LOG/$(ls -t $LOG | head -1)"
+# → updater.available → updater.downloaded の順に出る
+
+# 3. 適用は**終了時**（autoInstallOnAppQuit）。終了して差し替わるのを待つ
+osascript -e 'tell application "Nemo" to quit'
+plutil -extract CFBundleShortVersionString raw /Applications/Nemo.app/Contents/Info.plist
+
+# 4. 差し替わった .app が公証を保っていること
+spctl -a -vv /Applications/Nemo.app && xcrun stapler validate /Applications/Nemo.app
+```
+
+`updater.downloaded` が出た時点で、サイドバー左下の表示が `0.2.0 に更新` のボタンに変わる。
+押すと確認ダイアログを経て再起動して適用される（終了を待たずに当てたいときの導線）。
+
+> **dev 版（Nemo Dev）では更新の導線は動かない**
+> （メニューから選ぶと「この版では確認できない」と出るのが正常）。
+> 常用版のログに `updater.disabled` が出ていたら、feed の埋め込みか channel の判定が壊れている。
 
 ## アイコンを変えたとき
 

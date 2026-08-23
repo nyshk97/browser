@@ -241,8 +241,68 @@ try {
         ).catch(() => '')
       : ''
     check('popup が開いて chrome.* が使える', ready === 'ready', popup ? '' : `openPopup: ${openResult}`)
+    // 次のケースはクリックで popup を開く。開いたままだとクリックが
+    // トグル（閉じる）になるので、**ウィンドウごと閉じてから**次へ進む
+    await popup?.ev('window.close()').catch(() => {})
     popup?.close()
+    await sleep(500)
     sw.close()
+  }
+
+  /* ---- 5b. popup の表示位置 ---- */
+  {
+    // `chrome.action.openPopup()` はウィンドウ右上の擬似アンカーで開くので、
+    // **サイドバーのボタンを実際にクリックする経路**でないと alignment を検証できない。
+    // electron-chrome-extensions の既定はアンカーの右端に popup の右端を合わせる（左へ伸びる）ため、
+    // サイドバーが左端にある Nemo では popup が画面外へ見切れる（実機で発生した）。
+    const anchor = await ui
+      .ev(
+        `(() => {
+          const btn = document.querySelector('browser-action-list')?.shadowRoot?.querySelector('.action')
+          if (!btn) return JSON.stringify({ ok: false })
+          const r = btn.getBoundingClientRect()
+          btn.click()
+          return JSON.stringify({ ok: true, left: window.screenX + r.left })
+        })()`
+      )
+      .then(JSON.parse)
+    const popup = anchor.ok ? await connectTo(cdp, 'popup.html', { timeoutMs: 5000 }).catch(() => null) : null
+    // 位置は preferred size が届いた後に確定するので、少し待ってから読む
+    if (popup) await sleep(1000)
+    const box = popup
+      ? await popup
+          .ev(
+            `JSON.stringify({
+              left: window.screenX, top: window.screenY,
+              width: window.outerWidth, height: window.outerHeight,
+              availLeft: screen.availLeft, availTop: screen.availTop,
+              availWidth: screen.availWidth, availHeight: screen.availHeight
+            })`
+          )
+          .then(JSON.parse, () => null)
+      : null
+    check('ツールバーのボタンのクリックで popup が開く', box !== null, anchor.ok ? '' : 'ボタンが無い')
+    if (box) {
+      check(
+        'popup が画面内に収まる',
+        box.left >= box.availLeft &&
+          box.left + box.width <= box.availLeft + box.availWidth &&
+          box.top >= box.availTop &&
+          box.top + box.height <= box.availTop + box.availHeight,
+        JSON.stringify(box)
+      )
+      // 画面端で押し戻された場合を誤検出しないよう、右に伸びる余地があるときだけ見る
+      if (anchor.left + box.width <= box.availLeft + box.availWidth) {
+        check(
+          'popup がアンカーから右へ開く',
+          box.left >= anchor.left - 1,
+          `anchor ${anchor.left} / popup ${box.left}`
+        )
+      }
+      await popup.ev('window.close()').catch(() => {})
+    }
+    popup?.close()
+    await sleep(500)
   }
 
   /* ---- 6. オプションページ ---- */

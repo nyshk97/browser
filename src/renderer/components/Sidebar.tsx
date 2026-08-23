@@ -132,7 +132,13 @@ export function Sidebar(): React.JSX.Element {
       </form>
 
       <div className="actions">
-        <browser-action-list partition={PAGE_PARTITION} alignment="bottom left" />
+        {/*
+          alignment は「popup がどちら向きに伸びるか」。
+          electron-chrome-extensions は既定でアンカーの**右端に popup の右端を合わせる**
+          （= 左へ伸びる）ので、サイドバーが左端にある Nemo では画面外へ見切れる。
+          `right` を含めるとアンカーの左端に popup の左端が合い、右へ伸びる。
+        */}
+        <browser-action-list partition={PAGE_PARTITION} alignment="bottom right" />
         <div className="spacer" />
         <button
           type="button"

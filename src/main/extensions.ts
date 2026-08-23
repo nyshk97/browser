@@ -1,3 +1,4 @@
+import { screen } from 'electron'
 import { ElectronChromeExtensions } from 'electron-chrome-extensions'
 
 import fs from 'node:fs'
@@ -241,6 +242,19 @@ export function watchServiceWorkerStatus(session: Electron.Session): void {
  * `PopupView.maybeClose` は DevTools が開いていれば閉じないので、
  * **生成された瞬間に開く**のが確実。dev で明示的に有効にしたときだけ動く。
  */
+/** popup が画面（work area）からはみ出していたら押し戻す。 */
+function keepPopupOnScreen(popup: { browserWindow?: Electron.BrowserWindow }): void {
+  const win = popup.browserWindow
+  if (!win || win.isDestroyed()) return
+  const bounds = win.getBounds()
+  const area = screen.getDisplayMatching(bounds).workArea
+  // popup が work area より大きいときは、左上を優先して合わせる（右下を切る）
+  const x = Math.max(area.x, Math.min(bounds.x, area.x + area.width - bounds.width))
+  const y = Math.max(area.y, Math.min(bounds.y, area.y + area.height - bounds.height))
+  if (x === bounds.x && y === bounds.y) return
+  win.setBounds({ ...bounds, x: Math.round(x), y: Math.round(y) })
+}
+
 export function watchExtensionPopups(extensions: ElectronChromeExtensions): void {
   const openDevTools = process.env['NEMO_POPUP_DEVTOOLS'] === '1'
 
@@ -249,6 +263,7 @@ export function watchExtensionPopups(extensions: ElectronChromeExtensions): void
     extensionId: string
     browserWindow?: Electron.BrowserWindow
     whenReady(): Promise<void>
+    on(event: string, listener: () => void): void
   }
 
   extensions.on('browser-action-popup-created', (popup: PopupLike) => {
@@ -256,6 +271,14 @@ export function watchExtensionPopups(extensions: ElectronChromeExtensions): void
     if (!contents) return
 
     log('extension.popup_created', { extensionId: popup.extensionId, devtools: openDevTools })
+
+    // popup の位置は electron-chrome-extensions が決めるが、**画面内に収める処理が無い**。
+    // 伸びる向き（Sidebar の `alignment`）を直しても、ウィンドウが画面の端にあれば
+    // popup の反対側が画面外へ出る。ライブラリは移動・リサイズのたびに位置を計算し直すので、
+    // その直後に毎回押し戻す。`setBounds` はこれらのイベントを再発火しないので再帰しない。
+    keepPopupOnScreen(popup)
+    popup.on('moved', () => keepPopupOnScreen(popup))
+    popup.on('resized', () => keepPopupOnScreen(popup))
 
     contents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
       logError('extension.popup_load_failed', new Error(errorDescription), {

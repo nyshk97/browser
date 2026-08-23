@@ -301,22 +301,27 @@ test('extensions/<id> が symlink でも外部を削除しない（canary）', (
 
 test('safeJoin は base より下の symlink を拒否し、base 上の symlink は許す', async () => {
   const { safeJoin } = await import('../src/shared/ext-lock.js')
-  // macOS の一時ディレクトリは /var -> /private/var を経由する。
-  // base より上の symlink まで拒否すると何も通らなくなるので、そこは許す。
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nemo-safejoin-'))
+  // base **より上**に symlink があるのは普通のこと（macOS の一時ディレクトリは
+  // /var -> /private/var を経由する）。そこまで拒否すると何も通らなくなるので許す。
+  // OS の tmpdir の作りに依存しないよう、上位の symlink は自分で作る。
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nemo-safejoin-'))
   try {
-    assert.ok(root.startsWith('/var/') || root.startsWith('/private/var/'))
+    const realParent = path.join(tmp, 'parent')
+    fs.mkdirSync(path.join(realParent, 'root'), { recursive: true })
+    fs.symlinkSync(realParent, path.join(tmp, 'parent-link'))
+    // base 自身は実在のディレクトリだが、そこへ至る経路に symlink が入っている
+    const root = path.join(tmp, 'parent-link', 'root')
     assert.doesNotThrow(() => safeJoin(root, ['a', 'b']))
 
     fs.mkdirSync(path.join(root, 'real'), { recursive: true })
-    fs.symlinkSync('/etc', path.join(root, 'link'))
+    fs.symlinkSync(tmp, path.join(root, 'link'))
     assert.throws(() => safeJoin(root, ['link']), /シンボリックリンク/)
-    assert.throws(() => safeJoin(root, ['link', 'passwd']), /シンボリックリンク/)
+    assert.throws(() => safeJoin(root, ['link', 'x']), /シンボリックリンク/)
     assert.doesNotThrow(() => safeJoin(root, ['real']))
 
     assert.throws(() => safeJoin(root, ['..']), /想定ディレクトリの外/)
     assert.throws(() => safeJoin(root, ['a', '..', '..']), /想定ディレクトリの外/)
   } finally {
-    fs.rmSync(root, { recursive: true, force: true })
+    fs.rmSync(tmp, { recursive: true, force: true })
   }
 })

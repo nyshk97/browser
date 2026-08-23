@@ -9,6 +9,11 @@
 # （`${env.X}` の展開はここでは効かない keys がある）
 copyright: Copyright (C) 2026 nyshk97
 
+# 自動更新の feed 公開は Phase 2-6 で入れる。
+# ここを未設定のままにすると electron-builder が GitHub への publish を試み、
+# トークンが無い CI で落ちる。
+publish: null
+
 directories:
   buildResources: build
 

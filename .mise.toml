@@ -131,3 +131,52 @@ if ! git checkout -- extensions.lock.json 2>/dev/null; then
 fi
 node scripts/ext-fetch.mjs
 """
+
+[tasks."config:init"]
+description = "設定同期リポジトリ（nemo-config）の作業コピーを用意する"
+usage = 'arg "<repo>" default="" help="同期リポジトリの URL（省略時は既定 / 前回の設定）"'
+run = '''
+if [ -n "$usage_repo" ]; then
+  node scripts/config-sync.mjs init --repo "$usage_repo"
+else
+  node scripts/config-sync.mjs init
+fi
+'''
+
+[tasks."config:status"]
+description = "常用データと同期リポジトリの差分・競合状態を見る"
+usage = 'arg "<channel>" default="stable" help="stable または dev"'
+run = 'node scripts/config-sync.mjs status --channel "$usage_channel"'
+
+[tasks."config:push"]
+description = "常用データ（設定・ピン留め・Favorites）を同期リポジトリへ上げる"
+usage = 'arg "<channel>" default="stable" help="stable または dev"'
+run = 'node scripts/config-sync.mjs push --channel "$usage_channel"'
+
+[tasks."config:pull"]
+description = "同期リポジトリの内容を常用データへ取り込む（Nemo を終了してから実行する）"
+usage = 'arg "<channel>" default="stable" help="stable または dev"'
+run = 'node scripts/config-sync.mjs pull --channel "$usage_channel"'
+
+[tasks."config:restore"]
+description = "直近の config:pull の前の状態に常用データを戻す"
+usage = 'arg "<channel>" default="stable" help="stable または dev"'
+run = 'node scripts/config-sync.mjs restore --channel "$usage_channel"'
+
+[tasks."arc:import"]
+description = "Arc のサイドバー（Favorites・ピン留め・フォルダ）を Nemo に取り込む（冪等）"
+usage = '''
+arg "<channel>" default="stable" help="stable または dev"
+flag "--dry-run" help="書き込まずに取り込む内容だけ表示する"
+flag "--replace" help="既存のピン留めを捨てて Arc の内容で置き換える"
+'''
+run = '''
+extra=""
+[ "$usage_dry_run" = "true" ] && extra="$extra --dry-run"
+[ "$usage_replace" = "true" ] && extra="$extra --replace"
+node scripts/arc-import.mjs --channel "$usage_channel" $extra
+'''
+
+[tasks."ext:outdated"]
+description = "拡張に新しいバージョンが出ていないか確認する（何も書き換えない）"
+run = "node scripts/ext-outdated.mjs"

@@ -96,8 +96,10 @@ node -e "import('./scripts/lib/harness.mjs').then(m=>console.log(m.findRunningNe
 ```
 
 `mise run dev` は同じ remote debugging ポートを掴んでいる Nemo があれば起動を拒否する。
+`mise run verify:packaged` も同じ `.app` が起動したままなら拒否する
+（残っていると新しいプロセスが立たず、CDP を待ち続けて失敗する）。
 `pkill -f "scripts/dev.mjs"` だけでは **孫プロセスの Electron が残る**ので、
-残っていたら `pkill -f "MacOS/Electron"` まで実行する。
+残っていたら `pkill -f "MacOS/Electron"`（パッケージ版は `pkill -f "Nemo Dev"`）まで実行する。
 
 ```js
 // Runtime.evaluate で実行する

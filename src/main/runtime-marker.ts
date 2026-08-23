@@ -74,6 +74,13 @@ export function removeRuntimeMarker(): void {
 }
 
 export function installRuntimeMarker(): void {
+  // パッケージ後は書かない。マーカーの置き場はリポジトリの `.nemo-run/` で、
+  // 検証スクリプトがそこを見る前提だから。パッケージ後は projectRoot が
+  // app.asar の中を指すので、書こうとすると必ず失敗する（error ログが出るだけで害になる）。
+  if (app.isPackaged) {
+    log('app.runtime_marker_skipped', { reason: 'packaged' })
+    return
+  }
   writeRuntimeMarker()
   app.on('will-quit', removeRuntimeMarker)
   process.on('exit', removeRuntimeMarker)

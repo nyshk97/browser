@@ -8,7 +8,7 @@
  *
  * 使い捨てのデータディレクトリで起動するので、常用プロファイルには触らない。
  */
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -25,6 +25,25 @@ const appPath = [
 
 if (!appPath) {
   console.error(`[verify-packaged] .app が見つからない。先に \`mise run package\` を実行する。`)
+  process.exit(1)
+}
+
+// 同じ .app のインスタンスが残っていると、起動しても新しいプロセスが立たず
+// CDP を待ち続けて失敗する。先に見つけて理由を出す（原因が分かりにくい失敗なので）。
+const strays = (() => {
+  try {
+    const out = execFileSync('/bin/ps', ['ax', '-o', 'pid=,command='], { encoding: 'utf8' })
+    return out
+      .split('\n')
+      .filter((line) => line.includes(`${appPath}/Contents/MacOS/`) && !line.includes('Helper'))
+      .map((line) => line.trim().split(/\s+/)[0])
+  } catch {
+    return []
+  }
+})()
+if (strays.length > 0) {
+  console.error(`[verify-packaged] 同じ .app が起動したままになっている: pid ${strays.join(', ')}`)
+  console.error(`  終了させてから実行する:  kill ${strays.join(' ')}`)
   process.exit(1)
 }
 

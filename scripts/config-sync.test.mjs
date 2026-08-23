@@ -140,6 +140,33 @@ test('snapshot は常用データを正規化して書き出す', () =>
     assert.equal(manifest.appVersion, '9.9.9')
   }))
 
+test('バックアップは channel と用途で分かれ、別 channel には戻せない', () =>
+  withSandbox(({ lib, userDataDir }) => {
+    fs.writeFileSync(
+      path.join(userDataDir, 'pins.json'),
+      stringify({ version: PINS_VERSION, data: { favorites: [], pinned: [] } })
+    )
+    const pull = lib.backupLiveData(userDataDir, 'stamp-1', { channel: 'dev', kind: 'pull' })
+    const arc = lib.backupLiveData(userDataDir, 'stamp-2', { channel: 'dev', kind: 'arc-import' })
+
+    assert.ok(pull.dir.includes(path.join('backups', 'dev', 'pull-stamp-1')))
+    assert.ok(arc.dir.includes(path.join('backups', 'dev', 'arc-import-stamp-2')))
+
+    // 用途で絞れる（config:restore が Arc 取り込みの分を拾わない）
+    assert.deepEqual(lib.listBackups('dev', 'pull'), ['pull-stamp-1'])
+    assert.deepEqual(lib.listBackups('dev', 'arc-import'), ['arc-import-stamp-2'])
+    assert.deepEqual(lib.listBackups('stable', 'pull'), [], '別 channel には見えない')
+
+    // channel / 戻し先が食い違ったら戻さない
+    assert.throws(() => lib.restoreBackup(pull.dir, { expectedChannel: 'stable' }), /channel が違う/)
+    assert.throws(
+      () => lib.restoreBackup(pull.dir, { expectedUserDataDir: '/somewhere/else' }),
+      /戻し先が想定と違う/
+    )
+    // 一致していれば戻せる
+    lib.restoreBackup(pull.dir, { expectedChannel: 'dev', expectedUserDataDir: userDataDir })
+  }))
+
 test('pull は検証 → バックアップ → 原子的 import の順で、失敗したら元に戻る', () =>
   withSandbox(({ root, lib, userDataDir }) => {
     const staging = path.join(root, 'staged')
@@ -167,14 +194,14 @@ test('pull は検証 → バックアップ → 原子的 import の順で、失
     )
 
     const { payloads } = lib.validateStaging(staging)
-    const backup = lib.backupLiveData(userDataDir, 'stamp-1')
+    const backup = lib.backupLiveData(userDataDir, 'stamp-1', { channel: 'dev', kind: 'pull' })
     lib.importPayloads(userDataDir, payloads)
 
     const after = JSON.parse(fs.readFileSync(path.join(userDataDir, 'settings.json'), 'utf8'))
     assert.equal(after.data.tabSleepMinutes, 10)
     assert.equal(fs.existsSync(path.join(userDataDir, 'pins.json')), true)
 
-    lib.restoreBackup(backup.dir)
+    lib.restoreBackup(backup.dir, { expectedChannel: 'dev', expectedUserDataDir: userDataDir })
     const restored = JSON.parse(fs.readFileSync(path.join(userDataDir, 'settings.json'), 'utf8'))
     assert.equal(restored.data.tabSleepMinutes, 99)
     // 元は存在しなかったファイルは、戻したときに消える
@@ -302,4 +329,150 @@ test('コンフリクトが残っていたら push も pull も止まる', () =>
         `${command} はコンフリクト中に走ってはいけない`
       )
     }
+  }))
+
+/* ------------------------------------------------------------------ *
+ * 2台で押し合ったときに変更が消えないこと
+ * ------------------------------------------------------------------ */
+
+/** テスト用の CLI 実行環境（1台ぶん）を作る。 */
+function machine(root, name, bare) {
+  const home = path.join(root, name, 'sync')
+  const data = path.join(root, name, 'userdata')
+  fs.mkdirSync(data, { recursive: true })
+  const env = {
+    ...process.env,
+    NEMO_SYNC_HOME: home,
+    NEMO_USER_DATA_DIR: data,
+    NEMO_CONFIG_REPO: bare,
+    GIT_AUTHOR_NAME: name,
+    GIT_AUTHOR_EMAIL: `${name}@example.com`,
+    GIT_COMMITTER_NAME: name,
+    GIT_COMMITTER_EMAIL: `${name}@example.com`
+  }
+  const cli = path.join(import.meta.dirname, 'config-sync.mjs')
+  return {
+    home,
+    data,
+    env,
+    run: (args, overrides = {}) =>
+      execFileSync('node', [cli, ...args], { encoding: 'utf8', env: { ...env, ...overrides } }),
+    /** 失敗を期待して実行する。stderr を返す。 */
+    expectFail: (args) => {
+      try {
+        execFileSync('node', [cli, ...args], { encoding: 'utf8', env, stdio: 'pipe' })
+      } catch (error) {
+        return String(error.stderr)
+      }
+      throw new Error(`失敗するはずのコマンドが成功した: ${args.join(' ')}`)
+    },
+    setFavorite: (id, url) =>
+      fs.writeFileSync(
+        path.join(data, 'pins.json'),
+        stringify({
+          version: PINS_VERSION,
+          data: { favorites: [{ id, url, title: id }], pinned: [] }
+        })
+      ),
+    favorites: () => JSON.parse(fs.readFileSync(path.join(data, 'pins.json'), 'utf8')).data.favorites
+  }
+}
+
+test('origin が進んでいたら push を拒否する（別 Mac の変更を消さない）', () =>
+  withSandbox(async ({ root }) => {
+    const bare = path.join(root, 'origin-lost.git')
+    execFileSync('git', ['init', '--bare', '-b', 'main', bare], { stdio: 'ignore' })
+
+    const a = machine(root, 'macA', bare)
+    const b = machine(root, 'macB', bare)
+
+    // 初期状態を A が作り、B はそれを取り込む
+    a.setFavorite('shared', 'https://shared.example.com/')
+    a.run(['init'])
+    a.run(['push'])
+    b.run(['init'])
+    b.run(['pull'])
+    assert.equal(b.favorites()[0].id, 'shared')
+
+    // A が更新して push
+    a.setFavorite('from-a', 'https://a.example.com/')
+    a.run(['push'])
+
+    // B は A の更新を知らないまま push しようとする → **止まること**
+    b.setFavorite('from-b', 'https://b.example.com/')
+    const stderr = b.expectFail(['push'])
+    assert.match(stderr, /origin が進んでいる/)
+
+    // origin には A の内容が残っている（消されていない）
+    const check = machine(root, 'checker', bare)
+    check.run(['init'])
+    check.run(['pull'])
+    assert.equal(check.favorites()[0].id, 'from-a', 'A の変更が生きている')
+
+    // B は pull してからなら push できる
+    b.run(['pull'])
+    assert.equal(b.favorites()[0].id, 'from-a', 'pull で A の内容が入る')
+    b.setFavorite('from-b', 'https://b.example.com/')
+    b.run(['push'])
+  }))
+
+test('一度も同期していない端末は、内容のある origin へ push できない', () =>
+  withSandbox(async ({ root }) => {
+    const bare = path.join(root, 'origin-fresh.git')
+    execFileSync('git', ['init', '--bare', '-b', 'main', bare], { stdio: 'ignore' })
+
+    const a = machine(root, 'first', bare)
+    a.setFavorite('a', 'https://a.example.com/')
+    a.run(['init'])
+    a.run(['push'])
+
+    const b = machine(root, 'second', bare)
+    b.setFavorite('b', 'https://b.example.com/')
+    b.run(['init'])
+    assert.match(b.expectFail(['push']), /まだ一度も同期していない/)
+  }))
+
+test('管理外のファイルが staging にあると push を止める', () =>
+  withSandbox(async ({ root }) => {
+    const bare = path.join(root, 'origin-unmanaged.git')
+    execFileSync('git', ['init', '--bare', '-b', 'main', bare], { stdio: 'ignore' })
+    const m = machine(root, 'unmanaged', bare)
+    m.setFavorite('x', 'https://x.example.com/')
+    m.run(['init'])
+    m.run(['push'])
+
+    fs.writeFileSync(path.join(m.home, 'repo', 'my-notes.txt'), 'ここに手でメモを置いた')
+    const stderr = m.expectFail(['push'])
+    assert.match(stderr, /管理していないファイル/)
+    assert.match(stderr, /my-notes\.txt/)
+
+    // 消せば通る（メモを勝手に commit していないこと）
+    fs.rmSync(path.join(m.home, 'repo', 'my-notes.txt'))
+    m.setFavorite('y', 'https://y.example.com/')
+    m.run(['push'])
+    const tracked = execFileSync('git', ['ls-files'], {
+      cwd: path.join(m.home, 'repo'),
+      encoding: 'utf8'
+    })
+    assert.equal(tracked.includes('my-notes.txt'), false)
+  }))
+
+test('origin を取得できないときは pull を中止する（古い JSON を入れない）', () =>
+  withSandbox(async ({ root }) => {
+    const bare = path.join(root, 'origin-gone.git')
+    execFileSync('git', ['init', '--bare', '-b', 'main', bare], { stdio: 'ignore' })
+    const m = machine(root, 'offline', bare)
+    m.setFavorite('before', 'https://before.example.com/')
+    m.run(['init'])
+    m.run(['push'])
+
+    // origin を消す = fetch が失敗する状況
+    fs.rmSync(bare, { recursive: true, force: true })
+
+    const stderr = m.expectFail(['pull'])
+    assert.match(stderr, /origin を取得できないので pull を中止/)
+
+    // --offline なら手元の staging をそのまま使う（明示したときだけ）
+    const out = m.run(['pull', '--offline'])
+    assert.match(out, /--offline/)
   }))

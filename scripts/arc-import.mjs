@@ -19,9 +19,9 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { mergeIntoPins, parseArcSidebar } from '../src/shared/arc-import.js'
-import { PINS_VERSION, normalizePins } from '../src/shared/settings-schema.js'
+import { PINS_VERSION, normalizePins, readVersioned } from '../src/shared/settings-schema.js'
 import { stringify } from '../src/shared/sync-schema.js'
-import { assertNotRunning, backupsDir, timestamp, userDataDirFor } from './lib/config-sync.mjs'
+import { assertNotRunning, backupLiveData, timestamp, userDataDirFor } from './lib/config-sync.mjs'
 
 const args = process.argv.slice(2)
 const flag = (name) => args.includes(`--${name}`)
@@ -108,12 +108,23 @@ try {
   /** @type {{ favorites: any[], pinned: any[] }} */
   let existing = { favorites: [], pinned: [] }
   if (fs.existsSync(pinsPath)) {
+    let parsed
     try {
-      const parsed = JSON.parse(fs.readFileSync(pinsPath, 'utf8'))
-      existing = normalizePins(parsed?.data)
+      parsed = JSON.parse(fs.readFileSync(pinsPath, 'utf8'))
     } catch (error) {
       throw new Error('既存の pins.json が読めない', { cause: error })
     }
+    // **版を必ず見る**。見ないと、新しい Nemo が書いた形式を古い importer が
+    // 「知らないキーは捨てる」正規化にかけて壊し、現在の版として書き戻してしまう。
+    const versioned = readVersioned(parsed, PINS_VERSION)
+    if (!versioned) {
+      throw new Error(
+        `既存の pins.json の version がこの importer より新しい / 不正（対応 ${PINS_VERSION}）。\n` +
+          `  ${pinsPath}\n` +
+          '  Nemo とリポジトリを同じ版に揃えてから実行する。'
+      )
+    }
+    existing = normalizePins(versioned.data)
   }
 
   const merged = replace ? imported : mergeIntoPins(existing, imported)
@@ -134,15 +145,9 @@ try {
 
   fs.mkdirSync(userDataDir, { recursive: true })
   if (fs.existsSync(pinsPath)) {
-    const stamp = timestamp()
-    const dir = path.join(backupsDir(), `arc-import-${stamp}`)
-    fs.mkdirSync(dir, { recursive: true })
-    fs.copyFileSync(pinsPath, path.join(dir, 'pins.json'))
-    fs.writeFileSync(
-      path.join(dir, 'backup.json'),
-      stringify({ userDataDir, savedAt: stamp, files: [{ name: 'pins.json', existed: true }] })
-    )
-    info(`バックアップ: ${dir}`)
+    // バックアップは channel と用途で分ける（config:restore が拾わないように）
+    const backup = backupLiveData(userDataDir, timestamp(), { channel, kind: 'arc-import' })
+    info(`バックアップ: ${backup.dir}`)
   }
 
   // 一時ファイル + rename（途中で落ちても半端な JSON を残さない）

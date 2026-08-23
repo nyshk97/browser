@@ -143,7 +143,8 @@ function runCommand(command: string): void {
     }
     case 'move-tab-to-new-window': {
       if (!tab || win.tabs.length <= 1) return
-      const target = createWindow()
+      // 移動先も同じ性質にする（シークレットのタブは通常ウィンドウへは移せない）
+      const target = createWindow(undefined, { isPrivate: win.isPrivate })
       target.whenUiReady(() => moveTabToWindow(tab, target))
       return
     }

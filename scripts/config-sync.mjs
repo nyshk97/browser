@@ -26,22 +26,29 @@ import {
   buildSnapshot,
   currentBranch,
   diffAgainstStaging,
+  fetchOrigin,
   git,
   hasRemote,
+  headCommit,
   importPayloads,
   listBackups,
   localConfigPath,
+  managedFiles,
   projectRoot,
+  readBase,
   readLocalConfig,
+  remoteHead,
   repoUrl,
   restoreBackup,
   stagingDir,
   stagingExists,
   syncHome,
   timestamp,
+  unmanagedChanges,
   unmergedPaths,
   userDataDirFor,
   validateStaging,
+  writeBase,
   writeLocalConfig
 } from './lib/config-sync.mjs'
 
@@ -84,6 +91,32 @@ function appVersion() {
   } catch {
     return ''
   }
+}
+
+/**
+ * origin を取り直す。
+ * **失敗は握りつぶさない**（古い追跡情報で「最新」と判断して古い JSON を入れないため）。
+ * ネットワークが無いと分かっていて手元の staging をそのまま使いたいときだけ `--offline`。
+ */
+function syncWithOrigin(what) {
+  if (!hasRemote()) {
+    info('origin が無いので手元の staging をそのまま使う')
+    return false
+  }
+  if (flag('offline')) {
+    info('--offline: origin を取りに行かない（手元の staging をそのまま使う）')
+    return false
+  }
+  try {
+    fetchOrigin()
+  } catch (error) {
+    throw new Error(
+      `origin を取得できないので ${what} を中止する。\n` +
+        '  ネットワークや認証を確認する。手元の staging をそのまま使うなら --offline を付ける。',
+      { cause: error }
+    )
+  }
+  return true
 }
 
 /** 未解決のコンフリクトがある間は import も push もしない。 */
@@ -187,7 +220,8 @@ function cmdStatus() {
   }
 
   const dirty = git(['status', '--porcelain=v1'], { allowFail: true }) ?? ''
-  console.log(`  branch       : ${currentBranch()}`)
+  const branch = currentBranch()
+  console.log(`  branch       : ${branch}`)
   if (hasRemote()) {
     const tracking = aheadBehind()
     if (tracking) console.log(`  origin       : ahead ${tracking.ahead} / behind ${tracking.behind}`)
@@ -196,6 +230,20 @@ function cmdStatus() {
     console.log('  origin       : 未設定')
   }
   console.log(`  未コミット   : ${dirty ? dirty.split('\n').length + ' 件' : 'なし'}`)
+
+  const unmanaged = unmanagedChanges()
+  if (unmanaged.length > 0) console.log(`  ⚠ 管理外の変更: ${unmanaged.join(', ')}（push は止まる）`)
+
+  // 「別の端末の変更を消さずに push できるか」
+  const base = readBase(channel)
+  const remote = hasRemote() ? remoteHead(branch) : null
+  console.log(
+    `  最後に同期   : ${base ? base.slice(0, 8) : '（未同期）'}` +
+      (remote ? ` / origin: ${remote.slice(0, 8)}` : '')
+  )
+  if (remote && base !== remote) {
+    console.log(`    → 先に mise run config:pull ${channel}（このままでは push できない）`)
+  }
 
   const differs = diffAgainstStaging(userDataDir, stagingDir())
   console.log('\n  常用データ vs staging:')
@@ -234,22 +282,40 @@ function readJson(file) {
 function cmdPush() {
   assertStaging()
   assertNoConflict()
+  const fetched = syncWithOrigin('push')
 
-  // 先に origin へ追いつく。追いつけないなら競合なので git で解決してもらう
-  if (hasRemote()) {
-    git(['fetch', 'origin'], { allowFail: true })
-    const tracking = aheadBehind()
-    if (tracking && tracking.behind > 0) {
-      const merged = git(['merge', '--ff-only', tracking.upstream], { allowFail: true })
-      if (merged === null) {
-        throw new Error(
-          `origin が進んでいて fast-forward できない（behind ${tracking.behind}）。\n` +
-            `  ${stagingDir()} で git を使って解決してから push し直す:\n` +
-            `    cd '${stagingDir()}' && git pull --rebase`
-        )
-      }
-      info(`origin に追いついた（${tracking.behind} コミット）`)
+  const branch = currentBranch()
+  const remote = fetched ? remoteHead(branch) : null
+  const base = readBase(channel)
+
+  // **origin が進んでいたら push しない**。
+  // ここを通すと、別の Mac の変更を「無競合の正常なコミット」として消せてしまう
+  // （staging を ff してから古い常用データで上書きするため）。
+  if (remote) {
+    if (base === null) {
+      throw new Error(
+        `この端末の ${channel} はまだ一度も同期していないのに、origin には内容がある。\n` +
+          `  先に取り込む: mise run config:pull ${channel}\n` +
+          '  （取り込まずに push すると、別の端末の変更を消す）'
+      )
     }
+    if (base !== remote) {
+      throw new Error(
+        `origin が進んでいる（この端末が最後に同期したのは ${base.slice(0, 8)} / origin は ${remote.slice(0, 8)}）。\n` +
+          `  先に取り込む: mise run config:pull ${channel}`
+      )
+    }
+  }
+
+  // 管理外のファイルを巻き込まない（手で置いたものまで commit しない）
+  const unmanaged = unmanagedChanges()
+  if (unmanaged.length > 0) {
+    throw new Error(
+      '同期が管理していないファイルが staging で変更されている:\n' +
+        unmanaged.map((file) => `    ${file}`).join('\n') +
+        `\n  ${stagingDir()} で commit するか元に戻してから push し直す。\n` +
+        `  同期が扱うのは ${managedFiles().join(' / ')} だけ。`
+    )
   }
 
   const userDataDir = userDataDirFor(channel)
@@ -266,21 +332,28 @@ function cmdPush() {
   const dirty = git(['status', '--porcelain=v1'], { allowFail: true }) ?? ''
   if (!dirty) {
     info('差分なし。何も commit しなかった')
+    // 内容が同じなら「この commit と一致している」と記録してよい
+    const head = headCommit()
+    if (head) writeBase(channel, head)
     return
   }
 
-  git(['add', '-A'])
+  // 管理対象だけを add する（`-A` にしない）
+  git(['add', '--', ...managedFiles()])
   const message = option('message', `chore(config): ${channel} の設定を同期`)
   git(['commit', '-m', message])
   info(`commit: ${message}`)
 
   if (!hasRemote()) {
     info('origin が無いので push しなかった（mise run config:init で設定する）')
+    const local = headCommit()
+    if (local) writeBase(channel, local)
     return
   }
-  const branch = currentBranch()
   execFileSync('git', ['push', '-u', 'origin', branch], { cwd: stagingDir(), stdio: 'inherit' })
   info('push した')
+  const head = headCommit()
+  if (head) writeBase(channel, head)
 }
 
 /* ------------------------------------------------------------------ *
@@ -293,8 +366,7 @@ function cmdPull() {
   if (!dryRun) assertNotRunning(channel, 'config:pull')
   assertNoConflict()
 
-  if (hasRemote()) {
-    git(['fetch', 'origin'], { allowFail: true })
+  if (syncWithOrigin('pull')) {
     const tracking = aheadBehind()
     if (tracking && tracking.behind > 0) {
       const merged = git(['merge', '--ff-only', tracking.upstream], { allowFail: true })
@@ -310,8 +382,6 @@ function cmdPull() {
     } else {
       info('staging は最新')
     }
-  } else {
-    info('origin が無いので手元の staging をそのまま読む')
   }
 
   // 検証を全部通してから初めて常用データに触る
@@ -320,8 +390,13 @@ function cmdPull() {
 
   const userDataDir = userDataDirFor(channel)
   const differs = diffAgainstStaging(userDataDir, stagingDir())
+  const head = headCommit()
+
   if (differs.length === 0) {
     info('常用データは staging と同じ。import は不要')
+    // 内容が一致しているなら、この commit を見たものとして記録する。
+    // ここで記録しないと push が永久に「先に pull しろ」と言い続ける。
+    if (!dryRun && head) writeBase(channel, head)
     return
   }
   info(`import 対象: ${differs.join(', ')}`)
@@ -332,16 +407,17 @@ function cmdPull() {
   }
 
   const stamp = timestamp()
-  const backup = backupLiveData(userDataDir, stamp)
+  const backup = backupLiveData(userDataDir, stamp, { channel, kind: 'pull' })
   info(`バックアップ: ${backup.dir}`)
   try {
     importPayloads(userDataDir, payloads)
   } catch (error) {
-    restoreBackup(backup.dir)
+    restoreBackup(backup.dir, { expectedUserDataDir: userDataDir, expectedChannel: channel })
     throw new Error('import に失敗したのでバックアップから戻した', { cause: error })
   }
+  if (head) writeBase(channel, head)
   info('import した。Nemo を起動すると反映される')
-  info(`戻したいときは: node scripts/config-sync.mjs restore --channel ${channel} --backup ${stamp}`)
+  info(`戻したいときは: node scripts/config-sync.mjs restore --channel ${channel} --backup pull-${stamp}`)
 }
 
 /* ------------------------------------------------------------------ *
@@ -350,14 +426,20 @@ function cmdPull() {
 
 function cmdRestore() {
   assertNotRunning(channel, 'config:restore')
-  const backups = listBackups()
-  if (backups.length === 0) throw new Error(`バックアップが無い（${backupsDir()}）`)
+  const userDataDir = userDataDirFor(channel)
+  // その channel の pull バックアップだけを対象にする。
+  // 用途も channel も混ぜると、**別のプロファイルを上書きしうる**。
+  const backups = listBackups(channel, 'pull')
+  if (backups.length === 0) {
+    throw new Error(`${channel} の pull バックアップが無い（${backupsDir(channel)}）`)
+  }
   const stamp = option('backup', backups[0])
-  const dir = path.join(backupsDir(), stamp)
+  const dir = path.join(backupsDir(channel), stamp)
   if (!fs.existsSync(path.join(dir, 'backup.json'))) {
     throw new Error(`そのバックアップが無い: ${stamp}\n  ある分: ${backups.slice(0, 10).join(', ')}`)
   }
-  const meta = restoreBackup(dir)
+  // 戻し先は必ず突き合わせる（backup.json の値を鵜呑みにしない）
+  const meta = restoreBackup(dir, { expectedUserDataDir: userDataDir, expectedChannel: channel })
   info(`${meta.userDataDir} を ${stamp} の状態に戻した`)
 }
 

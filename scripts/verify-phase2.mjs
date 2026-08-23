@@ -9,7 +9,7 @@
  *
  *   node scripts/verify-phase2.mjs
  */
-import { connect, connectUi, listTargets, sleep, waitFor } from './lib/cdp.mjs'
+import { connect, connectTo, connectUi, listTargets, sleep, waitFor } from './lib/cdp.mjs'
 
 const CDP = process.env.NEMO_CDP ?? 'http://127.0.0.1:9333'
 const PAGES = process.env.NEMO_TEST_PAGES ?? 'http://127.0.0.1:8787'
@@ -225,6 +225,119 @@ if (privateTarget) {
     total.length >= historyBefore,
     `${historyBefore} → ${total.length}`
   )
+
+  /* ---- シークレットのタブを新規ウィンドウへ移す ---- */
+  // 移動先を通常ウィンドウで作ると partition が違って registry が移動を拒否し、
+  // **空のウィンドウだけが増えて対象タブはシークレット側に残る**（実際に踏んだ）。
+  // 移動には2枚以上要る。**初期タブ（about:blank）の有無に頼らない**
+  // （UI のロード完了より前にタブを作ると、初期タブは作られない）。ここで明示的に揃える。
+  await privateUi.ev(`window.nemo.createTab('${PAGES}/login.html').then(() => 'ok')`)
+  const moveKey = await privateUi.ev(`window.nemo.createTab('${PAGES}/index.html').then((key) => key)`)
+  // 移動には「2枚以上ある」ことが要る（1枚しかないと registry は何もしない）。
+  // 揃わなかったときに原因が分かるよう、その時点の状態を出す。
+  const beforeMove = await waitFor(
+    privateUi,
+    `window.nemo.getWindowState().then((s) => (s.tabs.length >= 2 ? JSON.stringify(s.tabs.map((t) => t.url)) : ''))`,
+    { timeoutMs: 8000 }
+  ).catch(async () => {
+    const now = await privateUi.ev(
+      'window.nemo.getWindowState().then((s) => JSON.stringify(s.tabs.map((t) => t.url)))'
+    )
+    return `（2枚に届かなかった: ${now}）`
+  })
+  const privateSidebarsBefore = (await listTargets(CDP)).filter(
+    (t) => t.url.includes('private=1') && t.url.includes('view=sidebar')
+  ).length
+
+  await privateUi.ev(`window.nemo.moveTabToNewWindow(${JSON.stringify(moveKey)}).then(() => 'ok')`)
+  await sleep(2500)
+
+  const privateSidebarsAfter = (await listTargets(CDP)).filter(
+    (t) => t.url.includes('private=1') && t.url.includes('view=sidebar')
+  ).length
+  check(
+    'シークレットのタブは**シークレットの**新規ウィンドウへ移る',
+    privateSidebarsAfter === privateSidebarsBefore + 1,
+    `シークレット窓 ${privateSidebarsBefore} → ${privateSidebarsAfter} / 移動前 ${beforeMove}`
+  )
+
+  const stillHere = await privateUi
+    .ev('window.nemo.getWindowState().then((s) => JSON.stringify(s))')
+    .then(JSON.parse)
+  check(
+    '移したタブは元のシークレット窓から外れている',
+    !stillHere.tabs.some((tab) => tab.key === moveKey),
+    stillHere.tabs.map((tab) => tab.key).join(', ')
+  )
+
+  /* ---- シークレットでもダウンロードできる ---- */
+  // ハンドラを付けていないと `will-download` に誰も応えず、保存先が決まらないまま失敗する。
+  const downloadsBefore = await privateUi
+    .ev('window.nemo.getSharedState().then((s) => String(s.downloads.length))')
+    .then(Number)
+  const dlKey = await privateUi.ev(`window.nemo.createTab('${PAGES}/index.html').then((key) => key)`)
+  const dlUrl = `${PAGES}/__nemo_download__`
+  // ダウンロードは navigation が中断される形になるので、reject は握る
+  await privateUi.ev(
+    `window.nemo.navigate(${JSON.stringify(dlKey)}, ${JSON.stringify(dlUrl)}).catch(() => 'download')`
+  )
+  const downloaded = await waitFor(
+    privateUi,
+    `window.nemo.getSharedState().then((s) => (s.downloads.length > ${downloadsBefore} ? JSON.stringify(s.downloads[0]) : ''))`,
+    { timeoutMs: 15000 }
+  ).catch(() => null)
+  check('シークレットでもダウンロードが Nemo の一覧に載る', Boolean(downloaded), String(downloaded))
+
+  /* ---- シークレット窓どうしはセッションを共有する ---- */
+  // ウィンドウごとに別セッションにすると、タブを別のシークレット窓へ移せず
+  // （partition が違って registry が拒否する）、2枚目でログインし直す羽目になる。
+  // Chrome と同じで**全シークレット窓で1つ**を共有する。
+  const cookieProbe = `${PAGES}/index.html?probe=private-cookie`
+  await privateUi.ev(`window.nemo.createTab('${cookieProbe}').then((key) => key)`)
+  await sleep(1500)
+  const cookiePage = await connectTo(CDP, 'probe=private-cookie', { type: 'page' })
+  await cookiePage.ev("document.cookie = 'nemo_private_probe=1; path=/'")
+  const wrote = await cookiePage.ev('document.cookie')
+  check('シークレットのページで cookie を書ける', String(wrote).includes('nemo_private_probe'), String(wrote))
+  cookiePage.close()
+
+  // 2枚目のシークレット窓から同じ origin を開くと、同じ cookie が見える
+  await ui.ev(`window.nemo.createPrivateWindow().then(() => 'ok')`)
+  await sleep(2500)
+  const second = (await listTargets(CDP))
+    .filter((t) => t.url.includes('private=1') && t.url.includes('view=sidebar'))
+    .find((t) => !t.url.includes(`window=${privState.windowId}`))
+  if (second) {
+    const secondUi = await connect(second.webSocketDebuggerUrl)
+    await waitFor(secondUi, "typeof window.nemo === 'object' && window.nemo !== null ? 'ready' : ''")
+    const shareProbe = `${PAGES}/index.html?probe=private-share`
+    await secondUi.ev(`window.nemo.createTab('${shareProbe}').then(() => 'ok')`)
+    await sleep(1500)
+    const sharePage = await connectTo(CDP, 'probe=private-share', { type: 'page' })
+    const shared = await sharePage.ev('document.cookie')
+    check(
+      '2枚目のシークレット窓が同じセッションを見る（ログインし直しにならない）',
+      String(shared).includes('nemo_private_probe'),
+      String(shared) || '（空）'
+    )
+    sharePage.close()
+    secondUi.close()
+  } else {
+    check('2枚目のシークレット窓が開く', false, '見つからなかった')
+  }
+
+  // 通常ウィンドウには漏れていないこと
+  const normalProbe = `${PAGES}/index.html?probe=normal-cookie`
+  await ui.ev(`window.nemo.createTab('${normalProbe}').then(() => 'ok')`)
+  await sleep(1500)
+  const normalPage = await connectTo(CDP, 'probe=normal-cookie', { type: 'page' })
+  const normalCookie = await normalPage.ev('document.cookie')
+  check(
+    'シークレットの cookie が通常セッションに漏れていない',
+    !String(normalCookie).includes('nemo_private_probe'),
+    String(normalCookie) || '（空）'
+  )
+  normalPage.close()
 
   privateUi.close()
 }

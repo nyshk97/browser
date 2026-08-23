@@ -30,7 +30,7 @@ import {
 import { recordVisit, updateTitle } from './store/history.js'
 import { archiveTab, pruneArchive, type ArchiveReason } from './store/archive.js'
 import { saveSession, type SavedWindow } from './store/session.js'
-import { listDownloads, onDownloadsChanged } from './downloads.js'
+import { installDownloadHandler, listDownloads, onDownloadsChanged } from './downloads.js'
 import { getUpdateState, onUpdateChanged } from './updater.js'
 import type { FindState, Prompt, SharedState, TabState, WindowState } from '../shared/types.js'
 
@@ -81,27 +81,54 @@ export function isTransferring(contents: WebContents): boolean {
  * ------------------------------------------------------------------ */
 
 /**
- * シークレットウィンドウ用のセッションを作る。
+ * シークレットウィンドウのセッション。
  *
- * `persist:` を付けない partition は**メモリ上だけ**に存在し、
- * 参照している WebContents が全部消えた時点で cookie も storage も消える。
+ * `persist:` を付けない partition は**メモリ上だけ**に存在する。
  * ディスクに書かないので「消え残り」を自前で検証する必要がない
  * （終了時に消す方式＝擬似シークレットは Phase 3 に置いた）。
+ *
+ * **全シークレットウィンドウで1つを共有する**（Chrome と同じ）。
+ * ウィンドウごとに分けると、シークレットのタブを別ウィンドウへ移せず
+ * （partition が違うので `moveTabToWindow` が拒否する）、
+ * 2枚目のシークレットウィンドウでログインし直す羽目になる。
+ *
+ * **最後のシークレットウィンドウが閉じたら中身を明示的に消す**。
+ * Electron は `session.fromPartition` の返り値を内部でキャッシュするので、
+ * 「参照が消えれば勝手に消える」に任せると、UI に出している
+ * 「閉じると跡形もなく消える」が本当かどうかが Chromium の都合に依存してしまう。
  *
  * **拡張はロードしない**。`electron-chrome-extensions` は
  * non-persistent セッションに拡張を載せられない（README の Limitations）。
  * つまりシークレットウィンドウでは Bitwarden の自動入力が使えない。UI に必ず出す。
  */
-let privateSessionSeq = 0
+const PRIVATE_PARTITION = 'nemo-private'
 
-function createPrivateSession(): { partition: string; session: Electron.Session } {
-  privateSessionSeq += 1
-  const partition = `nemo-private-${privateSessionSeq}`
-  const privateSession = session.fromPartition(partition)
+let privateSessionPrepared = false
+
+function ensurePrivateSession(): string {
+  if (privateSessionPrepared) return PRIVATE_PARTITION
+  const privateSession = session.fromPartition(PRIVATE_PARTITION)
   // 権限・デバイスの既定は通常セッションと同じ（ここを省くと自動許可され得る）
   applySessionSecurityDefaults(privateSession, 'page', findWindowIdForPageContents)
-  log('window.private_session_created', { partition })
-  return { partition, session: privateSession }
+  // ダウンロードもここで登録する。付けないと `will-download` に誰も応えず、
+  // 保存先が決まらないまま失敗する（Nemo のダウンロード一覧にも出ない）。
+  // **保存したファイルはシークレットを閉じても残る**のは Chrome と同じ挙動。
+  installDownloadHandler(privateSession)
+  privateSessionPrepared = true
+  log('window.private_session_created', { partition: PRIVATE_PARTITION })
+  return PRIVATE_PARTITION
+}
+
+/** シークレットウィンドウが1つも無くなったら、セッションの中身を消す。 */
+function clearPrivateSessionIfUnused(): void {
+  if (!privateSessionPrepared) return
+  const stillOpen = [...windowsById.values()].some((win) => !win.isDestroyed && win.isPrivate)
+  if (stillOpen) return
+  const privateSession = session.fromPartition(PRIVATE_PARTITION)
+  void Promise.all([privateSession.clearStorageData(), privateSession.clearCache()]).then(
+    () => log('window.private_session_cleared', {}),
+    (error: unknown) => logError('window.private_session_clear_failed', error)
+  )
 }
 
 /* ------------------------------------------------------------------ *
@@ -535,7 +562,7 @@ export class NemoWindow {
   constructor(bounds?: SavedWindow['bounds'], isPrivate = false) {
     this.id = NemoWindow.nextId++
     this.isPrivate = isPrivate
-    this.partition = isPrivate ? createPrivateSession().partition : PAGE_PARTITION
+    this.partition = isPrivate ? ensurePrivateSession() : PAGE_PARTITION
     this.sidebarVisible = getSettings().sidebarVisible
 
     this.baseWindow = new BaseWindow({
@@ -775,7 +802,13 @@ export class NemoWindow {
     const bounds = this.baseWindow.isDestroyed() ? null : this.baseWindow.getBounds()
     const tabs = this.tabs
       .filter((tab) => /^https?:\/\//.test(tab.url))
-      .map((tab) => ({ url: tab.url, title: tab.title, pinnedId: tab.pinnedId }))
+      // lastActiveAt も保存する。落とすと自動アーカイブの寿命が再起動でリセットされる
+      .map((tab) => ({
+        url: tab.url,
+        title: tab.title,
+        pinnedId: tab.pinnedId,
+        lastActiveAt: tab.lastActiveAt
+      }))
     const activeIndex = Math.max(
       this.tabs
         .filter((tab) => /^https?:\/\//.test(tab.url))
@@ -817,6 +850,8 @@ export class NemoWindow {
     }
 
     windowsById.delete(this.id)
+    // 最後のシークレットウィンドウが閉じたら中身を消す（UI で約束している挙動）
+    if (this.isPrivate) clearPrivateSessionIfUnused()
     scheduleSessionSave()
   }
 
@@ -911,6 +946,11 @@ export interface CreateTabOptions {
    * 選択された時点で `materialize()` される。
    */
   asleep?: boolean
+  /**
+   * 最後にアクティブだった時刻を引き継ぐ（セッション復元）。
+   * 省略すると「たった今」になり、**自動アーカイブの寿命がリセットされる**。
+   */
+  lastActiveAt?: number
 }
 
 export function createTab(win: NemoWindow, url: string = BLANK_URL, options: CreateTabOptions = {}): NemoTab {
@@ -928,6 +968,9 @@ export function createTab(win: NemoWindow, url: string = BLANK_URL, options: Cre
     resolveNavigationTarget(url, { allowExtensionPages: isLoadedExtensionUrl(url) }, 'createTab') ?? BLANK_URL
 
   const tab = new NemoTab(win, target, options.title)
+  if (typeof options.lastActiveAt === 'number' && Number.isFinite(options.lastActiveAt)) {
+    tab.lastActiveAt = Math.min(options.lastActiveAt, Date.now())
+  }
   // 消えた定義への紐付けを持ち込ませない（セッション復元で古い pinnedId が来る）。
   // 紐付いたままだと、サイドバーのどの層にも出ないタブになる。
   tab.pinnedId = options.pinnedId && findPinned(options.pinnedId) ? options.pinnedId : null
@@ -1059,12 +1102,18 @@ export function moveTabToWindow(tab: NemoTab, target: NemoWindow): void {
     target.baseWindow.contentView.addChildView(view)
     // 拡張側の tab → window 対応を貼り替える。
     // removeTab は impl.removeTab を呼び返してタブを閉じるので、その間だけ無視する。
-    transferringWebContents.add(wc.id)
-    try {
-      extensions?.removeTab(wc)
-      extensions?.addTab(wc, target.baseWindow)
-    } finally {
-      transferringWebContents.delete(wc.id)
+    //
+    // **シークレットのタブは拡張のタブモデルに載っていない**ので触らない。
+    // 渡すと `Invalid WebContents argument. Its session must match ...` で投げる
+    // （main の例外ハンドラに落ちるだけで移動自体は済むため、気づきにくい）。
+    if (!target.isPrivate) {
+      transferringWebContents.add(wc.id)
+      try {
+        extensions?.removeTab(wc)
+        extensions?.addTab(wc, target.baseWindow)
+      } finally {
+        transferringWebContents.delete(wc.id)
+      }
     }
   }
 

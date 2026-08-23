@@ -47,8 +47,16 @@ export function stagingDir() {
   return path.join(syncHome(), 'repo')
 }
 
-export function backupsDir() {
-  return path.join(syncHome(), 'backups')
+/**
+ * バックアップ置き場。
+ *
+ * **channel と用途で必ず分ける**。1か所に混ぜると、
+ * `config:restore --channel dev` が別 channel（＝起動中かもしれない常用版）や
+ * 別用途（Arc 取り込み）のバックアップを拾って上書きしうる。
+ */
+export function backupsDir(channel = null) {
+  const base = path.join(syncHome(), 'backups')
+  return channel ? path.join(base, channel) : base
 }
 
 /** 同期リポジトリの URL などの手元の設定（public repo には置かない）。 */
@@ -79,6 +87,81 @@ export function writeLocalConfig(config) {
 
 export function repoUrl() {
   return process.env['NEMO_CONFIG_REPO'] || readLocalConfig().repo || DEFAULT_REPO
+}
+
+/* ------------------------------------------------------------------ *
+ * 「この端末の常用データが、どの commit の内容と一致しているか」
+ *
+ * これを持たないと **別 Mac の更新を無競合で消せる**:
+ *   A が push → B の staging は behind → B が push すると staging を ff してから
+ *   B の古い常用データで上書きし、**A の変更が正常なコミットとして消える**。
+ * push の前に「origin がその commit から進んでいないか」を見て、進んでいたら止める。
+ *
+ * channel ごとに持つ。stable で pull した直後に dev を push すると、
+ * dev の常用データは**その内容を一度も見ていない**ので、やはり止めるのが正しい。
+ * ------------------------------------------------------------------ */
+
+export function readBase(channel) {
+  const channels = readLocalConfig().channels
+  const entry = channels && typeof channels === 'object' ? channels[channel] : null
+  return entry && typeof entry.baseCommit === 'string' ? entry.baseCommit : null
+}
+
+export function writeBase(channel, commit) {
+  const config = readLocalConfig()
+  const channels = { ...(config.channels ?? {}) }
+  channels[channel] = { baseCommit: commit, syncedAt: new Date().toISOString() }
+  writeLocalConfig({ ...config, channels })
+}
+
+export function headCommit() {
+  return git(['rev-parse', 'HEAD'], { allowFail: true })
+}
+
+/** origin 側の先頭。まだ1つも commit が無いリポジトリでは null。 */
+export function remoteHead(branch) {
+  return git(['rev-parse', `origin/${branch}`], { allowFail: true })
+}
+
+/**
+ * origin を取り直す。**失敗を握りつぶさない**。
+ * 握りつぶすと、ネットワークや認証が落ちているときに古い追跡情報のまま
+ * 「staging は最新」と表示して、古い JSON を常用データへ import してしまう。
+ */
+export function fetchOrigin() {
+  git(['fetch', 'origin'])
+}
+
+/* ------------------------------------------------------------------ *
+ * staging に置いてよいファイル
+ * ------------------------------------------------------------------ */
+
+/** 同期が管理するファイル。これ以外は push のコミットに含めない。 */
+export function managedFiles() {
+  return [
+    'manifest.json',
+    'README.md',
+    ...SYNCED_FILES.map((spec) => spec.name),
+    ...REFERENCE_FILES.map((ref) => ref.name)
+  ]
+}
+
+/**
+ * staging にある「管理外の変更」。
+ * `git add -A` で巻き込むと、手で置いたファイルまで同期リポジトリに commit される。
+ */
+export function unmanagedChanges() {
+  const out = git(['status', '--porcelain=v1'], { allowFail: true }) ?? ''
+  const managed = new Set(managedFiles())
+  return (
+    out
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => line.slice(3).trim().replace(/^"|"$/g, ''))
+      // リネームは `old -> new` の形で出る。両方見る
+      .flatMap((entry) => entry.split(' -> '))
+      .filter((file) => file && !managed.has(file))
+  )
 }
 
 /* ------------------------------------------------------------------ *
@@ -287,9 +370,15 @@ export function validateStaging(dir) {
   return { manifest, payloads }
 }
 
-/** 常用データの現物を退避する。戻すのは `restoreBackup`。 */
-export function backupLiveData(userDataDir, stamp) {
-  const dir = path.join(backupsDir(), stamp)
+/**
+ * 常用データの現物を退避する。戻すのは `restoreBackup`。
+ * @param {string} userDataDir
+ * @param {string} stamp
+ * @param {{ channel: string, kind: 'pull' | 'arc-import' }} meta
+ */
+export function backupLiveData(userDataDir, stamp, { channel, kind }) {
+  if (!channel || !kind) throw new Error('backupLiveData には channel と kind が要る')
+  const dir = path.join(backupsDir(channel), `${kind}-${stamp}`)
   fs.mkdirSync(dir, { recursive: true })
   const saved = []
   for (const spec of SYNCED_FILES) {
@@ -302,13 +391,38 @@ export function backupLiveData(userDataDir, stamp) {
     fs.copyFileSync(source, path.join(dir, spec.name))
     saved.push({ name: spec.name, existed: true })
   }
-  fs.writeFileSync(path.join(dir, 'backup.json'), stringify({ userDataDir, savedAt: stamp, files: saved }))
-  return { dir, files: saved }
+  fs.writeFileSync(
+    path.join(dir, 'backup.json'),
+    stringify({ userDataDir, channel, kind, savedAt: stamp, files: saved })
+  )
+  return { dir, files: saved, stamp }
 }
 
-/** バックアップを常用データへ戻す。 */
-export function restoreBackup(backupDir) {
+/**
+ * バックアップを常用データへ戻す。
+ *
+ * **戻す先は必ず呼び出し側の期待と突き合わせる**。
+ * `backup.json` の `userDataDir` を無検証で使うと、
+ * 別 channel のバックアップを渡されたときに**起動中の別プロファイルを上書きする**。
+ *
+ * @param {string} backupDir
+ * @param {{ expectedUserDataDir?: string, expectedChannel?: string }} [expect]
+ */
+export function restoreBackup(backupDir, expect = {}) {
   const meta = JSON.parse(fs.readFileSync(path.join(backupDir, 'backup.json'), 'utf8'))
+  if (expect.expectedChannel && meta.channel !== expect.expectedChannel) {
+    throw new Error(
+      `このバックアップは channel が違う（バックアップ: ${meta.channel ?? '不明'} / 指定: ${expect.expectedChannel}）`
+    )
+  }
+  if (
+    expect.expectedUserDataDir &&
+    path.resolve(String(meta.userDataDir ?? '')) !== path.resolve(expect.expectedUserDataDir)
+  ) {
+    throw new Error(
+      `このバックアップの戻し先が想定と違う\n  バックアップ: ${meta.userDataDir}\n  指定       : ${expect.expectedUserDataDir}`
+    )
+  }
   for (const entry of meta.files) {
     const target = path.join(meta.userDataDir, entry.name)
     if (entry.existed) fs.copyFileSync(path.join(backupDir, entry.name), target)
@@ -317,12 +431,18 @@ export function restoreBackup(backupDir) {
   return meta
 }
 
-/** 直近のバックアップ（新しい順）。 */
-export function listBackups() {
+/**
+ * その channel / 用途のバックアップ（新しい順）。
+ * @param {string} channel
+ * @param {'pull' | 'arc-import' | null} kind null なら全部
+ */
+export function listBackups(channel, kind = null) {
+  const dir = backupsDir(channel)
   try {
     return fs
-      .readdirSync(backupsDir())
-      .filter((name) => fs.existsSync(path.join(backupsDir(), name, 'backup.json')))
+      .readdirSync(dir)
+      .filter((name) => (kind ? name.startsWith(`${kind}-`) : true))
+      .filter((name) => fs.existsSync(path.join(dir, name, 'backup.json')))
       .sort()
       .reverse()
   } catch {

@@ -191,7 +191,9 @@ export function registerIpcHandlers(): void {
     const { win, tab } = requireTab(event, key)
     // 1枚しか無いタブを別ウィンドウへ動かしても意味がないので何もしない
     if (win.tabs.length <= 1) return
-    const target = createWindow()
+    // 移動先も同じ性質にする。通常ウィンドウを作ると partition が違って
+    // registry が移動を拒否し、**空のウィンドウだけが増える**
+    const target = createWindow(undefined, { isPrivate: win.isPrivate })
     target.whenUiReady(() => moveTabToWindow(tab, target))
   })
 

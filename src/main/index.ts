@@ -159,7 +159,9 @@ app
             createTab(win, tab.url, {
               pinnedId: tab.pinnedId,
               title: tab.title,
-              asleep: true
+              asleep: true,
+              // 引き継がないと自動アーカイブの寿命が再起動のたびにリセットされる
+              lastActiveAt: tab.lastActiveAt
             })
           })
           const active = win.tabs[saved.activeIndex] ?? win.tabs[0]

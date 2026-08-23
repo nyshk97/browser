@@ -232,3 +232,100 @@ function normalizeTitle(value, fallback) {
   if (typeof value !== 'string' || value.trim().length === 0) return fallback
   return value.slice(0, 300)
 }
+
+/* ------------------------------------------------------------------ *
+ * セッション復元
+ * ------------------------------------------------------------------ */
+
+/**
+ * セッションのスキーマ版。
+ * - 1 … タブごとの `lastActiveAt` を持たない
+ * - 2 … `lastActiveAt` を持つ（**自動アーカイブの寿命を再起動でリセットしないため**）
+ */
+export const SESSION_VERSION = 2
+
+/**
+ * @typedef {object} SavedTab
+ * @property {string} url
+ * @property {string} title
+ * @property {string | null} pinnedId
+ * @property {number} lastActiveAt 最後にアクティブだった時刻
+ */
+
+/**
+ * @typedef {object} SavedWindow
+ * @property {{ x: number, y: number, width: number, height: number } | null} bounds
+ * @property {SavedTab[]} tabs
+ * @property {number} activeIndex
+ */
+
+/**
+ * @typedef {object} SessionData
+ * @property {SavedWindow[]} windows
+ * @property {boolean} cleanExit
+ * @property {number} savedAt
+ */
+
+/**
+ * 保存されたセッションを検査して正規化する。
+ *
+ * 版 1 には `lastActiveAt` が無い。**「たった今」に倒す**
+ * （0 にすると、版を上げた直後の初回起動で古いタブが一斉に自動アーカイブされる）。
+ *
+ * @param {unknown} raw
+ * @returns {SessionData}
+ */
+export function normalizeSession(raw) {
+  const input = isRecord(raw) ? raw : {}
+  const windows = Array.isArray(input['windows'])
+    ? input['windows'].flatMap((value) => {
+        if (!isRecord(value)) return []
+        const tabs = Array.isArray(value['tabs'])
+          ? value['tabs'].flatMap((tab) => {
+              if (!isRecord(tab)) return []
+              const url = normalizeStoredUrl(tab['url'])
+              if (!url) return []
+              return [
+                {
+                  url,
+                  title: typeof tab['title'] === 'string' ? tab['title'].slice(0, 300) : '',
+                  pinnedId: typeof tab['pinnedId'] === 'string' ? tab['pinnedId'] : null,
+                  lastActiveAt: normalizeTimestamp(tab['lastActiveAt'])
+                }
+              ]
+            })
+          : []
+        if (tabs.length === 0) return []
+        const activeIndex =
+          typeof value['activeIndex'] === 'number' && Number.isInteger(value['activeIndex'])
+            ? Math.min(Math.max(value['activeIndex'], 0), tabs.length - 1)
+            : 0
+        return [{ bounds: normalizeBounds(value['bounds']), tabs, activeIndex }]
+      })
+    : []
+  return {
+    windows,
+    cleanExit: input['cleanExit'] === true,
+    savedAt: typeof input['savedAt'] === 'number' ? input['savedAt'] : 0
+  }
+}
+
+/**
+ * 保存された時刻。無い / 壊れている / 未来の値は「たった今」に倒す。
+ * @param {unknown} raw
+ */
+function normalizeTimestamp(raw) {
+  const now = Date.now()
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return now
+  return Math.min(raw, now)
+}
+
+/** @param {unknown} raw @returns {SavedWindow['bounds']} */
+function normalizeBounds(raw) {
+  if (!isRecord(raw)) return null
+  const values = ['x', 'y', 'width', 'height'].map((key) => raw[key])
+  if (!values.every((v) => typeof v === 'number' && Number.isFinite(v))) return null
+  const [x, y, width, height] = /** @type {number[]} */ (values)
+  if (width < 200 || height < 200) return null
+  return { x, y, width, height }
+}

@@ -6,7 +6,8 @@ import {
   normalizePins,
   normalizeSettings,
   normalizeStoredUrl,
-  readVersioned
+  readVersioned,
+  normalizeSession
 } from '../src/shared/settings-schema.js'
 
 test('壊れた設定は既定値に落ちる', () => {
@@ -91,4 +92,78 @@ test('ピン留めの入れ子は上限で打ち切る', () => {
     current = current.children[0]
   }
   assert.ok(depth <= MAX_PIN_DEPTH + 1, `depth=${depth}`)
+})
+
+/* ------------------------------------------------------------------ *
+ * セッション（自動アーカイブの寿命）
+ * ------------------------------------------------------------------ */
+
+test('セッションは lastActiveAt を保つ（自動アーカイブの寿命が再起動でリセットされない）', () => {
+  const old = Date.now() - 40 * 60 * 60 * 1000
+  const result = normalizeSession({
+    windows: [
+      {
+        bounds: null,
+        activeIndex: 0,
+        tabs: [
+          { url: 'https://example.com/', title: 'a', pinnedId: null, lastActiveAt: old },
+          { url: 'https://example.org/', title: 'b', pinnedId: null, lastActiveAt: old }
+        ]
+      }
+    ],
+    cleanExit: true,
+    savedAt: 1
+  })
+  assert.equal(result.windows[0].tabs[0].lastActiveAt, old)
+  assert.equal(result.windows[0].tabs[1].lastActiveAt, old)
+})
+
+test('版 1（lastActiveAt なし）は「たった今」に倒す', () => {
+  // 0 に倒すと、版を上げた直後の初回起動で古いタブが一斉に片付いてしまう
+  const before = Date.now()
+  const result = normalizeSession({
+    windows: [{ bounds: null, activeIndex: 0, tabs: [{ url: 'https://example.com/', title: 'a' }] }],
+    cleanExit: true,
+    savedAt: 1
+  })
+  const value = result.windows[0].tabs[0].lastActiveAt
+  assert.ok(value >= before && value <= Date.now(), `たった今になっていない: ${value}`)
+})
+
+test('壊れた / 未来の lastActiveAt は「たった今」に倒す', () => {
+  const future = Date.now() + 10 * 24 * 60 * 60 * 1000
+  const result = normalizeSession({
+    windows: [
+      {
+        bounds: null,
+        activeIndex: 0,
+        tabs: [
+          { url: 'https://a.example.com/', title: '', pinnedId: null, lastActiveAt: 'あ' },
+          { url: 'https://b.example.com/', title: '', pinnedId: null, lastActiveAt: -1 },
+          { url: 'https://c.example.com/', title: '', pinnedId: null, lastActiveAt: future }
+        ]
+      }
+    ]
+  })
+  for (const tab of result.windows[0].tabs) {
+    assert.ok(tab.lastActiveAt <= Date.now(), `未来の値が残っている: ${tab.lastActiveAt}`)
+    assert.ok(tab.lastActiveAt > 0)
+  }
+})
+
+test('セッションの URL も http/https 以外を落とす', () => {
+  const result = normalizeSession({
+    windows: [
+      {
+        bounds: null,
+        activeIndex: 0,
+        tabs: [
+          { url: 'file:///etc/passwd', title: 'x', pinnedId: null, lastActiveAt: 1 },
+          { url: 'https://ok.example.com/', title: 'y', pinnedId: null, lastActiveAt: 1 }
+        ]
+      }
+    ]
+  })
+  assert.equal(result.windows[0].tabs.length, 1)
+  assert.equal(result.windows[0].tabs[0].url, 'https://ok.example.com/')
 })

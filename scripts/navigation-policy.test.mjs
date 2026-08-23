@@ -9,6 +9,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   BLANK_URL,
+  DENIED_SCHEMES,
+  UI_SCHEME_URL_PREFIX,
   isLoadedExtensionUrl,
   isNavigableUrl,
   normalizeNavigationInput,
@@ -127,4 +129,31 @@ test('ログ用の URL はパス・クエリ・フラグメントを落とす', 
   assert.equal(redactUrl('javascript:alert(document.cookie)'), 'javascript:')
   assert.equal(redactUrl(BLANK_URL), 'about:')
   assert.equal(redactUrl('まったく URL でない'), '(unparsable)')
+})
+
+test('明示的に拒否する scheme は1つも通らない（計画 1-0）', () => {
+  for (const scheme of DENIED_SCHEMES) {
+    const url = `${scheme}${scheme === 'javascript:' ? 'alert(1)' : '//example.com/x'}`
+    assert.equal(isNavigableUrl(url), false, url)
+    assert.equal(
+      isNavigableUrl(url, { allowExtensionPages: true, extensionIds: new Set(['abc']) }),
+      false,
+      url
+    )
+    assert.equal(normalizeNavigationInput(url).allowed, false, url)
+  }
+})
+
+test('ブラウザ UI の origin はページ側からもコマンドバーからも開けない', () => {
+  const url = `${UI_SCHEME_URL_PREFIX}index.html`
+  assert.equal(isNavigableUrl(url), false)
+  assert.equal(normalizeNavigationInput(url).allowed, false)
+})
+
+test('検索テンプレートは差し替えられるが https 以外は既定に落ちる', () => {
+  assert.equal(
+    normalizeNavigationInput('猫', 'https://duckduckgo.com/?q={q}').url,
+    'https://duckduckgo.com/?q=%E7%8C%AB'
+  )
+  assert.ok(normalizeNavigationInput('猫', 'ftp://x/{q}').url.startsWith('https://www.google.com/'))
 })

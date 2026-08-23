@@ -1,0 +1,62 @@
+# パッケージング設定。
+#
+# dev 版 / 常用版は **appId・productName・データディレクトリを分ける**。
+# ビルド種別は `NEMO_BUILD_CHANNEL` で切り替える（既定は dev）。
+# `mise run package` / `mise run package:stable` から呼ばれる。
+
+# appId / productName / icon は channel ごとに変わるので、
+# `scripts/package.mjs` が `--config.<key>` で渡す。
+# （`${env.X}` の展開はここでは効かない keys がある）
+copyright: Copyright (C) 2026 nyshk97
+
+directories:
+  buildResources: build
+
+files:
+  - out/**/*
+  - package.json
+  # electron-chrome-extensions の preload は bundler が拾わないので明示的に入れる
+  - node_modules/electron-chrome-extensions/dist/**/*
+
+# lock された拡張 artifact は **asar の外**（Contents/Resources/）に置く。
+# Chromium の拡張ローダーはネイティブコードなので、asar の中のパスからは読めない。
+extraResources:
+  - from: extensions
+    to: extensions
+  - from: extensions.lock.json
+    to: extensions.lock.json
+  # GPL-3.0 で配る以上、第三者ソフトウェアの notice は成果物に同梱する
+  - from: build/THIRD-PARTY-NOTICES.md
+    to: THIRD-PARTY-NOTICES.md
+  - from: LICENSE
+    to: LICENSE
+
+asarUnpack:
+  # ネイティブモジュールは asar の中からはロードできない
+  - '**/*.node'
+  - node_modules/better-sqlite3/**/*
+  # preload は実ファイルパスで渡す必要がある
+  - node_modules/electron-chrome-extensions/dist/**/*
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: [arm64]
+  darkModeSupport: true
+  # 任意のサイトを開くアプリなので hardened runtime は必須
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+
+# Electron fuses。ここを緩めると、署名済みアプリが任意の Node スクリプトを
+# 実行する踏み台になる。`scripts/check-fuses.mjs` が成果物を検査する。
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  grantFileProtocolExtraPrivileges: false

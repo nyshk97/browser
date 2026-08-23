@@ -108,9 +108,7 @@ async function materialize(entry) {
   const actualHash = sha256File(cache)
   if (entry.sha256 && entry.sha256 !== actualHash) {
     // キャッシュが壊れている / 上流が同じ URL で差し替えた可能性
-    throw new Error(
-      `${entry.id}: sha256 mismatch\n  expected ${entry.sha256}\n  actual   ${actualHash}`
-    )
+    throw new Error(`${entry.id}: sha256 mismatch\n  expected ${entry.sha256}\n  actual   ${actualHash}`)
   }
   entry.sha256 = actualHash
 

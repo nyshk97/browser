@@ -5,23 +5,34 @@ import type { Plugin } from 'vite'
 
 /**
  * ブラウザ UI の CSP。
+ *
+ * UI は `nemo://ui/` から配信する（`file://` を使わない）。
  * 本番は `script-src 'self'` まで絞る。
  * dev は Vite の HMR（inline preamble と ws 接続）が必要なぶんだけ緩める。
- * **緩めるのは dev server で配信するときだけで、ビルド成果物には入らない。**
+ * **緩めるのは dev server 経由で配信するときだけで、ビルド成果物には入らない。**
  */
 const PROD_CSP = [
   "default-src 'self'",
-  "img-src 'self' crx: data:",
+  "img-src 'self' crx: data: https:",
   "style-src 'self' 'unsafe-inline'",
-  "script-src 'self'"
+  "script-src 'self'",
+  "connect-src 'self'",
+  "frame-src 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'"
 ].join('; ')
 
 const DEV_CSP = [
   "default-src 'self'",
-  "img-src 'self' crx: data:",
+  "img-src 'self' crx: data: https:",
   "style-src 'self' 'unsafe-inline'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-  "connect-src 'self' ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*"
+  "connect-src 'self' ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*",
+  "frame-src 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'"
 ].join('; ')
 
 function cspPlugin(isDev: boolean): Plugin {
@@ -33,11 +44,21 @@ function cspPlugin(isDev: boolean): Plugin {
   }
 }
 
+/**
+ * ビルド種別。
+ * `NEMO_BUILD_CHANNEL=stable` を指定したときだけ常用版になる。
+ * 指定なしのビルドは dev 版（データディレクトリも bundle id も別）。
+ */
+const buildChannel = process.env['NEMO_BUILD_CHANNEL'] === 'stable' ? 'stable' : 'dev'
+
 export default defineConfig(({ command }) => {
   const isDev = command === 'serve'
   return {
     main: {
       plugins: [externalizeDepsPlugin()],
+      define: {
+        __NEMO_CHANNEL__: JSON.stringify(buildChannel)
+      },
       build: {
         rollupOptions: {
           input: { index: resolve('src/main/index.ts') }
@@ -63,6 +84,11 @@ export default defineConfig(({ command }) => {
     renderer: {
       root: 'src/renderer',
       plugins: [react(), cspPlugin(isDev)],
+      server: {
+        // dev でも UI の origin は nemo://ui のままにする（main が中継する）。
+        // HMR の ws だけは dev server へ直接つなぐので、宛先を明示する。
+        hmr: { protocol: 'ws', host: '127.0.0.1' }
+      },
       build: {
         rollupOptions: {
           input: { index: resolve('src/renderer/index.html') }

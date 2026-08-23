@@ -139,8 +139,7 @@ async function stopAll() {
   await stopChildren(spawned.filter(isChildAlive))
 }
 
-const spike = (args) =>
-  capture(process.execPath, ['scripts/verify-spike.mjs', ...args], { NEMO_CDP: cdp })
+const spike = (args) => capture(process.execPath, ['scripts/verify-spike.mjs', ...args], { NEMO_CDP: cdp })
 
 try {
   if (originalVersion === otherVersion) {
@@ -168,11 +167,8 @@ try {
 
   console.log(`\n=== ${otherVersion} へ張り替える`)
   if (
-    (await runToCompletion(
-      process.execPath,
-      ['scripts/ext-fetch.mjs', '--update', otherVersion],
-      extEnv
-    )) !== 0
+    (await runToCompletion(process.execPath, ['scripts/ext-fetch.mjs', '--update', otherVersion], extEnv)) !==
+    0
   ) {
     throw new Error('ext-fetch --update 失敗')
   }

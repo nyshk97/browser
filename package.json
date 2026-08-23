@@ -1,7 +1,7 @@
 {
   "name": "nemo",
   "version": "0.0.0",
-  "description": "Nemo — a self-hosted Arc alternative browser (Phase 0 spike)",
+  "description": "Nemo — a self-hosted Arc alternative browser",
   "license": "GPL-3.0-only",
   "private": true,
   "type": "module",
@@ -10,35 +10,56 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "node scripts/dev.mjs",
     "build": "electron-vite build",
-    "start": "electron-vite preview",
+    "lint": "eslint .",
+    "format": "prettier --write .",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "node --test scripts/*.test.mjs",
+    "package": "node scripts/package.mjs dev",
+    "verify": "node scripts/verify-all.mjs",
+    "verify:ext": "node scripts/verify-ext-smoke.mjs",
+    "verify:packaged": "node scripts/verify-packaged.mjs",
+    "verify:spike": "node scripts/verify-spike.mjs",
     "ext:fetch": "node scripts/ext-fetch.mjs",
     "ext:verify": "node scripts/ext-verify.mjs",
-    "test-pages": "node scripts/test-server.mjs",
-    "verify:spike": "node scripts/verify-spike.mjs",
-    "test": "node --test scripts/*.test.mjs"
+    "licenses": "node scripts/license-report.mjs --check",
+    "icons": "node scripts/make-icons.mjs",
+    "test-pages": "node scripts/test-server.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
       "electron",
-      "esbuild"
+      "esbuild",
+      "better-sqlite3"
     ]
   },
   "devDependencies": {
+    "@electron/asar": "4.3.0",
+    "@electron/fuses": "2.1.3",
+    "@electron/rebuild": "4.2.0",
+    "@eslint/js": "10.0.1",
     "@types/adm-zip": "0.5.7",
+    "@types/better-sqlite3": "9.6.0",
     "@types/node": "24.10.1",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.4",
     "@vitejs/plugin-react": "5.2.0",
     "adm-zip": "0.5.16",
     "electron": "41.10.6",
+    "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
+    "eslint": "10.9.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.11.0",
+    "prettier": "3.9.6",
     "typescript": "5.9.3",
+    "typescript-eslint": "8.67.0",
     "vite": "7.3.6"
   },
   "dependencies": {
+    "better-sqlite3": "13.0.3",
     "electron-chrome-extensions": "4.9.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"

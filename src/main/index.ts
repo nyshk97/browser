@@ -1,7 +1,8 @@
 import { app, session } from 'electron'
 import { ElectronChromeExtensions } from 'electron-chrome-extensions'
-import { PAGE_PARTITION, UI_PARTITION, applyUserDataDir } from './paths.js'
-import { applySessionSecurityDefaults } from './security.js'
+import { APP_ID, PAGE_PARTITION, UI_PARTITION, applyUserDataDir, channel, isDevChannel } from './paths.js'
+import { applySessionSecurityDefaults, installAuthHandler, installCertificateHandler } from './security.js'
+import { registerUiScheme, handleUiScheme } from './protocol.js'
 import {
   createExtensions,
   loadLockedExtensions,
@@ -9,21 +10,44 @@ import {
   watchServiceWorkerStatus
 } from './extensions.js'
 import { registerIpcHandlers, setLoadedExtensions } from './ipc.js'
-import { createWindow, setExtensions, windowsById } from './registry.js'
-import { installApplicationMenu } from './menu.js'
+import {
+  collectSession,
+  createTab,
+  createWindow,
+  findWindowIdForPageContents,
+  selectTab,
+  setExtensions,
+  startBackgroundWork,
+  stopBackgroundWork,
+  windowsById
+} from './registry.js'
+import { installApplicationMenu, watchKeybindingChanges } from './menu.js'
 import { installRuntimeMarker } from './runtime-marker.js'
-import { log, logError } from './log.js'
+import { installDownloadHandler } from './downloads.js'
+import { closeLogFile, log, logError, openLogFile } from './log.js'
+import { closeSettings, getSettings, initSettings } from './store/settings.js'
+import { closePins, initPins } from './store/pins.js'
+import { closeHistory, initHistory } from './store/history.js'
+import { closePermissionStore, initPermissionStore } from './store/permissions.js'
+import { closeSession, initSession, markCleanExit } from './store/session.js'
 
 applyUserDataDir()
+app.setAppUserModelId(APP_ID)
+
+// custom protocol の登録は app.ready より前でなければならない
+registerUiScheme()
 
 /**
- * dev 版でのみ remote debugging を開ける（Phase 1-10 でビルド種別に紐付ける）。
- * 明示的な env が無い限り開かない。packaged なアプリでは何があっても開かない。
+ * dev 版でのみ remote debugging を開ける。
+ * 明示的な env が無い限り開かない。**常用版（stable）では何があっても開かない**
+ * （CDP に到達できるものは拡張の service worker で任意の JS を実行でき、
+ * アンロック済み Vault の中身に手が届く）。
  */
 const remoteDebuggingPort = process.env['NEMO_REMOTE_DEBUGGING_PORT']
-if (remoteDebuggingPort && !app.isPackaged) {
+if (remoteDebuggingPort && isDevChannel) {
   app.commandLine.appendSwitch('remote-debugging-port', remoteDebuggingPort)
-  log('app.remote_debugging_enabled', { port: remoteDebuggingPort })
+} else if (remoteDebuggingPort) {
+  console.error('[nemo] 常用版では remote debugging を開かない（NEMO_REMOTE_DEBUGGING_PORT を無視した）')
 }
 
 // 単一インスタンス（Phase 2-5 の既定ブラウザ対応の前提でもある）
@@ -35,46 +59,96 @@ app.on('second-instance', () => {
   createWindow()
 })
 
-app.whenReady().then(async () => {
-  // 起動中であることを外から確実に見つけられるようにする（検証スクリプトのガード用）
-  installRuntimeMarker()
+app
+  .whenReady()
+  .then(async () => {
+    openLogFile()
+    if (remoteDebuggingPort && isDevChannel) {
+      log('app.remote_debugging_enabled', { port: remoteDebuggingPort })
+    }
 
-  const pageSession = session.fromPartition(PAGE_PARTITION)
-  const uiSession = session.fromPartition(UI_PARTITION)
+    // 起動中であることを外から確実に見つけられるようにする（検証スクリプトのガード用）
+    installRuntimeMarker()
 
-  applySessionSecurityDefaults(pageSession, 'page')
-  applySessionSecurityDefaults(uiSession, 'ui')
+    initSettings()
+    initPins()
+    initPermissionStore()
+    initHistory()
+    const restored = initSession()
 
-  // <browser-action-list> のアイコンは UI セッションで表示されるので、
-  // crx:// は UI セッション側で扱う
-  ElectronChromeExtensions.handleCRXProtocol(uiSession)
+    const pageSession = session.fromPartition(PAGE_PARTITION)
+    const uiSession = session.fromPartition(UI_PARTITION)
 
-  // 拡張のロードより先に生成する（ロードイベントを取りこぼさないため）
-  const extensions = createExtensions(pageSession)
-  setExtensions(extensions)
-  watchServiceWorkerStatus(pageSession)
-  watchExtensionPopups(extensions)
+    applySessionSecurityDefaults(pageSession, 'page', findWindowIdForPageContents)
+    applySessionSecurityDefaults(uiSession, 'ui', findWindowIdForPageContents)
+    installCertificateHandler(findWindowIdForPageContents)
+    installAuthHandler(findWindowIdForPageContents)
+    installDownloadHandler(pageSession)
 
-  registerIpcHandlers()
-  installApplicationMenu()
+    // ブラウザ UI は nemo://ui/ から配信する（file:// を使わない）
+    handleUiScheme(uiSession)
 
-  try {
-    const loaded = await loadLockedExtensions(pageSession)
-    setLoadedExtensions(loaded)
-  } catch (error) {
-    logError('extension.lock_read_failed', error)
-    setLoadedExtensions([])
-  }
+    // <browser-action-list> のアイコンは UI セッションで表示されるので、
+    // crx:// は UI セッション側で扱う
+    ElectronChromeExtensions.handleCRXProtocol(uiSession)
 
-  createWindow()
-  log('app.ready', {
-    electron: process.versions.electron,
-    chrome: process.versions.chrome,
-    userData: app.getPath('userData')
+    // 拡張のロードより先に生成する（ロードイベントを取りこぼさないため）
+    const extensions = createExtensions(pageSession)
+    setExtensions(extensions)
+    watchServiceWorkerStatus(pageSession)
+    watchExtensionPopups(extensions)
+
+    registerIpcHandlers()
+    installApplicationMenu()
+    watchKeybindingChanges()
+    startBackgroundWork()
+
+    try {
+      const loaded = await loadLockedExtensions(pageSession)
+      setLoadedExtensions(loaded)
+    } catch (error) {
+      logError('extension.lock_read_failed', error)
+      setLoadedExtensions([])
+    }
+
+    // セッション復元（正常終了後もクラッシュ後も同じ経路で戻す）
+    const shouldRestore = getSettings().restoreSession && restored.windows.length > 0
+    if (shouldRestore) {
+      log('session.restoring', {
+        windows: restored.windows.length,
+        cleanExit: restored.cleanExit
+      })
+      for (const saved of restored.windows) {
+        const win = createWindow(undefined, { bounds: saved.bounds, noInitialTab: true })
+        win.whenUiReady(() => {
+          saved.tabs.forEach((tab) => {
+            // 復元直後は WebContents を作らない（数十タブを一斉に立ち上げない）。
+            // 選んだ時点で読み込まれる。
+            createTab(win, tab.url, {
+              pinnedId: tab.pinnedId,
+              title: tab.title,
+              asleep: true
+            })
+          })
+          const active = win.tabs[saved.activeIndex] ?? win.tabs[0]
+          if (active) selectTab(win, active.key)
+          win.layout()
+        })
+      }
+    } else {
+      createWindow()
+    }
+
+    log('app.ready', {
+      channel,
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      restored: shouldRestore
+    })
   })
-}).catch((error: unknown) => {
-  logError('app.ready_failed', error)
-})
+  .catch((error: unknown) => {
+    logError('app.ready_failed', error)
+  })
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
@@ -82,4 +156,17 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
   if (windowsById.size === 0) createWindow()
+})
+
+app.on('before-quit', () => {
+  // 正常終了。ここで書き切っておくと、次の起動が確実に最新のタブから始まる。
+  markCleanExit(collectSession())
+  stopBackgroundWork()
+  closeSettings()
+  closePins()
+  closePermissionStore()
+  closeSession()
+  closeHistory()
+  log('app.quit', {})
+  closeLogFile()
 })

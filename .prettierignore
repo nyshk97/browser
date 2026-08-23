@@ -1,0 +1,10 @@
+out/
+extensions/
+.ext-cache/
+pnpm-lock.yaml
+*.tsbuildinfo
+# ドキュメントは prettier に整形させない
+# （計画ファイルの表を勝手に組み直され、差分が読めなくなる）
+*.md
+docs/
+test-pages/

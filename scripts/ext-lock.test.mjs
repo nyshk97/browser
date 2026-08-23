@@ -36,9 +36,7 @@ function seedArchive(cacheDir, extensionId, version, body) {
   const zip = new AdmZip()
   zip.addFile(
     'manifest.json',
-    Buffer.from(
-      JSON.stringify({ manifest_version: 3, name: 'Fake', version, background: {} }, null, 2)
-    )
+    Buffer.from(JSON.stringify({ manifest_version: 3, name: 'Fake', version, background: {} }, null, 2))
   )
   zip.addFile('background.js', Buffer.from(body))
   const dest = path.join(cacheDir, extensionId, version, `fake-${version}.zip`)
@@ -157,10 +155,7 @@ test('lock を書き戻せばロールバックできる（キャッシュから
     assert.equal(run('ext-fetch.mjs', ['--update', '2.0.0'], ws).status, 0)
 
     // `mise run ext:rollback` は git で lock を戻して ext:fetch するだけ
-    fs.writeFileSync(
-      ws.lock,
-      `${JSON.stringify({ lockfileVersion: 1, extensions: [v1] }, null, 2)}\n`
-    )
+    fs.writeFileSync(ws.lock, `${JSON.stringify({ lockfileVersion: 1, extensions: [v1] }, null, 2)}\n`)
     assert.equal(run('ext-fetch.mjs', [], ws).status, 0)
 
     const restored = readLock(ws)
@@ -193,10 +188,7 @@ test('lock の sha256 を書き換えると ext-fetch が止まる', () => {
     assert.equal(run('ext-fetch.mjs', [], ws).status, 0)
     const entry = readLock(ws)
     entry.sha256 = '0'.repeat(64)
-    fs.writeFileSync(
-      ws.lock,
-      `${JSON.stringify({ lockfileVersion: 1, extensions: [entry] }, null, 2)}\n`
-    )
+    fs.writeFileSync(ws.lock, `${JSON.stringify({ lockfileVersion: 1, extensions: [entry] }, null, 2)}\n`)
 
     const result = run('ext-fetch.mjs', [], ws)
     assert.equal(result.status, 1)
@@ -264,10 +256,7 @@ test('壊れた lock を置いても ext-fetch / ext-verify が何も消さず�
 
     const entry = readLock(ws)
     entry.id = '..'
-    fs.writeFileSync(
-      ws.lock,
-      `${JSON.stringify({ lockfileVersion: 1, extensions: [entry] }, null, 2)}\n`
-    )
+    fs.writeFileSync(ws.lock, `${JSON.stringify({ lockfileVersion: 1, extensions: [entry] }, null, 2)}\n`)
 
     const fetched = run('ext-fetch.mjs', [], ws)
     assert.equal(fetched.status, 1)

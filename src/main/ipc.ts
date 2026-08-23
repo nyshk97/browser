@@ -1,23 +1,46 @@
-import { ipcMain, session, type IpcMainInvokeEvent } from 'electron'
-import { PAGE_PARTITION } from './paths.js'
+import { clipboard, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron'
+import { PAGE_PARTITION, userDataPath } from './paths.js'
 import { restartServiceWorkers } from './extensions.js'
 import { log } from './log.js'
 import {
   createTab,
   createWindow,
   findWindowByUiWebContents,
+  moveTabToWindow,
+  openPinned,
   removeTab,
   selectTab,
   type NemoTab,
   type NemoWindow
 } from './registry.js'
 import { normalizeNavigationInput } from './security.js'
-import type { LoadedExtensionInfo, WindowState } from '../shared/types.js'
+import { answerPrompt } from './prompts.js'
+import { suggest } from './suggest.js'
+import { getSettings, updateSettings } from './store/settings.js'
+import {
+  addFavorite,
+  createFolder,
+  findFavorite,
+  findPinnedByUrl,
+  getFavorites,
+  getPinned,
+  moveFavorite,
+  movePinned,
+  pinUrl,
+  removeFavorite,
+  renameNode,
+  toggleFolder,
+  unpin
+} from './store/pins.js'
+import { cancelDownload, clearDownloads, listDownloads, revealDownload } from './downloads.js'
+import type { LoadedExtensionInfo, PromptAnswer, SharedState, WindowState } from '../shared/types.js'
 
 /**
  * IPC は必ず「送信元が登録済みウィンドウの UI WebContents か」と
  * 「対象タブがそのウィンドウのものか」を検証する。
  * これを省くと、悪意あるページが他タブを操作できる経路になる。
+ *
+ * 引数の型も1つずつ検査する（`unknown` で受けて narrow する）。
  */
 
 let loadedExtensions: LoadedExtensionInfo[] = []
@@ -35,105 +58,365 @@ function requireWindow(event: IpcMainInvokeEvent): NemoWindow {
   return win
 }
 
-function requireTab(event: IpcMainInvokeEvent, tabId: unknown): { win: NemoWindow; tab: NemoTab } {
+function requireTab(event: IpcMainInvokeEvent, key: unknown): { win: NemoWindow; tab: NemoTab } {
   const win = requireWindow(event)
-  if (typeof tabId !== 'number' || !Number.isInteger(tabId)) {
-    throw new Error('invalid tabId')
-  }
-  const tab = win.tabs.find((t) => t.id === tabId)
+  const tab = win.findTab(requireString(key, 'tab key'))
   if (!tab) {
-    log('ipc.rejected', { reason: 'tab_not_owned', tabId, windowId: win.id })
+    log('ipc.rejected', { reason: 'tab_not_owned', windowId: win.id })
     throw new Error('tab does not belong to this window')
   }
   return { win, tab }
 }
 
-function assertOptionalUrl(value: unknown): string | undefined {
-  if (value === undefined || value === null) return undefined
-  if (typeof value !== 'string') throw new Error('invalid url')
+function requireString(value: unknown, what: string): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 4096) {
+    throw new Error(`invalid ${what}`)
+  }
   return value
 }
 
+function optionalString(value: unknown, what: string): string | undefined {
+  if (value === undefined || value === null) return undefined
+  return requireString(value, what)
+}
+
+function requireRecord(value: unknown, what: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`invalid ${what}`)
+  }
+  return value as Record<string, unknown>
+}
+
+/** コマンドバー・拡張以外から来た URL は必ずここを通す。 */
+function resolveInput(input: unknown): string {
+  const decision = normalizeNavigationInput(requireString(input, 'input'), getSettings().searchTemplate)
+  if (!decision.allowed) {
+    log('navigation.blocked', { phase: 'ipc', reason: decision.reason })
+    throw new Error(`navigation rejected: ${decision.reason}`)
+  }
+  return decision.url
+}
+
+function sharedState(): SharedState {
+  return { favorites: getFavorites(), pinned: getPinned(), downloads: listDownloads() }
+}
+
 export function registerIpcHandlers(): void {
+  /* ---- 状態 ---- */
   ipcMain.handle('nemo:get-window-state', (event): WindowState => requireWindow(event).toState())
-
-  ipcMain.handle('nemo:get-visible-tab-ids', (event): number[] =>
-    requireWindow(event).getVisibleTabIds()
-  )
-
+  ipcMain.handle('nemo:get-shared-state', (event): SharedState => {
+    requireWindow(event)
+    return sharedState()
+  })
+  ipcMain.handle('nemo:get-settings', (event) => {
+    requireWindow(event)
+    return getSettings()
+  })
+  ipcMain.handle('nemo:get-visible-tab-keys', (event): string[] => requireWindow(event).getVisibleTabKeys())
   ipcMain.handle('nemo:get-extensions', (event): LoadedExtensionInfo[] => {
     requireWindow(event)
     return loadedExtensions
   })
 
-  ipcMain.handle('nemo:create-tab', (event, url: unknown): number => {
+  /* ---- タブ ---- */
+  ipcMain.handle('nemo:create-tab', (event, url: unknown, options: unknown): string => {
     const win = requireWindow(event)
-    const raw = assertOptionalUrl(url)
-    let target: string | undefined
-    if (raw) {
-      const decision = normalizeNavigationInput(raw)
-      if (!decision.allowed) throw new Error(`navigation rejected: ${decision.reason}`)
-      target = decision.url
+    const raw = optionalString(url, 'url')
+    const background = options !== undefined && requireRecord(options, 'options')['background'] === true
+    const tab = createTab(win, raw ? resolveInput(raw) : undefined, { background })
+    return tab.key
+  })
+
+  ipcMain.handle('nemo:select-tab', (event, key: unknown) => {
+    const { win, tab } = requireTab(event, key)
+    selectTab(win, tab.key)
+  })
+
+  ipcMain.handle('nemo:close-tab', (event, key: unknown) => {
+    const { win, tab } = requireTab(event, key)
+    removeTab(win, tab.key)
+  })
+
+  ipcMain.handle('nemo:move-tab-to-new-window', (event, key: unknown) => {
+    const { win, tab } = requireTab(event, key)
+    // 1枚しか無いタブを別ウィンドウへ動かしても意味がないので何もしない
+    if (win.tabs.length <= 1) return
+    const target = createWindow()
+    target.whenUiReady(() => moveTabToWindow(tab, target))
+  })
+
+  ipcMain.handle('nemo:navigate', async (event, key: unknown, input: unknown) => {
+    const { tab } = requireTab(event, key)
+    const url = resolveInput(input)
+    if (tab.asleep) tab.materialize()
+    await tab.webContents?.loadURL(url)
+  })
+
+  ipcMain.handle('nemo:go-back', (event, key: unknown) => {
+    const { tab } = requireTab(event, key)
+    const wc = tab.webContents
+    if (wc?.navigationHistory.canGoBack()) wc.navigationHistory.goBack()
+  })
+
+  ipcMain.handle('nemo:go-forward', (event, key: unknown) => {
+    const { tab } = requireTab(event, key)
+    const wc = tab.webContents
+    if (wc?.navigationHistory.canGoForward()) wc.navigationHistory.goForward()
+  })
+
+  ipcMain.handle('nemo:reload', (event, key: unknown) => {
+    const { win, tab } = requireTab(event, key)
+    if (tab.asleep) {
+      selectTab(win, tab.key)
+      return
     }
-    const tab = createTab(win, target)
-    selectTab(win, tab.id)
-    return tab.id
+    tab.crashed = false
+    tab.webContents?.reload()
   })
 
-  ipcMain.handle('nemo:select-tab', (event, tabId: unknown) => {
-    const { win, tab } = requireTab(event, tabId)
-    selectTab(win, tab.id)
+  ipcMain.handle('nemo:stop', (event, key: unknown) => {
+    const { tab } = requireTab(event, key)
+    tab.webContents?.stop()
   })
 
-  ipcMain.handle('nemo:close-tab', (event, tabId: unknown) => {
-    const { win, tab } = requireTab(event, tabId)
-    removeTab(win, tab.id)
+  ipcMain.handle('nemo:set-zoom', (event, key: unknown, factor: unknown): number => {
+    const { tab } = requireTab(event, key)
+    if (typeof factor !== 'number' || !Number.isFinite(factor)) throw new Error('invalid factor')
+    const clamped = Math.min(Math.max(factor, 0.25), 5)
+    tab.zoomFactor = clamped
+    tab.webContents?.setZoomFactor(clamped)
+    tab.window.pushState()
+    return clamped
   })
 
-  ipcMain.handle('nemo:navigate', async (event, tabId: unknown, input: unknown) => {
-    const { tab } = requireTab(event, tabId)
-    if (typeof input !== 'string') throw new Error('invalid input')
-    const decision = normalizeNavigationInput(input)
-    if (!decision.allowed) {
-      log('navigation.blocked', { phase: 'command-bar', reason: decision.reason })
-      throw new Error(`navigation rejected: ${decision.reason}`)
+  /* ---- サイドバー（定義） ---- */
+  ipcMain.handle('nemo:open-pinned', (event, pinnedId: unknown) => {
+    const win = requireWindow(event)
+    openPinned(win, requireString(pinnedId, 'pinnedId'))
+  })
+
+  ipcMain.handle('nemo:pin-tab', (event, key: unknown) => {
+    const { tab } = requireTab(event, key)
+    // すでにピン留めなら解除する（⌘D のトグル）
+    if (tab.pinnedId) {
+      unpin(tab.pinnedId)
+      tab.pinnedId = null
+      tab.window.pushState()
+      return
     }
-    await tab.webContents.loadURL(decision.url)
+    const existing = findPinnedByUrl(tab.url)
+    const node = existing ?? pinUrl(tab.url, tab.title)
+    if (!node) return
+    tab.pinnedId = node.id
+    tab.window.pushState()
   })
 
-  ipcMain.handle('nemo:go-back', (event, tabId: unknown) => {
-    const { tab } = requireTab(event, tabId)
-    if (tab.webContents.navigationHistory.canGoBack()) tab.webContents.navigationHistory.goBack()
+  ipcMain.handle('nemo:unpin', (event, pinnedId: unknown) => {
+    const win = requireWindow(event)
+    const id = requireString(pinnedId, 'pinnedId')
+    unpin(id)
+    // 開いているタブの紐付けも外す（定義が消えたのに紐付いたままにしない）
+    for (const tab of win.tabs) {
+      if (tab.pinnedId === id) tab.pinnedId = null
+    }
+    win.pushState()
   })
 
-  ipcMain.handle('nemo:go-forward', (event, tabId: unknown) => {
-    const { tab } = requireTab(event, tabId)
-    if (tab.webContents.navigationHistory.canGoForward()) tab.webContents.navigationHistory.goForward()
+  ipcMain.handle('nemo:add-favorite', (event, key: unknown) => {
+    const { tab } = requireTab(event, key)
+    addFavorite(tab.url, tab.title)
   })
 
-  ipcMain.handle('nemo:reload', (event, tabId: unknown) => {
-    const { tab } = requireTab(event, tabId)
-    tab.webContents.reload()
+  ipcMain.handle('nemo:remove-favorite', (event, favoriteId: unknown) => {
+    requireWindow(event)
+    removeFavorite(requireString(favoriteId, 'favoriteId'))
   })
 
-  ipcMain.handle('nemo:stop', (event, tabId: unknown) => {
-    const { tab } = requireTab(event, tabId)
-    tab.webContents.stop()
+  ipcMain.handle('nemo:open-favorite', (event, favoriteId: unknown) => {
+    const win = requireWindow(event)
+    const favorite = findFavorite(requireString(favoriteId, 'favoriteId'))
+    if (!favorite) return
+    const existing = win.tabs.find((tab) => tab.url === favorite.url)
+    if (existing) selectTab(win, existing.key)
+    else createTab(win, favorite.url, { title: favorite.title })
   })
 
+  ipcMain.handle('nemo:create-folder', (event, title: unknown) => {
+    requireWindow(event)
+    createFolder(optionalString(title, 'title') ?? '新しいフォルダ')
+  })
+
+  ipcMain.handle('nemo:rename-node', (event, id: unknown, title: unknown) => {
+    requireWindow(event)
+    renameNode(requireString(id, 'id'), requireString(title, 'title'))
+  })
+
+  ipcMain.handle('nemo:toggle-folder', (event, id: unknown) => {
+    requireWindow(event)
+    toggleFolder(requireString(id, 'id'))
+  })
+
+  ipcMain.handle('nemo:move-pinned', (event, id: unknown, parentId: unknown, index: unknown) => {
+    requireWindow(event)
+    if (typeof index !== 'number' || !Number.isInteger(index)) throw new Error('invalid index')
+    movePinned(requireString(id, 'id'), optionalString(parentId, 'parentId') ?? null, index)
+  })
+
+  ipcMain.handle('nemo:move-favorite', (event, id: unknown, index: unknown) => {
+    requireWindow(event)
+    if (typeof index !== 'number' || !Number.isInteger(index)) throw new Error('invalid index')
+    moveFavorite(requireString(id, 'id'), index)
+  })
+
+  /* ---- ウィンドウ / オーバーレイ ---- */
   ipcMain.handle('nemo:create-window', (event) => {
     requireWindow(event)
     createWindow()
   })
 
-  ipcMain.handle('nemo:toggle-devtools', (event, tabId: unknown) => {
-    const { tab } = requireTab(event, tabId)
-    if (tab.webContents.isDevToolsOpened()) tab.webContents.closeDevTools()
-    else tab.webContents.openDevTools({ mode: 'right' })
+  ipcMain.handle('nemo:set-sidebar-visible', (event, visible: unknown) => {
+    const win = requireWindow(event)
+    if (typeof visible !== 'boolean') throw new Error('invalid visible')
+    win.setSidebarVisible(visible)
+    updateSettings({ sidebarVisible: visible })
+  })
+
+  ipcMain.handle('nemo:set-overlay', (event, kind: unknown) => {
+    const win = requireWindow(event)
+    if (kind !== null && kind !== 'command-bar' && kind !== 'find' && kind !== 'downloads') {
+      throw new Error('invalid overlay')
+    }
+    win.setOverlay(kind)
+  })
+
+  ipcMain.handle('nemo:toggle-devtools', (event, key: unknown) => {
+    const { tab } = requireTab(event, key)
+    const wc = tab.webContents
+    if (!wc) return
+    if (wc.isDevToolsOpened()) wc.closeDevTools()
+    else wc.openDevTools({ mode: 'right' })
+  })
+
+  ipcMain.handle('nemo:copy-url', (event, key: unknown) => {
+    const { tab } = requireTab(event, key)
+    clipboard.writeText(tab.url)
+  })
+
+  /* ---- コマンドバー ---- */
+  ipcMain.handle('nemo:suggest', (event, query: unknown) => {
+    const win = requireWindow(event)
+    return suggest(win, typeof query === 'string' ? query.slice(0, 512) : '')
+  })
+
+  /* ---- ページ内検索 ---- */
+  ipcMain.handle('nemo:find', (event, key: unknown, query: unknown, options: unknown) => {
+    const { tab } = requireTab(event, key)
+    const text = requireString(query, 'query').slice(0, 512)
+    const opts = options === undefined ? {} : requireRecord(options, 'options')
+    tab.find = {
+      query: text,
+      activeMatch: tab.find?.activeMatch ?? 0,
+      totalMatches: tab.find?.totalMatches ?? 0
+    }
+    const wc = tab.webContents
+    // 検索語そのものはログに出さない（長さだけ）
+    log('find.requested', { attached: Boolean(wc), length: text.length })
+    // Electron 41 では `findNext: false` を**明示すると `found-in-page` が飛んでこない**
+    // （省略時＝既定値 false と挙動が違う）。新規検索のときは指定しない。
+    // docs/compat.md「既知の癖」参照。
+    const findOptions: Electron.FindInPageOptions = { forward: opts['forward'] !== false }
+    if (opts['findNext'] === true) findOptions.findNext = true
+    wc?.findInPage(text, findOptions)
+  })
+
+  ipcMain.handle('nemo:stop-find', (event, key: unknown) => {
+    const { tab } = requireTab(event, key)
+    tab.find = null
+    tab.webContents?.stopFindInPage('clearSelection')
+    tab.window.pushState()
+  })
+
+  /* ---- ダウンロード ---- */
+  ipcMain.handle('nemo:cancel-download', (event, id: unknown) => {
+    requireWindow(event)
+    cancelDownload(requireString(id, 'id'))
+  })
+  ipcMain.handle('nemo:reveal-download', (event, id: unknown) => {
+    requireWindow(event)
+    revealDownload(requireString(id, 'id'))
+  })
+  ipcMain.handle('nemo:clear-downloads', (event) => {
+    requireWindow(event)
+    clearDownloads()
+  })
+
+  /* ---- ダイアログ ---- */
+  ipcMain.handle('nemo:resolve-prompt', (event, id: unknown, answer: unknown) => {
+    const win = requireWindow(event)
+    answerPrompt(win.id, requireString(id, 'id'), validateAnswer(answer))
+  })
+
+  /* ---- 設定 ---- */
+  ipcMain.handle('nemo:update-settings', (event, patch: unknown) => {
+    requireWindow(event)
+    return updateSettings(requireRecord(patch, 'patch'))
+  })
+
+  /* ---- 拡張 ---- */
+  ipcMain.handle('nemo:open-extension-options', (event, extensionId: unknown) => {
+    const win = requireWindow(event)
+    const id = requireString(extensionId, 'extensionId')
+    const extension = loadedExtensions.find((item) => item.id === id)
+    if (!extension?.optionsUrl) return
+    // 拡張ページなので通常のナビゲーション検証（http/https のみ）は通らない。
+    // ロード済み拡張の自分のページに限って createTab 側の allowExtensionPages が通す。
+    createTab(win, extension.optionsUrl)
   })
 
   ipcMain.handle('nemo:restart-service-workers', async (event) => {
     requireWindow(event)
     return restartServiceWorkers(session.fromPartition(PAGE_PARTITION))
   })
+
+  ipcMain.handle('nemo:open-log-folder', (event) => {
+    requireWindow(event)
+    void shell.openPath(userDataPath('logs'))
+  })
+}
+
+/** 資格情報の文字列（空も許す。中身はログに出さない）。 */
+function credential(value: unknown, max: number): string {
+  if (typeof value !== 'string') throw new Error('invalid credential')
+  return value.slice(0, max)
+}
+
+function validateAnswer(value: unknown): PromptAnswer {
+  const answer = requireRecord(value, 'answer')
+  switch (answer['kind']) {
+    case 'permission':
+      return {
+        kind: 'permission',
+        allow: answer['allow'] === true,
+        remember: answer['remember'] === true
+      }
+    case 'auth':
+      // 資格情報は空文字もありうるので requireString（非空を要求）は使わない
+      return {
+        kind: 'auth',
+        username: credential(answer['username'], 256),
+        password: credential(answer['password'], 512)
+      }
+    case 'auth-cancel':
+      return { kind: 'auth-cancel' }
+    case 'certificate':
+      return { kind: 'certificate', proceed: answer['proceed'] === true }
+    case 'external-protocol':
+      return {
+        kind: 'external-protocol',
+        open: answer['open'] === true,
+        remember: answer['remember'] === true
+      }
+    default:
+      throw new Error('invalid answer')
+  }
 }

@@ -41,6 +41,8 @@ const pages = `http://127.0.0.1:${pagesPort}`
  * 使い捨てのデータディレクトリを毎回作って、そこで完結させる。
  */
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nemo-verify-'))
+/** ダウンロードの検証で実際の ~/Downloads を汚さないための保存先。 */
+const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nemo-verify-dl-'))
 
 /**
  * 起動した子プロセスは**一度入れたら外さない**。
@@ -89,24 +91,29 @@ async function startApp() {
     env: {
       ...process.env,
       NEMO_REMOTE_DEBUGGING_PORT: debugPort,
-      NEMO_USER_DATA_DIR: userDataDir
+      NEMO_USER_DATA_DIR: userDataDir,
+      NEMO_DOWNLOAD_DIR: downloadDir
     }
   })
   await waitForHttp(`${cdp}/json/list`, {
     child,
     check: async (res) => {
       const list = await res.json()
-      return list.some((t) => t.url.includes('/renderer/index.html'))
+      // UI は nemo://ui/ から配信される（file:// ではない）
+      return list.some((t) => t.url.startsWith('nemo://ui/'))
     }
   })
   return child
 }
 
-/** verify-spike には採番したエンドポイントを必ず明示的に渡す。 */
-const spike = (args) =>
-  runToCompletion(process.execPath, ['scripts/verify-spike.mjs', ...args], {
+/** 検証スクリプトには採番したエンドポイントを必ず明示的に渡す。 */
+const runVerify = (script, args = []) =>
+  runToCompletion(process.execPath, [script, ...args], {
     env: { ...process.env, NEMO_CDP: cdp, NEMO_TEST_PAGES: pages }
   })
+
+const spike = (args) => runVerify('scripts/verify-spike.mjs', args)
+const phase1 = (args) => runVerify('scripts/verify-phase1.mjs', args)
 
 let exitCode = 0
 try {
@@ -114,14 +121,7 @@ try {
   console.log(`（CDP ${cdp} / テストページ ${pages} / userData ${userDataDir}）`)
 
   console.log('\n=== ユニットテスト')
-  if (
-    (await runToCompletion(process.execPath, [
-      '--test',
-      'scripts/navigation-policy.test.mjs',
-      'scripts/ext-lock.test.mjs',
-      'scripts/harness.test.mjs'
-    ])) !== 0
-  ) {
+  if ((await runToCompletion(process.execPath, ['--test', 'scripts/*.test.mjs'])) !== 0) {
     throw new Error('ユニットテスト失敗')
   }
 
@@ -141,18 +141,25 @@ try {
   console.log('=== Nemo 起動')
   await startApp()
 
-  console.log('\n=== 自走検証')
+  console.log('\n=== 自走検証（Phase 0: 拡張）')
   const spikeCode = await spike([])
   if (spikeCode !== 0) exitCode = spikeCode
 
+  console.log('\n=== 自走検証（Phase 1: ブラウザ本体）')
+  const phase1Code = await phase1([])
+  if (phase1Code !== 0) exitCode = phase1Code
+
   console.log('\n=== 再起動をまたぐ永続性')
   await spike(['--storage-write'])
+  await phase1(['--session-write'])
   await stopAll()
 
   await startPagesServer()
   await startApp()
   const storageCode = await spike(['--storage-read'])
   if (storageCode !== 0) exitCode = storageCode
+  const sessionCode = await phase1(['--session-read'])
+  if (sessionCode !== 0) exitCode = sessionCode
 } catch (error) {
   console.error(`\n[verify] ${error instanceof Error ? error.message : String(error)}`)
   exitCode = 1
@@ -169,6 +176,7 @@ try {
   const alive = spawned.filter(isChildAlive)
   if (alive.length === 0) {
     fs.rmSync(userDataDir, { recursive: true, force: true })
+    fs.rmSync(downloadDir, { recursive: true, force: true })
   } else {
     exitCode = 1
     console.error(

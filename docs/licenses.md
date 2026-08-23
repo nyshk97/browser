@@ -18,21 +18,34 @@ Patron License を買わない以上 GPL-3.0 を選ぶことになる。GPL-3.0 
 - `package.json` の `license` を `GPL-3.0-only` にした
 - 依存ライブラリのライセンスを棚卸しした（下記）
 
-## 依存ライブラリの棚卸し（2026-08-23 時点、`node_modules` 全体）
+## 依存ライブラリの棚卸し
 
-| ライセンス | 件数 | 備考 |
+`mise run licenses` が `node_modules` を走査して集計する（手で数えない）。
+互換リストにも例外リストにも無いライセンスが現れたら**非ゼロで終わる**ので、
+依存を足したときに気づける。
+
+2026-08-23 時点（Phase 1 完了時）の内訳:
+
+| ライセンス | 件数 |
+|---|---|
+| MIT | 318 |
+| ISC | 39 |
+| Apache-2.0 | 20 |
+| BSD-2-Clause | 12 |
+| BSD-3-Clause | 11 |
+| BlueOak-1.0.0 | 11 |
+| 0BSD / Python-2.0 / CC-BY-4.0 / WTFPL | 各 1 |
+
+個別に確認して受け入れたもの:
+
+| パッケージ | ライセンス | 判断 |
 |---|---|---|
-| MIT | 75 | GPL-3.0 と両立する |
-| ISC | 7 | 同上 |
-| Apache-2.0 | 3 | GPL-3.0 とは片方向互換（Apache-2.0 のコードを GPL-3.0 の成果物に取り込める）。逆向きは不可 |
-| BSD-3-Clause | 1 | 両立する |
-| BSD-2-Clause | 1 | 両立する |
-| CC-BY-4.0 | 1 | `caniuse-lite`（ビルド時のデータのみ） |
-| デュアル（GPL-3.0 / Patron） | 1 | `electron-chrome-extensions` — **これが GPL-3.0 を選ぶ理由** |
+| `electron-chrome-extensions` | GPL-3.0 / Patron License のデュアル | **GPL-3.0 を選ぶ**。Nemo 本体を GPL-3.0-only で public 配布する理由そのもの |
+| `sanitize-filename` | WTFPL OR ISC | ISC を選ぶ |
+| `type-fest` | MIT OR CC0-1.0 | MIT を選ぶ |
+| `utf8-byte-length` | WTFPL OR MIT | MIT を選ぶ |
 
-`pnpm install --frozen-lockfile` した直後の `node_modules/.pnpm` 全体を走査した結果（dev 依存を含む）。
-
-copyleft と衝突する依存（AGPL・SSPL 等）は無い。
+GPL-3.0 と衝突するライセンス（AGPL・独自の商用ライセンス専用など）は 1 件も無い。
 
 ## Phase 1-1 に残す作業
 

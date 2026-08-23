@@ -8,8 +8,29 @@
 /** 通常の Web ページとして開いてよい scheme。 */
 export const PAGE_SCHEMES = new Set(['http:', 'https:'])
 
+/**
+ * **明示的に拒否する scheme**（計画 1-0）。
+ *
+ * `PAGE_SCHEMES` に無いものはそもそも通らないので、この集合は判定に使わない。
+ * 「うっかり許可側に足さないための覚書」として置き、
+ * `scripts/navigation-policy.test.mjs` が1つずつ拒否されることを確認する。
+ */
+export const DENIED_SCHEMES = Object.freeze([
+  'javascript:', // ブックマークレット相当。UI からもページからも通さない
+  'data:', // data: ページは origin を持たないので同一生成元の判定が崩れる
+  'file:', // ローカルファイルはブラウザ UI からは開かない
+  'chrome:',
+  'devtools:',
+  'blob:',
+  'filesystem:',
+  'view-source:'
+])
+
 /** 新規タブの空ページ。`about:` を丸ごと許可すると `about:srcdoc` 等まで通るので厳密一致で扱う。 */
 export const BLANK_URL = 'about:blank'
+
+/** ブラウザ UI を配信する origin。ページ側 WebContents では**絶対に**開かない。 */
+export const UI_SCHEME_URL_PREFIX = 'nemo://ui/'
 
 /**
  * @typedef {object} NavigationPolicy
@@ -82,13 +103,17 @@ export function isLoadedExtensionUrl(url, extensionIds) {
  * @property {string} [reason]
  */
 
+/** 検索エンジンの既定（`{q}` を入力で置換する）。 */
+export const DEFAULT_SEARCH_TEMPLATE = 'https://www.google.com/search?q={q}'
+
 /**
  * コマンドバー等の人間の入力を、そのまま loadURL に渡さずに正規化・検証する。
- * ここからは `chrome-extension:` / `devtools:` / `file:` / `javascript:` を一切通さない。
+ * ここからは `chrome-extension:` / `devtools:` / `file:` / `javascript:` / `nemo:` を一切通さない。
  * @param {string} input
+ * @param {string} [searchTemplate] 検索に回すときのテンプレート（https のみ）
  * @returns {NavigationDecision}
  */
-export function normalizeNavigationInput(input) {
+export function normalizeNavigationInput(input, searchTemplate = DEFAULT_SEARCH_TEMPLATE) {
   const trimmed = input.trim()
   if (!trimmed) return { allowed: false, url: '', reason: 'empty' }
   if (trimmed === BLANK_URL) return { allowed: true, url: BLANK_URL }
@@ -104,10 +129,11 @@ export function normalizeNavigationInput(input) {
       return { allowed: true, url: `${schemeForHost(hostPort[1])}//${trimmed}` }
     }
 
-    let candidate = null
+    let candidate
     try {
       candidate = new URL(trimmed)
     } catch {
+      // scheme はあるが URL として壊れている入力（`http:/x` など）
       candidate = null
     }
     if (!candidate || !PAGE_SCHEMES.has(candidate.protocol)) {
@@ -124,7 +150,27 @@ export function normalizeNavigationInput(input) {
   if (looksLikeHost) {
     return { allowed: true, url: `${schemeForHost(host)}//${trimmed}` }
   }
-  return { allowed: true, url: `https://www.google.com/search?q=${encodeURIComponent(trimmed)}` }
+  return { allowed: true, url: buildSearchUrl(trimmed, searchTemplate) }
+}
+
+/**
+ * 検索 URL を組み立てる。テンプレートが壊れていたら既定に落とす
+ * （設定ファイル1行で任意 scheme のナビゲーションを作れないようにする）。
+ * @param {string} query
+ * @param {string} template
+ */
+function buildSearchUrl(query, template) {
+  const candidate = (template.includes('{q}') ? template : DEFAULT_SEARCH_TEMPLATE).replace(
+    '{q}',
+    encodeURIComponent(query)
+  )
+  try {
+    const url = new URL(candidate)
+    if (url.protocol !== 'https:') throw new Error('not https')
+    return url.toString()
+  } catch {
+    return DEFAULT_SEARCH_TEMPLATE.replace('{q}', encodeURIComponent(query))
+  }
 }
 
 /**

@@ -12,6 +12,8 @@ Nemo は Electron と `electron-chrome-extensions` の組み合わせが壊れ�
 | `electron-chrome-web-store` | **0.13.0** | MIT。Nemo では Web Store 経路を使わず、CRX の公開鍵取得のロジックだけ参考にしている |
 | `electron-vite` | 5.0.0 | vite 7.3.6 |
 | React | 19.2.8 | |
+| `better-sqlite3` | **13.0.3** | prebuild が Node-API なので **Electron 向けの rebuild が不要**（下記） |
+| `electron-builder` | 26.15.3 | fuses の書き換えも任せる |
 | Bitwarden 拡張 | **2026.8.0** | `bitwarden/clients` の `dist-chrome-2026.8.0.zip` |
 
 検証日: 2026-08-23 / 検証機: macOS 15（Darwin 25.5.0, arm64）
@@ -59,7 +61,60 @@ Electron を上げる PR では次を必ず通す（Phase 1-10 / Phase 2-6）:
 `chrome.storage` は `local` / `session` / `sync` のいずれも読み書きできた
 （Electron 公式ドキュメントは `local` のみと書いているが、`electron-chrome-extensions` が補っている）。
 
+## Phase 1 で分かった癖
+
+### `better-sqlite3` は Electron 向けの rebuild が要らない（13.0.3 時点）
+
+計画では「Electron を上げるたびに ABI 向け rebuild が要る」としていたが、
+**13.0.3 の prebuild は Node-API なので Electron 41 でそのままロードできる**。
+`electron-rebuild` を走らせても `binding.gyp` が prebuild を検出してビルドをスキップするため、
+`build/Release/better_sqlite3.node` は生成されない（「rebuild したつもり」になりやすい）。
+
+代わりに必要なのは **asar の外に出すこと**（`asarUnpack`）。
+実際に動くかは `mise run verify:packaged` が**パッケージした .app を起動して**確認する。
+
+### `findInPage` に `findNext: false` を明示すると結果が返らない
+
+`webContents.findInPage(text, { forward: true, findNext: false })` は
+**`found-in-page` イベントが1度も飛んでこない**。
+`findNext` を省略（＝既定値 false）すれば正常に返る。ドキュメント上は同じはずなので、
+Electron 41 側の癖として扱う。Nemo は新規検索のとき `findNext` を渡さない（`src/main/ipc.ts`）。
+
+再現: `wc.findInPage('Nemo')` → `FOUND` / `wc.findInPage('Nemo', { findNext: false })` → イベントなし。
+
+### Chromium の拡張ローダーは asar の中を読めない
+
+`fs` は asar を透過的に読めるので `manifest.json` の存在チェックは通るが、
+`session.extensions.loadExtension()` はネイティブ側でパスを開くため失敗する。
+lock された artifact は `extraResources` で `Contents/Resources/` に置き、
+`app.isPackaged` のときは `process.resourcesPath` を見る（`src/main/paths.ts`）。
+
+### fuses を書き換えると ad-hoc 署名が必要になる
+
+`electronFuses` で fuse を書き換えると Electron 本体の linker 署名が無効になり、
+macOS が起動時に **SIGKILL する（出力も残らない）**。
+配布用の署名をしないビルドでも `codesign --force --deep --sign -` を掛ける必要がある。
+
+### `@electron/fuses` の `getCurrentFuseWire` は文字コードを返す
+
+値は `'0'` / `'1'` ではなく **48 / 49**（文字コード）。
+文字列や真偽値で比較すると全部 false になり、
+「false を期待している fuse だけたまたま PASS する」という質の悪い誤判定になる。
+
+### `chrome.runtime.onInstalled` が発火しない
+
+自作のテスト拡張で確認した。初回セットアップを `onInstalled` に置いている拡張は
+その処理が走らない。Bitwarden は動いているので実害は出ていないが、既知の欠落として記録する。
+
+### 権限要求は「アクティブなタブから」でないとダイアログまで届かない
+
+背景タブから `navigator.geolocation.getCurrentPosition()` を呼んでも
+`setPermissionRequestHandler` まで来ない（Chromium 側で保留される）。
+自走検証で権限ダイアログを試すときは、対象タブを必ずアクティブにする。
+
 ## 更新のたびに要る作業
 
-- `better-sqlite3` を対象 Electron の ABI 向けに rebuild する（Phase 1 以降）
-- 両拡張ライブラリの preload script が成果物に含まれることを検査する（Phase 1-1）
+- 両拡張ライブラリの preload script が成果物に含まれることを検査する → `mise run package` が自動で見る
+- `mise run verify:ext`（CI 必須・資格情報なし）を通す
+- `mise run verify:packaged` でパッケージ成果物の起動確認をする
+- Bitwarden での最終確認（保護 workflow / 実機）

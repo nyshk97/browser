@@ -1,0 +1,32 @@
+name: 拡張互換（実物の Bitwarden）
+
+# 保護 workflow。実物の Bitwarden artifact を取ってきて確認する。
+# 資格情報を使う検証（Vault のアンロック・自動入力）は**人が実機で行う**ので、
+# ここでやるのは「lock どおりの artifact がロードでき、拡張 API が動く」ところまで。
+#
+# 手動実行と、Electron / 拡張の更新 PR のときだけ回す（外部からのダウンロードを伴うため）。
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'extensions.lock.json'
+
+jobs:
+  bitwarden:
+    name: Bitwarden でのスパイク検証
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: lock された拡張 artifact を取得する
+        run: node scripts/ext-fetch.mjs
+      - name: 自走検証（拡張 + ブラウザ本体）
+        run: node scripts/verify-all.mjs

@@ -90,7 +90,8 @@ function readMarkerDir() {
     // 起動中の Nemo を見落として稼働中のインスタンスを壊す側に転ぶ
     if (error.code === 'ENOENT') return null
     throw new Error(
-      `${runtimeMarkerDir} を読めない (${error.code}). 起動中か判定できないので検証を中止する`
+      `${runtimeMarkerDir} を読めない (${error.code}). 起動中か判定できないので検証を中止する`,
+      { cause: error }
     )
   }
   if (stat.isSymbolicLink()) {
@@ -135,10 +136,11 @@ export function findRunningNemo() {
       continue
     }
 
-    let info = null
+    let info
     try {
       info = JSON.parse(fs.readFileSync(file, 'utf8'))
     } catch {
+      // 中身が壊れていても PID が生きている以上「起動中」として扱う
       info = null
     }
     // 中身が壊れていても PID が生きている以上「起動中」として扱う（消さない）

@@ -11,9 +11,11 @@ import type { LoadedExtensionInfo } from '../shared/types.js'
 import {
   createTab,
   createWindow,
+  findTabByWebContents,
   findWindowByBaseWindow,
   findWindowByBaseWindowId,
   focusedOrFirstWindow,
+  isTransferring,
   removeTab,
   removeWindow,
   selectTab
@@ -130,15 +132,23 @@ export async function loadLockedExtensions(session: Electron.Session): Promise<L
         name: extension.name,
         version: extension.manifest.version,
         matchesLock,
-        path: dir
+        path: dir,
+        optionsUrl: optionsPageUrl(extension)
       })
       log('extension.loaded', { id: extension.id, version: extension.manifest.version })
 
       if (extension.manifest.manifest_version === 3 && extension.manifest.background?.service_worker) {
+        // ロード直後は Chromium 側の登録がまだ終わっておらず、1回目は失敗することがある。
+        // そのまま error として出すと**実際には動いているのにログが赤くなる**ので、
+        // 少し待って running を確認できたら失敗として扱わない。
         const scope = `chrome-extension://${extension.id}`
-        await session.serviceWorkers.startWorkerForScope(scope).catch((error: unknown) => {
-          logError('extension.service_worker_start_failed', error, { id: extension.id })
-        })
+        try {
+          await session.serviceWorkers.startWorkerForScope(scope)
+        } catch (error) {
+          const running = await waitForServiceWorker(session, extension.id, 3000)
+          if (running) log('extension.service_worker_started_late', { id: extension.id })
+          else logError('extension.service_worker_start_failed', error, { id: extension.id })
+        }
       }
     } catch (error) {
       logError('extension.load_failed', error, { id: entry.id, version: entry.version, path: dir })
@@ -149,6 +159,36 @@ export async function loadLockedExtensions(session: Electron.Session): Promise<L
   setLoadedExtensionIds(results.map((r) => r.id))
 
   return results
+}
+
+/**
+ * 拡張の manifest からオプションページの URL を作る。
+ * `options_ui.page`（MV3 の標準）と旧 `options_page` の両方を見る。
+ */
+function optionsPageUrl(extension: Electron.Extension): string | null {
+  const manifest = extension.manifest as {
+    options_ui?: { page?: string }
+    options_page?: string
+  }
+  const page = manifest.options_ui?.page ?? manifest.options_page
+  if (typeof page !== 'string' || page.length === 0) return null
+  return `chrome-extension://${extension.id}/${page.replace(/^\/+/, '')}`
+}
+
+/** service worker が起動するまで待つ（起動しなければ false）。 */
+async function waitForServiceWorker(
+  session: Electron.Session,
+  extensionId: string,
+  timeoutMs: number
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  const scope = `chrome-extension://${extensionId}/`
+  while (Date.now() < deadline) {
+    const running = session.serviceWorkers.getAllRunning()
+    if (Object.values(running).some((info) => info.scope?.startsWith(scope))) return true
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  }
+  return false
 }
 
 /** 受け入れ基準の「service worker を停止・再起動しても動く」検証用。 */
@@ -209,6 +249,21 @@ export function watchExtensionPopups(extensions: ElectronChromeExtensions): void
       })
     })
 
+    // popup を閉じた直後にアクティブタブの `tab-updated` を撃つ。
+    //
+    // Bitwarden は Vault をアンロックしても、ツールバーのアイコンが
+    // しばらくロックのまま残ることがある（Phase 0 で観測）。
+    // `chrome.action.setIcon` 自体は observer 経由で UI に伝わるので、
+    // 足りていないのは**拡張側がアイコンを描き直すきっかけ**の方。
+    // `tab-updated` は electron-chrome-extensions が `chrome.tabs.onUpdated` に
+    // 変換してくれる唯一の自前フックなので、ここで1回だけ撃つ。
+    contents.once('destroyed', () => {
+      const active = focusedOrFirstWindow()?.getActiveTab()?.webContents
+      if (!active || active.isDestroyed()) return
+      active.emit('tab-updated')
+      log('extension.action_refresh_nudged', { extensionId: popup.extensionId })
+    })
+
     if (!openDevTools) return
 
     contents.on('console-message', (event) => {
@@ -248,36 +303,32 @@ export function createExtensions(session: Electron.Session): ElectronChromeExten
 
       // 拡張から渡された URL もナビゲーション検証を必ず通す。
       // 拡張は自分のページ（chrome-extension://<ロード済み ID>/）だけ追加で開ける。
-      const url = resolveNavigationTarget(
-        details.url,
-        { allowExtensionPages: true },
-        'chrome.tabs.create'
-      )
+      const url = resolveNavigationTarget(details.url, { allowExtensionPages: true }, 'chrome.tabs.create')
       if (url === null) throw new Error('navigation rejected')
 
       const background = details.active === false
       const tab = createTab(win, url, { background })
-      if (!background) selectTab(win, tab.id)
-      return [tab.webContents, win.baseWindow]
+      const contents = tab.webContents
+      if (!contents) throw new Error('tab was not materialized')
+      return [contents, win.baseWindow]
     },
 
-    selectTab(tab, baseWindow) {
-      const win = findWindowByBaseWindow(baseWindow)
-      if (win) selectTab(win, tab.id)
+    selectTab(tab) {
+      const found = findTabByWebContents(tab)
+      if (found) selectTab(found.win, found.tab.key)
     },
 
-    removeTab(tab, baseWindow) {
-      const win = findWindowByBaseWindow(baseWindow)
-      if (win) removeTab(win, tab.id)
+    removeTab(tab) {
+      // ウィンドウ間の移動中は、拡張側の付け替えで飛んでくる removeTab を無視する。
+      // ここを素通しすると、移動しようとしたタブがそのまま閉じられる。
+      if (isTransferring(tab)) return
+      const found = findTabByWebContents(tab)
+      if (found) removeTab(found.win, found.tab.key)
     },
 
     async createWindow(details) {
       const requested = Array.isArray(details.url) ? details.url[0] : details.url
-      const url = resolveNavigationTarget(
-        requested,
-        { allowExtensionPages: true },
-        'chrome.windows.create'
-      )
+      const url = resolveNavigationTarget(requested, { allowExtensionPages: true }, 'chrome.windows.create')
       if (url === null) throw new Error('navigation rejected')
       const win = createWindow(url)
       return win.baseWindow
@@ -288,7 +339,11 @@ export function createExtensions(session: Electron.Session): ElectronChromeExten
       if (win) removeWindow(win)
     },
 
-    // Phase 0 では拡張からの追加権限要求は拒否する（Phase 1-8 で UI を付ける）
+    /**
+     * 拡張からの追加権限要求は拒否する。
+     * lock した artifact の manifest にある権限だけで動かす方針なので、
+     * 実行中に権限が増える経路は持たない。
+     */
     async requestPermissions(extension, permissions) {
       log('extension.permissions_denied', { id: extension.id, permissions: permissions.permissions })
       return false

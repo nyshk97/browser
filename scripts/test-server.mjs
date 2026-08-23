@@ -14,6 +14,8 @@ const port = Number(process.env.PORT ?? 8787)
 
 // 「自分が起動したサーバか」を検証側が確かめられるようにする
 const MARKER_PATH = '/__nemo_test_pages__'
+/** ダウンロードの検証用。Content-Disposition を付けて必ずダウンロードにする。 */
+const DOWNLOAD_PATH = '/__nemo_download__'
 
 const types = {
   '.html': 'text/html; charset=utf-8',
@@ -28,6 +30,17 @@ const server = http.createServer((req, res) => {
     res.end(`nemo-test-pages ${process.pid}`)
     return
   }
+  if (url.pathname === DOWNLOAD_PATH) {
+    const body = Buffer.alloc(64 * 1024, 'n')
+    res.writeHead(200, {
+      'content-type': 'application/octet-stream',
+      'content-length': String(body.length),
+      'content-disposition': 'attachment; filename="nemo-verify.bin"'
+    })
+    res.end(body)
+    return
+  }
+
   const rel = url.pathname === '/' ? '/index.html' : url.pathname
   const filePath = path.join(root, path.normalize(rel).replace(/^(\.\.[/\\])+/, ''))
 

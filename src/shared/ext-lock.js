@@ -113,18 +113,34 @@ export function validateEntry(entry, index) {
 
   const source = entry.source
   if (!source || typeof source !== 'object') throw new Error(`${where}: source が無い`)
-  if (source.type !== 'github-release' && source.type !== 'chrome-web-store') {
+  if (source.type !== 'github-release' && source.type !== 'chrome-web-store' && source.type !== 'local') {
     throw new Error(`${where}: source.type が不正 (${JSON.stringify(source.type)})`)
   }
-  if (typeof source.url !== 'string') throw new Error(`${where}: source.url が無い`)
-  let url
-  try {
-    url = new URL(source.url)
-  } catch {
-    throw new Error(`${where}: source.url が URL でない`)
-  }
-  if (url.protocol !== 'https:') {
-    throw new Error(`${where}: source.url は https のみ許可 (${url.protocol})`)
+
+  if (source.type === 'local') {
+    // リポジトリ内の自作拡張（取得先が無い）。CI 用のテスト拡張がこれ。
+    // パスはリポジトリ相対に限る（絶対パスや `..` を許すと lock 1行で任意のディレクトリを読める）。
+    if (typeof source.path !== 'string' || source.path.length === 0) {
+      throw new Error(`${where}: source.path が無い（type: local）`)
+    }
+    if (path.isAbsolute(source.path)) {
+      throw new Error(`${where}: source.path に絶対パスは使えない`)
+    }
+    const normalized = path.normalize(source.path)
+    if (normalized === '..' || normalized.startsWith(`..${path.sep}`)) {
+      throw new Error(`${where}: source.path がリポジトリの外を指している`)
+    }
+  } else {
+    if (typeof source.url !== 'string') throw new Error(`${where}: source.url が無い`)
+    let url
+    try {
+      url = new URL(source.url)
+    } catch {
+      throw new Error(`${where}: source.url が URL でない`)
+    }
+    if (url.protocol !== 'https:') {
+      throw new Error(`${where}: source.url は https のみ許可 (${url.protocol})`)
+    }
   }
 
   for (const field of ['sha256', 'treeSha256']) {

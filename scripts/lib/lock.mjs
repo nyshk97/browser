@@ -13,7 +13,6 @@ export {
   validateLock
 } from '../../src/shared/ext-lock.js'
 
-
 export const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 /**
@@ -21,8 +20,7 @@ export const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.u
  * 更新・ロールバックの往復テストを、実物の lock と拡張に触れずに回すために要る。
  */
 export const lockPath = process.env.NEMO_EXT_LOCK ?? path.join(projectRoot, 'extensions.lock.json')
-export const extensionsDir =
-  process.env.NEMO_EXT_DIR ?? path.join(projectRoot, 'extensions')
+export const extensionsDir = process.env.NEMO_EXT_DIR ?? path.join(projectRoot, 'extensions')
 export const cacheDir = process.env.NEMO_EXT_CACHE ?? path.join(projectRoot, '.ext-cache')
 
 export function readLock() {

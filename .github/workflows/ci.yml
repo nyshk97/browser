@@ -1,0 +1,73 @@
+name: CI
+
+# Electron を上げる PR で拡張互換が壊れていないかを見るのが主目的。
+# ここが落ちたら Electron を据え置く（計画の「Chromium 追従」の判断材料）。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: lint / typecheck / unit test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec eslint .
+      - run: pnpm exec prettier --check .
+      - run: pnpm exec tsc --noEmit -p tsconfig.node.json
+      - run: pnpm exec tsc --noEmit -p tsconfig.web.json
+      - run: node --test scripts/*.test.mjs
+
+  extension-smoke:
+    # 拡張互換の必須チェック。**資格情報なし・決定的**（自作テスト拡張だけを使う）。
+    # Electron 更新 PR ではこの job を required status check にする。
+    name: extension smoke (macOS)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: 拡張互換 smoke test
+        run: node scripts/verify-ext-smoke.mjs
+      - name: 失敗したらログを残す
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-smoke-logs
+          path: |
+            /tmp/nemo-extsmoke-*/logs/**
+          if-no-files-found: ignore
+
+  package:
+    # 開発起動では露見しない問題（ネイティブモジュール・preload・fuses）を
+    # パッケージ成果物で検査する。
+    name: package (macOS)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: dev 版をパッケージして検査する
+        run: node scripts/package.mjs dev
+      - name: パッケージした .app を起動して smoke test する
+        run: node scripts/verify-packaged.mjs dev

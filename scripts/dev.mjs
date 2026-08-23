@@ -16,6 +16,7 @@ import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { findRunningNemo } from './lib/harness.mjs'
 
 const require = createRequire(import.meta.url)
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -32,6 +33,11 @@ function run(command, args, options = {}) {
   const child = spawn(command, args, {
     cwd: projectRoot,
     stdio: 'inherit',
+    // 自分のプロセスグループを持たせる。
+    // electron-vite が起動する Electron は**孫プロセス**なので、
+    // 親だけ kill すると残る（残ったインスタンスが CDP のポートを掴んだまま
+    // 次の起動を出迎え、古い方を検証してしまう。実際に踏んだ）。
+    detached: true,
     ...options
   })
   children.push(child)
@@ -48,13 +54,40 @@ function runToCompletion(command, args, options = {}) {
 
 function shutdown(code = 0) {
   for (const child of children) {
-    if (!child.killed) child.kill('SIGTERM')
+    if (child.killed || child.pid === undefined) continue
+    try {
+      // プロセスグループごと落とす（孫の Electron を残さない）
+      process.kill(-child.pid, 'SIGTERM')
+    } catch {
+      try {
+        child.kill('SIGTERM')
+      } catch {
+        /* すでに死んでいる */
+      }
+    }
   }
   process.exit(code)
 }
 
 process.on('SIGINT', () => shutdown(0))
 process.on('SIGTERM', () => shutdown(0))
+
+// 0. 同じ remote debugging ポートを掴んでいるインスタンスが残っていないか。
+//    残ったまま起動すると、CDP につないだ検証が**古いインスタンス**を見て
+//    「dev server が落ちている」ような 502 を返し、原因の切り分けが極端に難しくなる。
+if (debugPort) {
+  const conflicting = findRunningNemo().filter(
+    (instance) => String(instance.remoteDebuggingPort ?? '') === String(debugPort)
+  )
+  if (conflicting.length > 0) {
+    console.error(`\n[dev] remote debugging ポート ${debugPort} を掴んでいる Nemo が残っている:`)
+    for (const instance of conflicting) {
+      console.error(`  pid ${instance.pid} (userData=${instance.userData ?? '不明'})`)
+    }
+    console.error('  終了させてから起動する:  kill ' + conflicting.map((i) => i.pid).join(' '))
+    process.exit(1)
+  }
+}
 
 // 1. 拡張が lock と一致しているか（展開後のツリー hash まで）
 try {

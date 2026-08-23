@@ -18,3 +18,9 @@ secrets/
 
 # 起動中インスタンスのマーカー
 .nemo-run/
+
+# ライセンス notice は package のたびに生成する
+build/THIRD-PARTY-NOTICES.md
+
+# icns の中間生成物（mise run icons で作り直せる）
+build/*.iconset/

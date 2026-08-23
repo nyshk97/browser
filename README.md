@@ -3,8 +3,10 @@
 Arc の代替として作っている自作ブラウザ。Electron + `BaseWindow` + タブごとの `WebContentsView` +
 `electron-chrome-extensions` で、Chrome 拡張（Bitwarden 等）が動く。
 
-現在は **Phase 0（スパイク）** の段階。本体の UI・サイドバー・同期はまだ無い。
-計画は `docs/plans/` を参照。
+現在は **Phase 1（素のブラウザ）** まで実装済み。
+サイドバー3層・コマンドバー・ダウンロード・セッション復元・権限ダイアログ・
+パッケージングまで入っていて、dev 版だけで一日ブラウジングできる状態を目指している。
+設定同期・Arc からの移行・既定ブラウザ化は Phase 2。計画は `docs/plans/` を参照。
 
 ## ライセンス
 
@@ -42,9 +44,16 @@ mise run dev       # 開発版 Nemo を起動（HMR あり・拡張つき）
 | `mise run dev:nodebug` | remote debugging を開けずに起動（実 Vault の Bitwarden を入れて触るとき） |
 | `mise run dev:popup` | 拡張 popup の DevTools を自動で開いて起動（popup の不具合を追うとき。CDP は開かない） |
 | `mise run dev:build` | ビルドしてから起動（本番に近い経路で確認したいとき） |
+| `mise run check` | lint → typecheck → ユニットテスト（コミット前） |
 | `mise run test` | ユニットテスト（Electron 不要） |
 | `mise run verify` | 自走検証を通す（ビルド→起動→CDP で検証→後片付け） |
+| `mise run verify:ext` | 拡張互換の smoke test（自作テスト拡張・資格情報なし・**CI 必須**） |
+| `mise run verify:ext-idle` | 上記 + service worker の idle 停止をまたぐ確認（遅い） |
 | `mise run verify:ext-update` | 版を上げ下げしても拡張の設定（`chrome.storage`）が残ることを実物で検証 |
+| `mise run package` / `package:stable` | パッケージして成果物を検査（fuses・ネイティブモジュール・notice） |
+| `mise run verify:packaged` | パッケージした `.app` を起動して smoke test |
+| `mise run icons` | アプリアイコン（常用版 / dev 版）を生成 |
+| `mise run licenses` | 依存ライブラリのライセンス棚卸し |
 | `mise run ext:fetch` / `ext:verify` / `ext:update <version>` / `ext:rollback` | 拡張の取得・検証・更新・巻き戻し |
 | `mise run test:pages` | テストページのサーバだけ起動 |
 
@@ -70,22 +79,49 @@ mise run ext:rollback                   # lock を git の状態に戻して再�
 node scripts/ext-webstore-key.mjs <id>  # Web Store の CRX から公開鍵を取り出す（初回のみ）
 ```
 
-## データディレクトリ
+## dev 版と常用版
 
-既定は `~/Library/Application Support/Nemo-spike/`（常用ブラウザとは別）。
-`NEMO_USER_DATA_DIR` で上書きできる。**CDP を開ける検証は必ず使い捨てのディレクトリで回す**
-（`mise run verify` は自動でそうしている）。
+**表示名・bundle id・アイコン・データディレクトリをすべて分ける。**
+同時に Dock に置いても取り違えないようにするため、dev 版のアイコンには DEV リボンが入る。
+
+| | dev 版 | 常用版 |
+|---|---|---|
+| 表示名 | `Nemo Dev` | `Nemo` |
+| bundle id | `local.nyshk97.nemo.dev` | `local.nyshk97.nemo` |
+| データ | `~/Library/Application Support/Nemo-dev/` | `.../Nemo/` |
+| remote debugging | 開ける（`NEMO_REMOTE_DEBUGGING_PORT`） | **絶対に開かない** |
+| ビルド | `mise run package` | `NEMO_BUILD_CHANNEL=stable mise run package:stable` |
+
+未パッケージの開発起動は**常に dev 版**として動く（常用データを触らないため）。
+
+`NEMO_USER_DATA_DIR` でデータディレクトリを上書きできる。
+**CDP を開ける検証は必ず使い捨てのディレクトリで回す**（`mise run verify` は自動でそうしている）。
+
+保存するもの:
+
+| ファイル | 内容 |
+|---|---|
+| `settings.json` | 設定（スキーマ版つき） |
+| `pins.json` | Favorites / ピン留めの定義 |
+| `permissions.json` | origin 単位の権限と外部 protocol の許可 |
+| `session.json` | セッション復元用のタブ一覧 |
+| `history.db` | 履歴（SQLite） |
+| `logs/` | 診断ログ（セッション単位・20 世代でローテーション） |
 
 ## ディレクトリ
 
 | パス | 内容 |
 |---|---|
-| `src/main/` | main プロセス（registry / security / extensions / ipc / menu） |
+| `src/main/` | main プロセス（registry / security / protocol / extensions / ipc / menu / downloads / prompts） |
+| `src/main/store/` | 永続化（設定・ピン留め・権限・セッション・履歴） |
 | `src/preload/ui.ts` | ブラウザ UI 専用の preload。公開する API を個別に列挙する |
 | `src/renderer/` | ブラウザ UI（React） |
 | `src/shared/` | main と UI で共有する型 |
 | `scripts/` | 拡張の取得・検証、テストページのサーバ、ユニットテスト、CDP 経由の自走検証 |
-| `test-pages/` | Phase 0 受け入れテスト用のページ |
+| `test-pages/` | 受け入れテスト用のページ |
+| `test-extension/` | CI 用の自作テスト拡張（資格情報なしで拡張互換を検証する） |
+| `build/` | アイコン・entitlements・パッケージング用のリソース |
+| `DESIGN.md` | ブラウザ UI の見た目の決めごと |
 | `docs/compat.md` | Electron × 拡張ライブラリの last-known-good |
 | `docs/phase0-report.md` | Phase 0 の検証結果 |
 | `.mise.toml` | 起動・検証のタスク定義（`mise tasks` で一覧） |
@@ -104,5 +140,10 @@ node scripts/ext-webstore-key.mjs <id>  # Web Store の CRX から公開鍵を�
   コマンドバー・Web ページからは通さない
 - ログに URL のパス・クエリ・フラグメントを出さない（`redactUrl` で scheme + host まで落とす）
 - 許可判定は `src/shared/navigation-policy.js` に切り出し、`mise run test` で回帰テストしている
-
-Phase 1-0 でさらに custom protocol 配信・CSP・fuses 検査まで広げる。
+- **ブラウザ UI は `file://` ではなく `nemo://ui/` で配信する**（`standard` / `secure` / `bypassCSP: false`）。
+  配信するのは `out/renderer/` の中だけで、`..` も symlink も外へ出られない
+- UI に厳格な CSP を掛ける（本番は `script-src 'self'`。緩めるのは dev server 経由のときだけ）
+- **権限要求は origin 単位でユーザーに聞く**。「今後も同じ扱いにする」を選んだときだけ記憶する
+- 外部 protocol（`mailto:` など）は allowlist に載っていても**初回は必ず確認する**
+- 証明書エラーは既定で拒否。続行はその場限りで、記憶しない
+- パッケージ成果物は Electron fuses（`runAsNode` 等）を `mise run package` が毎回検査する

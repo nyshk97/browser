@@ -18,7 +18,7 @@ const CDP = process.env.NEMO_CDP ?? 'http://127.0.0.1:9333'
 const PAGES = process.env.NEMO_TEST_PAGES ?? 'http://127.0.0.1:8787'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-const targets = async () => (await (await fetch(`${CDP}/json/list`)).json())
+const targets = async () => await (await fetch(`${CDP}/json/list`)).json()
 
 async function connect(wsUrl) {
   const ws = new WebSocket(wsUrl)
@@ -68,9 +68,25 @@ function check(name, ok, detail = '') {
 }
 
 async function uiSession() {
-  const t = (await targets()).find((x) => x.url.includes('/renderer/index.html'))
+  // ブラウザ UI は nemo://ui/ から配信される（Phase 1 で file:// をやめた）
+  const t = (await targets()).find((x) => x.url.includes('view=sidebar'))
   if (!t) throw new Error('ブラウザ UI の target が見つからない')
   return connect(t.webSocketDebuggerUrl)
+}
+
+/** サイドバーの UI target 数（= ウィンドウ数）。 */
+async function uiWindowCount() {
+  return (await targets()).filter((x) => x.url.includes('view=sidebar')).length
+}
+
+/** chrome の tabId（WebContents.id）から Nemo のタブを引く。 */
+function tabByContentsId(state, contentsId) {
+  return state.tabs.find((t) => t.webContentsId === contentsId) ?? null
+}
+
+/** アクティブタブの WebContents id。 */
+function activeContentsId(state) {
+  return state.tabs.find((t) => t.key === state.activeTabKey)?.webContentsId ?? null
 }
 
 async function swSession() {
@@ -100,9 +116,7 @@ const mode = process.argv[2]
 
 if (mode === '--storage-write') {
   const sw = await swSession()
-  console.log(
-    await sw.ev(`chrome.storage.local.set({ __nemo_verify__: 'before-restart' }).then(() => 'ok')`)
-  )
+  console.log(await sw.ev(`chrome.storage.local.set({ __nemo_verify__: 'before-restart' }).then(() => 'ok')`))
   process.exit(0)
 }
 
@@ -117,7 +131,11 @@ if (mode === '--extension-info') {
 if (mode === '--storage-read') {
   const sw = await swSession()
   const value = await sw.ev(`chrome.storage.local.get('__nemo_verify__').then(v => v)`)
-  check('chrome.storage.local が再起動をまたいで残る', value?.__nemo_verify__ === 'before-restart', JSON.stringify(value))
+  check(
+    'chrome.storage.local が再起動をまたいで残る',
+    value?.__nemo_verify__ === 'before-restart',
+    JSON.stringify(value)
+  )
   process.exit(failures > 0 ? 1 : 0)
 }
 
@@ -125,11 +143,11 @@ const ui = await uiSession()
 
 // 1. registry の初期状態
 let state = await ui.ev('window.nemo.getWindowState()')
-check('registry が初期タブを1つ持つ', state.tabs.length === 1, JSON.stringify(state.tabs.map((t) => t.id)))
-const tabId = state.tabs[0].id
+check('registry が初期タブを1つ持つ', state.tabs.length === 1, JSON.stringify(state.tabs.map((t) => t.key)))
+const tabKey = JSON.stringify(state.tabs[0].key)
 
 // 2. ナビゲーション
-await ui.ev(`window.nemo.navigate(${tabId}, '${PAGES}/login.html?site=a')`)
+await ui.ev(`window.nemo.navigate(${tabKey}, '${PAGES}/login.html?site=a')`)
 await sleep(2500)
 state = await ui.ev('window.nemo.getWindowState()')
 check('コマンドバー入力からナビゲートできる', state.tabs[0].url.includes('login.html'), state.tabs[0].url)
@@ -138,7 +156,7 @@ check('コマンドバー入力からナビゲートできる', state.tabs[0].ur
 for (const bad of ['file:///etc/passwd', 'javascript:alert(1)', 'data:text/html,<h1>x</h1>']) {
   let rejected = false
   try {
-    await ui.ev(`window.nemo.navigate(${tabId}, ${JSON.stringify(bad)})`)
+    await ui.ev(`window.nemo.navigate(${tabKey}, ${JSON.stringify(bad)})`)
   } catch (error) {
     rejected = /navigation rejected/.test(String(error))
   }
@@ -162,7 +180,9 @@ check('拒否後も元の URL のまま', state.tabs[0].url.includes('login.html
 // 5. content script の注入（トップフレーム）
 {
   const { contexts } = await contextsAfterReload('login.html')
-  const extensionWorlds = contexts.filter((c) => c.auxData?.isDefault === false && !/Electron/.test(c.name ?? ''))
+  const extensionWorlds = contexts.filter(
+    (c) => c.auxData?.isDefault === false && !/Electron/.test(c.name ?? '')
+  )
   check(
     'ページに拡張の content script が入る',
     extensionWorlds.length > 0,
@@ -171,11 +191,13 @@ check('拒否後も元の URL のまま', state.tabs[0].url.includes('login.html
 }
 
 // 6. iframe を含む全フレーム
-await ui.ev(`window.nemo.navigate(${tabId}, '${PAGES}/iframe.html')`)
+await ui.ev(`window.nemo.navigate(${tabKey}, '${PAGES}/iframe.html')`)
 await sleep(2500)
 {
   const { contexts } = await contextsAfterReload('iframe.html')
-  const extensionWorlds = contexts.filter((c) => c.auxData?.isDefault === false && !/Electron/.test(c.name ?? ''))
+  const extensionWorlds = contexts.filter(
+    (c) => c.auxData?.isDefault === false && !/Electron/.test(c.name ?? '')
+  )
   check(
     'iframe を含む全フレームに content script が入る',
     extensionWorlds.length >= 2,
@@ -185,16 +207,22 @@ await sleep(2500)
 
 // 7. ブラウザ UI には content script が入らない（セッション分離）
 {
-  const { contexts } = await contextsAfterReload('/renderer/index.html')
-  const extensionWorlds = contexts.filter((c) => c.auxData?.isDefault === false && !/Electron/.test(c.name ?? ''))
-  check('ブラウザ UI には content script が入らない', extensionWorlds.length === 0, extensionWorlds.map((c) => c.name).join(', '))
+  const { contexts } = await contextsAfterReload('view=sidebar')
+  const extensionWorlds = contexts.filter(
+    (c) => c.auxData?.isDefault === false && !/Electron/.test(c.name ?? '')
+  )
+  check(
+    'ブラウザ UI には content script が入らない',
+    extensionWorlds.length === 0,
+    extensionWorlds.map((c) => c.name).join(', ')
+  )
 }
 
 // UI をリロードしたので接続し直す
 const ui2 = await uiSession()
 
 // 8. popup がタブ / ウィンドウモデルに乗る
-await ui2.ev(`window.nemo.navigate(${tabId}, '${PAGES}/popup.html')`)
+await ui2.ev(`window.nemo.navigate(${tabKey}, '${PAGES}/popup.html')`)
 await sleep(2500)
 {
   const before = await ui2.ev('window.nemo.getWindowState()')
@@ -206,16 +234,24 @@ await sleep(2500)
   })
   await sleep(2000)
   const after = await ui2.ev('window.nemo.getWindowState()')
-  check('window.open がタブとして registry に入る', after.tabs.length === before.tabs.length + 1, `${before.tabs.length} -> ${after.tabs.length}`)
+  check(
+    'window.open がタブとして registry に入る',
+    after.tabs.length === before.tabs.length + 1,
+    `${before.tabs.length} -> ${after.tabs.length}`
+  )
 
-  const uiBefore = (await targets()).filter((x) => x.url.includes('/renderer/index.html')).length
+  const uiBefore = await uiWindowCount()
   await page.send('Runtime.evaluate', {
     expression: `window.open('/login.html?site=popup-window', '_blank', 'width=500,height=400')`,
     userGesture: true
   })
   await sleep(2500)
-  const uiAfter = (await targets()).filter((x) => x.url.includes('/renderer/index.html')).length
-  check('サイズ指定の window.open が新規ウィンドウになる', uiAfter === uiBefore + 1, `${uiBefore} -> ${uiAfter}`)
+  const uiAfter = await uiWindowCount()
+  check(
+    'サイズ指定の window.open が新規ウィンドウになる',
+    uiAfter === uiBefore + 1,
+    `${uiBefore} -> ${uiAfter}`
+  )
 }
 
 // 9. 拡張が作るタブ / ウィンドウ（Phase 0 の中核）
@@ -223,58 +259,96 @@ await sleep(2500)
 {
   const sw = await swSession()
   const state0 = await ui2.ev('window.nemo.getWindowState()')
-  const activeBefore = state0.activeTabId
+  const activeBefore = activeContentsId(state0)
 
   // 9-1. active: false は「作るがフォアグラウンドにしない」
   const bg = await sw.ev(`chrome.tabs.create({ url: '${PAGES}/login.html?site=ext-bg', active: false })`)
   await sleep(2500)
   const state1 = await ui2.ev('window.nemo.getWindowState()')
-  check('chrome.tabs.create が Nemo のタブになる', state1.tabs.length === state0.tabs.length + 1, `${state0.tabs.length} -> ${state1.tabs.length}`)
-  check('chrome.tabs.create の戻り値に tabId がある', typeof bg?.id === 'number', JSON.stringify(bg && { id: bg.id, windowId: bg.windowId, active: bg.active }))
-  check('active: false でアクティブタブが変わらない', state1.activeTabId === activeBefore, `activeTabId ${activeBefore} -> ${state1.activeTabId}`)
+  check(
+    'chrome.tabs.create が Nemo のタブになる',
+    state1.tabs.length === state0.tabs.length + 1,
+    `${state0.tabs.length} -> ${state1.tabs.length}`
+  )
+  check(
+    'chrome.tabs.create の戻り値に tabId がある',
+    typeof bg?.id === 'number',
+    JSON.stringify(bg && { id: bg.id, windowId: bg.windowId, active: bg.active })
+  )
+  check(
+    'active: false でアクティブタブが変わらない',
+    activeContentsId(state1) === activeBefore,
+    `active ${activeBefore} -> ${activeContentsId(state1)}`
+  )
   check(
     'active: false のタブは registry に居るがアクティブではない',
-    state1.tabs.some((t) => t.id === bg?.id) && state1.activeTabId !== bg?.id
+    Boolean(tabByContentsId(state1, bg?.id)) && activeContentsId(state1) !== bg?.id
   )
   // 実際に前面に描画されていないこと（View の可視性）を UI 側から見る
-  const visible = await ui2.ev('window.nemo.getVisibleTabIds()')
+  const visible = await ui2.ev('window.nemo.getVisibleTabKeys()')
   check(
     'バックグラウンドタブの View が表示されていない',
-    Array.isArray(visible) && visible.length === 1 && visible[0] === state1.activeTabId,
-    `visible=${JSON.stringify(visible)} active=${state1.activeTabId}`
+    Array.isArray(visible) && visible.length === 1 && visible[0] === state1.activeTabKey,
+    `visible=${JSON.stringify(visible)} active=${state1.activeTabKey}`
   )
 
   // 9-2. active: true はフォアグラウンドになる
   const fg = await sw.ev(`chrome.tabs.create({ url: '${PAGES}/login.html?site=ext-fg', active: true })`)
   await sleep(2500)
   const state2 = await ui2.ev('window.nemo.getWindowState()')
-  check('active: true で作ったタブがアクティブになる', state2.activeTabId === fg?.id, `activeTabId=${state2.activeTabId} created=${fg?.id}`)
+  check(
+    'active: true で作ったタブがアクティブになる',
+    activeContentsId(state2) === fg?.id,
+    `active=${activeContentsId(state2)} created=${fg?.id}`
+  )
 
   // 9-3. windowId が Nemo のウィンドウと対応している
   const chromeWindowId = await sw.ev(`chrome.windows.getCurrent().then(w => w.id)`)
-  check('chrome.tabs.create の windowId が現在のウィンドウと一致する', bg?.windowId === chromeWindowId, `tab.windowId=${bg?.windowId} current=${chromeWindowId}`)
+  check(
+    'chrome.tabs.create の windowId が現在のウィンドウと一致する',
+    bg?.windowId === chromeWindowId,
+    `tab.windowId=${bg?.windowId} current=${chromeWindowId}`
+  )
+  // 1-8: 拡張のウィンドウ対応が Nemo の所有モデルと一致していること
+  check(
+    '拡張から見た windowId が Nemo のタブの所属ウィンドウと一致する',
+    tabByContentsId(state1, bg?.id)?.chromeWindowId === bg?.windowId,
+    `nemo=${tabByContentsId(state1, bg?.id)?.chromeWindowId} chrome=${bg?.windowId}`
+  )
 
   // 9-4. chrome.windows.create が Nemo のウィンドウになる
-  const uiBefore = (await targets()).filter((x) => x.url.includes('/renderer/index.html')).length
+  const uiBefore = await uiWindowCount()
   const created = await sw.ev(`chrome.windows.create({ url: '${PAGES}/login.html?site=ext-window' })`)
   await sleep(3000)
-  const uiAfter = (await targets()).filter((x) => x.url.includes('/renderer/index.html')).length
-  check('chrome.windows.create が Nemo のウィンドウになる', uiAfter === uiBefore + 1, `${uiBefore} -> ${uiAfter}`)
-  check('chrome.windows.create の戻り値に windowId がある', typeof created?.id === 'number', JSON.stringify(created && { id: created.id }))
+  const uiAfter = await uiWindowCount()
+  check(
+    'chrome.windows.create が Nemo のウィンドウになる',
+    uiAfter === uiBefore + 1,
+    `${uiBefore} -> ${uiAfter}`
+  )
+  check(
+    'chrome.windows.create の戻り値に windowId がある',
+    typeof created?.id === 'number',
+    JSON.stringify(created && { id: created.id })
+  )
 
   const allWindows = await sw.ev(`chrome.windows.getAll().then(w => w.map(x => x.id))`)
-  check('chrome.windows.getAll に新しいウィンドウが載る', Array.isArray(allWindows) && allWindows.includes(created?.id), JSON.stringify(allWindows))
+  check(
+    'chrome.windows.getAll に新しいウィンドウが載る',
+    Array.isArray(allWindows) && allWindows.includes(created?.id),
+    JSON.stringify(allWindows)
+  )
 
   // 9-5. 拡張からの片付け
   await sw.ev(`chrome.windows.remove(${created?.id}).then(() => 'ok')`)
   await sleep(2000)
-  const uiFinal = (await targets()).filter((x) => x.url.includes('/renderer/index.html')).length
+  const uiFinal = await uiWindowCount()
   check('chrome.windows.remove でウィンドウが閉じる', uiFinal === uiBefore, `${uiAfter} -> ${uiFinal}`)
 
   await sw.ev(`chrome.tabs.remove(${bg?.id}).then(() => 'ok')`)
   await sleep(1500)
   const state3 = await ui2.ev('window.nemo.getWindowState()')
-  check('chrome.tabs.remove でタブが registry から消える', !state3.tabs.some((t) => t.id === bg?.id))
+  check('chrome.tabs.remove でタブが registry から消える', !tabByContentsId(state3, bg?.id))
 }
 
 // 10. 拡張からの URL は検証を通ること（http/https と自分の拡張ページ以外は拒否）
@@ -287,7 +361,8 @@ await sleep(2500)
   const after = (await ui2.ev('window.nemo.getWindowState()')).tabs.length
   check('拡張からの file: URL はタブにならない', after === before, `${rejected} / tabs ${before} -> ${after}`)
 
-  const own = await sw.ev(`chrome.tabs.create({ url: chrome.runtime.getURL('popup/index.html'), active: false })
+  const own =
+    await sw.ev(`chrome.tabs.create({ url: chrome.runtime.getURL('popup/index.html'), active: false })
     .then(t => ({ id: t.id }), e => ({ error: String(e && e.message) }))`)
   await sleep(2000)
   check('拡張は自分の chrome-extension:// ページを開ける', typeof own?.id === 'number', JSON.stringify(own))
@@ -339,14 +414,16 @@ await sleep(2500)
   console.log(`      使えない API: ${ng.map(([k]) => k).join(', ') || 'なし'}`)
 
   // commands は「呼べるが shortcut が空」= キーバインドが登録されていない、が実態
-  const commands = await sw.ev(`chrome.commands.getAll().then(c => c.map(x => x.name + ':' + JSON.stringify(x.shortcut)))`)
+  const commands = await sw.ev(
+    `chrome.commands.getAll().then(c => c.map(x => x.name + ':' + JSON.stringify(x.shortcut)))`
+  )
   console.log(`      chrome.commands.getAll(): ${JSON.stringify(commands)}`)
 }
 
 // 13. タブを閉じたときの後始末
 {
   const before = await ui2.ev('window.nemo.getWindowState()')
-  const victim = before.tabs[before.tabs.length - 1].id
+  const victim = JSON.stringify(before.tabs[before.tabs.length - 1].key)
   await ui2.ev(`window.nemo.closeTab(${victim})`)
   await sleep(1000)
   const after = await ui2.ev('window.nemo.getWindowState()')
@@ -357,7 +434,7 @@ await sleep(2500)
 {
   let rejected = false
   try {
-    await ui2.ev('window.nemo.selectTab(999999)')
+    await ui2.ev(`window.nemo.selectTab('00000000-0000-0000-0000-000000000000')`)
   } catch (error) {
     rejected = /does not belong/.test(String(error))
   }

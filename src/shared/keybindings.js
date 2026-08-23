@@ -23,6 +23,12 @@ export const COMMANDS = [
   // File
   { id: 'command-bar', label: 'コマンドバー', accelerator: 'CmdOrCtrl+T', menu: 'file' },
   { id: 'new-window', label: '新規ウィンドウ', accelerator: 'CmdOrCtrl+N', menu: 'file' },
+  {
+    id: 'new-private-window',
+    label: 'シークレットウィンドウ',
+    accelerator: 'CmdOrCtrl+Shift+P',
+    menu: 'file'
+  },
   { id: 'close-tab', label: 'タブを閉じる', accelerator: 'CmdOrCtrl+W', menu: 'file', needsTab: true },
   { id: 'close-window', label: 'ウィンドウを閉じる', accelerator: 'CmdOrCtrl+Shift+W', menu: 'file' },
   { id: 'reopen-tab', label: '閉じたタブを開き直す', accelerator: 'CmdOrCtrl+Shift+T', menu: 'file' },
@@ -73,6 +79,8 @@ export const COMMANDS = [
 
   // Window
   { id: 'show-downloads', label: 'ダウンロード', accelerator: 'CmdOrCtrl+Shift+J', menu: 'window' },
+  { id: 'show-library', label: '履歴とアーカイブ', accelerator: 'CmdOrCtrl+Y', menu: 'window' },
+  { id: 'show-settings', label: '設定', accelerator: 'CmdOrCtrl+,', menu: 'window' },
 
   // Develop
   {

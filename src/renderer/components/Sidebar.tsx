@@ -63,9 +63,24 @@ export function Sidebar(): React.JSX.Element {
     else void window.nemo.createTab(input)
   }
 
+  const isPrivate = state?.isPrivate === true
+
   return (
-    <div className="sidebar">
+    <div className={`sidebar${isPrivate ? ' private' : ''}`}>
       <div className="drag-strip" />
+
+      {/*
+        シークレットウィンドウでは拡張がロードされない
+        （electron-chrome-extensions は non-persistent セッションに拡張を載せられない）。
+        つまり Bitwarden の自動入力が効かない。**黙って効かないのが一番困る**ので必ず出す。
+      */}
+      {isPrivate ? (
+        <div className="private-note">
+          <b>シークレットウィンドウ</b>
+          <span>履歴・cookie を残さない。閉じると跡形もなく消える</span>
+          <span>拡張は動かない（Bitwarden の自動入力は使えない）</span>
+        </div>
+      ) : null}
 
       <div className="nav-row">
         <button
@@ -152,6 +167,14 @@ export function Sidebar(): React.JSX.Element {
           onClick={() => void window.nemo.setOverlay('downloads')}
         >
           ↓{shared.downloads.some((item) => item.state === 'progressing') ? <span className="badge" /> : null}
+        </button>
+        <button
+          type="button"
+          className="icon"
+          title="履歴とアーカイブ（⌘Y）"
+          onClick={() => void window.nemo.setOverlay('library')}
+        >
+          🕘
         </button>
         <button
           type="button"
@@ -302,6 +325,14 @@ function ExtensionFooter({
       )}
       {mismatched.length > 0 ? <span className="warn">lock 不一致</span> : null}
       <div className="spacer" />
+      <button
+        type="button"
+        className="icon"
+        title="設定（⌘,）"
+        onClick={() => void window.nemo.setOverlay('settings')}
+      >
+        ⚙
+      </button>
       <VersionBadge version={version} update={update} />
     </div>
   )

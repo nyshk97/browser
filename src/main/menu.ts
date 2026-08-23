@@ -34,7 +34,9 @@ const UI_COMMANDS = new Set([
   'find',
   'find-next',
   'find-previous',
-  'show-downloads'
+  'show-downloads',
+  'show-library',
+  'show-settings'
 ])
 
 function sendToUi(win: NemoWindow, command: string): void {
@@ -48,6 +50,7 @@ function runCommand(command: string): void {
   if (!win) {
     // ウィンドウが1つも無いときでも新規ウィンドウだけは作れるようにする
     if (command === 'new-window' || command === 'command-bar') createWindow()
+    if (command === 'new-private-window') createWindow(undefined, { isPrivate: true })
     return
   }
 
@@ -61,6 +64,9 @@ function runCommand(command: string): void {
     if (command === 'command-bar') win.setOverlay('command-bar')
     if (command === 'focus-address') win.setOverlay('address-bar')
     if (command === 'show-downloads') win.setOverlay(win.overlay === 'downloads' ? null : 'downloads')
+    // ライブラリと設定は同じキーで開閉する（開いているのにもう一度押したら閉じる）
+    if (command === 'show-library') win.setOverlay(win.overlay === 'library' ? null : 'library')
+    if (command === 'show-settings') win.setOverlay(win.overlay === 'settings' ? null : 'settings')
     sendToUi(win, command)
     return
   }
@@ -70,6 +76,9 @@ function runCommand(command: string): void {
   switch (command) {
     case 'new-window':
       createWindow()
+      return
+    case 'new-private-window':
+      createWindow(undefined, { isPrivate: true })
       return
     case 'close-tab':
       if (tab) removeTab(win, tab.key)

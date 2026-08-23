@@ -14,7 +14,8 @@ import {
   togglePin,
   unpinEverywhere,
   type NemoTab,
-  type NemoWindow
+  type NemoWindow,
+  type OverlayKind
 } from './registry.js'
 import { isUiUrl, normalizeNavigationInput } from './security.js'
 import { answerPrompt, currentPrompt } from './prompts.js'
@@ -33,6 +34,9 @@ import {
   toggleFolder
 } from './store/pins.js'
 import { cancelDownload, clearDownloads, listDownloads, revealDownload } from './downloads.js'
+import { clearHistory, queryHistory, removeHistory } from './store/history.js'
+import { clearArchive, queryArchive, removeArchived } from './store/archive.js'
+import { getDefaultBrowserStatus, requestDefaultBrowser } from './default-browser.js'
 import { getAppStatus } from './app-status.js'
 import { checkForUpdatesManually, getUpdateState, promptRestart } from './updater.js'
 import { windowsById } from './registry.js'
@@ -314,6 +318,11 @@ export function registerIpcHandlers(): void {
     createWindow()
   })
 
+  ipcMain.handle('nemo:create-private-window', (event) => {
+    requireWindow(event)
+    createWindow(undefined, { isPrivate: true })
+  })
+
   ipcMain.handle('nemo:set-sidebar-visible', (event, visible: unknown) => {
     const win = requireWindow(event)
     if (typeof visible !== 'boolean') throw new Error('invalid visible')
@@ -331,16 +340,11 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('nemo:set-overlay', (event, kind: unknown) => {
     const win = requireWindow(event)
-    if (
-      kind !== null &&
-      kind !== 'command-bar' &&
-      kind !== 'address-bar' &&
-      kind !== 'find' &&
-      kind !== 'downloads'
-    ) {
+    const allowed = ['command-bar', 'address-bar', 'find', 'downloads', 'library', 'settings'] as const
+    if (kind !== null && !allowed.includes(kind as (typeof allowed)[number])) {
       throw new Error('invalid overlay')
     }
-    win.setOverlay(kind)
+    win.setOverlay(kind as OverlayKind)
   })
 
   ipcMain.handle('nemo:toggle-devtools', (event, key: unknown) => {
@@ -402,6 +406,44 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('nemo:clear-downloads', (event) => {
     requireWindow(event)
     clearDownloads()
+  })
+
+  /* ---- ライブラリ（履歴 / アーカイブ） ---- */
+  ipcMain.handle('nemo:query-history', (event, query: unknown) => {
+    requireWindow(event)
+    return queryHistory(typeof query === 'string' ? query.slice(0, 512) : '')
+  })
+  ipcMain.handle('nemo:remove-history', (event, url: unknown) => {
+    requireWindow(event)
+    removeHistory(requireString(url, 'url'))
+  })
+  ipcMain.handle('nemo:clear-history', (event) => {
+    requireWindow(event)
+    clearHistory()
+    log('history.cleared', {})
+  })
+  ipcMain.handle('nemo:query-archive', (event, query: unknown) => {
+    requireWindow(event)
+    return queryArchive(typeof query === 'string' ? query.slice(0, 512) : '')
+  })
+  ipcMain.handle('nemo:remove-archived', (event, url: unknown) => {
+    requireWindow(event)
+    removeArchived(requireString(url, 'url'))
+  })
+  ipcMain.handle('nemo:clear-archive', (event) => {
+    requireWindow(event)
+    clearArchive()
+    log('archive.cleared', {})
+  })
+
+  /* ---- 既定ブラウザ ---- */
+  ipcMain.handle('nemo:get-default-browser-status', (event) => {
+    requireWindow(event)
+    return getDefaultBrowserStatus()
+  })
+  ipcMain.handle('nemo:request-default-browser', (event) => {
+    requireWindow(event)
+    return requestDefaultBrowser()
   })
 
   /* ---- ダイアログ ---- */

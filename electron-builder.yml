@@ -60,6 +60,23 @@ asarUnpack:
   # preload は実ファイルパスで渡す必要がある
   - node_modules/electron-chrome-extensions/dist/**/*
 
+# 既定ブラウザ対応（計画 2-5）。
+#
+# `Info.plist` に http / https のハンドラを宣言しておかないと、
+# `setAsDefaultProtocolClient` を呼んでも OS が受け付けず、
+# システム設定の「デフォルトの Web ブラウザ」にも出てこない。
+#
+# dev 版もこの宣言を持つ（別 bundle id なので常用版と取り違えない）。
+# 実際に既定にするのは明示的な操作（設定画面のボタン）だけで、
+# **開発起動では登録できないようにしている**（`src/main/default-browser.ts`）。
+protocols:
+  - name: HTTP URL
+    schemes: [http]
+    role: Viewer
+  - name: HTTPS URL
+    schemes: [https]
+    role: Viewer
+
 dmg:
   # electron-builder の既定は dmg を署名しない。公証の前に署名しておく。
   sign: true

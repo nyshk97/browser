@@ -68,6 +68,25 @@ check(
   readPlist('CFBundleVersion')
 )
 
+// 既定ブラウザにするには Info.plist に http / https のハンドラ宣言が要る。
+// 宣言が無いと setAsDefaultProtocolClient が黙って効かず、
+// システム設定のブラウザ一覧にも出てこない（原因が分かりにくい壊れ方をする）。
+const urlSchemes = (() => {
+  try {
+    const raw = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleURLTypes', plist], {
+      encoding: 'utf8'
+    })
+    return raw
+  } catch {
+    return ''
+  }
+})()
+check(
+  'Info.plist が http / https のハンドラを宣言している',
+  urlSchemes.includes('http') && urlSchemes.includes('https'),
+  urlSchemes ? 'CFBundleURLTypes あり' : 'CFBundleURLTypes が無い'
+)
+
 /* ---- ネイティブモジュール ---- */
 const sqliteNode = fs.existsSync(path.join(unpacked, 'node_modules', 'better-sqlite3'))
 check('better-sqlite3 が asar の外に出ている', sqliteNode, unpacked)

@@ -54,11 +54,14 @@ export async function connect(wsUrl) {
 }
 
 /** URL の一部が一致する target につなぐ。見つかるまで待つ。 */
-export async function connectTo(cdp, urlPart, { timeoutMs = 15000, type = null } = {}) {
+export async function connectTo(cdp, urlPart, { timeoutMs = 15000, type = null, exclude = null } = {}) {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     const targets = await listTargets(cdp)
-    const found = targets.find((t) => (type ? t.type === type : true) && t.url.includes(urlPart))
+    const found = targets.find(
+      (t) =>
+        (type ? t.type === type : true) && t.url.includes(urlPart) && !(exclude && t.url.includes(exclude))
+    )
     if (found) return connect(found.webSocketDebuggerUrl)
     if (Date.now() > deadline) {
       throw new Error(
@@ -77,7 +80,14 @@ export async function connectTo(cdp, urlPart, { timeoutMs = 15000, type = null }
  * （`JSON.parse(undefined)` で落ちて原因が分かりにくい。CI で踏んだ）。
  */
 export async function connectUi(cdp, view = 'sidebar', options = {}) {
-  const session = await connectTo(cdp, `view=${view}`, options)
+  // シークレットウィンドウの UI も `view=sidebar` を持つ。
+  // 素直に先頭を拾うと、検証が**シークレットウィンドウを操作してしまう**
+  // （そこで作ったタブはセッションに保存されないので、後の復元検証が落ちる。実際に踏んだ）。
+  // 明示的に欲しいときは `includePrivate: true` を渡す。
+  const session = await connectTo(cdp, `view=${view}`, {
+    exclude: options.includePrivate ? null : 'private=1',
+    ...options
+  })
   const timeoutMs = options.timeoutMs ?? 30000
   await waitFor(session, "typeof window.nemo === 'object' && window.nemo !== null ? 'ready' : ''", {
     timeoutMs

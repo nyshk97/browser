@@ -711,3 +711,263 @@ input {
 .dialog-actions button.primary:hover {
   filter: brightness(1.08);
 }
+
+/* ------------------------------------------------------------------ *
+ * ライブラリ（履歴 / アーカイブ）と設定
+ *
+ * どちらもページの上に大きく重ねるパネル。ダウンロードのパネルと同じ器を使い、
+ * 中身のレイアウトだけ変える。
+ * ------------------------------------------------------------------ */
+
+.panel.library,
+.panel.settings {
+  height: 100%;
+}
+
+/* 履歴 / アーカイブの切り替え */
+.seg {
+  display: flex;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--nemo-radius);
+  padding: 2px;
+}
+
+.seg button {
+  padding: 3px 10px;
+  border-radius: 5px;
+  color: var(--nemo-ink-dim);
+  font-size: 12px;
+}
+
+.seg button:hover {
+  color: var(--nemo-ink);
+}
+
+.seg button.on {
+  background: var(--nemo-surface-hi);
+  color: var(--nemo-ink);
+}
+
+.lib-search {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--nemo-border);
+}
+
+.lib-search input {
+  width: 100%;
+  padding: 6px 9px;
+  background: var(--nemo-surface);
+  border-radius: var(--nemo-radius);
+}
+
+.lib-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.lib-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.lib-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+}
+
+.lib-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 12px;
+  height: 30px;
+}
+
+.lib-row:hover {
+  background: var(--nemo-hover);
+}
+
+.lib-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.lib-title {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 55%;
+}
+
+.lib-url {
+  color: var(--nemo-ink-dim);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.lib-meta {
+  color: var(--nemo-ink-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.lib-row .icon {
+  opacity: 0;
+}
+
+.lib-row:hover .icon {
+  opacity: 1;
+}
+
+/* 設定 */
+.set-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 16px 20px;
+}
+
+.set-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.set-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+}
+
+.set-body section {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--nemo-border);
+}
+
+.set-body section:last-child {
+  border-bottom: 0;
+}
+
+.set-body h3 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--nemo-ink-dim);
+  letter-spacing: 0.04em;
+}
+
+.set-body p {
+  margin: 6px 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.set-body p.ok {
+  color: var(--nemo-accent);
+}
+
+.set-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.set-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 0;
+}
+
+.set-label {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.set-label .dim {
+  font-size: 11px;
+}
+
+.set-input input {
+  background: var(--nemo-surface);
+  border-radius: var(--nemo-radius);
+  padding: 5px 8px;
+  width: 84px;
+  text-align: right;
+}
+
+.set-input.wide input {
+  width: 320px;
+  text-align: left;
+}
+
+.set-input .dim {
+  margin-left: 6px;
+  font-size: 12px;
+}
+
+.set-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+}
+
+.set-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.set-row .warn {
+  color: var(--nemo-danger);
+}
+
+.btn {
+  background: var(--nemo-surface);
+  border-radius: var(--nemo-radius);
+  padding: 5px 12px;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--nemo-surface-hi);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+}
+
+/* シークレットウィンドウ */
+.sidebar.private {
+  background: #241c30;
+}
+
+.private-note {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 10px 8px;
+  padding: 8px 10px;
+  border-radius: var(--nemo-radius);
+  background: rgba(140, 100, 220, 0.16);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.private-note b {
+  font-size: 12px;
+}

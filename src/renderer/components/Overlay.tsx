@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useCommand, useSharedState, useWindowState } from '../useNemo.js'
 import { PromptDialog } from './PromptDialog.js'
+import { Library } from './Library.js'
+import { Settings } from './Settings.js'
 import type { Prompt, Suggestion, WindowState } from '../../shared/types.js'
 
 /**
@@ -69,6 +71,8 @@ export function Overlay(): React.JSX.Element | null {
     return <CommandBar key="address-bar" onClose={close} state={state} newTab={false} />
   if (kind === 'find') return <FindBar onClose={close} state={state} />
   if (kind === 'downloads') return <Downloads onClose={close} />
+  if (kind === 'library') return <Library onClose={close} />
+  if (kind === 'settings') return <Settings onClose={close} />
   return null
 }
 

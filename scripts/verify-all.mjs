@@ -3,7 +3,7 @@
  * 自走検証を一括で通す（`mise run verify`）。
  *
  *   ユニットテスト → ビルド → 拡張の照合 → ページサーバ → アプリ起動 →
- *   verify-spike → 再起動をまたぐ永続性 → 後片付け
+ *   verify-spike → verify-phase1 → verify-phase2 → 再起動をまたぐ永続性 → 後片付け
  *
  * 終了コードがそのまま合否になるので CI にも載せられる。
  *
@@ -115,6 +115,7 @@ const runVerify = (script, args = []) =>
 
 const spike = (args) => runVerify('scripts/verify-spike.mjs', args)
 const phase1 = (args) => runVerify('scripts/verify-phase1.mjs', args)
+const phase2 = (args) => runVerify('scripts/verify-phase2.mjs', args)
 
 let exitCode = 0
 try {
@@ -149,6 +150,10 @@ try {
   console.log('\n=== 自走検証（Phase 1: ブラウザ本体）')
   const phase1Code = await phase1([])
   if (phase1Code !== 0) exitCode = phase1Code
+
+  console.log('\n=== 自走検証（Phase 2: ライブラリ・アーカイブ・シークレット）')
+  const phase2Code = await phase2([])
+  if (phase2Code !== 0) exitCode = phase2Code
 
   console.log('\n=== 再起動をまたぐ永続性')
   await spike(['--storage-write'])

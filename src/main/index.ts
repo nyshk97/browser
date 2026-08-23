@@ -15,6 +15,7 @@ import {
   createTab,
   createWindow,
   findWindowIdForPageContents,
+  focusedOrFirstWindow,
   selectTab,
   setExtensions,
   startBackgroundWork,
@@ -23,15 +24,18 @@ import {
 } from './registry.js'
 import { installApplicationMenu, watchKeybindingChanges } from './menu.js'
 import { installRuntimeMarker } from './runtime-marker.js'
+import { flushOpenUrls, handleSecondInstance, installOpenUrlHandler } from './open-url.js'
 import { installDownloadHandler } from './downloads.js'
 import { closeLogFile, log, logError, openLogFile } from './log.js'
 import { closeSettings, getSettings, initSettings } from './store/settings.js'
 import { closePins, initPins } from './store/pins.js'
-import { closeHistory, initHistory } from './store/history.js'
+import { closeDb, initDb } from './store/db.js'
+import { pruneArchive } from './store/archive.js'
 import { closePermissionStore, initPermissionStore } from './store/permissions.js'
 import { closeSession, initSession, markCleanExit } from './store/session.js'
 import { markReadyWhen, setExtensionCount } from './app-status.js'
 import { initUpdater, stopUpdater } from './updater.js'
+import { getDefaultBrowserStatus } from './default-browser.js'
 
 applyUserDataDir()
 app.setAppUserModelId(APP_ID)
@@ -53,6 +57,10 @@ process.on('unhandledRejection', (reason) => {
 // custom protocol の登録は app.ready より前でなければならない
 registerUiScheme()
 
+// 外部アプリからの URL は **ready より前に**購読する。
+// ready を待つと、未起動から開かれたときの URL を取りこぼす。
+installOpenUrlHandler()
+
 /**
  * dev 版でのみ remote debugging を開ける。
  * 明示的な env が無い限り開かない。**常用版（stable）では何があっても開かない**
@@ -71,8 +79,10 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 }
 
-app.on('second-instance', () => {
-  createWindow()
+app.on('second-instance', (_event, argv) => {
+  // macOS では外部 URL は open-url で来る。argv に乗るのは macOS 以外の経路。
+  // URL が乗っていなければ「もう一度アプリを開いた」= 新規ウィンドウ。
+  if (!handleSecondInstance(argv)) createWindow()
 })
 
 app
@@ -89,7 +99,8 @@ app
     initSettings()
     initPins()
     initPermissionStore()
-    initHistory()
+    initDb()
+    pruneArchive()
     const restored = initSession()
 
     const pageSession = session.fromPartition(PAGE_PARTITION)
@@ -164,6 +175,30 @@ app
     // 外（自走検証など）はこの合図を待ってから registry を見る。
     void markReadyWhen(startupWindows)
 
+    // 溜まっていた外部 URL をここで流す。
+    // ウィンドウが揃う前に開こうとすると createTab が拒否されて URL が消える。
+    const openExternalUrl = (url: string): void => {
+      const win = focusedOrFirstWindow()
+      if (win) {
+        createTab(win, url)
+        win.baseWindow.focus()
+      } else {
+        createWindow(url)
+      }
+      app.focus({ steal: true })
+    }
+    if (startupWindows.length > 0) {
+      startupWindows[0].whenUiSettled(() => flushOpenUrls(openExternalUrl))
+    } else {
+      flushOpenUrls(openExternalUrl)
+    }
+
+    const defaultBrowser = getDefaultBrowserStatus()
+    log('default_browser.state', {
+      isDefault: defaultBrowser.isDefault,
+      canRequest: defaultBrowser.canRequest
+    })
+
     log('app.ready', {
       channel,
       electron: process.versions.electron,
@@ -192,7 +227,7 @@ app.on('before-quit', () => {
   closePins()
   closePermissionStore()
   closeSession()
-  closeHistory()
+  closeDb()
   log('app.quit', {})
   closeLogFile()
 })

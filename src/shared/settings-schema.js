@@ -13,6 +13,7 @@ export const SETTINGS_VERSION = 1
 /** @type {import('./types.js').NemoSettings} */
 export const DEFAULT_SETTINGS = {
   tabSleepMinutes: 30,
+  tabArchiveHours: 24,
   sidebarVisible: true,
   searchTemplate: 'https://www.google.com/search?q={q}',
   keybindings: {},
@@ -32,6 +33,8 @@ export function normalizeSettings(raw) {
   const input = isRecord(raw) ? raw : {}
   return {
     tabSleepMinutes: clampNumber(input['tabSleepMinutes'], DEFAULT_SETTINGS.tabSleepMinutes, 0, 24 * 60),
+    // 上限は 30 日。これより長い設定は「事実上 OFF」なので 0 と変わらない
+    tabArchiveHours: clampNumber(input['tabArchiveHours'], DEFAULT_SETTINGS.tabArchiveHours, 0, 24 * 30),
     sidebarVisible:
       typeof input['sidebarVisible'] === 'boolean'
         ? input['sidebarVisible']

@@ -14,7 +14,8 @@ import {
   isLoadedExtensionUrl,
   isNavigableUrl,
   normalizeNavigationInput,
-  redactUrl
+  redactUrl,
+  urlsFromArgv
 } from '../src/shared/navigation-policy.js'
 
 const LOADED = new Set(['nngceckbapebfimnlniiiahkandclblb'])
@@ -156,4 +157,25 @@ test('検索テンプレートは差し替えられるが https 以外は既定�
     'https://duckduckgo.com/?q=%E7%8C%AB'
   )
   assert.ok(normalizeNavigationInput('猫', 'ftp://x/{q}').url.startsWith('https://www.google.com/'))
+})
+
+/* ------------------------------------------------------------------ *
+ * 外部アプリから渡された URL（計画 2-5）
+ * ------------------------------------------------------------------ */
+
+test('argv から http/https の引数だけを拾う', () => {
+  assert.deepEqual(
+    urlsFromArgv(['--flag', 'https://example.com/a', '/tmp/file.txt', 'http://example.org/']),
+    ['https://example.com/a', 'http://example.org/']
+  )
+  // 拾わないもの（開いてよいかの判定は isNavigableUrl が別途行う）
+  assert.deepEqual(urlsFromArgv(['file:///etc/passwd', 'javascript:alert(1)', 'nemo://ui/index.html']), [])
+  assert.deepEqual(urlsFromArgv([]), [])
+})
+
+test('argv で拾った URL も isNavigableUrl を通す前提になっている', () => {
+  // 形だけ http でも、拒否する scheme に化けるものは通さない
+  const [picked] = urlsFromArgv(['HTTPS://Example.com/'])
+  assert.equal(picked, 'HTTPS://Example.com/')
+  assert.equal(isNavigableUrl(picked), true)
 })

@@ -6,6 +6,7 @@ import type { ElectronChromeExtensions } from 'electron-chrome-extensions'
 import { PAGE_PARTITION, UI_INDEX_URL, UI_PARTITION } from './paths.js'
 import {
   BLANK_URL,
+  applySessionSecurityDefaults,
   applyWebContentsSecurityDefaults,
   isLoadedExtensionUrl,
   isUiUrl,
@@ -27,6 +28,7 @@ import {
   unpin as unpinDefinition
 } from './store/pins.js'
 import { recordVisit, updateTitle } from './store/history.js'
+import { archiveTab, pruneArchive, type ArchiveReason } from './store/archive.js'
 import { saveSession, type SavedWindow } from './store/session.js'
 import { listDownloads, onDownloadsChanged } from './downloads.js'
 import { getUpdateState, onUpdateChanged } from './updater.js'
@@ -75,10 +77,39 @@ export function isTransferring(contents: WebContents): boolean {
 }
 
 /* ------------------------------------------------------------------ *
+ * シークレットウィンドウ（計画 2-4）
+ * ------------------------------------------------------------------ */
+
+/**
+ * シークレットウィンドウ用のセッションを作る。
+ *
+ * `persist:` を付けない partition は**メモリ上だけ**に存在し、
+ * 参照している WebContents が全部消えた時点で cookie も storage も消える。
+ * ディスクに書かないので「消え残り」を自前で検証する必要がない
+ * （終了時に消す方式＝擬似シークレットは Phase 3 に置いた）。
+ *
+ * **拡張はロードしない**。`electron-chrome-extensions` は
+ * non-persistent セッションに拡張を載せられない（README の Limitations）。
+ * つまりシークレットウィンドウでは Bitwarden の自動入力が使えない。UI に必ず出す。
+ */
+let privateSessionSeq = 0
+
+function createPrivateSession(): { partition: string; session: Electron.Session } {
+  privateSessionSeq += 1
+  const partition = `nemo-private-${privateSessionSeq}`
+  const privateSession = session.fromPartition(partition)
+  // 権限・デバイスの既定は通常セッションと同じ（ここを省くと自動許可され得る）
+  applySessionSecurityDefaults(privateSession, 'page', findWindowIdForPageContents)
+  log('window.private_session_created', { partition })
+  return { partition, session: privateSession }
+}
+
+/* ------------------------------------------------------------------ *
  * オーバーレイ（コマンドバー / 検索バー / ダイアログ / ダウンロード）
  * ------------------------------------------------------------------ */
 
-export type OverlayKind = 'command-bar' | 'address-bar' | 'find' | 'prompt' | 'downloads' | null
+export type OverlayKind =
+  'command-bar' | 'address-bar' | 'find' | 'prompt' | 'downloads' | 'library' | 'settings' | null
 
 /** オーバーレイの種類ごとに、UI View が受け取る矩形を決める。 */
 function overlayBounds(
@@ -107,6 +138,16 @@ function overlayBounds(
         width,
         height: Math.min(460, content.height - 24)
       }
+    }
+    // ライブラリと設定はページの上に大きく重ねる（別ウィンドウにしない）。
+    // 独立ウィンドウにすると、拡張のタブモデルとサイドバーの3層に
+    // 「どのウィンドウにも属さない画面」が増えて所有関係が崩れる。
+    case 'library':
+    case 'settings': {
+      const margin = 24
+      const width = Math.min(920, Math.max(content.width - sidebarWidth - margin * 2, 360))
+      const height = Math.max(content.height - margin * 2, 240)
+      return { x: sidebarWidth + margin, y: margin, width, height }
     }
   }
 }
@@ -157,7 +198,8 @@ export class NemoTab {
 
     const view = new WebContentsView({
       webPreferences: {
-        session: session.fromPartition(PAGE_PARTITION),
+        // シークレットウィンドウのタブは、そのウィンドウ専用のメモリ内セッションに置く
+        session: session.fromPartition(this.window.partition),
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
@@ -190,7 +232,9 @@ export class NemoTab {
       resolveNavigationTarget(target, { allowExtensionPages: isLoadedExtensionUrl(target) }, 'materialize') ??
       BLANK_URL
     void wc.loadURL(resolved)
-    extensions?.addTab(wc, this.window.baseWindow)
+    // シークレットウィンドウのタブは拡張のタブモデルに載せない
+    // （拡張がロードされていないセッションなので、載せても対応する tab が作れない）
+    if (!this.window.isPrivate) extensions?.addTab(wc, this.window.baseWindow)
     if (this.zoomFactor !== 1) wc.setZoomFactor(this.zoomFactor)
     return view
   }
@@ -205,7 +249,7 @@ export class NemoTab {
     this.find = null
     this.window.baseWindow.contentView.removeChildView(view)
     if (!wc.isDestroyed()) {
-      extensions?.removeTab(wc)
+      if (!this.window.isPrivate) extensions?.removeTab(wc)
       wc.close()
     }
     log('tab.slept', { key: this.key, windowId: this.window.id })
@@ -252,9 +296,15 @@ function attachTabEvents(tab: NemoTab, wc: WebContents): void {
     if (current && current !== BLANK_URL) tab.url = current
   }
 
+  // シークレットウィンドウのタブは履歴に一切残さない
+  const remember = (fn: () => void): void => {
+    if (win().isPrivate) return
+    fn()
+  }
+
   wc.on('page-title-updated', (_event, title) => {
     tab.title = title
-    updateTitle(tab.url, title)
+    remember(() => updateTitle(tab.url, title))
     notify()
   })
   wc.on('page-favicon-updated', (_event, favicons) => {
@@ -269,14 +319,14 @@ function attachTabEvents(tab: NemoTab, wc: WebContents): void {
   })
   wc.on('did-navigate', (_event, url) => {
     syncUrl()
-    recordVisit(url, tab.title)
+    remember(() => recordVisit(url, tab.title))
     tab.find = null
     notify()
   })
   wc.on('did-navigate-in-page', (_event, url, isMainFrame) => {
     if (!isMainFrame) return
     syncUrl()
-    recordVisit(url, tab.title)
+    remember(() => recordVisit(url, tab.title))
     notify()
   })
   wc.on('did-finish-load', () => {
@@ -329,7 +379,9 @@ function attachTabEvents(tab: NemoTab, wc: WebContents): void {
     // 開き元のウィンドウが閉じかけているときに createTab が拒否することがあるので握る。
     try {
       if (disposition === 'new-window') {
-        const newWin = createWindow(popupTarget)
+        // シークレットのページから開いたウィンドウが通常セッションになると、
+        // そこだけ履歴も cookie も残る。開き元の性質を引き継ぐ。
+        const newWin = createWindow(popupTarget, { isPrivate: win().isPrivate })
         log('popup.window_created', { windowId: newWin.id, opener: tab.key })
       } else {
         const background = disposition === 'background-tab'
@@ -462,6 +514,10 @@ export class NemoWindow {
   static nextId = 1
 
   readonly id: number
+  /** シークレットウィンドウか（拡張なし・メモリ内セッション・履歴に残さない）。 */
+  readonly isPrivate: boolean
+  /** このウィンドウのタブが使うセッション partition。 */
+  readonly partition: string
   readonly baseWindow: BaseWindow
   /** サイドバー（常時表示）。 */
   readonly chromeView: WebContentsView
@@ -476,8 +532,10 @@ export class NemoWindow {
   private pendingAfterReady: (() => void)[] = []
   private pendingAfterSettled: (() => void)[] = []
 
-  constructor(bounds?: SavedWindow['bounds']) {
+  constructor(bounds?: SavedWindow['bounds'], isPrivate = false) {
     this.id = NemoWindow.nextId++
+    this.isPrivate = isPrivate
+    this.partition = isPrivate ? createPrivateSession().partition : PAGE_PARTITION
     this.sidebarVisible = getSettings().sidebarVisible
 
     this.baseWindow = new BaseWindow({
@@ -486,8 +544,8 @@ export class NemoWindow {
       ...(bounds ? { x: bounds.x, y: bounds.y } : {}),
       minWidth: 640,
       minHeight: 480,
-      title: 'Nemo',
-      backgroundColor: '#16161a',
+      title: isPrivate ? 'Nemo（シークレット）' : 'Nemo',
+      backgroundColor: isPrivate ? '#1b1524' : '#16161a',
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: TRAFFIC_LIGHT_INSET
     })
@@ -524,7 +582,7 @@ export class NemoWindow {
     })
     if (view === 'overlay') contentsView.setBackgroundColor('#00000000')
 
-    const uiUrl = `${UI_INDEX_URL}?view=${view}&window=${this.id}`
+    const uiUrl = `${UI_INDEX_URL}?view=${view}&window=${this.id}${this.isPrivate ? '&private=1' : ''}`
     lockUiNavigation(contentsView.webContents, view, uiUrl)
 
     void contentsView.webContents.loadURL(uiUrl)
@@ -666,7 +724,8 @@ export class NemoWindow {
       activeTabKey: this.activeTabKey,
       sidebarVisible: this.sidebarVisible,
       fullScreen: this.baseWindow.isDestroyed() ? false : this.baseWindow.isFullScreen(),
-      find: active?.find ?? null
+      find: active?.find ?? null,
+      isPrivate: this.isPrivate
     }
   }
 
@@ -744,7 +803,7 @@ export class NemoWindow {
       const wc = tab.webContents
       if (tab.view) this.baseWindow.contentView.removeChildView(tab.view)
       if (wc) {
-        extensions?.removeTab(wc)
+        if (!this.isPrivate) extensions?.removeTab(wc)
         wc.close()
       }
       tab.view = null
@@ -920,7 +979,7 @@ export function selectTab(win: NemoWindow, key: string): void {
   const wc = tab.webContents
   // electron-chrome-extensions 側からも selectTab が飛んでくるため、
   // 既にアクティブなら通知を撃ち返さない（撃ち返すと相互再入で止まらなくなる）。
-  if (wc) extensions?.selectTab(wc)
+  if (wc && !win.isPrivate) extensions?.selectTab(wc)
   log('tab.select', { key, windowId: win.id })
   win.pushState()
 }
@@ -929,20 +988,27 @@ export function selectTab(win: NemoWindow, key: string): void {
 const closedTabs: { url: string; title: string; pinnedId: string | null }[] = []
 const CLOSED_TAB_LIMIT = 25
 
-export function removeTab(win: NemoWindow, key: string): void {
+export function removeTab(
+  win: NemoWindow,
+  key: string,
+  options: { archiveReason?: ArchiveReason } = {}
+): void {
   const index = win.tabs.findIndex((tab) => tab.key === key)
   if (index === -1) return
   const [tab] = win.tabs.splice(index, 1)
 
-  if (/^https?:\/\//.test(tab.url)) {
+  // シークレットのタブは ⌘⇧T の対象にしない（閉じたら跡形もなく消えるのが約束）
+  if (/^https?:\/\//.test(tab.url) && !win.isPrivate) {
     closedTabs.push({ url: tab.url, title: tab.title, pinnedId: tab.pinnedId })
     if (closedTabs.length > CLOSED_TAB_LIMIT) closedTabs.shift()
+    // 一時タブを閉じたらアーカイブに残す（Arc と同じで、閉じても掘り返せる）
+    if (tab.pinnedId === null) archiveTab(tab.url, tab.title, options.archiveReason ?? 'closed')
   }
 
   const wc = tab.webContents
   if (tab.view) win.baseWindow.contentView.removeChildView(tab.view)
   if (wc) {
-    extensions?.removeTab(wc)
+    if (!win.isPrivate) extensions?.removeTab(wc)
     wc.close()
   }
   tab.view = null
@@ -972,6 +1038,12 @@ export function reopenClosedTab(win: NemoWindow): void {
 export function moveTabToWindow(tab: NemoTab, target: NemoWindow): void {
   const source = tab.window
   if (source === target) return
+  // シークレットと通常はセッションが違う。View を作り直さずに移すと、
+  // 移した先で「シークレットのはずのタブが通常セッションのまま」になる。
+  if (source.partition !== target.partition) {
+    log('tab.move_rejected', { key: tab.key, reason: 'different_session' })
+    return
+  }
   const index = source.tabs.indexOf(tab)
   if (index === -1) return
   source.tabs.splice(index, 1)
@@ -1017,12 +1089,14 @@ export interface CreateWindowOptions {
   bounds?: SavedWindow['bounds']
   /** セッション復元のように、呼び出し側が自分でタブを入れる場合。 */
   noInitialTab?: boolean
+  /** シークレットウィンドウとして作る（拡張なし・メモリ内セッション）。 */
+  isPrivate?: boolean
 }
 
 export function createWindow(initialUrl?: string, options: CreateWindowOptions = {}): NemoWindow {
-  const win = new NemoWindow(options.bounds)
+  const win = new NemoWindow(options.bounds, options.isPrivate === true)
   windowsById.set(win.id, win)
-  log('window.create', { windowId: win.id })
+  log('window.create', { windowId: win.id, private: win.isPrivate })
 
   win.whenUiReady(() => {
     if (!options.noInitialTab && win.tabs.length === 0) createTab(win, initialUrl ?? BLANK_URL)
@@ -1123,24 +1197,8 @@ const SLEEP_SWEEP_MS = 5_000
 
 export function startBackgroundWork(): void {
   sleepTimer = setInterval(() => {
-    const minutes = getSettings().tabSleepMinutes
-    if (minutes <= 0) return
-    const threshold = Date.now() - minutes * 60_000
-    for (const win of windowsById.values()) {
-      if (win.isDestroyed) continue
-      let slept = false
-      for (const tab of win.tabs) {
-        if (tab.key === win.activeTabKey) continue
-        if (tab.asleep) continue
-        if (tab.lastActiveAt > threshold) continue
-        // 音が出ているタブは寝かせない
-        if (tab.webContents?.isCurrentlyAudible()) continue
-        tab.sleep()
-        slept = true
-      }
-      // 何も寝ていないなら通知しない（5秒ごとに UI を再描画しない）
-      if (slept) win.pushState()
-    }
+    sweepSleep()
+    sweepArchive()
   }, SLEEP_SWEEP_MS)
   sleepTimer.unref?.()
 
@@ -1162,6 +1220,65 @@ export function startBackgroundWork(): void {
   })
 }
 
+/** 触っていないタブのメモリを解放する。 */
+function sweepSleep(): void {
+  const minutes = getSettings().tabSleepMinutes
+  if (minutes <= 0) return
+  const threshold = Date.now() - minutes * 60_000
+  for (const win of windowsById.values()) {
+    if (win.isDestroyed) continue
+    let slept = false
+    for (const tab of win.tabs) {
+      if (tab.key === win.activeTabKey) continue
+      if (tab.asleep) continue
+      if (tab.lastActiveAt > threshold) continue
+      // 音が出ているタブは寝かせない
+      if (tab.webContents?.isCurrentlyAudible()) continue
+      tab.sleep()
+      slept = true
+    }
+    // 何も寝ていないなら通知しない（5秒ごとに UI を再描画しない）
+    if (slept) win.pushState()
+  }
+}
+
+/**
+ * 放置された一時タブを自動でアーカイブする（計画 2-4。既定 24 時間）。
+ *
+ * 対象は**一時タブだけ**。ピン留めしたタブは触らない（Arc と同じ）。
+ * アーカイブは「閉じる」だが**消さない**。ライブラリから掘り返せる。
+ *
+ * 触らないもの:
+ * - アクティブなタブ（見ている最中に消えたら事故）
+ * - 音が出ているタブ（裏で再生中）
+ * - シークレットウィンドウのタブ（そもそも記録に残さない）
+ */
+function sweepArchive(): void {
+  const hours = getSettings().tabArchiveHours
+  if (hours <= 0) return
+  const threshold = Date.now() - hours * 3_600_000
+  let archived = 0
+  for (const win of [...windowsById.values()]) {
+    if (win.isDestroyed || win.isPrivate) continue
+    for (const tab of [...win.tabs]) {
+      if (tab.pinnedId !== null) continue
+      if (tab.key === win.activeTabKey) continue
+      if (tab.lastActiveAt > threshold) continue
+      if (tab.webContents?.isCurrentlyAudible()) continue
+      if (!/^https?:\/\//.test(tab.url)) {
+        // 空タブは残しても意味が無いので、記録せずに閉じるだけ
+        removeTab(win, tab.key)
+        continue
+      }
+      // アーカイブは removeTab に任せる（経路を1本にしておかないと理由がズレる）
+      removeTab(win, tab.key, { archiveReason: 'auto' })
+      archived += 1
+      log('tab.auto_archived', { key: tab.key, windowId: win.id })
+    }
+  }
+  if (archived > 0) pruneArchive()
+}
+
 export function stopBackgroundWork(): void {
   if (sleepTimer) clearInterval(sleepTimer)
   sleepTimer = null
@@ -1180,7 +1297,10 @@ function scheduleSessionSave(): void {
 }
 
 export function collectSession(): SavedWindow[] {
-  return [...windowsById.values()].filter((win) => !win.isDestroyed).map((win) => win.toSaved())
+  // シークレットウィンドウはディスクに残さない（復元もしない）
+  return [...windowsById.values()]
+    .filter((win) => !win.isDestroyed && !win.isPrivate)
+    .map((win) => win.toSaved())
 }
 
 /** 起動時にダイアログ待ちの状態を UI に送り直す（ウィンドウを作り直したとき用）。 */

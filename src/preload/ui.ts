@@ -2,6 +2,9 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { injectBrowserAction } from 'electron-chrome-extensions/browser-action'
 import type {
   AppStatus,
+  ArchivedTab,
+  DefaultBrowserStatus,
+  HistoryEntry,
   LoadedExtensionInfo,
   NemoSettings,
   NemoUiApi,
@@ -53,6 +56,7 @@ const api: NemoUiApi = {
   moveFavorite: (id, index) => ipcRenderer.invoke('nemo:move-favorite', id, index) as Promise<void>,
 
   createWindow: () => ipcRenderer.invoke('nemo:create-window') as Promise<void>,
+  createPrivateWindow: () => ipcRenderer.invoke('nemo:create-private-window') as Promise<void>,
   setSidebarVisible: (visible) => ipcRenderer.invoke('nemo:set-sidebar-visible', visible) as Promise<void>,
   setOverlay: (kind) => ipcRenderer.invoke('nemo:set-overlay', kind) as Promise<void>,
   toggleDevTools: (key) => ipcRenderer.invoke('nemo:toggle-devtools', key) as Promise<void>,
@@ -62,6 +66,18 @@ const api: NemoUiApi = {
 
   find: (key, query, options) => ipcRenderer.invoke('nemo:find', key, query, options) as Promise<void>,
   stopFind: (key) => ipcRenderer.invoke('nemo:stop-find', key) as Promise<void>,
+
+  queryHistory: (query) => ipcRenderer.invoke('nemo:query-history', query) as Promise<HistoryEntry[]>,
+  removeHistory: (url) => ipcRenderer.invoke('nemo:remove-history', url) as Promise<void>,
+  clearHistory: () => ipcRenderer.invoke('nemo:clear-history') as Promise<void>,
+  queryArchive: (query) => ipcRenderer.invoke('nemo:query-archive', query) as Promise<ArchivedTab[]>,
+  removeArchived: (url) => ipcRenderer.invoke('nemo:remove-archived', url) as Promise<void>,
+  clearArchive: () => ipcRenderer.invoke('nemo:clear-archive') as Promise<void>,
+
+  getDefaultBrowserStatus: () =>
+    ipcRenderer.invoke('nemo:get-default-browser-status') as Promise<DefaultBrowserStatus>,
+  requestDefaultBrowser: () =>
+    ipcRenderer.invoke('nemo:request-default-browser') as Promise<DefaultBrowserStatus>,
 
   cancelDownload: (id) => ipcRenderer.invoke('nemo:cancel-download', id) as Promise<void>,
   revealDownload: (id) => ipcRenderer.invoke('nemo:reveal-download', id) as Promise<void>,

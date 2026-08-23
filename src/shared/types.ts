@@ -81,6 +81,12 @@ export interface WindowState {
   sidebarVisible: boolean
   fullScreen: boolean
   find: FindState | null
+  /**
+   * シークレットウィンドウか。
+   * ページは**メモリ上だけのセッション**に置かれ、拡張はロードされない
+   * （＝ Bitwarden の自動入力が使えない）。UI にその旨を出すために持つ。
+   */
+  isPrivate: boolean
 }
 
 export interface FindState {
@@ -201,12 +207,49 @@ export interface Suggestion {
 }
 
 /* ------------------------------------------------------------------ *
+ * ライブラリ（履歴 / アーカイブ）
+ * ------------------------------------------------------------------ */
+
+export interface HistoryEntry {
+  url: string
+  title: string
+  visitCount: number
+  lastVisitedAt: number
+}
+
+export interface ArchivedTab {
+  url: string
+  title: string
+  archivedAt: number
+  /** `auto`（放置して自動）/ `closed`（閉じた）/ `imported`（Arc から取り込み）。 */
+  reason: string
+}
+
+/* ------------------------------------------------------------------ *
+ * 既定ブラウザ
+ * ------------------------------------------------------------------ */
+
+export interface DefaultBrowserStatus {
+  http: boolean
+  https: boolean
+  isDefault: boolean
+  /** この起動では設定できるか（開発起動では false）。 */
+  canRequest: boolean
+  reason: string | null
+}
+
+/* ------------------------------------------------------------------ *
  * 設定
  * ------------------------------------------------------------------ */
 
 export interface NemoSettings {
   /** 非アクティブタブを sleep させるまでの時間（分単位）。0 で無効。 */
   tabSleepMinutes: number
+  /**
+   * 触っていない一時タブを自動でアーカイブするまでの時間（時間単位）。0 で無効。
+   * アーカイブされたタブは閉じるが、ライブラリから掘り返せる。
+   */
+  tabArchiveHours: number
   sidebarVisible: boolean
   /** 検索エンジンの URL テンプレート（`{q}` を置換する）。 */
   searchTemplate: string
@@ -287,9 +330,13 @@ export interface NemoUiApi {
 
   /* ウィンドウ */
   createWindow(): Promise<void>
+  /** シークレットウィンドウ（拡張なし・メモリ内セッション）。 */
+  createPrivateWindow(): Promise<void>
   setSidebarVisible(visible: boolean): Promise<void>
   /** オーバーレイ（コマンドバー / 検索バー / ダウンロード）の表示切り替え。 */
-  setOverlay(kind: 'command-bar' | 'address-bar' | 'find' | 'downloads' | null): Promise<void>
+  setOverlay(
+    kind: 'command-bar' | 'address-bar' | 'find' | 'downloads' | 'library' | 'settings' | null
+  ): Promise<void>
   toggleDevTools(key: string): Promise<void>
   copyUrl(key: string): Promise<void>
 
@@ -299,6 +346,19 @@ export interface NemoUiApi {
   /* ページ内検索 */
   find(key: string, query: string, options?: { forward?: boolean; findNext?: boolean }): Promise<void>
   stopFind(key: string): Promise<void>
+
+  /* ライブラリ（履歴 / アーカイブ） */
+  queryHistory(query: string): Promise<HistoryEntry[]>
+  removeHistory(url: string): Promise<void>
+  clearHistory(): Promise<void>
+  queryArchive(query: string): Promise<ArchivedTab[]>
+  removeArchived(url: string): Promise<void>
+  clearArchive(): Promise<void>
+
+  /* 既定ブラウザ */
+  getDefaultBrowserStatus(): Promise<DefaultBrowserStatus>
+  /** 既定ブラウザにするよう OS に要求し、**確かめた結果**を返す。 */
+  requestDefaultBrowser(): Promise<DefaultBrowserStatus>
 
   /* ダウンロード */
   cancelDownload(id: string): Promise<void>

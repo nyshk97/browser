@@ -185,3 +185,19 @@ function isLoopbackHost(host) {
 function schemeForHost(host) {
   return isLoopbackHost(host) ? 'http:' : 'https:'
 }
+
+/**
+ * コマンドライン引数から「外部から開けと渡された URL」を拾う（計画 2-5）。
+ *
+ * macOS では `open-url` イベントで届くが、macOS 以外の経路と
+ * `open --args` からの起動では argv に乗る。**ここでは形だけ見て拾い**、
+ * 実際に開いてよいかは `isNavigableUrl` で改めて判定する
+ * （argv は外から来る文字列なので、拾った時点では信用しない）。
+ *
+ * @param {readonly string[]} argv 実行ファイル名を除いた引数
+ * @returns {string[]}
+ */
+export function urlsFromArgv(argv) {
+  if (!Array.isArray(argv)) return []
+  return argv.filter((arg) => typeof arg === 'string' && /^https?:\/\//i.test(arg))
+}

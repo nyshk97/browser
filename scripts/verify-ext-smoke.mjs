@@ -16,7 +16,7 @@ import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { connect, connectTo, listTargets, sleep, waitFor } from './lib/cdp.mjs'
+import { connect, connectTo, connectUi, listTargets, sleep, waitFor } from './lib/cdp.mjs'
 import {
   assertNemoNotRunning,
   getFreePort,
@@ -121,7 +121,7 @@ try {
   await startPagesServer()
   await startApp()
 
-  const ui = await connectTo(cdp, 'view=sidebar')
+  const ui = await connectUi(cdp)
 
   /* ---- 1. ロード ---- */
   const loaded = await ui.ev('window.nemo.getExtensions().then((e) => JSON.stringify(e))').then(JSON.parse)
@@ -133,7 +133,16 @@ try {
   check('オプションページが検出される', Boolean(loaded[0]?.optionsUrl), loaded[0]?.optionsUrl ?? '')
 
   /* ---- 2. service worker ---- */
-  check('service worker が起動している', Boolean(await swTarget()))
+  // 起動には数秒かかることがある（CI の遅いマシンで顕著）。瞬間値で判定しない。
+  const swUp = await (async () => {
+    const deadline = Date.now() + 20000
+    while (Date.now() < deadline) {
+      if (await swTarget()) return true
+      await sleep(500)
+    }
+    return false
+  })()
+  check('service worker が起動している', swUp)
 
   /* ---- 3. content script（トップ + iframe） ---- */
   await ui.ev(`window.nemo.createTab('${pages}/iframe.html').then((k) => k)`)

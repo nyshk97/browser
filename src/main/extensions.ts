@@ -141,13 +141,29 @@ export async function loadLockedExtensions(session: Electron.Session): Promise<L
         // ロード直後は Chromium 側の登録がまだ終わっておらず、1回目は失敗することがある。
         // そのまま error として出すと**実際には動いているのにログが赤くなる**ので、
         // 少し待って running を確認できたら失敗として扱わない。
+        // ロード直後は Chromium 側の登録がまだ終わっておらず、1回目は失敗することがある
+        // （CI の遅いマシンで実際に踏んだ）。少し待って running を確認し、
+        // それでもだめならもう一度だけ起動を頼む。error にするのは最後。
         const scope = `chrome-extension://${extension.id}`
         try {
           await session.serviceWorkers.startWorkerForScope(scope)
-        } catch (error) {
-          const running = await waitForServiceWorker(session, extension.id, 3000)
-          if (running) log('extension.service_worker_started_late', { id: extension.id })
-          else logError('extension.service_worker_start_failed', error, { id: extension.id })
+        } catch (firstError) {
+          if (await waitForServiceWorker(session, extension.id, 5000)) {
+            log('extension.service_worker_started_late', { id: extension.id })
+          } else {
+            try {
+              await session.serviceWorkers.startWorkerForScope(scope)
+              log('extension.service_worker_started_on_retry', { id: extension.id })
+            } catch (retryError) {
+              if (await waitForServiceWorker(session, extension.id, 5000)) {
+                log('extension.service_worker_started_late', { id: extension.id })
+              } else {
+                logError('extension.service_worker_start_failed', retryError ?? firstError, {
+                  id: extension.id
+                })
+              }
+            }
+          }
         }
       }
     } catch (error) {

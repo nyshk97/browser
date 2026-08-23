@@ -12,7 +12,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { connectTo, sleep } from './lib/cdp.mjs'
+import { connectUi, sleep } from './lib/cdp.mjs'
 import { getFreePort, isChildAlive, projectRoot, stopChildren, waitForHttp } from './lib/harness.mjs'
 
 const channel = process.argv[2] === 'stable' ? 'stable' : 'dev'
@@ -94,7 +94,7 @@ try {
   })
   check('パッケージした .app が起動してブラウザ UI を表示する', true)
 
-  const ui = await connectTo(cdp, 'view=sidebar')
+  const ui = await connectUi(cdp)
 
   // 拡張（Chromium のローダーは asar の中を読めないので、ここで落ちるなら同梱の仕方が間違い）
   const extensions = await ui

@@ -69,6 +69,21 @@ export async function connectTo(cdp, urlPart, { timeoutMs = 15000, type = null }
   }
 }
 
+/**
+ * ブラウザ UI（サイドバー）に繋ぎ、`window.nemo` が生えるまで待つ。
+ *
+ * target は `nemo://ui/` のロードが始まった時点で現れるので、
+ * つないだ直後に評価すると **実行コンテキストがまだ無く `undefined` が返る**
+ * （`JSON.parse(undefined)` で落ちて原因が分かりにくい。CI で踏んだ）。
+ */
+export async function connectUi(cdp, view = 'sidebar', options = {}) {
+  const session = await connectTo(cdp, `view=${view}`, options)
+  await waitFor(session, "typeof window.nemo === 'object' && window.nemo !== null ? 'ready' : ''", {
+    timeoutMs: options.timeoutMs ?? 15000
+  })
+  return session
+}
+
 /** 条件が満たされるまで ev を繰り返す。 */
 export async function waitFor(session, expression, { timeoutMs = 10000, interval = 200 } = {}) {
   const deadline = Date.now() + timeoutMs

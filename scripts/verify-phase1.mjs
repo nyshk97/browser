@@ -15,7 +15,7 @@
  *   node scripts/verify-phase1.mjs --session-write セッション復元の前半（タブを開く）
  *   node scripts/verify-phase1.mjs --session-read  再起動後に復元されたか見る
  */
-import { connectTo, listTargets, sleep, waitFor } from './lib/cdp.mjs'
+import { connectTo, connectUi, listTargets, sleep, waitFor } from './lib/cdp.mjs'
 
 const CDP = process.env.NEMO_CDP ?? 'http://127.0.0.1:9333'
 const PAGES = process.env.NEMO_TEST_PAGES ?? 'http://127.0.0.1:8787'
@@ -35,8 +35,8 @@ async function expectThrows(name, fn, detail = '') {
   }
 }
 
-const ui = await connectTo(CDP, 'view=sidebar')
-const overlay = await connectTo(CDP, 'view=overlay')
+const ui = await connectUi(CDP)
+const overlay = await connectUi(CDP, 'overlay')
 
 const state = () => ui.ev('window.nemo.getWindowState().then(s => JSON.stringify(s))').then(JSON.parse)
 const shared = () => ui.ev('window.nemo.getSharedState().then(s => JSON.stringify(s))').then(JSON.parse)

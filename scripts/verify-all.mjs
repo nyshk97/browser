@@ -21,6 +21,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   assertNemoNotRunning,
+  findUncaughtExceptions,
   getFreePort,
   isChildAlive,
   projectRoot,
@@ -169,6 +170,14 @@ try {
   } catch (error) {
     exitCode = 1
     console.error(`\n[verify] ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  // main プロセスの例外は握ってログに落としている（ブラウザごと止めないため）。
+  // 握ったまま気づかないと意味がないので、検証の最後に必ず見る。
+  const uncaught = findUncaughtExceptions(userDataDir)
+  if (uncaught.length > 0) {
+    exitCode = 1
+    console.error(`\n[verify] main プロセスの例外がログに残っている:\n  ${uncaught.join('\n  ')}`)
   }
 
   // 消してよいかは「生き残りがいないこと」だけで判断する。

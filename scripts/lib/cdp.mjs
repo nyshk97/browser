@@ -78,9 +78,18 @@ export async function connectTo(cdp, urlPart, { timeoutMs = 15000, type = null }
  */
 export async function connectUi(cdp, view = 'sidebar', options = {}) {
   const session = await connectTo(cdp, `view=${view}`, options)
+  const timeoutMs = options.timeoutMs ?? 30000
   await waitFor(session, "typeof window.nemo === 'object' && window.nemo !== null ? 'ready' : ''", {
-    timeoutMs: options.timeoutMs ?? 15000
+    timeoutMs
   })
+  // **アプリの初期化完了まで待つ**。
+  // 起動時のタブは UI のロード完了後に作られるので、ここを待たないと
+  // registry が空の状態を読んでしまう（実際に間欠的な FAIL になった）。
+  if (options.waitReady !== false) {
+    await waitFor(session, "window.nemo.getAppStatus().then((s) => (s.ready ? 'ready' : ''))", {
+      timeoutMs
+    })
+  }
   return session
 }
 

@@ -30,9 +30,24 @@ import { closePins, initPins } from './store/pins.js'
 import { closeHistory, initHistory } from './store/history.js'
 import { closePermissionStore, initPermissionStore } from './store/permissions.js'
 import { closeSession, initSession, markCleanExit } from './store/session.js'
+import { markReadyWhen, setExtensionCount } from './app-status.js'
 
 applyUserDataDir()
 app.setAppUserModelId(APP_ID)
+
+/**
+ * main プロセスの例外でブラウザごと止めない。
+ *
+ * 既定では Electron がエラーダイアログを出してアプリが使えなくなる。
+ * 一日中開いているブラウザでそれをやられると、開いていたタブごと失う。
+ * **握りつぶすのではなく診断ログに残す**（`app.uncaught_exception` で追える）。
+ */
+process.on('uncaughtException', (error) => {
+  logError('app.uncaught_exception', error)
+})
+process.on('unhandledRejection', (reason) => {
+  logError('app.unhandled_rejection', reason)
+})
 
 // custom protocol の登録は app.ready より前でなければならない
 registerUiScheme()
@@ -106,13 +121,16 @@ app
     try {
       const loaded = await loadLockedExtensions(pageSession)
       setLoadedExtensions(loaded)
+      setExtensionCount(loaded.length)
     } catch (error) {
       logError('extension.lock_read_failed', error)
       setLoadedExtensions([])
+      setExtensionCount(0)
     }
 
     // セッション復元（正常終了後もクラッシュ後も同じ経路で戻す）
     const shouldRestore = getSettings().restoreSession && restored.windows.length > 0
+    const startupWindows: ReturnType<typeof createWindow>[] = []
     if (shouldRestore) {
       log('session.restoring', {
         windows: restored.windows.length,
@@ -120,6 +138,7 @@ app
       })
       for (const saved of restored.windows) {
         const win = createWindow(undefined, { bounds: saved.bounds, noInitialTab: true })
+        startupWindows.push(win)
         win.whenUiReady(() => {
           saved.tabs.forEach((tab) => {
             // 復元直後は WebContents を作らない（数十タブを一斉に立ち上げない）。
@@ -136,8 +155,12 @@ app
         })
       }
     } else {
-      createWindow()
+      startupWindows.push(createWindow())
     }
+
+    // 起動時のタブが揃ってから ready にする。
+    // 外（自走検証など）はこの合図を待ってから registry を見る。
+    void markReadyWhen(startupWindows)
 
     log('app.ready', {
       channel,

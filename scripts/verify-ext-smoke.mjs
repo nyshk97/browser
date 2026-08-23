@@ -19,6 +19,7 @@ import path from 'node:path'
 import { connect, connectTo, connectUi, listTargets, sleep, waitFor } from './lib/cdp.mjs'
 import {
   assertNemoNotRunning,
+  findUncaughtExceptions,
   getFreePort,
   isChildAlive,
   projectRoot,
@@ -197,6 +198,25 @@ try {
     check('chrome.windows.remove でウィンドウが閉じる', uiCountFinal === uiCountBefore)
 
     await sw.ev(`chrome.tabs.remove(${bg?.id}).then(() => 'ok')`)
+
+    // 作った直後のウィンドウを閉じても main プロセスが落ちないこと。
+    //
+    // 準備待ちで積んである「初期タブを作る」処理が破棄済みウィンドウで走ると
+    // `Object has been destroyed` で落ちる。**このテストはその競合を強制はできない**
+    // （UI のロードが速いと素通りする）。競合そのものは registry 側のガードで塞いであり、
+    // 実際に起きたときは最後の「例外がログに1件も無い」で捕まえる。
+    const quick = await sw.ev(`chrome.windows.create({ url: '${pages}/index.html' })`)
+    await sw.ev(`chrome.windows.remove(${quick?.id}).then(() => 'ok', (e) => 'error: ' + e.message)`)
+    await sleep(3000)
+    const alive = await ui
+      .ev(`window.nemo.getAppStatus().then((s) => JSON.stringify(s))`)
+      .then(JSON.parse, () => null)
+    check(
+      'UI の準備前にウィンドウを閉じても main プロセスが落ちない',
+      alive !== null && alive.ready === true,
+      JSON.stringify(alive)
+    )
+
     sw.close()
   }
 
@@ -323,6 +343,10 @@ try {
     failures += 1
     console.error(`[verify:ext] ${error.message}`)
   }
+  // main プロセスの例外は握ってログに落としているので、ここで必ず見る
+  const uncaught = findUncaughtExceptions(userDataDir)
+  check('main プロセスの例外がログに1件も無い', uncaught.length === 0, uncaught.join(' / '))
+
   if (spawned.filter(isChildAlive).length === 0) {
     fs.rmSync(userDataDir, { recursive: true, force: true })
     fs.rmSync(extRoot, { recursive: true, force: true })

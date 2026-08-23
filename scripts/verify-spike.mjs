@@ -71,7 +71,31 @@ async function uiSession() {
   // ブラウザ UI は nemo://ui/ から配信される（Phase 1 で file:// をやめた）
   const t = (await targets()).find((x) => x.url.includes('view=sidebar'))
   if (!t) throw new Error('ブラウザ UI の target が見つからない')
-  return connect(t.webSocketDebuggerUrl)
+  const session = await connect(t.webSocketDebuggerUrl)
+  await waitForAppReady(session)
+  return session
+}
+
+/**
+ * アプリの初期化完了を待つ。
+ *
+ * 起動時のタブは UI のロード完了後に作られるので、
+ * 「UI の target が出た」だけで読み始めると registry が空に見える
+ * （同じ HEAD で PASS と FAIL が入れ替わる形で踏んだ）。
+ */
+async function waitForAppReady(session, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs
+  let last = null
+  while (Date.now() < deadline) {
+    try {
+      last = await session.ev('window.nemo.getAppStatus().then((s) => JSON.stringify(s))')
+      if (last && JSON.parse(last).ready) return
+    } catch {
+      // window.nemo がまだ生えていない
+    }
+    await sleep(300)
+  }
+  throw new Error(`アプリの初期化完了を待てなかった（最後の状態: ${last ?? 'なし'}）`)
 }
 
 /** サイドバーの UI target 数（= ウィンドウ数）。 */
@@ -144,6 +168,11 @@ const ui = await uiSession()
 // 1. registry の初期状態
 let state = await ui.ev('window.nemo.getWindowState()')
 check('registry が初期タブを1つ持つ', state.tabs.length === 1, JSON.stringify(state.tabs.map((t) => t.key)))
+if (state.tabs.length === 0) {
+  // ここから先はタブが前提なので、例外で落ちるのではなく理由を出して終わる
+  console.log('\n初期タブが1つも無いので以降の検証を打ち切る（アプリの初期化を待てていない）')
+  process.exit(1)
+}
 const tabKey = JSON.stringify(state.tabs[0].key)
 
 // 2. ナビゲーション

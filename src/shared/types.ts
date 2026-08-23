@@ -218,8 +218,18 @@ export interface LoadedExtensionInfo {
  * preload が公開する API
  * ------------------------------------------------------------------ */
 
+/** アプリの初期化状況。外から「もう見てよいか」を判断するために出す。 */
+export interface AppStatus {
+  /** 起動時のウィンドウとタブが揃ったか。 */
+  ready: boolean
+  windows: number
+  tabs: number
+  extensions: number
+}
+
 export interface NemoUiApi {
   /* 状態 */
+  getAppStatus(): Promise<AppStatus>
   getWindowState(): Promise<WindowState>
   getSharedState(): Promise<SharedState>
   getSettings(): Promise<NemoSettings>

@@ -151,3 +151,5 @@ node scripts/ext-webstore-key.mjs <id>  # Web Store の CRX から公開鍵を�
 - 外部 protocol（`mailto:` など）は allowlist に載っていても**初回は必ず確認する**
 - 証明書エラーは既定で拒否。続行はその場限りで、記憶しない
 - パッケージ成果物は Electron fuses（`runAsNode` 等）を `mise run package` が毎回検査する
+- main プロセスの例外でブラウザごと止めない（診断ログに `app.uncaught_exception` として残す）。
+  握ったまま気づかないことがないよう、自走検証は毎回**ログに例外が1件も無いこと**を確認する

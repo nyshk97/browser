@@ -12,7 +12,7 @@ import {
   redactUrl,
   resolveNavigationTarget
 } from './security.js'
-import { log } from './log.js'
+import { log, logError } from './log.js'
 import { cancelPrompts, currentPrompt, setPromptNotifier } from './prompts.js'
 import { getSettings } from './store/settings.js'
 import {
@@ -169,6 +169,14 @@ export class NemoTab {
     applyWebContentsSecurityDefaults(wc, (contents) => findWindowIdForPageContents(contents))
     attachTabEvents(this, wc)
 
+    // ここに来る時点でウィンドウは生きている前提だが、
+    // 落ちると「エラーダイアログが出てアプリごと止まる」なので最後にもう一度見る
+    if (this.window.isDestroyed || this.window.baseWindow.isDestroyed()) {
+      log('tab.materialize_rejected', { key: this.key, reason: 'window_destroyed' })
+      if (!wc.isDestroyed()) wc.close()
+      this.view = null
+      throw new Error('window has been destroyed')
+    }
     this.window.baseWindow.contentView.addChildView(view)
     view.setVisible(false)
 
@@ -311,13 +319,19 @@ function attachTabEvents(tab: NemoTab, wc: WebContents): void {
     )
     if (popupTarget === null) return { action: 'deny' }
 
-    if (disposition === 'new-window') {
-      const newWin = createWindow(popupTarget)
-      log('popup.window_created', { windowId: newWin.id, opener: tab.key })
-    } else {
-      const background = disposition === 'background-tab'
-      const newTab = createTab(win(), popupTarget, { background })
-      log('popup.tab_created', { key: newTab.key, opener: tab.key, background })
+    // ここは Electron のハンドラの中なので、投げると main プロセスまで届く。
+    // 開き元のウィンドウが閉じかけているときに createTab が拒否することがあるので握る。
+    try {
+      if (disposition === 'new-window') {
+        const newWin = createWindow(popupTarget)
+        log('popup.window_created', { windowId: newWin.id, opener: tab.key })
+      } else {
+        const background = disposition === 'background-tab'
+        const newTab = createTab(win(), popupTarget, { background })
+        log('popup.tab_created', { key: newTab.key, opener: tab.key, background })
+      }
+    } catch (error) {
+      logError('popup.create_failed', error, { opener: tab.key })
     }
     return { action: 'deny' }
   })
@@ -391,6 +405,7 @@ export class NemoWindow {
   private destroyed = false
   private uiReady = false
   private pendingAfterReady: (() => void)[] = []
+  private pendingAfterSettled: (() => void)[] = []
 
   constructor(bounds?: SavedWindow['bounds']) {
     this.id = NemoWindow.nextId++
@@ -452,7 +467,9 @@ export class NemoWindow {
         this.uiReady = true
         const queued = this.pendingAfterReady
         this.pendingAfterReady = []
-        for (const fn of queued) fn()
+        // 破棄済みなら実行しない（ロード完了と close が競合する）
+        if (!this.destroyed) for (const fn of queued) fn()
+        this.settle()
       } else {
         // オーバーレイは購読しかしないので、読み込み直後に**今の状態を送り直す**。
         // ここが無いと、起動直後に出た権限・認証ダイアログが
@@ -467,9 +484,37 @@ export class NemoWindow {
     return contentsView
   }
 
+  /**
+   * UI の準備ができてから実行する。
+   *
+   * **ウィンドウが破棄済みなら実行しない**。
+   * UI のロード完了前に閉じられたウィンドウでコールバック（初期タブの生成など）が走ると、
+   * 破棄済みの `contentView` に触って main プロセスが
+   * `TypeError: Object has been destroyed` で落ちる（エラーダイアログが出る）。
+   * `window.open` で開いたウィンドウをすぐ閉じると実際に起きる。
+   */
   whenUiReady(fn: () => void): void {
+    if (this.destroyed) return
     if (this.uiReady) fn()
     else this.pendingAfterReady.push(fn)
+  }
+
+  /**
+   * 「UI の準備ができた」か「破棄された」かのどちらかで必ず1回呼ぶ。
+   * 起動完了の判定に使う（閉じられたウィンドウを待ち続けて ready にならない、を避ける）。
+   */
+  whenUiSettled(fn: () => void): void {
+    if (this.uiReady || this.destroyed) {
+      fn()
+      return
+    }
+    this.pendingAfterSettled.push(fn)
+  }
+
+  private settle(): void {
+    const queued = this.pendingAfterSettled
+    this.pendingAfterSettled = []
+    for (const fn of queued) fn()
   }
 
   get chromeWebContents(): WebContents {
@@ -615,6 +660,11 @@ export class NemoWindow {
     this.destroyed = true
     log('window.destroy', { windowId: this.id, tabs: this.tabs.length })
 
+    // UI の準備待ちで積んであった処理は捨てる（破棄済みのウィンドウでは走らせない）。
+    // 「準備できたか破棄されたか」を待っている側にはここで知らせる。
+    this.pendingAfterReady = []
+    this.settle()
+
     cancelPrompts(this.id)
 
     // BaseWindow を閉じても子 WebContentsView の webContents は自動破棄されないため、
@@ -734,6 +784,13 @@ export interface CreateTabOptions {
 }
 
 export function createTab(win: NemoWindow, url: string = BLANK_URL, options: CreateTabOptions = {}): NemoTab {
+  // 破棄済みのウィンドウにタブを足さない。
+  // 足すと `contentView.addChildView` が投げ、main プロセスが落ちる。
+  if (win.isDestroyed || win.baseWindow.isDestroyed()) {
+    log('tab.create_rejected', { windowId: win.id, reason: 'window_destroyed' })
+    throw new Error('window has been destroyed')
+  }
+
   const previousActiveKey = win.activeTabKey
   // 呼び出し側が検証済みの URL を渡す前提だが、ここでも最後に必ず通す
   // （`loadURL` に生の文字列が渡る経路を1つも残さない）。

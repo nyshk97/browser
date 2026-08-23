@@ -107,6 +107,17 @@ if (mode === '--session-read') {
  * 1-0 セキュリティ境界
  * ------------------------------------------------------------------ */
 
+// 初期化完了の合図が「タブが揃ってから」であること。
+// ここが逆転すると、外から見たときに registry が空に見える瞬間ができる。
+{
+  const status = await ui.ev('window.nemo.getAppStatus().then((s) => JSON.stringify(s))').then(JSON.parse)
+  check(
+    '初期化完了の合図は起動時のタブが揃ってから立つ',
+    status.ready === true && status.windows >= 1 && status.tabs >= 1,
+    JSON.stringify(status)
+  )
+}
+
 const targets = await listTargets(CDP)
 check(
   'ブラウザ UI は nemo:// から配信されている（file:// を使わない）',
@@ -412,13 +423,16 @@ await ui.ev(`window.nemo.addFavorite(${JSON.stringify(reopened)}).then(() => 'ok
   const page = await connectTo(CDP, 'probe=move')
   await page.ev(`(() => { window.__nemo_move_marker = 'kept'; return 'ok' })()`)
   await ui.ev(`window.nemo.moveTabToNewWindow(${JSON.stringify(key)}).then(() => 'ok')`)
-  await sleep(1500)
+  // 移動は新しいウィンドウの UI が用意できてから走る。
+  // 固定 sleep で待つと遅いマシンで間欠的に落ちるので、結果そのものを待つ。
+  const gone = await waitFor(
+    ui,
+    `window.nemo.getWindowState().then(s => s.tabs.some(t => t.key === ${JSON.stringify(key)}) ? '' : 'moved')`,
+    { timeoutMs: 20000 }
+  ).catch(() => 'still-here')
+  check('移したタブは元のウィンドウから外れる', gone === 'moved', gone)
   const marker = await page.ev('window.__nemo_move_marker ?? "lost"')
   check('別ウィンドウへ移しても WebContents を作り直さない', marker === 'kept', marker)
-  const gone = await ui.ev(
-    `window.nemo.getWindowState().then(s => s.tabs.some(t => t.key === ${JSON.stringify(key)}) ? 'still-here' : 'moved')`
-  )
-  check('移したタブは元のウィンドウから外れる', gone === 'moved', gone)
   page.close()
 }
 

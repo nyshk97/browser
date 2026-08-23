@@ -13,7 +13,14 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { connectUi, sleep } from './lib/cdp.mjs'
-import { getFreePort, isChildAlive, projectRoot, stopChildren, waitForHttp } from './lib/harness.mjs'
+import {
+  findUncaughtExceptions,
+  getFreePort,
+  isChildAlive,
+  projectRoot,
+  stopChildren,
+  waitForHttp
+} from './lib/harness.mjs'
 
 const channel = process.argv[2] === 'stable' ? 'stable' : 'dev'
 const productName = channel === 'stable' ? 'Nemo' : 'Nemo Dev'
@@ -137,6 +144,9 @@ try {
     failures += 1
     console.error(`[verify-packaged] ${error.message}`)
   })
+  const uncaught = findUncaughtExceptions(userDataDir)
+  check('main プロセスの例外がログに1件も無い', uncaught.length === 0, uncaught.join(' / '))
+
   if (spawned.filter(isChildAlive).length === 0) {
     fs.rmSync(userDataDir, { recursive: true, force: true })
     fs.rmSync(downloadDir, { recursive: true, force: true })

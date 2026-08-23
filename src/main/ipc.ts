@@ -32,7 +32,15 @@ import {
   toggleFolder
 } from './store/pins.js'
 import { cancelDownload, clearDownloads, listDownloads, revealDownload } from './downloads.js'
-import type { LoadedExtensionInfo, PromptAnswer, SharedState, WindowState } from '../shared/types.js'
+import { getAppStatus } from './app-status.js'
+import { windowsById } from './registry.js'
+import type {
+  AppStatus,
+  LoadedExtensionInfo,
+  PromptAnswer,
+  SharedState,
+  WindowState
+} from '../shared/types.js'
 
 /**
  * IPC は必ず「送信元が登録済みウィンドウの UI WebContents か」と
@@ -126,6 +134,13 @@ function sharedState(): SharedState {
 
 export function registerIpcHandlers(): void {
   /* ---- 状態 ---- */
+  // 起動時のタブは UI のロード完了後に作られるので、
+  // 「UI が出た」だけでは registry が空に見える。外はこれを待ってから読む。
+  ipcMain.handle('nemo:get-app-status', (event): AppStatus => {
+    requireWindow(event)
+    return getAppStatus([...windowsById.values()].filter((win) => !win.isDestroyed))
+  })
+
   ipcMain.handle('nemo:get-window-state', (event): WindowState => requireWindow(event).toState())
   ipcMain.handle('nemo:get-shared-state', (event): SharedState => {
     requireWindow(event)

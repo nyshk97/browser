@@ -253,3 +253,38 @@ export async function waitForHttp(url, { timeoutMs = 30000, child = null, check 
   }
   throw new Error(`起動を待てなかった: ${url}`)
 }
+
+/**
+ * 診断ログに main プロセスの例外が残っていないか見る。
+ *
+ * Nemo は `uncaughtException` を握ってログに落とす（ブラウザごと止めないため）。
+ * その代わり、**検証では「1件も出ていないこと」を必ず確かめる**。
+ * これが無いと、握った例外に気づけないまま PASS してしまう。
+ *
+ * @param {string} userDataDir
+ * @returns {string[]} 見つかった行（空なら問題なし）
+ */
+export function findUncaughtExceptions(userDataDir) {
+  const logDir = path.join(userDataDir, 'logs')
+  let files
+  try {
+    files = fs.readdirSync(logDir).filter((name) => name.endsWith('.log'))
+  } catch {
+    return []
+  }
+  const found = []
+  for (const name of files) {
+    let text
+    try {
+      text = fs.readFileSync(path.join(logDir, name), 'utf8')
+    } catch {
+      continue
+    }
+    for (const line of text.split('\n')) {
+      if (line.includes('app.uncaught_exception') || line.includes('app.unhandled_rejection')) {
+        found.push(`${name}: ${line.slice(0, 300)}`)
+      }
+    }
+  }
+  return found
+}

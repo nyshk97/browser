@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { injectBrowserAction } from 'electron-chrome-extensions/browser-action'
 import type {
+  AppStatus,
   LoadedExtensionInfo,
   NemoSettings,
   NemoUiApi,
@@ -18,6 +19,7 @@ injectBrowserAction()
 
 /** 公開する API は個別に列挙する（オブジェクトを丸ごと渡さない）。 */
 const api: NemoUiApi = {
+  getAppStatus: () => ipcRenderer.invoke('nemo:get-app-status') as Promise<AppStatus>,
   getWindowState: () => ipcRenderer.invoke('nemo:get-window-state') as Promise<WindowState>,
   getSharedState: () => ipcRenderer.invoke('nemo:get-shared-state') as Promise<SharedState>,
   getSettings: () => ipcRenderer.invoke('nemo:get-settings') as Promise<NemoSettings>,

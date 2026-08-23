@@ -267,6 +267,97 @@ await ui.ev(`window.nemo.addFavorite(${JSON.stringify(reopened)}).then(() => 'ok
   check('Favorites から削除できる', (await shared()).favorites.length === 0)
 }
 
+// タブ行をピン留めへドラッグする経路（UI は D&D、IPC は pinTabAt）
+{
+  const dragKey = await ui.ev(`window.nemo.createTab('${PAGES}/login.html')`)
+  await ui.ev(`window.nemo.createFolder('落とし先').then(() => 'ok')`)
+  const target = (await shared()).pinned.find((n) => n.kind === 'folder')?.id
+  await ui.ev(
+    `window.nemo.pinTabAt(${JSON.stringify(dragKey)}, ${JSON.stringify(target)}, 0).then(() => 'ok')`
+  )
+  {
+    const sh = await shared()
+    const folder = sh.pinned.find((n) => n.id === target)
+    const s2 = await state()
+    check(
+      'タブをフォルダへ落とすと、その中にピン留めされる',
+      folder?.children?.[0]?.url?.includes('/login.html') === true,
+      JSON.stringify(folder?.children?.map((c) => c.title))
+    )
+    check(
+      '落としたタブは同じ定義に紐づく（別 ID を作らない）',
+      s2.tabs.find((t) => t.key === dragKey)?.pinnedId === folder?.children?.[0]?.id
+    )
+  }
+  // すでにピン留め済みのタブを掴み直したときは、定義を作らず場所だけ動かす。
+  // 作り直すと ID が変わり、他ウィンドウで開いている同じピン留めの紐付けが切れる
+  const definitionsBefore = flattenIds((await shared()).pinned).length
+  await ui.ev(`window.nemo.pinTabAt(${JSON.stringify(dragKey)}, null, 0).then(() => 'ok')`)
+  {
+    const sh = await shared()
+    check(
+      'ピン留め済みのタブを落とし直しても定義は増えない',
+      flattenIds(sh.pinned).length === definitionsBefore,
+      `${definitionsBefore} -> ${flattenIds(sh.pinned).length}`
+    )
+    check('落とした位置（先頭）に移る', sh.pinned[0]?.url?.includes('/login.html') === true)
+    await ui.ev(`window.nemo.unpin(${JSON.stringify(sh.pinned[0]?.id)}).then(() => 'ok')`)
+    await ui.ev(`window.nemo.unpin(${JSON.stringify(target)}).then(() => 'ok')`)
+  }
+  await ui.ev(`window.nemo.closeTab(${JSON.stringify(dragKey)}).then(() => 'ok')`)
+}
+
+// 落とし先の位置は「掴んだ場所」で前後してはいけない（実装が「抜いてから挿す」なので
+// 補正しないと、上から動かしたときだけ1つ後ろに入る）
+{
+  const ids = []
+  for (const name of ['A', 'B', 'C']) {
+    await ui.ev(`window.nemo.createFolder(${JSON.stringify(name)}).then(() => 'ok')`)
+    ids.push((await shared()).pinned.at(-1))
+  }
+  const titles = () =>
+    shared().then((sh) => sh.pinned.filter((n) => ids.some((i) => i.id === n.id)).map((n) => n.title))
+  const at = async (title) => (await shared()).pinned.findIndex((n) => n.title === title)
+
+  // A を C の位置へ（下へ動かす）→ C の手前
+  await ui.ev(`window.nemo.movePinned(${JSON.stringify(ids[0].id)}, null, ${await at('C')}).then(() => 'ok')`)
+  check(
+    '同じ階層で下へ動かすと、落とした行の手前に入る',
+    (await titles()).join('') === 'BAC',
+    (await titles()).join('')
+  )
+
+  // C を A の位置へ（上へ動かす）→ A の手前
+  await ui.ev(`window.nemo.movePinned(${JSON.stringify(ids[2].id)}, null, ${await at('A')}).then(() => 'ok')`)
+  check(
+    '同じ階層で上へ動かしても、落とした行の手前に入る',
+    (await titles()).join('') === 'BCA',
+    (await titles()).join('')
+  )
+
+  for (const node of ids) await ui.ev(`window.nemo.unpin(${JSON.stringify(node.id)}).then(() => 'ok')`)
+}
+
+// サイドバーの並び（見出しを置かず、一時タブの先頭に「新しいタブ」を出す）
+{
+  const dom = JSON.parse(
+    await ui.ev(`JSON.stringify({
+      todayLabel: document.body.innerText.includes('今日のタブ'),
+      newTabRow: Boolean(document.querySelector('.row.new-tab')),
+      newTabAboveTabs: (() => {
+        const rows = [...document.querySelectorAll('.scroll .row')]
+        const at = rows.findIndex((r) => r.classList.contains('new-tab'))
+        return at >= 0 && rows.slice(at + 1).every((r) => !r.classList.contains('pin'))
+      })(),
+      tabsDraggable: Boolean(document.querySelector('.scroll .row[draggable="true"]'))
+    })`)
+  )
+  check('一時タブに見出し（今日のタブ）を出さない', dom.todayLabel === false)
+  check('「新しいタブ」行がある', dom.newTabRow)
+  check('「新しいタブ」はピン留めより下・一時タブより上にある', dom.newTabAboveTabs)
+  check('タブ行はドラッグできる（ピン留めへ落とせる）', dom.tabsDraggable)
+}
+
 /* ------------------------------------------------------------------ *
  * 1-5 コマンドバーの補完
  * ------------------------------------------------------------------ */
@@ -503,6 +594,127 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
     (await overlay.ev(`document.querySelector('[data-testid]') ? 'open' : 'closed'`)) === 'closed'
   )
   page.close()
+}
+
+/* ------------------------------------------------------------------ *
+ * 2本指スワイプ / スーパーリロード（dev 常用で足りなかった分）
+ * ------------------------------------------------------------------ */
+
+{
+  const key = await ui.ev(`window.nemo.createTab('${PAGES}/index.html')`)
+  const loaded = (part) =>
+    waitFor(
+      ui,
+      `window.nemo.getWindowState().then(s => { const t = s.tabs.find(t => t.key === ${JSON.stringify(key)}); return t && !t.loading && t.url.includes('${part}') ? t.url : '' })`,
+      { timeoutMs: 15000 }
+    )
+  await loaded('/index.html')
+  await ui.ev(`window.nemo.navigate(${JSON.stringify(key)}, '${PAGES}/cache.html').then(() => 'ok')`)
+  await loaded('/cache.html')
+
+  const page = await connectTo(CDP, '/cache.html', { type: 'page' })
+  check(
+    'スワイプ判定はページから見えない（隔離ワールドに入っている）',
+    (await page.ev('String(window.__nemoSwipeAttached)')) === 'undefined'
+  )
+
+  /**
+   * トラックパッドのスワイプ相当（DOM の deltaX は指を右に払うと負）。
+   *
+   * 呼ぶ前に必ず間を空ける。**ページが切り替わった直後に流れ込む慣性では動かない**のが
+   * 仕様なので（そうしないと戻った勢いでもう1ページ戻る）、指を離した状態から始める。
+   */
+  const swipe = async (deltaX, deltaY = 0) => {
+    await sleep(500)
+    for (let i = 0; i < 12; i += 1) {
+      await page.send('Input.dispatchMouseEvent', {
+        type: 'mouseWheel',
+        x: 300,
+        y: 300,
+        deltaX: deltaX / 12,
+        deltaY: deltaY / 12,
+        pointerType: 'mouse'
+      })
+      await sleep(10)
+    }
+  }
+
+  const urlOf = () =>
+    ui.ev(
+      `window.nemo.getWindowState().then(s => { const t = s.tabs.find(t => t.key === ${JSON.stringify(key)}); return t ? t.url : '' })`
+    )
+
+  /** 遷移が終わるのを待つ。動かなかったときは今の URL をそのまま返して check に見せる。 */
+  const urlAfterSwipe = async (part) => {
+    try {
+      return await loaded(part)
+    } catch {
+      return await urlOf()
+    }
+  }
+
+  await swipe(-240)
+  const moved = await urlAfterSwipe('/index.html')
+  check('2本指スワイプ（指を右へ）で戻る', moved.includes('/index.html'), moved)
+
+  await swipe(240)
+  const forward = await urlAfterSwipe('/cache.html')
+  check('2本指スワイプ（指を左へ）で進む', forward.includes('/cache.html'), forward)
+
+  // iframe の中でも効くこと。`wheel` は iframe の境界を越えて親へ伝わらないので、
+  // メインフレームだけに入れていると埋め込み動画や広告の上で死ぬ。
+  // **子フレームの window へ直接**イベントを投げて、そこに判定が入っていることを見る
+  // （座標でホイールを送ると親フレームが受けてしまい、子に入れなくても通ってしまう）
+  {
+    await ui.ev(`window.nemo.navigate(${JSON.stringify(key)}, '${PAGES}/iframe.html').then(() => 'ok')`)
+    await loaded('/iframe.html')
+    // 注入した直後は「1つ前のページの慣性」とみなす作りなので、少し待ってから始める
+    await sleep(500)
+    const sent = await page.ev(`(() => {
+      const frame = document.querySelector('iframe').contentWindow
+      for (let i = 0; i < 12; i += 1) {
+        frame.dispatchEvent(new WheelEvent('wheel', { deltaX: -20, deltaY: 0, bubbles: true }))
+      }
+      return 'sent'
+    })()`)
+    const afterIframe = await urlAfterSwipe('/cache.html')
+    check('iframe の中でもスワイプで戻れる', afterIframe.includes('/cache.html'), `${sent} / ${afterIframe}`)
+    await ui.ev(`window.nemo.navigate(${JSON.stringify(key)}, '${PAGES}/cache.html').then(() => 'ok')`)
+    await loaded('/cache.html')
+  }
+
+  // 縦に流れているジェスチャでページが飛ばないこと（読んでいる最中の誤爆）
+  await swipe(-240, 400)
+  await sleep(600)
+  const afterVertical = await urlOf()
+  check('縦に流れるジェスチャでは履歴が動かない', afterVertical.includes('/cache.html'), afterVertical)
+  page.close()
+
+  /* スーパーリロード（右クリック / ⌘⇧R）は、キャッシュ済みのサブリソースまで取り直す */
+  const hits = async () => (await (await fetch(`${PAGES}/__nemo_cache_count__`)).json()).hits
+  const base = await hits()
+  await ui.ev(`window.nemo.reload(${JSON.stringify(key)}).then(() => 'ok')`)
+  await sleep(400)
+  await loaded('/cache.html')
+  await sleep(400)
+  const normal = await hits()
+  check(
+    '通常の再読み込みではキャッシュ済みのサブリソースを取り直さない',
+    normal === base,
+    `${base} -> ${normal}`
+  )
+
+  await ui.ev(`window.nemo.reload(${JSON.stringify(key)}, { ignoreCache: true }).then(() => 'ok')`)
+  await sleep(400)
+  await loaded('/cache.html')
+  let hard = normal
+  for (let i = 0; i < 20 && hard === normal; i += 1) {
+    await sleep(300)
+    hard = await hits()
+  }
+  check('キャッシュ無視の再読み込みでは取り直す', hard > normal, `${normal} -> ${hard}`)
+
+  await ui.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
 }
 
 /* ------------------------------------------------------------------ *

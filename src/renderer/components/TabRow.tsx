@@ -1,6 +1,14 @@
 import { Favicon } from './Sidebar.js'
 import type { TabState } from '../../shared/types.js'
 
+/**
+ * タブ行をドラッグしていることを表す DataTransfer の型。
+ *
+ * ピン留めツリー側は `dragover` の時点で「タブを掴んでいるのか」を知る必要があるが、
+ * その段階では `getData` が読めない（HTML5 の DnD 仕様）。`types` に出るこの型で見分ける。
+ */
+export const TAB_DRAG_TYPE = 'application/x-nemo-tab'
+
 /** サイドバーの1行（タブ実体）。DESIGN.md「状態の見せ方」に対応する。 */
 export function TabRow({
   tab,
@@ -27,6 +35,11 @@ export function TabRow({
       className={classes.join(' ')}
       style={indent ? { marginLeft: indent * 14 } : undefined}
       title={tab.title}
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.setData(TAB_DRAG_TYPE, tab.key)
+        event.dataTransfer.effectAllowed = 'move'
+      }}
       onClick={() => (onClick ? onClick() : void window.nemo.selectTab(tab.key))}
       onAuxClick={(event) => {
         // ミドルクリックで閉じる

@@ -8,6 +8,7 @@ import {
   findWindowByUiWebContents,
   moveTabToWindow,
   openPinned,
+  pinTabInto,
   removeTab,
   selectTab,
   togglePin,
@@ -202,14 +203,17 @@ export function registerIpcHandlers(): void {
     if (wc?.navigationHistory.canGoForward()) wc.navigationHistory.goForward()
   })
 
-  ipcMain.handle('nemo:reload', (event, key: unknown) => {
+  ipcMain.handle('nemo:reload', (event, key: unknown, options: unknown) => {
     const { win, tab } = requireTab(event, key)
+    // キャッシュ無視（サイドバーの再読み込みボタンを右クリック / ⌘⇧R）
+    const ignoreCache = options !== undefined && requireRecord(options, 'options')['ignoreCache'] === true
     if (tab.asleep) {
       selectTab(win, tab.key)
       return
     }
     tab.crashed = false
-    tab.webContents?.reload()
+    if (ignoreCache) tab.webContents?.reloadIgnoringCache()
+    else tab.webContents?.reload()
   })
 
   ipcMain.handle('nemo:stop', (event, key: unknown) => {
@@ -236,6 +240,13 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('nemo:pin-tab', (event, key: unknown) => {
     const { tab } = requireTab(event, key)
     togglePin(tab)
+  })
+
+  // タブ行をピン留めツリーへドラッグしたとき。位置まで指定できる点が ⌘D と違う
+  ipcMain.handle('nemo:pin-tab-at', (event, key: unknown, parentId: unknown, index: unknown) => {
+    const { tab } = requireTab(event, key)
+    if (typeof index !== 'number' || !Number.isInteger(index)) throw new Error('invalid index')
+    pinTabInto(tab, optionalString(parentId, 'parentId') ?? null, index)
   })
 
   ipcMain.handle('nemo:unpin', (event, pinnedId: unknown) => {

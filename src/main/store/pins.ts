@@ -125,6 +125,22 @@ function clampIndex(index: number, length: number): number {
   return Math.min(index, length)
 }
 
+/** ノードの今の居場所（親と、その中での位置）。 */
+function locate(
+  nodes: PinnedNode[],
+  id: string,
+  parentId: string | null = null
+): { parentId: string | null; index: number } | null {
+  for (const [index, node] of nodes.entries()) {
+    if (node.id === id) return { parentId, index }
+    if (node.kind === 'folder') {
+      const found = locate(node.children, id, node.id)
+      if (found) return found
+    }
+  }
+  return null
+}
+
 /** 自分自身 / 自分の子孫の中へは動かせない（動かすとツリーが消える）。 */
 function isDescendant(node: PinnedNode, candidateId: string): boolean {
   if (node.id === candidateId) return true
@@ -202,7 +218,15 @@ export function toggleFolder(id: string): void {
   commit({ ...data(), pinned: toggle(data().pinned) })
 }
 
-/** ドラッグ & ドロップの結果を反映する。 */
+/**
+ * ドラッグ & ドロップの結果を反映する。
+ *
+ * `index` は「**動かす前**のツリーで見た挿入位置」= その位置にある行の**手前**に入る。
+ * 実装は「抜いてから挿す」なので、同じ親の中で下へ動かすときは抜いたぶん詰める。
+ * 補正しないと、掴んだ場所によって落とし先が1つ前後する
+ * （上から動かすと対象の後ろ・下や一時タブから動かすと対象の前になり、
+ *  ドロップ線の見た目とも食い違う）。
+ */
 export function movePinned(id: string, parentId: string | null, index: number): void {
   const current = data()
   const target = findPinned(id)
@@ -215,10 +239,12 @@ export function movePinned(id: string, parentId: string | null, index: number): 
     const parent = findPinned(parentId)
     if (!parent || parent.kind !== 'folder') return
   }
+  const from = locate(current.pinned, id)
   const removed = removeNode(current.pinned, id)
   if (!removed.node) return
-  commit({ ...current, pinned: insertNode(removed.nodes, parentId, index, removed.node) })
-  log('pin.moved', { id, parentId, index })
+  const insertAt = from && from.parentId === parentId && from.index < index ? index - 1 : index
+  commit({ ...current, pinned: insertNode(removed.nodes, parentId, insertAt, removed.node) })
+  log('pin.moved', { id, parentId, index: insertAt })
 }
 
 /* ------------------------------------------------------------------ *

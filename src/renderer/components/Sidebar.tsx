@@ -8,7 +8,7 @@ const PAGE_PARTITION = 'persist:nemo'
 
 /**
  * サイドバー（DESIGN.md「3層の並び」）。
- * アドレスバー → Favorites → ピン留め → 今日のタブ の順で固定する。
+ * アドレスバー → Favorites → ピン留め → 一時タブ の順で固定する。
  */
 export function Sidebar(): React.JSX.Element {
   const state = useWindowState()
@@ -70,7 +70,7 @@ export function Sidebar(): React.JSX.Element {
       <div className="nav-row">
         <button
           type="button"
-          className="icon"
+          className="icon nav"
           title="戻る"
           disabled={!activeTab?.canGoBack}
           onClick={() => activeTab && void window.nemo.goBack(activeTab.key)}
@@ -79,7 +79,7 @@ export function Sidebar(): React.JSX.Element {
         </button>
         <button
           type="button"
-          className="icon"
+          className="icon nav"
           title="進む"
           disabled={!activeTab?.canGoForward}
           onClick={() => activeTab && void window.nemo.goForward(activeTab.key)}
@@ -88,13 +88,18 @@ export function Sidebar(): React.JSX.Element {
         </button>
         <button
           type="button"
-          className="icon"
-          title={activeTab?.loading ? '停止' : '再読み込み'}
+          className="icon nav"
+          title={activeTab?.loading ? '停止' : '再読み込み（右クリックでキャッシュを無視）'}
           disabled={!activeTab}
           onClick={() =>
             activeTab &&
             void (activeTab.loading ? window.nemo.stop(activeTab.key) : window.nemo.reload(activeTab.key))
           }
+          onContextMenu={(event) => {
+            // スーパーリロード。⌘⇧R と同じ経路（キャッシュを捨てて読み直す）
+            event.preventDefault()
+            if (activeTab) void window.nemo.reload(activeTab.key, { ignoreCache: true })
+          }}
         >
           {activeTab?.loading ? '×' : '⟳'}
         </button>
@@ -176,11 +181,22 @@ export function Sidebar(): React.JSX.Element {
         </div>
         <PinnedTree nodes={shared.pinned} openIds={openPinnedIds} tabs={pinnedTabs} />
 
-        <div className="label">今日のタブ</div>
+        {/*
+          ここから下が一時タブ。見出しは置かず、区切り線と「新しいタブ」行で
+          ピン留めとの境目を示す（Arc と同じ並び）。
+        */}
+        <div className="tabs-sep" />
+        <button
+          type="button"
+          className="row new-tab"
+          onClick={() => void window.nemo.setOverlay('command-bar')}
+        >
+          <span className="plus">＋</span>
+          <span className="tt">新しいタブ</span>
+        </button>
         {ephemeral.map((tab) => (
           <TabRow key={tab.key} tab={tab} active={tab.key === state?.activeTabKey} />
         ))}
-        {ephemeral.length === 0 ? <div className="empty">タブなし</div> : null}
       </div>
 
       <ExtensionFooter extensions={extensions} />

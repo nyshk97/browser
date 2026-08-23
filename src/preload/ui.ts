@@ -33,12 +33,14 @@ const api: NemoUiApi = {
   navigate: (key, input) => ipcRenderer.invoke('nemo:navigate', key, input) as Promise<void>,
   goBack: (key) => ipcRenderer.invoke('nemo:go-back', key) as Promise<void>,
   goForward: (key) => ipcRenderer.invoke('nemo:go-forward', key) as Promise<void>,
-  reload: (key) => ipcRenderer.invoke('nemo:reload', key) as Promise<void>,
+  reload: (key, options) => ipcRenderer.invoke('nemo:reload', key, options) as Promise<void>,
   stop: (key) => ipcRenderer.invoke('nemo:stop', key) as Promise<void>,
   setZoom: (key, factor) => ipcRenderer.invoke('nemo:set-zoom', key, factor) as Promise<number>,
 
   openPinned: (pinnedId) => ipcRenderer.invoke('nemo:open-pinned', pinnedId) as Promise<void>,
   pinTab: (key) => ipcRenderer.invoke('nemo:pin-tab', key) as Promise<void>,
+  pinTabAt: (key, parentId, index) =>
+    ipcRenderer.invoke('nemo:pin-tab-at', key, parentId, index) as Promise<void>,
   unpin: (pinnedId) => ipcRenderer.invoke('nemo:unpin', pinnedId) as Promise<void>,
   addFavorite: (key) => ipcRenderer.invoke('nemo:add-favorite', key) as Promise<void>,
   removeFavorite: (favoriteId) => ipcRenderer.invoke('nemo:remove-favorite', favoriteId) as Promise<void>,

@@ -1,4 +1,4 @@
-import { BaseWindow, WebContentsView, session, type WebContents } from 'electron'
+import { BaseWindow, WebContentsView, session, webFrameMain, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,6 +13,7 @@ import {
   resolveNavigationTarget
 } from './security.js'
 import { log, logError } from './log.js'
+import { buildSwipeInjection } from '../shared/swipe-gesture.js'
 import { cancelPrompts, currentPrompt, setPromptNotifier } from './prompts.js'
 import { getSettings } from './store/settings.js'
 import {
@@ -20,6 +21,7 @@ import {
   findPinnedByUrl,
   getFavorites,
   getPinned,
+  movePinned,
   onPinsChanged,
   pinUrl,
   unpin as unpinDefinition
@@ -309,6 +311,8 @@ function attachTabEvents(tab: NemoTab, wc: WebContents): void {
   })
   wc.on('unresponsive', () => log('tab.unresponsive', { key: tab.key }))
 
+  attachSwipeNavigation(tab, wc)
+
   // popup（window.open / target=_blank / ⌘クリック）を Nemo のタブモデルに乗せる。
   // allow を返すと Electron が BaseWindow 外の BrowserWindow を作ってしまうため、
   // deny した上で自前で作る。
@@ -335,6 +339,69 @@ function attachTabEvents(tab: NemoTab, wc: WebContents): void {
       logError('popup.create_failed', error, { opener: tab.key })
     }
     return { action: 'deny' }
+  })
+}
+
+/**
+ * トラックパッドの2本指スワイプで戻る / 進む（macOS の作法）。
+ *
+ * Electron は Chromium の overscroll history navigation を公開しておらず、
+ * `BaseWindow` の `swipe` イベントは3本指スワイプにしか出ない。
+ * `webContents.on('input-event')` も **ホイールの deltaX を渡してくれない**（Electron 41 で実測。
+ * `type` と `modifiers` だけが入っている）ので、main 側だけでは方向すら判定できない。
+ *
+ * そこで判定コードを**隔離ワールド**へ入れ、ページの `wheel` から判定する。
+ * ワールドが分かれているのでページからは覗けず、特権 API も渡らない
+ * （ページ側 preload を持たない方針は崩さない）。履歴を動かすのはページ内の
+ * `history.back()` で、Nemo 側の状態は既存の `did-navigate` が拾う。
+ */
+const SWIPE_WORLD_ID = 1729
+const swipeInjection = buildSwipeInjection()
+
+function attachSwipeNavigation(tab: NemoTab, wc: WebContents): void {
+  const injectMain = (): void => {
+    wc.executeJavaScriptInIsolatedWorld(SWIPE_WORLD_ID, [{ code: swipeInjection }]).catch((error) => {
+      logError('tab.swipe_inject_failed', error, { key: tab.key })
+    })
+  }
+
+  /**
+   * 子フレーム。`wheel` は iframe の境界を越えて親へ伝わらないので、ここに入れないと
+   * **埋め込み動画や広告の上でスワイプが死ぬ**。
+   *
+   * `WebFrameMain` には隔離ワールドで実行する API が無い（`executeJavaScript` だけ）ので、
+   * 子フレームぶんはページと同じワールドに入る。渡しているのは
+   * 「`wheel` を見て `history.back()` を呼ぶ」だけで、**ページが元から持っている能力の範囲**
+   * （特権 API は載せない方針は変わらない）。見えて困るのはマーカー変数くらい。
+   */
+  const injectFrame = (frame: Electron.WebFrameMain | undefined | null): void => {
+    if (!frame) return
+    frame.executeJavaScript(swipeInjection, false).catch(() => {
+      // 差し替わっている途中のフレームでは失敗する。次のナビゲーションで入り直す
+    })
+  }
+
+  const injectAll = (): void => {
+    try {
+      injectMain()
+      const main = wc.mainFrame
+      for (const frame of main.framesInSubtree) {
+        if (frame !== main) injectFrame(frame)
+      }
+    } catch {
+      // WebContents が壊れている（破棄と競合した）。次のナビゲーションで入り直す
+    }
+  }
+
+  // document が変わるたびに入れ直す。**戻る / 進むで戻ってきたページも入れ直す**
+  // （bfcache から復元されると `dom-ready` は出ないので、それだけでは
+  //  一度戻ったあと二度と効かない。検証で踏んだ）。
+  // 注入コード自身が二重登録を弾くので、余分に呼んでも害はない。
+  wc.on('dom-ready', injectAll)
+  wc.on('did-navigate', injectAll)
+  wc.on('did-frame-navigate', (_event, _url, _code, _status, isMainFrame, processId, routingId) => {
+    if (isMainFrame) return
+    injectFrame(webFrameMain.fromId(processId, routingId))
   })
 }
 
@@ -1005,6 +1072,24 @@ export function togglePin(tab: NemoTab): void {
   if (!node) return
   tab.pinnedId = node.id
   tab.window.pushState()
+}
+
+/**
+ * タブをピン留めツリーの**指定した位置**へ置く（サイドバーへのドラッグ & ドロップ）。
+ *
+ * すでにピン留め済みのタブを掴んだときは、定義を作り直さず場所だけ動かす。
+ * 作り直すと ID が変わり、他ウィンドウで開いている同じピン留めの紐付けが切れる。
+ */
+export function pinTabInto(tab: NemoTab, parentId: string | null, index: number): void {
+  let pinnedId = tab.pinnedId
+  if (!pinnedId) {
+    const node = findPinnedByUrl(tab.url) ?? pinUrl(tab.url, tab.title)
+    if (!node) return
+    pinnedId = node.id
+    tab.pinnedId = pinnedId
+    tab.window.pushState()
+  }
+  movePinned(pinnedId, parentId, index)
 }
 
 /** ピン留め定義を、そのウィンドウで開く（既に開いていればそれを選ぶ）。 */

@@ -1,12 +1,21 @@
 import { useState } from 'react'
 import { Favicon } from './Sidebar.js'
+import { TAB_DRAG_TYPE } from './TabRow.js'
 import type { PinnedNode, TabState } from '../../shared/types.js'
+
+/** 掴んでいるのがタブ行か（ピン留め同士の並べ替えと区別する）。 */
+function isTabDrag(event: React.DragEvent): boolean {
+  return event.dataTransfer.types.includes(TAB_DRAG_TYPE)
+}
 
 /**
  * ピン留めのツリー（フォルダで入れ子）。
  *
  * 「定義」を描く。開いているタブがあれば、その状態（読み込み中・未読）を重ねて出す。
  * ピン留めタブを閉じても定義は残るので、行そのものは消えない（Arc の挙動）。
+ *
+ * 落とせるものは2種類ある。ピン留め同士の並べ替えと、下の一時タブからの移動
+ * （= その場でピン留めして、落とした位置に置く）。
  */
 export function PinnedTree({
   nodes,
@@ -19,6 +28,16 @@ export function PinnedTree({
 }): React.JSX.Element {
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropHint, setDropHint] = useState<string | null>(null)
+
+  /** 落とされたものを、指定の位置に置く。タブならピン留めしてから動かす。 */
+  const drop = (event: React.DragEvent, parentId: string | null, index: number): void => {
+    const tabKey = event.dataTransfer.getData(TAB_DRAG_TYPE)
+    if (tabKey) {
+      void window.nemo.pinTabAt(tabKey, parentId, index)
+      return
+    }
+    if (dragId) void window.nemo.movePinned(dragId, parentId, index)
+  }
 
   const render = (list: PinnedNode[], parentId: string | null, depth: number): React.JSX.Element[] =>
     list.map((node, index) => {
@@ -49,10 +68,10 @@ export function PinnedTree({
           event.preventDefault()
           event.stopPropagation()
           setDropHint(null)
-          if (!dragId || dragId === node.id) return
+          if (!isTabDrag(event) && (!dragId || dragId === node.id)) return
           // フォルダの上に落としたら中に入れる。リンクの上なら同じ階層のその位置へ。
-          if (node.kind === 'folder') void window.nemo.movePinned(dragId, node.id, 0)
-          else void window.nemo.movePinned(dragId, parentId, index)
+          if (node.kind === 'folder') drop(event, node.id, 0)
+          else drop(event, parentId, index)
           setDragId(null)
         }
       }
@@ -120,15 +139,36 @@ export function PinnedTree({
       )
     })
 
-  if (nodes.length === 0) return <div className="empty">⌘D でピン留め</div>
+  // 空のときも受け皿は要る（最初の1件はここへドラッグして作る）
+  if (nodes.length === 0) {
+    return (
+      <div
+        className={`empty droppable${dropHint === 'root' ? ' drop' : ''}`}
+        onDragOver={(event) => {
+          event.preventDefault()
+          setDropHint('root')
+        }}
+        onDragLeave={() => setDropHint(null)}
+        onDrop={(event) => {
+          event.preventDefault()
+          setDropHint(null)
+          drop(event, null, 0)
+          setDragId(null)
+        }}
+      >
+        ⌘D かドラッグでピン留め
+      </div>
+    )
+  }
 
   return (
     <div
       className="pins"
       onDragOver={(event) => event.preventDefault()}
-      onDrop={() => {
+      onDrop={(event) => {
         // 空きスペースに落としたら最上位の末尾へ
-        if (dragId) void window.nemo.movePinned(dragId, null, nodes.length)
+        event.preventDefault()
+        drop(event, null, nodes.length)
         setDragId(null)
         setDropHint(null)
       }}

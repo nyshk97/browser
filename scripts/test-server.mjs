@@ -16,6 +16,16 @@ const port = Number(process.env.PORT ?? 8787)
 const MARKER_PATH = '/__nemo_test_pages__'
 /** ダウンロードの検証用。Content-Disposition を付けて必ずダウンロードにする。 */
 const DOWNLOAD_PATH = '/__nemo_download__'
+/**
+ * スーパーリロード（キャッシュ無視）の検証用。
+ *
+ * 長い max-age を付けたサブリソースを返し、**取りに来た回数**を数える。
+ * 普通の再読み込みではキャッシュから使われて増えず、キャッシュ無視なら増える。
+ * メインリソースは再読み込みで必ず再検証されるので、差が出るのはサブリソースの方。
+ */
+const CACHE_ASSET_PATH = '/__nemo_cached_asset__'
+const CACHE_COUNT_PATH = '/__nemo_cache_count__'
+let cachedAssetHits = 0
 
 const types = {
   '.html': 'text/html; charset=utf-8',
@@ -38,6 +48,21 @@ const server = http.createServer((req, res) => {
       'content-disposition': 'attachment; filename="nemo-verify.bin"'
     })
     res.end(body)
+    return
+  }
+
+  if (url.pathname === CACHE_ASSET_PATH) {
+    cachedAssetHits += 1
+    res.writeHead(200, {
+      'content-type': 'text/javascript; charset=utf-8',
+      'cache-control': 'public, max-age=600'
+    })
+    res.end(`window.__nemoCachedAsset = ${cachedAssetHits}\n`)
+    return
+  }
+  if (url.pathname === CACHE_COUNT_PATH) {
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+    res.end(JSON.stringify({ hits: cachedAssetHits }))
     return
   }
 

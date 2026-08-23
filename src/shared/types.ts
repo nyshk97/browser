@@ -245,13 +245,16 @@ export interface NemoUiApi {
   navigate(key: string, input: string): Promise<void>
   goBack(key: string): Promise<void>
   goForward(key: string): Promise<void>
-  reload(key: string): Promise<void>
+  /** `ignoreCache` でキャッシュを無視して読み直す（スーパーリロード）。 */
+  reload(key: string, options?: { ignoreCache?: boolean }): Promise<void>
   stop(key: string): Promise<void>
   setZoom(key: string, factor: number): Promise<number>
 
   /* サイドバー（定義） */
   openPinned(pinnedId: string): Promise<void>
   pinTab(key: string): Promise<void>
+  /** タブをピン留めツリーの指定位置へ置く（サイドバーへのドラッグ & ドロップ）。 */
+  pinTabAt(key: string, parentId: string | null, index: number): Promise<void>
   unpin(pinnedId: string): Promise<void>
   addFavorite(key: string): Promise<void>
   removeFavorite(favoriteId: string): Promise<void>

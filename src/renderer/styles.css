@@ -111,12 +111,25 @@ input {
   width: 26px;
   height: 24px;
   border-radius: 6px;
+  font-size: 14px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   color: var(--nemo-ink-dim);
   position: relative;
   transition: background 0.12s;
+}
+
+/*
+ * 戻る / 進む / 再読み込みはブラウザで一番よく押すので、他のアイコンより大きくする
+ * （グリフ自体が小さい記号なので、箱だけ広げても押しやすくならない）。
+ * 同じ行にあるサイドバー開閉ボタンは対象外なので、行ではなくボタンに付ける。
+ */
+.icon.nav {
+  width: 32px;
+  height: 30px;
+  font-size: 20px;
+  line-height: 1;
 }
 
 .icon:hover:not(:disabled) {
@@ -231,6 +244,21 @@ input {
   opacity: 0.6;
 }
 
+/* ピン留めが空のときも、タブを落とせる場所だと分かるようにする */
+.empty.droppable.drop {
+  opacity: 1;
+  color: var(--nemo-ink);
+  box-shadow: inset 0 0 0 1px var(--nemo-accent);
+  border-radius: var(--nemo-radius);
+}
+
+/* ピン留めと一時タブの境目。見出しの代わりに置く */
+.tabs-sep {
+  height: 1px;
+  margin: 10px 8px 6px;
+  background: var(--nemo-border);
+}
+
 /* ------------------------------------------------------------------ *
  * 行（タブ・ピン留め・フォルダ）
  * ------------------------------------------------------------------ */
@@ -264,8 +292,32 @@ input {
   box-shadow: inset 2px 0 0 var(--nemo-danger);
 }
 
+/* 落とすと「その行の手前」に入るので、線は上側に出す（movePinned の index の意味と揃える） */
 .row.drop {
-  box-shadow: inset 0 -2px 0 var(--nemo-accent);
+  box-shadow: inset 0 2px 0 var(--nemo-accent);
+}
+
+/* フォルダは手前ではなく「中」に入るので、線ではなく枠で示す */
+.row.folder.drop {
+  box-shadow: inset 0 0 0 1px var(--nemo-accent);
+}
+
+/* 一時タブの先頭に置く「新しいタブ」。タブ行と同じ高さで、色だけ落とす */
+.row.new-tab {
+  width: 100%;
+  color: var(--nemo-ink-dim);
+  text-align: left;
+}
+
+.row.new-tab:hover {
+  color: var(--nemo-ink);
+}
+
+.row.new-tab .plus {
+  width: 16px;
+  flex: 0 0 auto;
+  text-align: center;
+  font-size: 11px;
 }
 
 .row .tt {

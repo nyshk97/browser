@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>キャッシュの確認</title>
+  </head>
+  <body>
+    <h1>キャッシュの確認</h1>
+    <!--
+      長い max-age が付いたサブリソース。
+      普通の再読み込みではここを取りに来ない（キャッシュから使う）が、
+      キャッシュ無視の再読み込みでは取りに来る。サーバ側で回数を数えている。
+    -->
+    <script src="/__nemo_cached_asset__"></script>
+    <p id="hit"></p>
+    <script>
+      document.getElementById('hit').textContent = `asset hits at load: ${window.__nemoCachedAsset}`
+    </script>
+  </body>
+</html>

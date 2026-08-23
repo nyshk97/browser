@@ -1,4 +1,4 @@
-import { clipboard, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, clipboard, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { PAGE_PARTITION, userDataPath } from './paths.js'
 import { restartServiceWorkers } from './extensions.js'
 import { log } from './log.js'
@@ -34,6 +34,7 @@ import {
 } from './store/pins.js'
 import { cancelDownload, clearDownloads, listDownloads, revealDownload } from './downloads.js'
 import { getAppStatus } from './app-status.js'
+import { checkForUpdatesManually, getUpdateState, promptRestart } from './updater.js'
 import { windowsById } from './registry.js'
 import type {
   AppStatus,
@@ -130,7 +131,13 @@ function resolveInput(input: unknown): string {
 }
 
 function sharedState(): SharedState {
-  return { favorites: getFavorites(), pinned: getPinned(), downloads: listDownloads() }
+  return {
+    favorites: getFavorites(),
+    pinned: getPinned(),
+    downloads: listDownloads(),
+    version: app.getVersion(),
+    update: getUpdateState()
+  }
 }
 
 export function registerIpcHandlers(): void {
@@ -428,6 +435,16 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('nemo:open-log-folder', (event) => {
     requireWindow(event)
     void shell.openPath(userDataPath('logs'))
+  })
+
+  ipcMain.handle('nemo:check-for-updates', (event) => {
+    requireWindow(event)
+    checkForUpdatesManually()
+  })
+
+  ipcMain.handle('nemo:restart-for-update', (event) => {
+    requireWindow(event)
+    promptRestart()
   })
 }
 

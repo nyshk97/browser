@@ -441,6 +441,23 @@ input {
   color: var(--nemo-danger);
 }
 
+/* バージョン表示。ふだんは沈めておき、更新の準備ができたときだけ主張させる */
+.footer .version {
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.footer .version.dim:hover {
+  background: var(--nemo-surface);
+  color: var(--nemo-ink);
+}
+
+.footer .version.ready {
+  background: var(--nemo-accent);
+  color: #fff;
+}
+
 /* ------------------------------------------------------------------ *
  * オーバーレイ共通
  * ------------------------------------------------------------------ */

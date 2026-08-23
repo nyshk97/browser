@@ -10,9 +10,11 @@
  * - `better-sqlite3` のネイティブバイナリが asar の外に出ているか
  * - `electron-chrome-extensions` の preload が同梱されているか
  * - lock された拡張 artifact が同梱されているか
- * - Info.plist の bundle id / 表示名が channel と一致しているか
+ * - Info.plist の bundle id / 表示名 / バージョンが期待どおりか
+ * - 更新 feed（app-update.yml）が **stable にだけ**入っているか
+ * - 配布用の署名をしたときは、署名と公証が実際に有効か
  */
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { projectRoot } from './lib/harness.mjs'
@@ -53,6 +55,19 @@ check(
 )
 check('表示名が channel と一致する', readPlist('CFBundleName') === productName, readPlist('CFBundleName'))
 
+// バージョンは package.json が唯一の源。2箇所に手書きが増えると必ずズレる。
+const expectedVersion = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8')).version
+check(
+  'CFBundleShortVersionString が package.json と一致する',
+  readPlist('CFBundleShortVersionString') === expectedVersion,
+  readPlist('CFBundleShortVersionString')
+)
+check(
+  'CFBundleVersion が package.json と一致する',
+  readPlist('CFBundleVersion') === expectedVersion,
+  readPlist('CFBundleVersion')
+)
+
 /* ---- ネイティブモジュール ---- */
 const sqliteNode = fs.existsSync(path.join(unpacked, 'node_modules', 'better-sqlite3'))
 check('better-sqlite3 が asar の外に出ている', sqliteNode, unpacked)
@@ -85,6 +100,57 @@ check(
     fs.existsSync(path.join(resources, 'THIRD-PARTY-NOTICES.md'))
 )
 check('UI の preload が同梱されている', /\/out\/preload\/ui\.cjs/.test(asarList))
+
+/* ---- 更新 feed ---- */
+/**
+ * **dev 版に app-update.yml があってはならない**。
+ * 入っていると dev で更新チェックが走った瞬間に常用版のビルドで置き換わる。
+ * updater.ts 側の `isDevChannel` ガードと合わせて二重防御にしている。
+ */
+const updateFeed = path.join(resources, 'app-update.yml')
+if (channel === 'stable') {
+  const feed = fs.existsSync(updateFeed) ? fs.readFileSync(updateFeed, 'utf8') : ''
+  check('常用版に更新 feed（app-update.yml）が入っている', feed.length > 0)
+  check(
+    '更新 feed が GitHub の nyshk97/nemo を指している',
+    /provider:\s*github/.test(feed) && /owner:\s*nyshk97/.test(feed) && /repo:\s*nemo/.test(feed),
+    feed.replace(/\n/g, ' ').trim()
+  )
+} else {
+  check('dev 版に更新 feed（app-update.yml）が入っていない', !fs.existsSync(updateFeed))
+}
+
+/* ---- 署名・公証（配布用にビルドしたときだけ） ---- */
+if (process.env['NEMO_SIGN'] === '1') {
+  const codesign = (args) => {
+    try {
+      execFileSync('codesign', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+      return { ok: true, out: '' }
+    } catch (error) {
+      return { ok: false, out: String(error.stderr ?? error.message).trim() }
+    }
+  }
+
+  const verified = codesign(['--verify', '--strict', '--deep', appPath])
+  check('配布用の署名が壊れていない', verified.ok, verified.out)
+
+  // `codesign -dvv` は **stderr** に出す。stdout だけ読むと常に空になり、
+  // 「Authority が見つからない」という誤った FAIL になる。
+  const shown = spawnSync('codesign', ['-dvv', appPath], { encoding: 'utf8' })
+  const info = `${shown.stdout ?? ''}${shown.stderr ?? ''}`
+  // ad-hoc 署名（`Signature=adhoc`）のまま配ると Gatekeeper に弾かれる
+  check('ad-hoc 署名ではない', !/Signature=adhoc/.test(info))
+  check('Developer ID で署名されている', /Authority=Developer ID Application/.test(info))
+
+  if (process.env['NEMO_NOTARIZE'] === '1') {
+    try {
+      execFileSync('xcrun', ['stapler', 'validate', appPath], { stdio: ['ignore', 'pipe', 'pipe'] })
+      check('公証のチケットが staple されている', true)
+    } catch (error) {
+      check('公証のチケットが staple されている', false, String(error.stderr ?? error.message).trim())
+    }
+  }
+}
 
 /* ---- fuses ---- */
 const { FuseV1Options, getCurrentFuseWire } = await import('@electron/fuses')

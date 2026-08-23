@@ -84,6 +84,11 @@ run = "node scripts/package.mjs dev"
 description = "常用版をパッケージして成果物を検査する（.app + dmg）"
 run = "node scripts/package.mjs stable"
 
+[tasks.release]
+description = "常用版をリリースする（ビルド→署名→notarize→GitHub Release→タグ。1コマンドで完結する唯一の経路）"
+usage = 'arg "<version>" default="patch" help="patch / minor / major / x.y.z"'
+run = 'node scripts/release.mjs "$usage_version"'
+
 [tasks.licenses]
 description = "依存ライブラリのライセンスを棚卸しする（GPL-3.0 と衝突しないことの確認）"
 run = "node scripts/license-report.mjs --check"

@@ -15,6 +15,7 @@ import {
   type NemoWindow
 } from './registry.js'
 import { addFavorite } from './store/pins.js'
+import { checkForUpdatesManually } from './updater.js'
 
 /**
  * メニューバーとキーバインド（計画 1-7）。
@@ -155,7 +156,23 @@ function runCommand(command: string): void {
   }
 }
 
+/**
+ * About パネル（Apple メニュー隣のアプリメニュー）。
+ *
+ * `version`（= CFBundleVersion）を空にしておかないと、
+ * 表示用のバージョンと同じ数字が2行に分かれて出る。
+ */
+function installAboutPanel(): void {
+  app.setAboutPanelOptions({
+    applicationName: app.name,
+    applicationVersion: app.getVersion(),
+    version: '',
+    copyright: 'Copyright (C) 2026 nyshk97\nGPL-3.0-only'
+  })
+}
+
 export function installApplicationMenu(): void {
+  installAboutPanel()
   const { bindings, problems } = resolveKeybindings(getSettings().keybindings)
   for (const problem of problems) log('keybinding.rejected', problem)
 
@@ -171,6 +188,7 @@ export function installApplicationMenu(): void {
       label: app.name,
       submenu: [
         { role: 'about', label: `${app.name} について` },
+        { label: 'アップデートを確認…', click: () => checkForUpdatesManually() },
         { type: 'separator' },
         { role: 'services', label: 'サービス' },
         { type: 'separator' },

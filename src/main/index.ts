@@ -31,6 +31,7 @@ import { closeHistory, initHistory } from './store/history.js'
 import { closePermissionStore, initPermissionStore } from './store/permissions.js'
 import { closeSession, initSession, markCleanExit } from './store/session.js'
 import { markReadyWhen, setExtensionCount } from './app-status.js'
+import { initUpdater, stopUpdater } from './updater.js'
 
 applyUserDataDir()
 app.setAppUserModelId(APP_ID)
@@ -117,6 +118,7 @@ app
     installApplicationMenu()
     watchKeybindingChanges()
     startBackgroundWork()
+    initUpdater()
 
     try {
       const loaded = await loadLockedExtensions(pageSession)
@@ -185,6 +187,7 @@ app.on('before-quit', () => {
   // 正常終了。ここで書き切っておくと、次の起動が確実に最新のタブから始まる。
   markCleanExit(collectSession())
   stopBackgroundWork()
+  stopUpdater()
   closeSettings()
   closePins()
   closePermissionStore()

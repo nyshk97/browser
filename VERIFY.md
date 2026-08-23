@@ -212,6 +212,72 @@ dev 版と常用版は**表示名・bundle id・アイコン・データディ�
 `dist/dev/mac-arm64/Nemo Dev.app` と `dist/stable/mac-arm64/Nemo.app` を
 同時に置いても取り違えないよう、dev 版のアイコンには DEV リボンが入る。
 
+### 配布用の署名まわりを触ったとき
+
+notarize まで行かずに「署名が壊れていないか」だけ確かめられる（数分待たずに済む）:
+
+```bash
+NEMO_SIGN=1 node scripts/package.mjs stable   # Developer ID で署名（notarize はしない）
+node scripts/verify-packaged.mjs stable       # 署名済み .app を起動して初期化まで進むか見る
+```
+
+`NEMO_SIGN=1` のときだけ増える検査:
+
+- ad-hoc 署名でないこと / Developer ID Application で署名されていること
+- `codesign --verify --strict --deep` が通ること
+- （`NEMO_NOTARIZE=1` も付けたときだけ）公証のチケットが staple されていること
+
+**常用版は remote debugging を開かない**（開けると拡張の service worker 経由で
+アンロック済み Vault に手が届く）。そのため `verify:packaged stable` は CDP ではなく
+**診断ログ**で起動を確かめる。機能の細かい検証は dev 版の経路で行う。
+
+### 更新 feed が dev に混ざっていないこと
+
+electron-builder は `publish` を書かなくても **git remote から推測して**
+`app-update.yml` を埋め込む。これが dev に入ると、dev で更新チェックが走った瞬間に
+常用版のビルドで dev が置き換わる。`scripts/after-pack.mjs` が消し、
+`check-package` が成果物に対して検査する:
+
+```bash
+mise run package && ls "dist/dev/mac-arm64/Nemo Dev.app/Contents/Resources/app-update.yml"
+# → No such file or directory になるのが正しい
+mise run package:stable && cat "dist/stable/mac-arm64/Nemo.app/Contents/Resources/app-update.yml"
+# → provider: github / owner: nyshk97 / repo: nemo
+```
+
+## リリースと自動更新
+
+リリースは `mise run release` の1コマンドだけ（手順を分けない）。詳細は README「リリース」。
+
+```bash
+node scripts/changelog.mjs check     # [Unreleased] が空でないか（release の preflight と同じ）
+mise run release 0.2.0               # preflight → bump → 署名 → notarize → GitHub Release
+```
+
+リリース後に確かめること:
+
+```bash
+gh release view v0.2.0 --repo nyshk97/nemo --json assets --jq '.assets[].name'
+# → dmg / zip / *.blockmap / latest-mac.yml が揃っていること
+#   （zip と latest-mac.yml が無いとアプリ内更新が動かない）
+
+# 公証が通っているか（ダウンロードした dmg に対して）
+spctl -a -t open --context context:primary-signature -v ~/Downloads/Nemo-0.2.0-arm64.dmg
+xcrun stapler validate /Applications/Nemo.app
+```
+
+**アプリ内更新の通し確認は「1つ前の版を入れてから」やる**:
+
+1. 1つ前の版の dmg を `/Applications` に入れて起動する（App Translocation を避けるため
+   ダウンロードフォルダから直接起動しない）
+2. メニューの `Nemo` → `アップデートを確認…` を選ぶ
+3. 落とし終えるとサイドバー左下のバージョン表示が `0.2.0 に更新` に変わる。押すと再起動して適用される
+4. 再起動後に `plutil -extract CFBundleShortVersionString raw /Applications/Nemo.app/Contents/Info.plist`
+   が新しい版になっていること
+
+> 起動直後の自動チェックは 30 秒後に走る。24 時間ごとに再チェックする。
+> **dev 版（Nemo Dev）では更新の導線は動かない**（メニューから選ぶと「この版では確認できない」と出るのが正常）。
+
 ## アイコンを変えたとき
 
 ```bash

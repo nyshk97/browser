@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { prettyUrl, useCommand, useSharedState, useWindowState } from '../useNemo.js'
 import { PinnedTree } from './PinnedTree.js'
 import { TabRow } from './TabRow.js'
-import type { LoadedExtensionInfo, TabState } from '../../shared/types.js'
+import type { LoadedExtensionInfo, TabState, UpdateState } from '../../shared/types.js'
 
 const PAGE_PARTITION = 'persist:nemo'
 
@@ -199,7 +199,7 @@ export function Sidebar(): React.JSX.Element {
         ))}
       </div>
 
-      <ExtensionFooter extensions={extensions} />
+      <ExtensionFooter extensions={extensions} version={shared.version} update={shared.update} />
     </div>
   )
 }
@@ -272,7 +272,15 @@ export function Favicon({
   return <span className="fi letter">{initial || '·'}</span>
 }
 
-function ExtensionFooter({ extensions }: { extensions: LoadedExtensionInfo[] }): React.JSX.Element {
+function ExtensionFooter({
+  extensions,
+  version,
+  update
+}: {
+  extensions: LoadedExtensionInfo[]
+  version: string
+  update: UpdateState
+}): React.JSX.Element {
   const mismatched = extensions.filter((extension) => !extension.matchesLock)
   return (
     <div className="footer">
@@ -293,6 +301,46 @@ function ExtensionFooter({ extensions }: { extensions: LoadedExtensionInfo[] }):
         ))
       )}
       {mismatched.length > 0 ? <span className="warn">lock 不一致</span> : null}
+      <div className="spacer" />
+      <VersionBadge version={version} update={update} />
     </div>
+  )
+}
+
+/**
+ * バージョン表示（0クリックで目に入る導線）。
+ *
+ * 見るのはほぼ「更新が当たったか」を確かめるときなので、メニューを辿らせない。
+ * 更新を落とし終えたら**適用は再起動待ち**なので、ここがそのまま導線になる。
+ */
+function VersionBadge({ version, update }: { version: string; update: UpdateState }): React.JSX.Element {
+  if (update.status === 'ready') {
+    return (
+      <button
+        type="button"
+        className="version ready"
+        title={`${update.version} をインストールする準備ができた`}
+        onClick={() => void window.nemo.restartForUpdate()}
+      >
+        {update.version} に更新
+      </button>
+    )
+  }
+  if (update.status === 'downloading') {
+    return (
+      <span className="version dim" title={`${update.version} を取得中`}>
+        更新 {update.percent ?? 0}%
+      </span>
+    )
+  }
+  return (
+    <button
+      type="button"
+      className="version dim"
+      title="クリックで更新を確認する"
+      onClick={() => void window.nemo.checkForUpdates()}
+    >
+      v{version}
+    </button>
   )
 }

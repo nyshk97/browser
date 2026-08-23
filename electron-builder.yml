@@ -9,10 +9,23 @@
 # （`${env.X}` の展開はここでは効かない keys がある）
 copyright: Copyright (C) 2026 nyshk97
 
-# 自動更新の feed 公開は Phase 2-6 で入れる。
-# ここを未設定のままにすると electron-builder が GitHub への publish を試み、
-# トークンが無い CI で落ちる。
-publish: null
+# 自動更新の feed（`publish`）は **ここには書かない**。
+#
+# ここに書くと dev 版の成果物にも `app-update.yml` が埋め込まれ、
+# dev で更新チェックが走った瞬間に常用版のビルドで dev が置き換わる。
+# `--config.publish=null` での打ち消しは効かない（"null" という名前の
+# publisher を探しに行って落ちる）ので、**stable のときだけ
+# `scripts/package.mjs` が `--config.publish.*` で足す**。
+#
+# アップロード自体は `scripts/release.mjs` が `gh` で行うので、
+# electron-builder には常に `--publish never` を渡す。
+
+# dev 版から更新 feed を外す（署名より前・dmg を作る前）。
+afterPack: scripts/after-pack.mjs
+
+# 署名の直後・dmg / zip を作る前に notarize + staple する。
+# `NEMO_NOTARIZE=1` のときだけ動く（既定は何もしない）。
+afterSign: scripts/notarize.mjs
 
 directories:
   buildResources: build
@@ -45,8 +58,12 @@ asarUnpack:
 
 mac:
   category: public.app-category.productivity
+  # dmg は人が入れるため、zip は electron-updater が差分更新に使うため
+  # （macOS の自動更新は zip でしか適用できない）。dev 版は dmg だけに絞る。
   target:
     - target: dmg
+      arch: [arm64]
+    - target: zip
       arch: [arm64]
   darkModeSupport: true
   # 任意のサイトを開くアプリなので hardened runtime は必須

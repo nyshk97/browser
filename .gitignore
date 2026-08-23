@@ -12,6 +12,8 @@ extensions/
 .env.*
 *.pem
 secrets/
+# 配布まわりの手元の値（Developer ID の Team / notarytool のプロファイル名）
+.release.local.json
 
 # tsc --build の生成物
 *.tsbuildinfo

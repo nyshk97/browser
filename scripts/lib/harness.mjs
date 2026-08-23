@@ -254,6 +254,47 @@ export async function waitForHttp(url, { timeoutMs = 30000, child = null, check 
   throw new Error(`起動を待てなかった: ${url}`)
 }
 
+/** 診断ログの全行（セッションをまたいで連結する）。 */
+export function readLogLines(userDataDir) {
+  const logDir = path.join(userDataDir, 'logs')
+  let files
+  try {
+    files = fs.readdirSync(logDir).filter((name) => name.endsWith('.log'))
+  } catch {
+    return []
+  }
+  return files.flatMap((name) => {
+    try {
+      return fs.readFileSync(path.join(logDir, name), 'utf8').split('\n').filter(Boolean)
+    } catch {
+      return []
+    }
+  })
+}
+
+/** そのイベントが診断ログに何件出たか。 */
+export function countLogEvents(userDataDir, event) {
+  return readLogLines(userDataDir).filter((line) => line.includes(`"event":"${event}"`)).length
+}
+
+/**
+ * 診断ログに指定のイベントが出るまで待つ。
+ *
+ * **常用版は remote debugging を開かない**ので、CDP の代わりにこれで起動を確認する
+ * （CDP に到達できるものは拡張の service worker 経由で任意の JS を実行できてしまう）。
+ */
+export async function waitForLogEvent(userDataDir, event, { child, timeoutMs = 150000 } = {}) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (countLogEvents(userDataDir, event) > 0) return true
+    if (child && !isChildAlive(child)) {
+      throw new Error(`アプリが終了した（exit ${child.exitCode ?? child.signalCode}）: ${event} を待っていた`)
+    }
+    await sleep(500)
+  }
+  throw new Error(`${Math.round(timeoutMs / 1000)} 秒待っても診断ログに ${event} が出ない`)
+}
+
 /**
  * 診断ログに main プロセスの例外が残っていないか見る。
  *

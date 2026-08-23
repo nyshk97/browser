@@ -1,4 +1,4 @@
-import { BaseWindow, WebContentsView, session, webFrameMain, type WebContents } from 'electron'
+import { BaseWindow, WebContentsView, app, session, webFrameMain, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -29,6 +29,7 @@ import {
 import { recordVisit, updateTitle } from './store/history.js'
 import { saveSession, type SavedWindow } from './store/session.js'
 import { listDownloads, onDownloadsChanged } from './downloads.js'
+import { getUpdateState, onUpdateChanged } from './updater.js'
 import type { FindState, Prompt, SharedState, TabState, WindowState } from '../shared/types.js'
 
 /**
@@ -683,7 +684,9 @@ export class NemoWindow {
     const shared: SharedState = {
       favorites: getFavorites(),
       pinned: getPinned(),
-      downloads: listDownloads()
+      downloads: listDownloads(),
+      version: app.getVersion(),
+      update: getUpdateState()
     }
     for (const contents of [this.chromeWebContents, this.overlayWebContents]) {
       if (!contents.isDestroyed()) contents.send('nemo:shared-state', shared)
@@ -1146,6 +1149,10 @@ export function startBackgroundWork(): void {
     for (const win of windowsById.values()) win.pushShared()
   })
   onDownloadsChanged(() => {
+    for (const win of windowsById.values()) win.pushShared()
+  })
+  // 更新の進捗はサイドバーに出す（適用は終了時なので「再起動待ち」を見せる必要がある）
+  onUpdateChanged(() => {
     for (const win of windowsById.values()) win.pushShared()
   })
 

@@ -76,6 +76,8 @@ const api: NemoUiApi = {
     ipcRenderer.invoke('nemo:open-extension-options', extensionId) as Promise<void>,
   restartServiceWorkers: () => ipcRenderer.invoke('nemo:restart-service-workers') as Promise<number>,
   openLogFolder: () => ipcRenderer.invoke('nemo:open-log-folder') as Promise<void>,
+  checkForUpdates: () => ipcRenderer.invoke('nemo:check-for-updates') as Promise<void>,
+  restartForUpdate: () => ipcRenderer.invoke('nemo:restart-for-update') as Promise<void>,
 
   getOverlayState: () =>
     ipcRenderer.invoke('nemo:get-overlay-state') as Promise<{

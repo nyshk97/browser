@@ -19,7 +19,13 @@ export function useWindowState(): WindowState | null {
 
 /** 全ウィンドウ共有の定義（Favorites / ピン留め / ダウンロード）。 */
 export function useSharedState(): SharedState {
-  const [state, setState] = useState<SharedState>({ favorites: [], pinned: [], downloads: [] })
+  const [state, setState] = useState<SharedState>({
+    favorites: [],
+    pinned: [],
+    downloads: [],
+    version: '',
+    update: { status: 'idle', version: null, percent: null, error: null }
+  })
   useEffect(() => {
     void window.nemo.getSharedState().then(setState)
     return window.nemo.onSharedState(setState)

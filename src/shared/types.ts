@@ -94,6 +94,25 @@ export interface SharedState {
   favorites: FavoriteItem[]
   pinned: PinnedNode[]
   downloads: DownloadState[]
+  /** 動いているアプリのバージョン（`0.1.0`）。 */
+  version: string
+  /** アプリ内自動更新の状態。 */
+  update: UpdateState
+}
+
+/**
+ * アプリ内自動更新の状態。
+ *
+ * 更新は既定で自動的に落としてくるが、**適用は終了時**なので
+ * 「落とし終えて再起動待ち」（`ready`）をユーザーに見せる必要がある。
+ */
+export interface UpdateState {
+  status: 'idle' | 'checking' | 'downloading' | 'ready' | 'error'
+  /** 取得中 / 適用待ちのバージョン。 */
+  version: string | null
+  /** ダウンロードの進捗（%）。 */
+  percent: number | null
+  error: string | null
 }
 
 /* ------------------------------------------------------------------ *
@@ -297,6 +316,11 @@ export interface NemoUiApi {
   restartServiceWorkers(): Promise<number>
   /** 診断ログのフォルダを Finder で開く。 */
   openLogFolder(): Promise<void>
+
+  /* 更新 */
+  checkForUpdates(): Promise<void>
+  /** 落とし終えた更新を適用する（再起動の確認ダイアログを出す）。 */
+  restartForUpdate(): Promise<void>
 
   /** オーバーレイの現在の状態（購読より前に起きた分を取りこぼさないため）。 */
   getOverlayState(): Promise<{ kind: string | null; prompt: Prompt | null }>

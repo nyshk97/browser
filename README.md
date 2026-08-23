@@ -54,8 +54,55 @@ mise run dev       # 開発版 Nemo を起動（HMR あり・拡張つき）
 | `mise run verify:packaged` | パッケージした `.app` を起動して smoke test |
 | `mise run icons` | アプリアイコン（常用版 / dev 版）を生成 |
 | `mise run licenses` | 依存ライブラリのライセンス棚卸し |
+| `mise run release [patch\|minor\|major\|x.y.z]` | 常用版をリリース（署名 → notarize → GitHub Release） |
 | `mise run ext:fetch` / `ext:verify` / `ext:update <version>` / `ext:rollback` | 拡張の取得・検証・更新・巻き戻し |
 | `mise run test:pages` | テストページのサーバだけ起動 |
+
+## リリース
+
+配布物は [GitHub Release](https://github.com/nyshk97/nemo/releases) に置き、
+アプリ内自動更新（electron-updater）で配る。
+
+**リリースの経路は `mise run release` ただ1つ**。ここに手順を書き写さない
+（別経路を作ると、そちらを辿ったときに未署名のまま公開される）。
+
+```bash
+# 1. docs/CHANGELOG.md の [Unreleased] に今回の変更を書いてコミットする
+# 2. リリースする（既定は patch）
+mise run release
+mise run release minor
+mise run release 0.2.0
+```
+
+`mise run release` は次を順にやる。**preflight で全部検査してから**壊し始める:
+
+1. preflight — clean worktree（未追跡込み）/ `HEAD == origin/main` / `[Unreleased]` が空でない /
+   拡張が lock と一致 / 署名と公証の資格情報 / **タグと Release がリモートに無いこと**（ローカルのタグは見ない）
+2. バージョンを bump して commit（**ビルドの前**。後だと成果物が dirty な作業ツリーから作られる）
+3. ビルド → Developer ID 署名 → notarize → staple → 成果物の検査（`check-package`）
+4. push → **draft** の Release に資産を上げてから公開（draft の間はタグが実体化しないので、
+   途中で落ちても「リリース物のないタグ」が残らない）
+
+push 前に失敗したら bump commit は自動で巻き戻る。何度でも叩き直してよい。
+
+### 常用版の入れ方
+
+`Nemo-<version>-arm64.dmg` を開いて `/Applications` に入れる。dev 版（`Nemo Dev`）とは
+bundle id もデータディレクトリも別なので**同時に入れて同時に動かせる**。
+以後の更新はアプリが自動で取得し、サイドバー左下のバージョン表示から適用できる。
+
+### 新しい Mac で用意するもの
+
+- Developer ID Application 証明書（keychain）
+- notarytool のプロファイル（`xcrun notarytool store-credentials`）
+- `.release.local.json`（**gitignore**。public repo に Team ID を書かないため）
+
+  ```json
+  { "teamId": "XXXXXXXXXX", "notaryProfile": "..." }
+  ```
+
+  環境変数 `NEMO_TEAM_ID` / `NEMO_NOTARY_PROFILE` でも渡せる。
+  証明書が1つしか無いマシンなら `teamId` は省略できる。
 
 ## 拡張の扱い
 

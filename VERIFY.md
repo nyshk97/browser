@@ -1,0 +1,152 @@
+# Nemo の動作確認手順
+
+修正内容に関係する手順だけ選んで実行する（全項目を毎回実行しない）。
+
+## 起動する
+
+```bash
+mise run setup     # 初回のみ（依存 + 拡張 artifact）
+mise run dev       # 開発版 Nemo を起動（HMR あり）
+```
+
+`mise run dev` は「拡張の照合 → テストページのサーバ → Nemo 起動（remote debugging 9333）」まで面倒を見る。
+本番に近い経路（バンドル済み・HMR なし）で見たいときは `mise run dev:build`。
+
+## まとめて検証する
+
+```bash
+mise run test               # ユニットテスト（Electron 不要・1秒未満）
+mise run verify             # 自走検証（ビルド→起動→CDP で検証→後片付け）。終了コードが合否
+mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残ることを実物で検証
+```
+
+**検証系は Nemo が起動していると実行を拒否する**（拡張や lock を触るため）。
+先に Nemo を終了する。起動中かどうかはアプリが書く `.nemo-run/<pid>.json` で判定する
+（`ps` のコマンドラインは dev モードだと `Electron .` になって当てにならない）。ポートは毎回空きを採番し、データディレクトリ・lock・拡張は
+すべて一時領域に隔離されるので、常用中のプロファイルには触らない。
+
+`mise run verify` が見ている項目:
+
+- **ユニットテスト**: 許可 scheme の判定・コマンドバー入力の正規化・ログの URL 伏せ字 /
+  拡張 lock の更新・ロールバック・改ざん検知・パス封じ込め /
+  検証ハーネス自身（マーカー掃除の暴発防止・子プロセスの停止）
+- registry の初期状態 / ナビゲーション / scheme allowlist（`file:` `javascript:` `data:` の拒否）
+- ページ側に `require` / `process` / `window.nemo` が漏れていないこと
+- 拡張の content script がトップフレームと iframe に入ること
+- **ブラウザ UI には content script が入らないこと**（セッション分離が効いていること）
+- `window.open` が Nemo のタブ / ウィンドウになること
+- **`chrome.tabs.create` / `chrome.windows.create` が Nemo のモデルに乗ること**
+  （`active: false` でアクティブタブが変わらないこと・View が表示されないこと・`windowId` の対応・`remove` での後始末）
+- 拡張から渡された URL がナビゲーション検証を通ること（`file:` は拒否 / 自分の拡張ページは許可）
+- 拡張の service worker が動いていること・再起動要求が通ること
+- 使えない `chrome.*` API の列挙（現状 `declarativeNetRequest` と `sidePanel.setOptions`）
+- タブを閉じたときの registry の後始末 / IPC が未所有のタブを拒否すること
+- `chrome.storage.local` が再起動をまたいで残ること
+
+個別に回すときは Nemo を起動した状態で `pnpm verify:spike`。
+
+## 手で CDP を叩く
+
+```bash
+node -e "fetch('http://127.0.0.1:9333/json/list').then(r=>r.json()).then(t=>t.forEach(x=>console.log(x.type,x.url.slice(0,80))))"
+```
+
+UI の webContents に接続して `window.nemo.*` を呼べば、UI 操作なしでタブを作れる。
+
+```js
+// Runtime.evaluate で実行する
+await window.nemo.getWindowState()
+await window.nemo.getVisibleTabIds()   // activeTabId とズレていたらバックグラウンドタブが前面に出ている
+await window.nemo.navigate(tabId, 'http://127.0.0.1:8787/login.html?site=a')
+await window.nemo.createTab('http://127.0.0.1:8787/iframe.html')
+await window.nemo.createWindow()
+await window.nemo.restartServiceWorkers()
+```
+
+確認すべき代表的な項目:
+
+| 確認したいこと | 見るもの |
+|---|---|
+| content script が入っているか | `Runtime.enable` してから `Page.reload` し、`Runtime.executionContextCreated` に拡張名の world が出るか |
+| バックグラウンドタブが前面に出ていないか | `getVisibleTabIds()` が `activeTabId` ただ1つを返すこと |
+| scheme allowlist | `window.nemo.navigate(tabId, 'file:///etc/passwd')` が `navigation rejected` で reject されること |
+| popup がタブモデルに乗るか | ページ側で `window.open(...)` → UI 側の `getWindowState()` のタブが増えること |
+| ウィンドウを閉じたときの後始末 | ウィンドウを閉じた後に `/json/list` の `page` が減ること（子 `WebContents` が残っていないこと） |
+| ページ側の隔離 | ページで `typeof require` / `typeof process` / `typeof window.nemo` がすべて `undefined` |
+
+### スクリーンショット
+
+```bash
+osascript -e 'tell application "System Events" to tell process "Electron"
+  set p to position of window 1
+  set s to size of window 1
+  return ((item 1 of p) as string) & "," & ((item 2 of p) as string) & "," & ((item 1 of s) as string) & "," & ((item 2 of s) as string)
+end tell'
+screencapture -x -R<x,y,w,h> /path/to/out.png
+```
+
+## 拡張の lock まわり
+
+```bash
+mise run ext:fetch              # lock どおりに展開する
+mise run ext:verify             # ツリー hash / version / manifest.key / アーカイブ sha256 を照合する
+mise run verify:ext-update      # 版を上げ下げしても chrome.storage が残ることを実物で自動検証する（一時領域で完結）
+mise run ext:update 2026.7.0    # 別バージョンへ張り替える（こちらはリポジトリの lock を書き換える）
+mise run ext:rollback           # lock を git の状態に戻して再展開（要コミット済み。キャッシュから復元するのでオフラインでも戻せる）
+mise run ext:update 2026.8.0    # git を使わずに戻すならこちら
+```
+
+確認ポイント:
+
+- 更新の前後で**拡張 ID が変わらない**こと（`grep extension.loaded` でログを見る）。
+  変わっていたら `manifest.key` の注入が効いていない = 拡張の設定が失われる
+- lock の `sha256` を書き換えると `ext:fetch` が exit 1 で止まること
+- **展開後のファイルを書き換えると `ext:verify` が落ち、起動しても拡張がロードされないこと**
+  （ログに `extension.integrity_failed` が出て、`/json/list` に service_worker が現れない）
+
+## Phase 0 受け入れテスト（人間の操作が要る分）
+
+### 実 Vault を入れるなら `mise run dev:nodebug` を使う
+
+`mise run dev` は remote debugging（CDP）を 9333 で開ける。
+**CDP に到達できるものは拡張の service worker で任意の JS を実行でき、
+アンロック済み Vault の中身に手が届く**（自走検証がまさにそれをやっている）。
+実アカウントでログインするときは `mise run dev:nodebug` で起動し、CDP を閉じておく。
+
+- `mise run verify` は使い捨てのデータディレクトリ（`/tmp/nemo-verify-*`）を毎回作って回すので、
+  実 Vault の入ったプロファイルには触らない。手で CDP つきの検証をするときは
+  `NEMO_USER_DATA_DIR=$(mktemp -d)` を付けて実 Vault のプロファイルから隔離する
+- 終わったら popup の Settings → Log out でログアウトする
+- スパイクのデータを消すなら `rm -rf ~/Library/Application\ Support/Nemo-spike`
+  （常用ブラウザの Bitwarden とは別のディレクトリなので、消しても普段の環境には影響しない）
+
+### popup がおかしいとき
+
+拡張の popup はタブではないので ⌘⌥I の対象にならず、メニューから DevTools を開こうとすると
+blur で popup 自体が閉じる。`mise run dev:popup` で起動すると **popup の生成と同時に
+DevTools が開く**（`PopupView` は DevTools が開いていれば閉じない）。CDP は開かないので
+実 Vault のままで使える。
+
+```bash
+mise run dev:popup
+```
+
+端末には `extension.popup_load_failed` と `extension.popup_console`（error / warning の
+**件数と発生箇所だけ**。本文は出さない）が流れる。**本文は DevTools のコンソールで見る**
+——ログにはメールアドレスやトークンが載りうるため、意図的に出していない。
+
+### 手順
+
+1. `mise run dev:nodebug` で Nemo を起動する（テストページのサーバも一緒に立つ）
+2. ツールバーの Bitwarden アイコンから popup を開く
+3. テスト用アカウントでログインし、Vault をアンロックする
+4. `http://127.0.0.1:8787/login.html?site=a` を開き、自動入力を試す
+   - ページ下部の「username: 入力あり(N文字) / password: …」表示で入力の有無が分かる
+5. `http://127.0.0.1:8787/iframe.html` で iframe 内のフォームに自動入力できるか見る
+6. `?site=a` と `?site=b` を別タブ・別ウィンドウで開き、**対象タブを取り違えないか**見る
+7. Nemo を再起動し、Vault のアンロック状態と拡張の設定が期待どおりか見る
+8. 数分放置して service worker が idle 停止した後、popup と自動入力が動くか見る
+   （`/json/list` に `service_worker` が出なくなったら停止している。ツールバーの `↺SW` で明示的に起こせる）
+9. `mise run ext:update <別バージョン>` → 再起動 → **ログインし直しを求められないこと** → 自動入力が動くか
+   → `mise run ext:update <元のバージョン>`（またはコミット済みなら `mise run ext:rollback`）で戻す
+10. ⌘⌥I で DevTools が開くか

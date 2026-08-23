@@ -1,0 +1,20 @@
+node_modules/
+out/
+dist/
+.DS_Store
+
+# 拡張の実体（lock から再取得できる生成物なので追跡しない）
+extensions/
+.ext-cache/
+
+# 個人情報・シークレットは public repo に絶対に入れない
+.env
+.env.*
+*.pem
+secrets/
+
+# tsc --build の生成物
+*.tsbuildinfo
+
+# 起動中インスタンスのマーカー
+.nemo-run/

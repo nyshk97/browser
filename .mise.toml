@@ -1,0 +1,79 @@
+# ランタイムはグローバル設定（~/.config/mise/config.toml）の node に任せる。
+# 固定が必要になったらここに [tools] を足す。
+
+[tasks.setup]
+description = "依存と拡張 artifact を揃える（初回・clone 直後に実行する）"
+run = """
+pnpm install --frozen-lockfile
+node scripts/ext-fetch.mjs
+node scripts/ext-verify.mjs
+"""
+
+[tasks.dev]
+description = "開発版 Nemo を起動する（HMR あり・拡張つき・remote debugging 9333）"
+run = "node scripts/dev.mjs"
+
+[tasks."dev:nodebug"]
+description = "remote debugging を開けずに開発版 Nemo を起動する（実 Vault の Bitwarden を入れて触るとき）"
+run = "node scripts/dev.mjs --no-debug"
+
+[tasks."dev:popup"]
+description = "拡張 popup の DevTools を自動で開いて起動する（popup の不具合を追うとき。CDP は開かない）"
+run = "node scripts/dev.mjs --no-debug --popup-devtools"
+
+[tasks."dev:build"]
+description = "ビルドしてから開発版 Nemo を起動する（HMR なし・本番に近い経路で確認する）"
+run = "node scripts/dev.mjs --built"
+
+[tasks.build]
+description = "本番ビルドを作る（out/ に出力）"
+run = "pnpm exec electron-vite build"
+
+[tasks.typecheck]
+description = "TypeScript の型検査を行う"
+run = """
+pnpm exec tsc --noEmit -p tsconfig.node.json
+pnpm exec tsc --noEmit -p tsconfig.web.json
+"""
+
+[tasks."test:pages"]
+description = "受け入れテスト用のページサーバを起動する（http://127.0.0.1:8787/）"
+run = "node scripts/test-server.mjs"
+
+[tasks.test]
+description = "ユニットテストを回す（Electron 不要・CI の必須チェック）"
+run = "node --test scripts/*.test.mjs"
+
+[tasks.verify]
+description = "自走検証を通す（ユニットテスト→ビルド→アプリ起動→CDP で検証→後片付け）"
+run = "node scripts/verify-all.mjs"
+
+[tasks."verify:ext-update"]
+description = "拡張の版を上げ下げしても拡張の設定（chrome.storage）が失われないことを実物で検証する"
+usage = 'arg "<version>" default="2026.7.0" help="一時的に張り替える先のバージョン"'
+run = 'node scripts/verify-ext-update.mjs "$usage_version"'
+
+[tasks."ext:fetch"]
+description = "extensions.lock.json に従って拡張 artifact を取得・展開する"
+run = "node scripts/ext-fetch.mjs"
+
+[tasks."ext:verify"]
+description = "展開済み拡張が lock と一致しているか検証する（ツリー hash まで見る）"
+run = "node scripts/ext-verify.mjs"
+
+[tasks."ext:update"]
+description = "拡張を指定バージョンへ張り替えて lock を更新する"
+usage = 'arg "<version>" help="張り替え先のバージョン（例: 2026.8.0）"'
+run = 'node scripts/ext-fetch.mjs --update "$usage_version"'
+
+[tasks."ext:rollback"]
+description = "extensions.lock.json を git の状態に戻して拡張を再展開する（キャッシュから復元）"
+run = """
+if ! git checkout -- extensions.lock.json 2>/dev/null; then
+  echo "extensions.lock.json を git から復元できない（未コミットのリポジトリなど）。"
+  echo "戻したいバージョンが分かっているなら次で戻せる:"
+  echo "  mise run ext:update <version>"
+  exit 1
+fi
+node scripts/ext-fetch.mjs
+"""

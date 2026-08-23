@@ -1,0 +1,23 @@
+{
+  "lockfileVersion": 1,
+  "comment": "Nemo が読み込む拡張の lock。ここに無い拡張は構造上ロードされない（= allowlist）。sha256 と manifestKey は scripts/ext-fetch.mjs が検証する。",
+  "extensions": [
+    {
+      "id": "nngceckbapebfimnlniiiahkandclblb",
+      "name": "Bitwarden Password Manager",
+      "version": "2026.8.0",
+      "source": {
+        "type": "github-release",
+        "repo": "bitwarden/clients",
+        "tagTemplate": "browser-v{version}",
+        "assetTemplate": "dist-chrome-{version}.zip",
+        "tag": "browser-v2026.8.0",
+        "asset": "dist-chrome-2026.8.0.zip",
+        "url": "https://github.com/bitwarden/clients/releases/download/browser-v2026.8.0/dist-chrome-2026.8.0.zip"
+      },
+      "sha256": "867b5a671ae40f3122b79b580841de9dc37c84b83dd13d34e971fc986e36d6c0",
+      "manifestKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmqKbvreshyXRuN2gikeR1idqR6KL0Di89JZcMyD4bjJRZVmQO7aznSGSALIHzSAUGYocUYBNDOP5QAhImxXyQ1qG8+goXs93v9GzrNJETdVuCEhqBggC4/DFabryJZDiKvZ2Jl0DM7MsWdoybZPwrj70V3aJ/nVNOMkf868scNTMliwitCqqjT5baTANsG0DkZWQExD4lSXzSZHH9MEO8q0iZ7RRlNuGRBAkZgNV8FwZRsPKm/rwQ9dy3VpgLcmLp5GiMt+kAEncqKAkuRYnhVXXBsKqIyYTMjHSLkLnpfFySyOPLBdS617i/PGNiP/MT6Xy6z//v5NozUgaAZ4gJQIDAQAB",
+      "treeSha256": "5693fc5e9247e47995d8c0fa12f4144d602f15599fcfe1e390c0103ffea9aeb1"
+    }
+  ]
+}

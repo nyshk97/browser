@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>Nemo Phase 0 テストページ</title>
+    <style>
+      body { font: 15px/1.6 -apple-system, sans-serif; margin: 40px; max-width: 720px; }
+      li { margin: 6px 0; }
+      code { background: #eee; padding: 1px 4px; border-radius: 3px; }
+    </style>
+  </head>
+  <body>
+    <h1>Nemo Phase 0 受け入れテスト</h1>
+    <ul>
+      <li><a href="/login.html">ログインフォーム（通常）</a> — 自動入力の基本確認</li>
+      <li><a href="/iframe.html">iframe 内のログインフォーム</a> — 受け入れ基準「iframe 内のフォーム」</li>
+      <li><a href="/popup.html">popup / 新規ウィンドウ生成</a> — タブモデルへの追従確認</li>
+    </ul>
+    <p>
+      複数タブ・複数ウィンドウの取り違え確認は、<code>/login.html?site=a</code> と
+      <code>/login.html?site=b</code> を別タブ・別ウィンドウで開いて行う。
+    </p>
+  </body>
+</html>

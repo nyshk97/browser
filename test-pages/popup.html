@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>popup 生成 — テスト</title>
+    <style>
+      body { font: 15px/1.6 -apple-system, sans-serif; margin: 40px; }
+      button { font: inherit; display: block; margin: 8px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>popup / 新規ウィンドウ</h1>
+    <button onclick="window.open('/login.html?site=popup-tab')">window.open（タブになるはず）</button>
+    <button onclick="window.open('/login.html?site=popup-window', '_blank', 'width=500,height=400')">
+      window.open（サイズ指定 = 新規ウィンドウになるはず）
+    </button>
+    <p><a href="/login.html?site=blank" target="_blank">target=_blank のリンク</a></p>
+    <hr />
+    <h2>scheme の allowlist 確認（すべてブロックされるべき）</h2>
+    <p><a href="file:///etc/passwd">file:///etc/passwd</a></p>
+    <p><a href="data:text/html,<h1>data</h1>">data: URL</a></p>
+  </body>
+</html>

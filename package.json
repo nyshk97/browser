@@ -1,0 +1,46 @@
+{
+  "name": "nemo",
+  "version": "0.0.0",
+  "description": "Nemo — a self-hosted Arc alternative browser (Phase 0 spike)",
+  "license": "GPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "main": "./out/main/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "ext:fetch": "node scripts/ext-fetch.mjs",
+    "ext:verify": "node scripts/ext-verify.mjs",
+    "test-pages": "node scripts/test-server.mjs",
+    "verify:spike": "node scripts/verify-spike.mjs",
+    "test": "node --test scripts/*.test.mjs"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
+  },
+  "devDependencies": {
+    "@types/adm-zip": "0.5.7",
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "5.2.0",
+    "adm-zip": "0.5.16",
+    "electron": "41.10.6",
+    "electron-vite": "5.0.0",
+    "typescript": "5.9.3",
+    "vite": "7.3.6"
+  },
+  "dependencies": {
+    "electron-chrome-extensions": "4.9.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  }
+}

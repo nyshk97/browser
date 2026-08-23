@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>ログイン — テスト</title>
+    <style>
+      body { font: 15px/1.6 -apple-system, sans-serif; margin: 40px; }
+      form { display: grid; gap: 10px; max-width: 320px; }
+      input { font: inherit; padding: 6px 8px; }
+      .site { color: #888; }
+    </style>
+  </head>
+  <body>
+    <h1>ログイン <span class="site" id="site"></span></h1>
+    <form id="form" action="/submitted.html" method="get">
+      <label>ユーザー名<input type="text" name="username" autocomplete="username" /></label>
+      <label>パスワード<input type="password" name="password" autocomplete="current-password" /></label>
+      <button type="submit">ログイン</button>
+    </form>
+    <p id="filled"></p>
+    <script>
+      const site = new URLSearchParams(location.search).get('site')
+      if (site) document.getElementById('site').textContent = `(site=${site})`
+      const form = document.getElementById('form')
+      setInterval(() => {
+        const u = form.username.value
+        const p = form.password.value
+        document.getElementById('filled').textContent =
+          `username: ${u ? `入力あり(${u.length}文字)` : '空'} / password: ${p ? `入力あり(${p.length}文字)` : '空'}`
+      }, 500)
+    </script>
+  </body>
+</html>

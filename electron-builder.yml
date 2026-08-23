@@ -23,9 +23,13 @@ copyright: Copyright (C) 2026 nyshk97
 # dev 版から更新 feed を外す（署名より前・dmg を作る前）。
 afterPack: scripts/after-pack.mjs
 
-# 署名の直後・dmg / zip を作る前に notarize + staple する。
+# 署名の直後・dmg / zip を作る前に .app を notarize + staple する。
 # `NEMO_NOTARIZE=1` のときだけ動く（既定は何もしない）。
 afterSign: scripts/notarize.mjs
+
+# dmg ができた後に dmg 自体も notarize + staple する。
+# .app だけ公証しても、dmg には署名もチケットも無いままで警告が出る。
+afterAllArtifactBuild: scripts/notarize-dmg.mjs
 
 directories:
   buildResources: build
@@ -55,6 +59,10 @@ asarUnpack:
   - node_modules/better-sqlite3/**/*
   # preload は実ファイルパスで渡す必要がある
   - node_modules/electron-chrome-extensions/dist/**/*
+
+dmg:
+  # electron-builder の既定は dmg を署名しない。公証の前に署名しておく。
+  sign: true
 
 mac:
   category: public.app-category.productivity

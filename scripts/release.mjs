@@ -221,6 +221,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }
     console.log(`\n=== 配る資産:\n  ${assets.map((a) => path.basename(a)).join('\n  ')}`)
 
+    // 公証のチケットは **配る dmg にも**乗っていなければならない。
+    // .app だけ公証しても、dmg を開く時点で Gatekeeper の警告が出る（0.1.0 で踏んだ）。
+    for (const dmg of assets.filter((asset) => asset.endsWith('.dmg'))) {
+      run('xcrun', ['stapler', 'validate', dmg])
+    }
+
     /* ---- 4. リリースノート ---- */
     const notes = findSection(fs.readFileSync(changelogPath, 'utf8'), version)
     if (!notes?.body) throw new Error(`CHANGELOG から [${version}] のノートを取り出せない`)

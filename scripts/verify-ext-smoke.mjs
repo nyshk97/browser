@@ -241,6 +241,28 @@ try {
         ).catch(() => '')
       : ''
     check('popup が開いて chrome.* が使える', ready === 'ready', popup ? '' : `openPopup: ${openResult}`)
+
+    // popup ↔ service worker のメッセージング。
+    // Bitwarden のログインは popup が service worker からの通知を待つ作りなので、
+    // ここが1つでも通らないと popup がスピナーのまま止まる（実機で発生した症状）。
+    const messaging = popup
+      ? await waitFor(popup, `document.getElementById('messaging')?.textContent || ''`, {
+          timeoutMs: 20000
+        })
+          .then(JSON.parse)
+          .catch(() => null)
+      : null
+    for (const [name, label] of [
+      ['popupToWorker', 'popup → service worker（応答つき）'],
+      ['workerToPopup', 'service worker → popup（一斉配信）'],
+      ['portRoundTrip', '長寿命 port の往復'],
+      ['storageChanged', 'service worker の書き込みが popup の storage.onChanged に届く'],
+      ['ignoredWithCallback', '応答されない sendMessage の callback が呼ばれる'],
+      ['ignoredAsPromise', '応答されない sendMessage の Promise が決着する'],
+      ['wasmInPopup', 'popup で WebAssembly が使える（manifest の wasm-unsafe-eval が効く）']
+    ]) {
+      check(label, messaging?.[name] === 'ok', messaging ? String(messaging[name]) : '結果が出ない')
+    }
     // 次のケースはクリックで popup を開く。開いたままだとクリックが
     // トグル（閉じる）になるので、**ウィンドウごと閉じてから**次へ進む
     await popup?.ev('window.close()').catch(() => {})

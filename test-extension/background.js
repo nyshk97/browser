@@ -28,5 +28,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: true, echo: message.value })
     return false
   }
+  // popup へ一斉配信する（Bitwarden がログイン完了を popup に伝える経路と同じ形）
+  if (message?.type === 'notify') {
+    void chrome.runtime.sendMessage({ type: 'from-worker', value: 'nemo' }).catch(() => {})
+    sendResponse({ ok: true })
+    return false
+  }
+  // popup の storage.onChanged を起こす
+  if (message?.type === 'touch') {
+    void chrome.storage.local.set({ __nemo_ci_touch__: Date.now() })
+    sendResponse({ ok: true })
+    return false
+  }
   return false
+})
+
+/** 長寿命 port。popup からつないで往復できるかを見る。 */
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'nemo-ci') return
+  port.onMessage.addListener((message) => {
+    if (message?.ping) port.postMessage({ pong: message.ping })
+  })
 })

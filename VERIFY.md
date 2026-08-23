@@ -200,6 +200,28 @@ dev 版と常用版は**表示名・bundle id・アイコン・データディ�
 `dist/dev/mac-arm64/Nemo Dev.app` と `dist/stable/mac-arm64/Nemo.app` を
 同時に置いても取り違えないよう、dev 版のアイコンには DEV リボンが入る。
 
+## アイコンを変えたとき
+
+```bash
+mise run icons              # build/icon.icns / icon-dev.icns と 512px の PNG を生成
+```
+
+見た目は生成された PNG を開いて確認する（`build/icon.png` / `build/icon-dev.png`）。
+**小さいサイズで潰れないかは必ず見る**（Dock で実際に出るのは 32〜128px）:
+
+```bash
+sips -Z 32 build/icon.png --out /tmp/i32.png && sips -Z 512 /tmp/i32.png --out /tmp/i32-zoom.png
+open /tmp/i32-zoom.png
+```
+
+パッケージ済みの .app に反映されたかは、`mise run package` のあとに
+`.app` の中の icns を PNG にして見る（`qlmanage -t` は固まることがあるので使わない）:
+
+```bash
+sips -s format png "dist/dev/mac-arm64/Nemo Dev.app/Contents/Resources/icon.icns" --out /tmp/packaged-icon.png -Z 256
+open /tmp/packaged-icon.png
+```
+
 ## 拡張互換 smoke（CI と同じもの）
 
 ```bash

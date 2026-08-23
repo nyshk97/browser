@@ -1,0 +1,114 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":dependencyDashboard"],
+  "timezone": "Asia/Tokyo",
+  "schedule": ["* 0-6 * * 1"],
+  "prConcurrentLimit": 3,
+  "labels": ["dependencies"],
+
+  "description": [
+    "Nemo の依存更新方針（計画 2-6）。",
+    "",
+    "1. **自動マージしない**。Electron / Chromium の更新は拡張互換を壊しうるし、",
+    "   壊れ方が『拡張が黙って動かない』なので CI の緑だけでは判断できない。",
+    "2. **バージョンは exact に固定する**（rangeStrategy: pin）。",
+    "   `^` で緩めると lockfile を作り直したときに黙って上がる。",
+    "3. Electron の PR は単独で立てる。落ちたら**据え置ける**ようにしておく",
+    "   （まとめPRだと Electron だけ戻せない）。",
+    "4. 通った組み合わせは `docs/compat.md` の last-known-good を更新してからマージする。",
+    "",
+    "必須チェック（GitHub の branch protection 側で required にする）:",
+    "  - CI / lint / typecheck / unit test",
+    "  - CI / extension smoke (macOS)   ← 資格情報なしで決定的に回る拡張互換の smoke",
+    "  - CI / package (macOS)",
+    "Bitwarden 実物での確認は保護 workflow（拡張互換（実物の Bitwarden））で行う。",
+    "これは `package.json` / `pnpm-lock.yaml` / `extensions.lock.json` を触る PR で自動的に回る。"
+  ],
+
+  "rangeStrategy": "pin",
+  "automerge": false,
+  "dependencyDashboardTitle": "依存更新のダッシュボード",
+
+  "packageRules": [
+    {
+      "description": "Electron は単独 PR。落ちたら据え置けるようにまとめない",
+      "matchPackageNames": ["electron"],
+      "groupName": null,
+      "labels": ["dependencies", "electron", "要・拡張互換の確認"],
+      "minimumReleaseAge": "7 days",
+      "prPriority": 10,
+      "prBodyNotes": [
+        "### マージ前に必ずやること",
+        "",
+        "- [ ] CI の `extension smoke (macOS)` が緑（資格情報なしの拡張互換）",
+        "- [ ] 保護 workflow `拡張互換（実物の Bitwarden）` が緑",
+        "- [ ] 実機で Bitwarden の Vault アンロックと自動入力を確認（VERIFY.md「Phase 0 受け入れテスト」）",
+        "- [ ] `docs/compat.md` の last-known-good をこの組み合わせに更新",
+        "",
+        "**落ちたら据え置く。** この PR を閉じれば pin は元のままなので、",
+        "次の Electron が出るまで今の組み合わせで動き続ける。"
+      ]
+    },
+    {
+      "description": "拡張ロードの実装。Electron と同じ扱いにする",
+      "matchPackageNames": ["electron-chrome-extensions"],
+      "groupName": null,
+      "labels": ["dependencies", "拡張", "要・拡張互換の確認"],
+      "minimumReleaseAge": "7 days",
+      "prPriority": 10
+    },
+    {
+      "description": "ネイティブモジュールは ABI の影響があるので単独で見る",
+      "matchPackageNames": ["better-sqlite3"],
+      "groupName": null,
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "配布まわり（署名・公証・自動更新）は壊れると気づきにくいので単独で見る",
+      "matchPackageNames": ["electron-builder", "electron-updater", "@electron/fuses", "@electron/asar"],
+      "groupName": "配布まわり",
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "lint / format / 型は 1 本にまとめる（落ちても影響範囲が閉じている）",
+      "matchPackageNames": [
+        "eslint",
+        "@eslint/js",
+        "typescript-eslint",
+        "eslint-config-prettier",
+        "eslint-plugin-react-hooks",
+        "prettier",
+        "typescript",
+        "globals"
+      ],
+      "groupName": "lint / typecheck",
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "React とビルドツールもまとめる",
+      "matchPackageNames": [
+        "react",
+        "react-dom",
+        "@types/react",
+        "@types/react-dom",
+        "vite",
+        "electron-vite",
+        "@vitejs/plugin-react"
+      ],
+      "groupName": "UI / ビルド",
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "GitHub Actions はまとめて上げる",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "minimumReleaseAge": "3 days"
+    }
+  ],
+
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["* 0-6 1 * *"],
+    "description": "lockfile の作り直しは lint プラグインまで上げてしまうことがある。単独 PR にして CI を通す"
+  }
+}

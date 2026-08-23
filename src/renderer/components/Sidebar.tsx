@@ -158,7 +158,12 @@ export function Sidebar(): React.JSX.Element {
           （= 左へ伸びる）ので、サイドバーが左端にある Nemo では画面外へ見切れる。
           `right` を含めるとアンカーの左端に popup の左端が合い、右へ伸びる。
         */}
-        <browser-action-list partition={PAGE_PARTITION} alignment="bottom right" />
+        {/*
+          シークレットウィンドウには拡張がロードされていない。
+          ここにアイコンを出すと「押せるのに何も起きない」ので、そもそも出さない
+          （partition が違うため、押しても通常セッションのタブを対象にしてしまう）。
+        */}
+        {isPrivate ? null : <browser-action-list partition={PAGE_PARTITION} alignment="bottom right" />}
         <div className="spacer" />
         <button
           type="button"
@@ -222,7 +227,12 @@ export function Sidebar(): React.JSX.Element {
         ))}
       </div>
 
-      <ExtensionFooter extensions={extensions} version={shared.version} update={shared.update} />
+      <ExtensionFooter
+        extensions={isPrivate ? [] : extensions}
+        version={shared.version}
+        update={shared.update}
+        isPrivate={isPrivate}
+      />
     </div>
   )
 }
@@ -298,17 +308,19 @@ export function Favicon({
 function ExtensionFooter({
   extensions,
   version,
-  update
+  update,
+  isPrivate = false
 }: {
   extensions: LoadedExtensionInfo[]
   version: string
   update: UpdateState
+  isPrivate?: boolean
 }): React.JSX.Element {
   const mismatched = extensions.filter((extension) => !extension.matchesLock)
   return (
     <div className="footer">
       {extensions.length === 0 ? (
-        <span className="dim">拡張なし</span>
+        <span className="dim">{isPrivate ? '拡張なし（シークレット）' : '拡張なし'}</span>
       ) : (
         extensions.map((extension) => (
           <button

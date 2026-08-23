@@ -138,8 +138,8 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                 ))
               )}
               <p className="dim">
-                拡張は `extensions.lock.json` に書いたものだけをロードする。追加・更新は `mise run
-                ext:outdated` / `ext:update` から行う。
+                拡張は <code>extensions.lock.json</code> に書いたものだけをロードする。追加・更新は{' '}
+                <code>mise run ext:outdated</code> / <code>ext:update</code> から行う。
               </p>
               <button type="button" className="btn" onClick={() => void window.nemo.restartServiceWorkers()}>
                 拡張の service worker を再起動する
@@ -149,8 +149,9 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
             <section>
               <h3>キーバインド</h3>
               <p className="dim">
-                `settings.json` の `keybindings` で上書きできる（`"pin-tab": "CmdOrCtrl+D"` の形）。
-                不正な値と重複は採用せず、診断ログに `keybinding.rejected` として残る。
+                <code>settings.json</code> の <code>keybindings</code> で上書きできる（
+                <code>&quot;pin-tab&quot;: &quot;CmdOrCtrl+D&quot;</code> の形）。 不正な値と重複は採用せず、
+                診断ログに <code>keybinding.rejected</code> として残る。
               </p>
               {Object.keys(settings.keybindings).length === 0 ? (
                 <p className="dim">いまは上書きなし（すべて既定）</p>
@@ -168,8 +169,8 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
             <section>
               <h3>データ</h3>
               <p className="dim">
-                設定とピン留めは `mise run config:push` / `config:pull` で 2 台目と同期できる。
-                履歴とアーカイブは端末ローカルで、同期には載せない。
+                設定とピン留めは <code>mise run config:push</code> / <code>config:pull</code> で 2
+                台目と同期できる。履歴とアーカイブは端末ローカルで、同期には載せない。
               </p>
               <button type="button" className="btn" onClick={() => void window.nemo.openLogFolder()}>
                 診断ログのフォルダを開く

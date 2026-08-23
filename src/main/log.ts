@@ -22,6 +22,17 @@ const KEEP_SESSIONS = 20
 let stream: fs.WriteStream | null = null
 let logFilePath: string | null = null
 
+/**
+ * ログファイルを開く前に出た行。
+ *
+ * `openLogFile()` は `app.whenReady` の後にしか呼べないが、
+ * **その前にも記録したいことがある**（外部アプリから渡された URL の queue など。
+ * 未起動から開かれたときの経路は必ず ready より前に始まる）。
+ * 溜めておいてファイルが開いた時点で書き出す。溜めっぱなしにならないよう上限を置く。
+ */
+const preOpen: string[] = []
+const MAX_PRE_OPEN = 200
+
 /** ログファイルを開く。app.whenReady の後に1回だけ呼ぶ。 */
 export function openLogFile(): string | null {
   if (stream) return logFilePath
@@ -33,7 +44,10 @@ export function openLogFile(): string | null {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     logFilePath = path.join(dir, `${channel}-${stamp}-${process.pid}.log`)
     stream = fs.createWriteStream(logFilePath, { flags: 'a' })
-    log('log.opened', { channel, version: app.getVersion() })
+    // ファイルを開く前に出た行を先に書き出す（時系列が崩れないよう log.opened より前）
+    const queued = preOpen.splice(0, preOpen.length)
+    for (const line of queued) stream.write(`${line}\n`)
+    log('log.opened', { channel, version: app.getVersion(), replayed: queued.length })
     return logFilePath
   } catch (error) {
     // ログが書けないこと自体でアプリを止めない（標準出力には出る）
@@ -57,7 +71,11 @@ function write(level: 'info' | 'error', event: string, detail: Record<string, un
   const line = JSON.stringify({ t: new Date().toISOString(), level, event, ...safe })
   if (level === 'error') console.error(`[nemo] ${line}`)
   else console.log(`[nemo] ${line}`)
-  stream?.write(`${line}\n`)
+  if (stream) {
+    stream.write(`${line}\n`)
+  } else if (preOpen.length < MAX_PRE_OPEN) {
+    preOpen.push(line)
+  }
 }
 
 export function log(event: string, detail: Record<string, unknown> = {}): void {

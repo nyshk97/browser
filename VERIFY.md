@@ -32,6 +32,8 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 | タブ / ウィンドウ・サイドバー・コマンドバー・ダウンロード・権限 | `mise run verify` |
 | 拡張まわり・Electron のバージョン | `mise run verify:ext`（+ 実機で Bitwarden） |
 | パッケージング・ネイティブ依存・fuses | `mise run package` → `mise run verify:packaged` |
+| 履歴 / アーカイブ・シークレット・設定画面・既定ブラウザ | `mise run verify`（`verify-phase2.mjs` が含まれる） |
+| 設定同期・Arc 移行・拡張の版確認 | `mise run check`（ユニットテスト）→ 下の「設定同期」「Arc からの移行」 |
 
 **検証系は Nemo が起動していると実行を拒否する**（拡張や lock を触るため）。
 先に Nemo を終了する。起動中かどうかはアプリが書く `.nemo-run/<pid>.json` で判定する
@@ -406,3 +408,106 @@ mise run dev:popup
 5. **動画サイトの全画面**（ページからの全画面要求）
 6. **実 Vault の Bitwarden で自動入力が動くこと**（`mise run dev:nodebug` で起動する）
 7. **拡張を更新した後も実 Vault で自動入力が動くこと**
+
+## 設定同期（Phase 2-1）
+
+ユニットテスト（`mise run check`）が **bare repo を origin にした push → pull の通し**まで見る。
+実リポジトリで確認するときは:
+
+```bash
+mise run config:status          # 常用データと staging の差分・競合の有無
+mise run config:pull --dry-run  # 検証だけして書かない
+```
+
+確認する点:
+
+- `config:pull` は **Nemo が起動していると拒否される**（起動中だと次の保存で上書きされるため）
+- 競合を作ると push / pull の両方が止まる:
+
+  ```bash
+  cd "$HOME/Library/Application Support/NemoConfigSync/repo"
+  # わざと競合させる → mise run config:push が「コンフリクトが残っている」で止まること
+  ```
+
+- pull の後に `~/Library/Application Support/NemoConfigSync/backups/<時刻>/` ができていること。
+  `mise run config:restore` で戻せること
+- **同期リポジトリに履歴・セッション・権限が入っていないこと**（入るのは
+  `settings.json` / `pins.json` / `extensions.lock.json` の写し / `manifest.json` だけ）
+
+  ```bash
+  ls "$HOME/Library/Application Support/NemoConfigSync/repo"
+  ```
+
+## Arc からの移行（Phase 2-2）
+
+```bash
+mise run arc:import --dry-run   # 取り込む中身を全部表示する（書かない）
+```
+
+確認する点:
+
+- **Arc を終了してから**実行する（起動中なら警告が出る）
+- `取り込まず` の件数が多すぎないこと（`arc://` のような内部ページだけが落ちる想定）
+- 使い捨てのデータディレクトリに 2 回流して、**結果が同じ**であること（冪等）:
+
+  ```bash
+  TMP=$(mktemp -d)
+  NEMO_USER_DATA_DIR="$TMP/ud" NEMO_SYNC_HOME="$TMP/sync" mise run arc:import dev
+  shasum "$TMP/ud/pins.json"
+  NEMO_USER_DATA_DIR="$TMP/ud" NEMO_SYNC_HOME="$TMP/sync" mise run arc:import dev
+  shasum "$TMP/ud/pins.json"   # 同じ hash になること
+  ```
+
+## 拡張の版確認（Phase 2-3）
+
+```bash
+mise run ext:outdated     # 新しい版が出ているかだけ見る。**何も書き換えない**
+```
+
+- lock の版と一致していれば「（最新）」と出る
+- 確認できなかったとき（API 制限・ネットワーク）は**終了コード 1**。黙って見落とさない
+
+## Phase 2 で人が見る分
+
+自走検証（`verify-phase2.mjs`）が機械で見るのは
+「履歴の全文検索 / アーカイブ / 自動アーカイブの条件 / シークレットに残らないこと /
+オーバーレイの開閉 / 開発起動では既定ブラウザにできないこと」まで。残りは手で見る。
+
+1. **ライブラリ（⌘Y）の見た目**。履歴とアーカイブの切り替え、行のダブルクリックで開けること、
+   × で1件消せること、🗑 で全消しできること
+2. **設定画面（⌘,）**。数値を打っている途中で確定されないこと（`3` の入力中に 0 に落ちない）、
+   検索エンジンに `http://` を入れると採用されず既定に戻ること
+3. **シークレットウィンドウ（⌘⇧P）**。サイドバーが紫になり、注意書きが出て、
+   **拡張のアイコンが出ない**こと。閉じてから開き直すとログイン状態が残っていないこと
+4. **既定ブラウザ**（パッケージ版でのみ）:
+
+   ```bash
+   mise run package                 # dev 版でも確かめられる（既定にはしなくてよい）
+   # 設定（⌘,）→「Nemo を既定のブラウザにする」→ 「既定のブラウザになっている」に変わること
+
+   APP="$PWD/dist/dev/mac-arm64/Nemo Dev.app"
+   TMP=$(mktemp -d)
+   launchctl setenv NEMO_USER_DATA_DIR "$TMP"   # open は env を渡せないのでこれで渡す
+
+   open -a "$APP" 'https://example.com/cold'    # 未起動経路（起動と同時に URL が来る）
+   sleep 12
+   open -a "$APP" 'https://example.com/running' # 起動済み経路
+   sleep 4
+   grep -h "open_url\|tab.create" "$TMP"/logs/*.log
+
+   osascript -e 'quit app "Nemo Dev"'
+   launchctl unsetenv NEMO_USER_DATA_DIR        # **必ず消す**（他の起動にも効いてしまう）
+   ```
+
+   - **`open -a` は LaunchServices 経由でしか届かない**。バイナリを直接 spawn した
+     インスタンスに URL を渡そうとすると `_LSOpenURLsWithCompletionHandler() failed ... error -600`
+     になる（アプリは動いているのに届かないので原因が分かりにくい）。アプリ側も `open` で起動する
+   - 古い `Nemo Dev` が残っていると単一インスタンス制御で新しい方が即終了し、
+     やはり -600 になる。先に `pkill -f "dist/dev/mac-arm64/Nemo Dev"` で掃除する
+   - **未起動から開いたときも URL を取りこぼさない**こと（空のウィンドウで立ち上がらない）。
+     ログに `open_url.queued` → `open_url.flushing` → `tab.create` が並ぶ
+   - 起動済みなら `open_url.handled` → `tab.create` が並ぶ
+   - Slack やメールからリンクを踏んで Nemo で開くこと（既定ブラウザにした後）
+
+5. **一時タブの自動アーカイブ**を実運用の設定（24 時間）で確認するのは現実的でないので、
+   設定画面で 1 時間などに落として翌日見る。**ピン留めしたタブが消えていないこと**を必ず見る

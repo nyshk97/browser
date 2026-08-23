@@ -74,7 +74,10 @@ check('見つからない語では 0 件', missing.length === 0)
 
 const beforeClose = await state()
 const closeKey = await ui.ev(`window.nemo.createTab('${PAGES}/iframe.html').then((key) => key)`)
-await waitFor(ui, `window.nemo.getWindowState().then((s) => (s.tabs.length > ${beforeClose.tabs.length} ? 'ok' : ''))`)
+await waitFor(
+  ui,
+  `window.nemo.getWindowState().then((s) => (s.tabs.length > ${beforeClose.tabs.length} ? 'ok' : ''))`
+)
 await ui.ev(`window.nemo.closeTab(${JSON.stringify(closeKey)}).then(() => 'ok')`)
 
 const closed = await archive('iframe')
@@ -105,9 +108,7 @@ await ui.ev(`window.nemo.pinTab(${JSON.stringify(pinnedKey)}).then(() => 'ok')`)
 
 // sleep で WebContents が消えてもアーカイブ判定は URL で行う。
 // sleep が先に走っても結果が変わらないことも同時に見ている。
-await ui.ev(
-  `window.nemo.updateSettings({ tabArchiveHours: 0.0004 }).then((s) => String(s.tabArchiveHours))`
-)
+await ui.ev(`window.nemo.updateSettings({ tabArchiveHours: 0.0004 }).then((s) => String(s.tabArchiveHours))`)
 
 const activeBefore = (await state()).activeTabKey
 await waitFor(
@@ -201,7 +202,10 @@ if (privateTarget) {
   // 「シークレットが記録した」のか「別の検証が記録した」のか区別できない。
   const privateUrl = `${PAGES}/index.html?probe=private-only`
   const privateKey = await privateUi.ev(`window.nemo.createTab('${privateUrl}').then((key) => key)`)
-  await waitFor(privateUi, `window.nemo.getWindowState().then((s) => (s.tabs.some((t) => t.key === ${JSON.stringify(privateKey)} && t.url.includes('probe=private-only')) ? 'ok' : ''))`)
+  await waitFor(
+    privateUi,
+    `window.nemo.getWindowState().then((s) => (s.tabs.some((t) => t.key === ${JSON.stringify(privateKey)} && t.url.includes('probe=private-only')) ? 'ok' : ''))`
+  )
   // 履歴の書き込みは did-navigate で同期に走るが、念のため少し待つ
   await sleep(800)
 
@@ -210,7 +214,10 @@ if (privateTarget) {
 
   await privateUi.ev(`window.nemo.closeTab(${JSON.stringify(privateKey)}).then(() => 'ok')`)
   await sleep(300)
-  check('シークレットのタブを閉じてもアーカイブに入らない', (await archive('probe=private-only')).length === 0)
+  check(
+    'シークレットのタブを閉じてもアーカイブに入らない',
+    (await archive('probe=private-only')).length === 0
+  )
 
   const total = await history('')
   check(

@@ -3,10 +3,10 @@
 Arc の代替として作っている自作ブラウザ。Electron + `BaseWindow` + タブごとの `WebContentsView` +
 `electron-chrome-extensions` で、Chrome 拡張（Bitwarden 等）が動く。
 
-現在は **Phase 1（素のブラウザ）** まで実装済み。
-サイドバー3層・コマンドバー・ダウンロード・セッション復元・権限ダイアログ・
-パッケージングまで入っていて、dev 版だけで一日ブラウジングできる状態を目指している。
-設定同期・Arc からの移行・既定ブラウザ化は Phase 2。計画は `docs/plans/` を参照。
+現在は **Phase 2（常用移行）** まで実装済み。
+サイドバー3層・コマンドバー・ダウンロード・セッション復元・権限ダイアログ・パッケージングに加えて、
+履歴 / アーカイブのライブラリ・一時タブの自動アーカイブ・シークレットウィンドウ・設定画面・
+既定ブラウザ対応・設定同期・Arc からの移行が入っている。計画は `docs/plans/` を参照。
 
 ## ライセンス
 
@@ -49,13 +49,16 @@ mise run dev       # 開発版 Nemo を起動（HMR あり・拡張つき）
 | `mise run verify` | 自走検証を通す（ビルド→起動→CDP で検証→後片付け） |
 | `mise run verify:ext` | 拡張互換の smoke test（自作テスト拡張・資格情報なし・**CI 必須**） |
 | `mise run verify:ext-idle` | 上記 + service worker の idle 停止をまたぐ確認（遅い） |
-| `mise run verify:ext-update` | 版を上げ下げしても拡張の設定（`chrome.storage`）が残ることを実物で検証 |
 | `mise run package` / `package:stable` | パッケージして成果物を検査（fuses・ネイティブモジュール・notice） |
 | `mise run verify:packaged` | パッケージした `.app` を起動して smoke test |
 | `mise run icons` | アプリアイコン（常用版 / dev 版）を生成 |
 | `mise run licenses` | 依存ライブラリのライセンス棚卸し |
 | `mise run release [patch\|minor\|major\|x.y.z]` | 常用版をリリース（署名 → notarize → GitHub Release） |
 | `mise run ext:fetch` / `ext:verify` / `ext:update <version>` / `ext:rollback` | 拡張の取得・検証・更新・巻き戻し |
+| `mise run verify:ext-update <version>` | 版を上げ下げしても拡張の設定（`chrome.storage`）が残ることを実物で検証 |
+| `mise run config:init` / `config:status` / `config:push` / `config:pull` / `config:restore` | 設定・ピン留めの同期（`nemo-config`） |
+| `mise run arc:import [stable\|dev] [--dry-run] [--replace]` | Arc のピン留め・Favorites を取り込む（冪等） |
+| `mise run ext:outdated` | 拡張に新しい版が出ていないか確認（何も書き換えない） |
 | `mise run test:pages` | テストページのサーバだけ起動 |
 
 ## リリース
@@ -103,6 +106,63 @@ bundle id もデータディレクトリも別なので**同時に入れて同�
 
   環境変数 `NEMO_TEAM_ID` / `NEMO_NOTARY_PROFILE` でも渡せる。
   証明書が1つしか無いマシンなら `teamId` は省略できる。
+
+## 設定同期（2台目を揃える）
+
+設定とピン留め / Favorites は private repo（`nemo-config`）経由で同期する。
+**アプリが読むのは常に `Application Support` の JSON だけ**で、git の作業コピー（staging）は
+別の場所（`~/Library/Application Support/NemoConfigSync/repo`）に置く。
+コンフリクトマーカーの入った JSON をアプリに読ませないための分離。
+
+```bash
+mise run config:init            # 同期リポジトリを clone（初回のみ）
+mise run config:status          # 常用データと staging の差分・競合状態を見る
+mise run config:push            # 常用データ → 同期リポジトリ
+mise run config:pull            # 同期リポジトリ → 常用データ（Nemo を終了してから）
+mise run config:restore         # 直前の pull の前に戻す
+```
+
+- **pull は起動中の Nemo があると実行できない**（起動中だと次の保存で黙って上書きされる）
+- pull は「競合なし・スキーマ正常」を検証してから、バックアップを取って原子的に import する
+- 競合中は push も pull も止まる。staging で `git` を使って解決する
+- 履歴・アーカイブ・セッション・権限の記憶は**端末ローカル**で同期しない
+- 拡張の lock は**写しだけ**置く（source of truth はアプリに同梱された `extensions.lock.json`）。
+  `config:status` が2台で版が揃っているかを突き合わせる
+
+### 新しい Mac で環境を揃える
+
+```bash
+git clone git@github.com:nyshk97/nemo.git ~/browser && cd ~/browser
+mise run setup                  # 依存 + 拡張 artifact
+mise run config:init            # 同期リポジトリを clone
+mise run config:pull            # 設定・ピン留めを取り込む（Nemo は終了しておく）
+```
+
+常用版そのものは [GitHub Release](https://github.com/nyshk97/nemo/releases) の dmg を入れる
+（リポジトリは同期と開発のために要る）。
+
+## Arc からの移行
+
+```bash
+mise run arc:import --dry-run   # 何が入るかだけ見る
+mise run arc:import             # 常用版（stable）へ取り込む
+mise run arc:import dev         # dev 版へ
+mise run arc:import --replace   # 既存のピン留めを捨てて Arc の内容にする
+```
+
+- **Arc を完全に終了してから**実行する（起動中は `StorableSidebar.json` が最新でないことがある）
+- スペースは無視してフラット化する。分割ビューと深すぎるフォルダは切り捨てずに親へ展開する
+- Arc のアイテム ID をそのまま使うので**冪等**。何度実行しても増えない
+- 既定は既存のピン留めを残したまま重ねる。取り込んだ内容を同期にも乗せるなら `mise run config:push`
+
+## 既定ブラウザにする
+
+設定画面（⌘,）の「Nemo を既定のブラウザにする」から。**パッケージ版でのみ設定できる**
+（開発起動で登録すると Electron 本体が既定ブラウザになってしまうため、
+`src/main/default-browser.ts` で弾いている）。
+
+外部アプリから渡された URL は `app.ready` より**前**に購読して queue し、
+起動時のウィンドウが揃ってから開く。未起動から開かれたときの URL を取りこぼさないため。
 
 ## 拡張の扱い
 

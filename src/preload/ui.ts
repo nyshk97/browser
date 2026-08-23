@@ -73,6 +73,12 @@ const api: NemoUiApi = {
   restartServiceWorkers: () => ipcRenderer.invoke('nemo:restart-service-workers') as Promise<number>,
   openLogFolder: () => ipcRenderer.invoke('nemo:open-log-folder') as Promise<void>,
 
+  getOverlayState: () =>
+    ipcRenderer.invoke('nemo:get-overlay-state') as Promise<{
+      kind: string | null
+      prompt: Prompt | null
+    }>,
+
   onWindowState: (listener) => subscribe<WindowState>('nemo:window-state', listener),
   onSharedState: (listener) => subscribe<SharedState>('nemo:shared-state', listener),
   onPrompt: (listener) => subscribe<Prompt | null>('nemo:prompt', listener),

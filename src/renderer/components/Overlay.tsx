@@ -13,8 +13,36 @@ export function Overlay(): React.JSX.Element | null {
   const [kind, setKind] = useState<string | null>(null)
   const [prompt, setPrompt] = useState<Prompt | null>(null)
 
-  useEffect(() => window.nemo.onOverlay(setKind), [])
-  useEffect(() => window.nemo.onPrompt(setPrompt), [])
+  // push が先に届いていたら、後から返ってきた初期値で上書きしない
+  const pushedKind = useRef(false)
+  const pushedPrompt = useRef(false)
+
+  useEffect(
+    () =>
+      window.nemo.onOverlay((next) => {
+        pushedKind.current = true
+        setKind(next)
+      }),
+    []
+  )
+  useEffect(
+    () =>
+      window.nemo.onPrompt((next) => {
+        pushedPrompt.current = true
+        setPrompt(next)
+      }),
+    []
+  )
+
+  // 購読するだけだと、**購読より前に**出たダイアログを取りこぼす。
+  // 起動直後に復元したタブが権限要求を出すと実際に起こりうる。
+  // 取りこぼすと permission / auth の callback が未解決のまま残り、ページが止まる。
+  useEffect(() => {
+    void window.nemo.getOverlayState().then((state) => {
+      if (!pushedKind.current) setKind(state.kind)
+      if (!pushedPrompt.current) setPrompt(state.prompt)
+    })
+  }, [])
 
   const close = useCallback(() => void window.nemo.setOverlay(null), [])
 

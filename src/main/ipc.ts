@@ -10,27 +10,26 @@ import {
   openPinned,
   removeTab,
   selectTab,
+  togglePin,
+  unpinEverywhere,
   type NemoTab,
   type NemoWindow
 } from './registry.js'
-import { normalizeNavigationInput } from './security.js'
-import { answerPrompt } from './prompts.js'
+import { isUiUrl, normalizeNavigationInput } from './security.js'
+import { answerPrompt, currentPrompt } from './prompts.js'
 import { suggest } from './suggest.js'
 import { getSettings, updateSettings } from './store/settings.js'
 import {
   addFavorite,
   createFolder,
   findFavorite,
-  findPinnedByUrl,
   getFavorites,
   getPinned,
   moveFavorite,
   movePinned,
-  pinUrl,
   removeFavorite,
   renameNode,
-  toggleFolder,
-  unpin
+  toggleFolder
 } from './store/pins.js'
 import { cancelDownload, clearDownloads, listDownloads, revealDownload } from './downloads.js'
 import type { LoadedExtensionInfo, PromptAnswer, SharedState, WindowState } from '../shared/types.js'
@@ -55,7 +54,31 @@ function requireWindow(event: IpcMainInvokeEvent): NemoWindow {
     log('ipc.rejected', { reason: 'unknown_sender', senderId: event.sender.id })
     throw new Error('sender is not a Nemo UI window')
   }
+  // WebContents の同一性だけでは足りない。
+  // その WebContents が **今どの origin にいるか** も見る。
+  // UI View が何らかの経路で外部ページへ遷移していた場合、
+  // ここを見ないと外部ページに特権 API を使わせてしまう
+  // （遷移自体は registry の lockUiNavigation で塞いでいるが、二重にする）。
+  if (!isUiUrl(senderFrameUrl(event))) {
+    log('ipc.rejected', { reason: 'sender_not_ui_origin', windowId: win.id })
+    throw new Error('sender is not on the Nemo UI origin')
+  }
   return win
+}
+
+/**
+ * 送信元フレームの URL。
+ * メインフレーム以外からの IPC は受け付けない（UI に iframe は無い）。
+ * 破棄済みフレームの `url` は投げることがあるので必ず包む。
+ */
+function senderFrameUrl(event: IpcMainInvokeEvent): string {
+  try {
+    const frame = event.senderFrame
+    if (!frame || frame !== event.sender.mainFrame) return ''
+    return frame.url
+  } catch {
+    return ''
+  }
 }
 
 function requireTab(event: IpcMainInvokeEvent, key: unknown): { win: NemoWindow; tab: NemoTab } {
@@ -197,29 +220,13 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('nemo:pin-tab', (event, key: unknown) => {
     const { tab } = requireTab(event, key)
-    // すでにピン留めなら解除する（⌘D のトグル）
-    if (tab.pinnedId) {
-      unpin(tab.pinnedId)
-      tab.pinnedId = null
-      tab.window.pushState()
-      return
-    }
-    const existing = findPinnedByUrl(tab.url)
-    const node = existing ?? pinUrl(tab.url, tab.title)
-    if (!node) return
-    tab.pinnedId = node.id
-    tab.window.pushState()
+    togglePin(tab)
   })
 
   ipcMain.handle('nemo:unpin', (event, pinnedId: unknown) => {
-    const win = requireWindow(event)
-    const id = requireString(pinnedId, 'pinnedId')
-    unpin(id)
-    // 開いているタブの紐付けも外す（定義が消えたのに紐付いたままにしない）
-    for (const tab of win.tabs) {
-      if (tab.pinnedId === id) tab.pinnedId = null
-    }
-    win.pushState()
+    requireWindow(event)
+    // 定義は全ウィンドウ共有なので、紐付けを外すのも全ウィンドウに効かせる
+    unpinEverywhere(requireString(pinnedId, 'pinnedId'))
   })
 
   ipcMain.handle('nemo:add-favorite', (event, key: unknown) => {
@@ -279,6 +286,14 @@ export function registerIpcHandlers(): void {
     if (typeof visible !== 'boolean') throw new Error('invalid visible')
     win.setSidebarVisible(visible)
     updateSettings({ sidebarVisible: visible })
+  })
+
+  // オーバーレイは購読しかしないので、読み込み直後に自分から取りに来られるようにする。
+  // push だけに頼ると、購読より前に出たダイアログを取りこぼし、
+  // ページ側の callback（権限・認証）が永久に解決しないまま残る。
+  ipcMain.handle('nemo:get-overlay-state', (event) => {
+    const win = requireWindow(event)
+    return { kind: win.overlay, prompt: currentPrompt(win.id) }
   })
 
   ipcMain.handle('nemo:set-overlay', (event, kind: unknown) => {

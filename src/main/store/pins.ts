@@ -144,11 +144,27 @@ export function pinUrl(url: string, title: string): PinnedNode | null {
   return node
 }
 
-export function unpin(id: string): void {
+/**
+ * ピン留め定義を消す。
+ *
+ * **消えた ID を（フォルダなら子孫も含めて）返す**のが肝。
+ * 呼び出し側は「定義が消えたタブ」の紐付けを外す必要があり、
+ * 返さないと子孫のぶんを取りこぼす。取りこぼしたタブは
+ * サイドバーのどの層にも出なくなり、再起動しても直らない。
+ */
+export function unpin(id: string): string[] {
   const result = removeNode(data().pinned, id)
-  if (!result.node) return
+  if (!result.node) return []
+  const removed = collectIds(result.node)
   commit({ ...data(), pinned: result.nodes })
-  log('pin.removed', { id })
+  log('pin.removed', { id, removed: removed.length })
+  return removed
+}
+
+/** ノードとその子孫の ID をすべて集める。 */
+function collectIds(node: PinnedNode): string[] {
+  if (node.kind !== 'folder') return [node.id]
+  return [node.id, ...node.children.flatMap(collectIds)]
 }
 
 export function createFolder(title: string): PinnedFolder {

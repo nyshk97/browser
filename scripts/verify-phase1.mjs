@@ -26,6 +26,13 @@ function check(name, ok, detail = '') {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
 }
 
+/** ピン留めツリーの ID を平らに並べる。 */
+function flattenIds(nodes) {
+  return nodes.flatMap((node) =>
+    node.kind === 'folder' ? [node.id, ...flattenIds(node.children)] : [node.id]
+  )
+}
+
 async function expectThrows(name, fn, detail = '') {
   try {
     await fn()
@@ -126,6 +133,21 @@ await expectThrows('他ウィンドウのタブは操作できない', () =>
   ui.ev(`window.nemo.selectTab('00000000-0000-0000-0000-000000000000')`)
 )
 
+// ブラウザ UI が外部ページへ遷移しないこと。
+// 遷移できてしまうと、その外部ページに window.nemo（タブ操作・ナビゲーション）が渡る。
+{
+  const before = await ui.ev('location.href')
+  await ui.ev(`(() => { location.href = 'https://example.com/'; return 'tried' })()`)
+  await sleep(1500)
+  const after = await ui.ev('location.href').catch(() => '(context lost)')
+  check('ブラウザ UI は外部ページへ遷移できない', after === before, `${before} -> ${after}`)
+  check(
+    '遷移を試みても window.nemo は UI 以外に渡らない',
+    (await ui.ev('location.protocol')) === 'nemo:',
+    await ui.ev('location.protocol')
+  )
+}
+
 /* ------------------------------------------------------------------ *
  * 1-2 タブとウィンドウの所有モデル
  * ------------------------------------------------------------------ */
@@ -199,6 +221,29 @@ await ui.ev(
   check(
     'フォルダを自分自身の中へは動かせない',
     sh.pinned.some((n) => n.id === folderId)
+  )
+}
+
+// ピン留めの解除は全ウィンドウ・フォルダの子孫まで効く
+{
+  // フォルダの中にピン留めがある状態でフォルダごと消す
+  const before = await state()
+  const boundBefore = before.tabs.filter((t) => t.pinnedId !== null).length
+  check('解除前は定義に紐づいたタブがある', boundBefore > 0, `bound=${boundBefore}`)
+
+  await ui.ev(`window.nemo.unpin(${JSON.stringify(folderId)}).then(() => 'ok')`)
+  await sleep(500)
+  const sh = await shared()
+  const after = await state()
+  check(
+    'フォルダを消すと子孫の定義も消える',
+    !sh.pinned.some((n) => n.id === folderId) && !flattenIds(sh.pinned).includes(pinnedId),
+    JSON.stringify(flattenIds(sh.pinned))
+  )
+  check(
+    '定義が消えたタブは一時タブとして残る（サイドバーから消えない）',
+    after.tabs.every((t) => t.pinnedId === null),
+    JSON.stringify(after.tabs.map((t) => t.pinnedId))
   )
 }
 
@@ -314,6 +359,22 @@ await ui.ev(`window.nemo.addFavorite(${JSON.stringify(reopened)}).then(() => 'ok
     `(() => { const d = document.querySelector('[data-testid]'); return d ? d.getAttribute('data-testid') : '' })()`
   )
   check('権限要求はダイアログを出す（自動許可しない）', kind === 'prompt-permission', kind)
+
+  // オーバーレイを読み直しても、答え待ちのダイアログが戻ること。
+  // 戻らないと permission / auth の callback が未解決のまま残り、ページが止まる
+  // （起動直後は「ダイアログを送る側」が「購読する側」より先に動きうる）。
+  await overlay.send('Page.reload')
+  const afterReload = await waitFor(
+    overlay,
+    `(() => { const d = document.querySelector('[data-testid]'); return d ? d.getAttribute('data-testid') : '' })()`,
+    { timeoutMs: 15000 }
+  ).catch(() => '')
+  check(
+    'オーバーレイを読み直しても答え待ちのダイアログが戻る',
+    afterReload === 'prompt-permission',
+    afterReload
+  )
+
   await overlay.ev(
     `(() => { const b = [...document.querySelectorAll('.dialog-actions button')].find(x => x.textContent === '許可しない'); b.click(); return 'ok' })()`
   )

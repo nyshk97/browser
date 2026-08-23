@@ -8,13 +8,22 @@ import {
   BLANK_URL,
   applyWebContentsSecurityDefaults,
   isLoadedExtensionUrl,
+  isUiUrl,
   redactUrl,
   resolveNavigationTarget
 } from './security.js'
 import { log } from './log.js'
 import { cancelPrompts, currentPrompt, setPromptNotifier } from './prompts.js'
 import { getSettings } from './store/settings.js'
-import { getPinned, findPinned, onPinsChanged, getFavorites } from './store/pins.js'
+import {
+  findPinned,
+  findPinnedByUrl,
+  getFavorites,
+  getPinned,
+  onPinsChanged,
+  pinUrl,
+  unpin as unpinDefinition
+} from './store/pins.js'
 import { recordVisit, updateTitle } from './store/history.js'
 import { saveSession, type SavedWindow } from './store/session.js'
 import { listDownloads, onDownloadsChanged } from './downloads.js'
@@ -314,6 +323,54 @@ function attachTabEvents(tab: NemoTab, wc: WebContents): void {
   })
 }
 
+/**
+ * ブラウザ UI の WebContents を `nemo://ui/` から出さない。
+ *
+ * UI の preload は `window.nemo`（タブ操作・ナビゲーション）を公開している。
+ * もし UI View が外部ページへ遷移すると、**そのページに特権 API が渡る**。
+ * UI に掛けた CSP は遷移先には効かないので、ここで塞ぐ必要がある。
+ *
+ * 現実の経路として一番ありうるのは「リンクやファイルをサイドバーに
+ * ドラッグ & ドロップする」で、これは普通にナビゲーションを起こす。
+ */
+function lockUiNavigation(contents: WebContents, view: 'sidebar' | 'overlay', uiUrl: string): void {
+  const guard = (phase: string, url: string, preventDefault: () => void): void => {
+    if (isUiUrl(url)) return
+    preventDefault()
+    log('ui.navigation_blocked', { view, phase, target: redactUrl(url) })
+  }
+
+  contents.on('will-navigate', (event, url) => {
+    guard('will-navigate', url, () => event.preventDefault())
+  })
+  contents.on('will-redirect', (event, url) => {
+    guard('will-redirect', url, () => event.preventDefault())
+  })
+  contents.on('will-frame-navigate', (event) => {
+    guard('will-frame-navigate', event.url, () => event.preventDefault())
+  })
+
+  // UI から新しいウィンドウは開かせない（開くのは Nemo 側の createWindow だけ）
+  contents.setWindowOpenHandler(({ url }) => {
+    log('ui.window_open_blocked', { view, target: redactUrl(url) })
+    return { action: 'deny' }
+  })
+
+  contents.on('will-attach-webview', (event) => {
+    event.preventDefault()
+    log('ui.webview_blocked', { view })
+  })
+
+  // 最後の砦。上のどれかをすり抜けて外部ページに着いてしまったら、
+  // 特権つきのまま放置せず UI に戻す（戻り先は必ず UI なのでループしない）。
+  contents.on('did-navigate', (_event, url) => {
+    if (isUiUrl(url)) return
+    log('ui.navigation_reverted', { view, target: redactUrl(url) })
+    // 戻り先は自分の view の URL（`?view=` を落とすと別の UI になってしまう）
+    void contents.loadURL(uiUrl)
+  })
+}
+
 /* ------------------------------------------------------------------ *
  * ウィンドウ
  * ------------------------------------------------------------------ */
@@ -382,13 +439,28 @@ export class NemoWindow {
       }
     })
     if (view === 'overlay') contentsView.setBackgroundColor('#00000000')
-    void contentsView.webContents.loadURL(`${UI_INDEX_URL}?view=${view}&window=${this.id}`)
-    contentsView.webContents.once('did-finish-load', () => {
-      if (view !== 'sidebar') return
-      this.uiReady = true
-      const queued = this.pendingAfterReady
-      this.pendingAfterReady = []
-      for (const fn of queued) fn()
+
+    const uiUrl = `${UI_INDEX_URL}?view=${view}&window=${this.id}`
+    lockUiNavigation(contentsView.webContents, view, uiUrl)
+
+    void contentsView.webContents.loadURL(uiUrl)
+
+    // `once` ではなく `on`。dev の HMR や、何らかの理由で読み直したときにも
+    // 状態を送り直さないと、UI が空のまま復帰しない。
+    contentsView.webContents.on('did-finish-load', () => {
+      if (view === 'sidebar') {
+        this.uiReady = true
+        const queued = this.pendingAfterReady
+        this.pendingAfterReady = []
+        for (const fn of queued) fn()
+      } else {
+        // オーバーレイは購読しかしないので、読み込み直後に**今の状態を送り直す**。
+        // ここが無いと、起動直後に出た権限・認証ダイアログが
+        // 「購読前に送られて誰も受け取らない」状態になり、
+        // ページ側の callback が永久に解決しない（実際に競合しうる）。
+        this.overlayWebContents.send('nemo:overlay', this.overlay)
+        this.pushPrompt(currentPrompt(this.id))
+      }
       this.pushState()
       this.pushShared()
     })
@@ -669,7 +741,9 @@ export function createTab(win: NemoWindow, url: string = BLANK_URL, options: Cre
     resolveNavigationTarget(url, { allowExtensionPages: isLoadedExtensionUrl(url) }, 'createTab') ?? BLANK_URL
 
   const tab = new NemoTab(win, target, options.title)
-  tab.pinnedId = options.pinnedId ?? null
+  // 消えた定義への紐付けを持ち込ませない（セッション復元で古い pinnedId が来る）。
+  // 紐付いたままだと、サイドバーのどの層にも出ないタブになる。
+  tab.pinnedId = options.pinnedId && findPinned(options.pinnedId) ? options.pinnedId : null
   win.tabs.push(tab)
   if (!options.asleep) tab.materialize()
   win.layout()
@@ -838,6 +912,42 @@ export function removeWindow(win: NemoWindow): void {
 /* ------------------------------------------------------------------ *
  * ピン留めとタブ実体の対応
  * ------------------------------------------------------------------ */
+
+/**
+ * ピン留め定義を消し、**全ウィンドウ**のタブから紐付けを外す。
+ *
+ * 定義は全ウィンドウ共有なので、操作したウィンドウのタブだけ外すのでは足りない。
+ * フォルダを消したときは子孫の定義も一緒に消えるため、その ID も外す。
+ * ここを1か所に寄せておかないと、解除の経路（サイドバー / メニュー）ごとに漏れが出る。
+ */
+export function unpinEverywhere(pinnedId: string): void {
+  const removed = unpinDefinition(pinnedId)
+  if (removed.length === 0) return
+  const removedIds = new Set(removed)
+  for (const win of windowsById.values()) {
+    if (win.isDestroyed) continue
+    let changed = false
+    for (const tab of win.tabs) {
+      if (tab.pinnedId && removedIds.has(tab.pinnedId)) {
+        tab.pinnedId = null
+        changed = true
+      }
+    }
+    if (changed) win.pushState()
+  }
+}
+
+/** ⌘D。留めていなければ留め、留めていれば解除する（解除は全ウィンドウに効く）。 */
+export function togglePin(tab: NemoTab): void {
+  if (tab.pinnedId) {
+    unpinEverywhere(tab.pinnedId)
+    return
+  }
+  const node = findPinnedByUrl(tab.url) ?? pinUrl(tab.url, tab.title)
+  if (!node) return
+  tab.pinnedId = node.id
+  tab.window.pushState()
+}
 
 /** ピン留め定義を、そのウィンドウで開く（既に開いていればそれを選ぶ）。 */
 export function openPinned(win: NemoWindow, pinnedId: string): void {

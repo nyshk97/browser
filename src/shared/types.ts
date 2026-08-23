@@ -285,6 +285,9 @@ export interface NemoUiApi {
   /** 診断ログのフォルダを Finder で開く。 */
   openLogFolder(): Promise<void>
 
+  /** オーバーレイの現在の状態（購読より前に起きた分を取りこぼさないため）。 */
+  getOverlayState(): Promise<{ kind: string | null; prompt: Prompt | null }>
+
   /* 購読 */
   onWindowState(listener: (state: WindowState) => void): () => void
   onSharedState(listener: (state: SharedState) => void): () => void

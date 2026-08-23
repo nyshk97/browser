@@ -11,9 +11,10 @@ import {
   removeWindow,
   reopenClosedTab,
   selectTab,
+  togglePin,
   type NemoWindow
 } from './registry.js'
-import { addFavorite, findPinnedByUrl, pinUrl, unpin } from './store/pins.js'
+import { addFavorite } from './store/pins.js'
 
 /**
  * メニューバーとキーバインド（計画 1-7）。
@@ -112,18 +113,10 @@ function runCommand(command: string): void {
     case 'copy-url':
       if (tab) sendToUi(win, 'copy-url')
       return
-    case 'pin-tab': {
-      if (!tab) return
-      if (tab.pinnedId) {
-        unpin(tab.pinnedId)
-        tab.pinnedId = null
-      } else {
-        const node = findPinnedByUrl(tab.url) ?? pinUrl(tab.url, tab.title)
-        if (node) tab.pinnedId = node.id
-      }
-      win.pushState()
+    case 'pin-tab':
+      // 実装は registry の togglePin に1本化する（解除は全ウィンドウに効かせる必要がある）
+      if (tab) togglePin(tab)
       return
-    }
     case 'add-favorite':
       if (tab) addFavorite(tab.url, tab.title)
       return

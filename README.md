@@ -135,7 +135,11 @@ node scripts/ext-webstore-key.mjs <id>  # Web Store の CRX から公開鍵を�
 - ナビゲーションは `http:` / `https:` と `about:blank`（厳密一致）のみ許可。
   リダイレクト後の scheme も検査する
 - permission は既定で拒否（allowlist）
-- IPC は送信元が登録済み UI WebContents か、対象タブがそのウィンドウのものかを毎回検証する
+- IPC は送信元が登録済み UI WebContents か、**その WebContents が今も `nemo://ui` にいるか**、
+  対象タブがそのウィンドウのものかを毎回検証する
+- **ブラウザ UI の WebContents は `nemo://ui/` から出さない**（`will-navigate` / `will-redirect` /
+  `will-frame-navigate` / `setWindowOpenHandler` で拒否）。UI の preload は `window.nemo` を公開しているので、
+  外部ページへ遷移できると**そのページに特権 API が渡る**（リンクをサイドバーにドロップすると起こりうる）
 - `chrome-extension://` は「ロード済み拡張が自分のページを開く」経路だけ許可する。
   コマンドバー・Web ページからは通さない
 - ログに URL のパス・クエリ・フラグメントを出さない（`redactUrl` で scheme + host まで落とす）

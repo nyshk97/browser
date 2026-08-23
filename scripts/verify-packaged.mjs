@@ -87,10 +87,15 @@ try {
       NEMO_DOWNLOAD_DIR: downloadDir
     }
   })
+  // ビルドし直した直後の初回起動は、macOS 側のスキャン（Gatekeeper / Spotlight）で
+  // 数十秒かかることがある。45 秒だと不安定に落ちたので余裕を持たせる。
+  // 本当に起動していないなら、下の catch で子プロセスの状態まで出す。
   await waitForHttp(`${cdp}/json/list`, {
     child: app,
-    timeoutMs: 45000,
+    timeoutMs: 150000,
     check: async (res) => (await res.json()).some((t) => t.url.startsWith('nemo://ui/'))
+  }).catch((error) => {
+    throw new Error(`${error.message}（pid ${app.pid} / 生存: ${isChildAlive(app)} / .app: ${appPath}）`)
   })
   check('パッケージした .app が起動してブラウザ UI を表示する', true)
 

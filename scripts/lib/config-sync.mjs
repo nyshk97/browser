@@ -236,13 +236,37 @@ export function findRunningForChannel(channel) {
   const found = []
   const product = PRODUCT_NAME[channel] ?? PRODUCT_NAME.stable
   const needle = `${product}.app/Contents/MacOS/${product}`
+  const target = path.resolve(userDataDirFor(channel))
+  /**
+   * 常用のデータディレクトリを見ているか。
+   *
+   * `NEMO_USER_DATA_DIR` で別のディレクトリを指しているときは、
+   * **同じ名前のアプリが動いていても関係ない**（別プロファイル）。
+   * 名前だけで判定すると、常用の Nemo を開いているだけで
+   * 使い捨てディレクトリ相手の操作まで止まる（テストが実アプリの起動状態で落ちた）。
+   */
+  const usingDefaultDir = !process.env['NEMO_USER_DATA_DIR']
   try {
     const out = execFileSync('/bin/ps', ['ax', '-o', 'pid=,command='], { encoding: 'utf8' })
     for (const line of out.split('\n')) {
+      const pid = Number(line.trim().split(/\s+/)[0])
+      if (!Number.isInteger(pid)) continue
+
+      // ヘルパープロセスは `--user-data-dir=<パス>` を持つので、狙ったプロファイルだけ拾える
+      if (line.includes(`--user-data-dir=${target}`)) {
+        if (!found.some((item) => item.pid === pid)) {
+          found.push({ pid, source: 'ps', command: line.trim() })
+        }
+        continue
+      }
+      // main プロセスはパスを持たないので名前で拾う。
+      // 既定のディレクトリを見ているときだけ有効な手掛かり。
+      if (!usingDefaultDir) continue
       if (!line.includes(needle)) continue
       if (line.includes('Helper')) continue
-      const pid = Number(line.trim().split(/\s+/)[0])
-      if (Number.isInteger(pid)) found.push({ pid, source: 'ps', command: line.trim() })
+      if (!found.some((item) => item.pid === pid)) {
+        found.push({ pid, source: 'ps', command: line.trim() })
+      }
     }
   } catch {
     /* ps が使えなくてもマーカー側で拾えることがある */
@@ -257,7 +281,6 @@ export function findRunningForChannel(channel) {
   } catch {
     entries = []
   }
-  const target = path.resolve(userDataDirFor(channel))
   for (const name of entries) {
     if (!/^\d+\.json$/.test(name)) continue
     let info

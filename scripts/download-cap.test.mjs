@@ -53,3 +53,18 @@ test('scope が違うものは数にも入れない', () => {
   assert.deepEqual([...idsOverCap(entries, null, 2)].sort(), ['n-0'])
   assert.deepEqual([...idsOverCap(entries, 'nemo-private', 2)].sort(), ['p-0'])
 })
+
+test('上限超過中に保護された進行中の項目は、完了した時点で落とせる', () => {
+  // 「長く走っている1件（最古）」＋「新しい完了済み 50 件」
+  const running = { id: 'long-running', scope: null, startedAt: 0, state: 'progressing' }
+  const entries = [running, ...completed(null, MAX_ENTRIES, 'new')]
+
+  // 走っている間は落とさない（＝上限を超えたまま 51 件残る）
+  assert.deepEqual(idsOverCap(entries, null), [], '進行中は保護される')
+
+  // 終わったら落とせるようになる。**この時点で trim を呼び直さないと残り続ける**
+  const done = entries.map((entry) =>
+    entry.id === 'long-running' ? { ...entry, state: 'completed' } : entry
+  )
+  assert.deepEqual(idsOverCap(done, null), ['long-running'], '完了後は最古として落ちる')
+})

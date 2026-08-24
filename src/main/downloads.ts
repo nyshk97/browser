@@ -134,6 +134,11 @@ export function installDownloadHandler(pageSession: Session, scope: string | nul
           doneState === 'completed' ? 'completed' : doneState === 'cancelled' ? 'cancelled' : 'interrupted'
       }
       log(doneState === 'completed' ? 'download.completed' : 'download.failed', { host, result: doneState })
+      // **終わった時点でもう一度上限を掛ける**。
+      // 上限判定は「終わっていないものは落とさない」ので、
+      // 長く走っている1件は超過していても保護される。
+      // 開始時にしか掛けないと、それが終わった後も上限を超えたまま残り続ける。
+      trim(entry.scope)
       notify()
     })
   })
@@ -157,6 +162,9 @@ function uniquePath(target: string): string {
  * 件数の上限を掛ける。**scope ごとに**掛けるのが肝。
  * 全部を混ぜて数えると、シークレット側で大量に落としただけで
  * 通常側の古い履歴が押し出されて消える。
+ *
+ * 呼ぶのは「開始時」と「終わった時」の両方。終わった時に掛けないと、
+ * 上限超過中は保護されていた進行中の項目が、完了後もそのまま残る。
  */
 function trim(scope: string | null): void {
   const snapshot = [...entries.values()].map((entry) => ({

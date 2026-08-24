@@ -1,4 +1,4 @@
-import { BaseWindow, WebContentsView, app, session, webFrameMain, type WebContents } from 'electron'
+import { BaseWindow, WebContentsView, app, dialog, session, webFrameMain, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -115,6 +115,14 @@ let privateSessionPrepared = false
 let privateClearing: Promise<void> | null = null
 /** 前回の消去のあとに実際に使われたか（使われていないなら消し直さない）。 */
 let privateUsedSinceClear = false
+/**
+ * 直近の消去が失敗したか。
+ * **失敗したまま次を開かない**（cookie も Basic 認証も残ったセッションで
+ * 「跡形もなく消える」と表示するのが一番まずい）。
+ */
+let privateClearFailed = false
+/** 消去のやり直し回数の上限。 */
+const PRIVATE_CLEAR_ATTEMPTS = 3
 
 function ensurePrivateSession(): string {
   privateUsedSinceClear = true
@@ -141,12 +149,67 @@ function ensurePrivateSession(): string {
  */
 export async function whenPrivateSessionReady(): Promise<void> {
   while (privateClearing) await privateClearing
+
+  // 前回の消去が失敗していたら、**開く前にやり直す**。
+  // 失敗をログだけにして開くと、前のセッションの cookie / Basic 認証が残ったまま
+  // 「跡形もなく消える」と表示することになる。
+  for (let attempt = 0; privateClearFailed && attempt < PRIVATE_CLEAR_ATTEMPTS; attempt += 1) {
+    log('window.private_session_clear_retry', { attempt: attempt + 1 })
+    privateClearing = clearPrivateSession().finally(() => {
+      privateClearing = null
+    })
+    await privateClearing
+  }
+  if (privateClearFailed) {
+    throw new Error('前のシークレットセッションを消しきれなかった')
+  }
 }
 
-/** シークレットウィンドウを開く。消去中なら終わってから開く。 */
-export async function openPrivateWindow(initialUrl?: string): Promise<NemoWindow> {
-  await whenPrivateSessionReady()
+/**
+ * シークレットウィンドウを開く。消去中なら終わってから開く。
+ * **消しきれていないときは開かない**（fail-closed）。開けなかったら null を返す。
+ */
+export async function openPrivateWindow(initialUrl?: string): Promise<NemoWindow | null> {
+  try {
+    await whenPrivateSessionReady()
+  } catch (error) {
+    logError('window.private_window_blocked', error)
+    dialog.showErrorBox(
+      'シークレットウィンドウを開けません',
+      '前のシークレットセッションを消しきれませんでした。\n' +
+        '前回の内容が残ったまま開くのを避けるため、開くのをやめます。\n' +
+        'Nemo を再起動してからやり直してください。'
+    )
+    return null
+  }
   return createWindow(initialUrl, { isPrivate: true })
+}
+
+/**
+ * シークレットセッションの中身を消す。
+ *
+ * **`allSettled` で全部の完了を待つ**。`all` は最初の失敗で返るので、
+ * 残りの消去が「開き直した後」まで走り続け、新しく書いた状態を消す競合になる。
+ * 1つでも失敗したら `privateClearFailed` を立てて、次に開くときにやり直す。
+ */
+function clearPrivateSession(): Promise<void> {
+  const privateSession = session.fromPartition(PRIVATE_PARTITION)
+  return Promise.allSettled([
+    privateSession.clearStorageData(),
+    privateSession.clearCache(),
+    privateSession.clearAuthCache()
+  ]).then((results) => {
+    const failures = results.filter((result) => result.status === 'rejected')
+    if (failures.length === 0) {
+      privateClearFailed = false
+      log('window.private_session_cleared', {})
+      return
+    }
+    privateClearFailed = true
+    for (const failure of failures) {
+      logError('window.private_session_clear_failed', failure.reason)
+    }
+  })
 }
 
 /**
@@ -168,21 +231,11 @@ function endPrivateSessionIfUnused(): void {
   forgetPermissionScope(PRIVATE_PARTITION)
   forgetDownloadsForScope(PRIVATE_PARTITION)
 
-  const privateSession = session.fromPartition(PRIVATE_PARTITION)
-  privateClearing = Promise.all([
-    privateSession.clearStorageData(),
-    privateSession.clearCache(),
-    privateSession.clearAuthCache()
-  ])
-    .then(
-      () => log('window.private_session_cleared', {}),
-      (error: unknown) => logError('window.private_session_clear_failed', error)
-    )
-    .finally(() => {
-      privateClearing = null
-      // 消している最中に開いて閉じられた分をここで拾う（使われていなければ何もしない）
-      endPrivateSessionIfUnused()
-    })
+  privateClearing = clearPrivateSession().finally(() => {
+    privateClearing = null
+    // 消している最中に開いて閉じられた分をここで拾う（使われていなければ何もしない）
+    endPrivateSessionIfUnused()
+  })
 }
 
 /* ------------------------------------------------------------------ *

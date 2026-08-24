@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { log, logError, redactUrl } from './log.js'
 import { getSettings } from './store/settings.js'
+import { idsOverCap } from '../shared/download-cap.js'
 import type { DownloadState } from '../shared/types.js'
 
 /**
@@ -39,7 +40,6 @@ interface Entry {
 
 const entries = new Map<string, Entry>()
 const listeners = new Set<() => void>()
-const MAX_ENTRIES = 50
 
 export function onDownloadsChanged(listener: () => void): () => void {
   listeners.add(listener)
@@ -64,11 +64,6 @@ export function listDownloads(scope: string | null = null): DownloadState[] {
     .filter((entry) => entry.scope === scope)
     .map((entry) => entry.state)
     .sort((a, b) => b.startedAt - a.startedAt)
-}
-
-/** 全 scope の状態（上限で古いものを落とすときだけ使う）。 */
-function allStates(): DownloadState[] {
-  return [...entries.values()].map((entry) => entry.state).sort((a, b) => b.startedAt - a.startedAt)
 }
 
 /**
@@ -113,7 +108,7 @@ export function installDownloadHandler(pageSession: Session, scope: string | nul
       host
     }
     entries.set(id, { state, item, scope })
-    trim()
+    trim(scope)
     log('download.started', { host })
     notify()
 
@@ -158,12 +153,19 @@ function uniquePath(target: string): string {
   return target
 }
 
-function trim(): void {
-  const sorted = allStates()
-  for (const state of sorted.slice(MAX_ENTRIES)) {
-    if (state.state === 'progressing' || state.state === 'paused') continue
-    entries.delete(state.id)
-  }
+/**
+ * 件数の上限を掛ける。**scope ごとに**掛けるのが肝。
+ * 全部を混ぜて数えると、シークレット側で大量に落としただけで
+ * 通常側の古い履歴が押し出されて消える。
+ */
+function trim(scope: string | null): void {
+  const snapshot = [...entries.values()].map((entry) => ({
+    id: entry.state.id,
+    scope: entry.scope,
+    startedAt: entry.state.startedAt,
+    state: entry.state.state
+  }))
+  for (const id of idsOverCap(snapshot, scope)) entries.delete(id)
 }
 
 export function cancelDownload(id: string, scope: string | null = null): void {

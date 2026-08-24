@@ -107,38 +107,50 @@ export function isTransferring(contents: WebContents): boolean {
  * non-persistent セッションに拡張を載せられない（README の Limitations）。
  * つまりシークレットウィンドウでは Bitwarden の自動入力が使えない。UI に必ず出す。
  */
-const PRIVATE_PARTITION_PREFIX = 'nemo-private-'
+const PRIVATE_PARTITION = 'nemo-private'
 
-/**
- * 今あいているシークレットセッションの partition。
- * 1つも開いていなければ null で、次に開くときは**別の番号**を採る。
- */
-let currentPrivatePartition: string | null = null
-let privateGeneration = 0
+/** ハンドラを登録済みか（**セッションは1つだけ**作って使い回す）。 */
+let privateSessionPrepared = false
+/** 消去中なら、その Promise。終わるまで新しいシークレットウィンドウを開かない。 */
+let privateClearing: Promise<void> | null = null
+/** 前回の消去のあとに実際に使われたか（使われていないなら消し直さない）。 */
+let privateUsedSinceClear = false
 
 function ensurePrivateSession(): string {
-  if (currentPrivatePartition) return currentPrivatePartition
-  privateGeneration += 1
-  const partition = `${PRIVATE_PARTITION_PREFIX}${privateGeneration}`
-  const privateSession = session.fromPartition(partition)
+  privateUsedSinceClear = true
+  if (privateSessionPrepared) return PRIVATE_PARTITION
+  const privateSession = session.fromPartition(PRIVATE_PARTITION)
   // 権限・デバイスの既定は通常セッションと同じ（ここを省くと自動許可され得る）。
   // ただし**記憶はこの partition の中だけ**（常用プロファイルに残さない）。
-  applySessionSecurityDefaults(privateSession, 'page', findWindowIdForPageContents, partition)
+  applySessionSecurityDefaults(privateSession, 'page', findWindowIdForPageContents, PRIVATE_PARTITION)
   // ダウンロードもここで登録する。付けないと `will-download` に誰も応えず、
   // 保存先が決まらないまま失敗する（Nemo のダウンロード一覧にも出ない）。
-  installDownloadHandler(privateSession, partition)
-  currentPrivatePartition = partition
-  log('window.private_session_created', { generation: privateGeneration })
-  return partition
+  installDownloadHandler(privateSession, PRIVATE_PARTITION)
+  privateSessionPrepared = true
+  log('window.private_session_created', {})
+  return PRIVATE_PARTITION
+}
+
+/**
+ * 消去中なら終わるまで待つ。
+ *
+ * **シークレットウィンドウはこれを通してから作る**。待たずに同じ partition を貼り直すと、
+ * 「遅れて終わった消去が、新しいウィンドウで書いたばかりの cookie まで消す」競合になる。
+ * 世代ごとに別 partition を作る手もあるが、Session は `clearStorageData` では破棄されず
+ * ハンドラごと積み上がるので、**1つを待って使い回す**。
+ */
+export async function whenPrivateSessionReady(): Promise<void> {
+  while (privateClearing) await privateClearing
+}
+
+/** シークレットウィンドウを開く。消去中なら終わってから開く。 */
+export async function openPrivateWindow(initialUrl?: string): Promise<NemoWindow> {
+  await whenPrivateSessionReady()
+  return createWindow(initialUrl, { isPrivate: true })
 }
 
 /**
  * シークレットウィンドウが1つも無くなったときの後始末。
- *
- * **次に開くシークレットは別の partition にする**。消去は非同期なので、
- * 同じ partition を即座に貼り直すと「遅れて終わった消去が、
- * 新しいウィンドウで書いたばかりの cookie まで消す」競合になる。
- * 番号を進めておけば、消している最中に開き直しても互いに干渉しない。
  *
  * 消すもの:
  * - storage（cookie / localStorage / IndexedDB / service worker …）と cache
@@ -148,24 +160,29 @@ function ensurePrivateSession(): string {
  * - この partition のダウンロード一覧（ファイル自体は残す）
  */
 function endPrivateSessionIfUnused(): void {
-  const partition = currentPrivatePartition
-  if (!partition) return
+  if (!privateSessionPrepared || privateClearing || !privateUsedSinceClear) return
   const stillOpen = [...windowsById.values()].some((win) => !win.isDestroyed && win.isPrivate)
   if (stillOpen) return
 
-  currentPrivatePartition = null
-  forgetPermissionScope(partition)
-  forgetDownloadsForScope(partition)
+  privateUsedSinceClear = false
+  forgetPermissionScope(PRIVATE_PARTITION)
+  forgetDownloadsForScope(PRIVATE_PARTITION)
 
-  const privateSession = session.fromPartition(partition)
-  void Promise.all([
+  const privateSession = session.fromPartition(PRIVATE_PARTITION)
+  privateClearing = Promise.all([
     privateSession.clearStorageData(),
     privateSession.clearCache(),
     privateSession.clearAuthCache()
-  ]).then(
-    () => log('window.private_session_cleared', {}),
-    (error: unknown) => logError('window.private_session_clear_failed', error)
-  )
+  ])
+    .then(
+      () => log('window.private_session_cleared', {}),
+      (error: unknown) => logError('window.private_session_clear_failed', error)
+    )
+    .finally(() => {
+      privateClearing = null
+      // 消している最中に開いて閉じられた分をここで拾う（使われていなければ何もしない）
+      endPrivateSessionIfUnused()
+    })
 }
 
 /* ------------------------------------------------------------------ *
@@ -720,6 +737,14 @@ export class NemoWindow {
     return this.overlayView.webContents
   }
 
+  /**
+   * このウィンドウが見てよいダウンロードの scope。
+   * 常用は `null`、シークレットは自分の partition。
+   */
+  get downloadScope(): string | null {
+    return this.isPrivate ? this.partition : null
+  }
+
   get sidebarWidth(): number {
     return this.sidebarVisible ? SIDEBAR_WIDTH : SIDEBAR_HIDDEN_WIDTH
   }
@@ -811,7 +836,7 @@ export class NemoWindow {
     const shared: SharedState = {
       favorites: getFavorites(),
       pinned: getPinned(),
-      downloads: listDownloads(),
+      downloads: listDownloads(this.downloadScope),
       version: app.getVersion(),
       update: getUpdateState()
     }

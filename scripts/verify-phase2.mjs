@@ -270,23 +270,68 @@ if (privateTarget) {
     stillHere.tabs.map((tab) => tab.key).join(', ')
   )
 
-  /* ---- シークレットでもダウンロードできる ---- */
+  /* ---- ダウンロードは scope で分かれる ---- */
   // ハンドラを付けていないと `will-download` に誰も応えず、保存先が決まらないまま失敗する。
-  const downloadsBefore = await privateUi
-    .ev('window.nemo.getSharedState().then((s) => String(s.downloads.length))')
-    .then(Number)
-  const dlKey = await privateUi.ev(`window.nemo.createTab('${PAGES}/index.html').then((key) => key)`)
+  // さらに一覧は全ウィンドウ共通なので、**絞らないと通常窓からシークレットの
+  // ファイル名・保存先が見えて Finder 表示もキャンセルもできてしまう**。
   const dlUrl = `${PAGES}/__nemo_download__`
-  // ダウンロードは navigation が中断される形になるので、reject は握る
-  await privateUi.ev(
-    `window.nemo.navigate(${JSON.stringify(dlKey)}, ${JSON.stringify(dlUrl)}).catch(() => 'download')`
+  const startDownload = async (session) => {
+    const before = await session
+      .ev('window.nemo.getSharedState().then((s) => String(s.downloads.length))')
+      .then(Number)
+    const key = await session.ev(`window.nemo.createTab('${PAGES}/index.html').then((k) => k)`)
+    // ダウンロードは navigation が中断される形になるので reject は握る
+    await session.ev(
+      `window.nemo.navigate(${JSON.stringify(key)}, ${JSON.stringify(dlUrl)}).catch(() => 'download')`
+    )
+    return waitFor(
+      session,
+      `window.nemo.getSharedState().then((s) => (s.downloads.length > ${before} ? JSON.stringify(s.downloads[0]) : ''))`,
+      { timeoutMs: 15000 }
+    )
+      .then(JSON.parse)
+      .catch(() => null)
+  }
+
+  // **両方に1件ずつ**作る。片方が空だと「出ていない」が偶然成立してしまう
+  const normalDownload = await startDownload(ui)
+  const privateDownload = await startDownload(privateUi)
+  check(
+    'シークレットでもダウンロードが Nemo の一覧に載る',
+    Boolean(privateDownload),
+    String(privateDownload?.id)
   )
-  const downloaded = await waitFor(
-    privateUi,
-    `window.nemo.getSharedState().then((s) => (s.downloads.length > ${downloadsBefore} ? JSON.stringify(s.downloads[0]) : ''))`,
-    { timeoutMs: 15000 }
-  ).catch(() => null)
-  check('シークレットでもダウンロードが Nemo の一覧に載る', Boolean(downloaded), String(downloaded))
+  check('通常ウィンドウのダウンロードも記録される', Boolean(normalDownload), String(normalDownload?.id))
+
+  const listOf = (session) =>
+    session.ev('window.nemo.getSharedState().then((s) => JSON.stringify(s.downloads))').then(JSON.parse)
+
+  const normalList = await listOf(ui)
+  const privateList = await listOf(privateUi)
+  check(
+    'シークレットのダウンロードが通常ウィンドウの一覧に出ない',
+    !normalList.some((item) => item.id === privateDownload?.id) &&
+      normalList.some((item) => item.id === normalDownload?.id),
+    `通常側 ${normalList.length} 件`
+  )
+  check(
+    '通常のダウンロードがシークレットの一覧に出ない',
+    !privateList.some((item) => item.id === normalDownload?.id) &&
+      privateList.some((item) => item.id === privateDownload?.id),
+    `シークレット側 ${privateList.length} 件`
+  )
+
+  // 一覧に出さなくても id を知っていれば叩けるので、操作も scope で絞る
+  if (privateDownload) {
+    await ui.ev(`window.nemo.cancelDownload(${JSON.stringify(privateDownload.id)}).then(() => 'ok')`)
+    await sleep(600)
+    const stillThere = await listOf(privateUi)
+    check(
+      '通常ウィンドウからシークレットのダウンロードを消せない',
+      stillThere.some((item) => item.id === privateDownload.id),
+      `シークレット側 ${stillThere.length} 件`
+    )
+  }
 
   /* ---- シークレット窓どうしはセッションを共有する ---- */
   // ウィンドウごとに別セッションにすると、タブを別のシークレット窓へ移せず

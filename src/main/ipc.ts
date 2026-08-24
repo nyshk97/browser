@@ -12,6 +12,7 @@ import {
   removeTab,
   selectTab,
   togglePin,
+  openPrivateWindow,
   unpinEverywhere,
   type NemoTab,
   type NemoWindow,
@@ -134,11 +135,12 @@ function resolveInput(input: unknown): string {
   return decision.url
 }
 
-function sharedState(): SharedState {
+/** 共有データ。**ダウンロードだけは呼び出し元ウィンドウの scope で絞る**。 */
+function sharedState(win: NemoWindow): SharedState {
   return {
     favorites: getFavorites(),
     pinned: getPinned(),
-    downloads: listDownloads(),
+    downloads: listDownloads(win.downloadScope),
     version: app.getVersion(),
     update: getUpdateState()
   }
@@ -154,10 +156,7 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('nemo:get-window-state', (event): WindowState => requireWindow(event).toState())
-  ipcMain.handle('nemo:get-shared-state', (event): SharedState => {
-    requireWindow(event)
-    return sharedState()
-  })
+  ipcMain.handle('nemo:get-shared-state', (event): SharedState => sharedState(requireWindow(event)))
   ipcMain.handle('nemo:get-settings', (event) => {
     requireWindow(event)
     return getSettings()
@@ -320,9 +319,10 @@ export function registerIpcHandlers(): void {
     createWindow()
   })
 
-  ipcMain.handle('nemo:create-private-window', (event) => {
+  ipcMain.handle('nemo:create-private-window', async (event) => {
     requireWindow(event)
-    createWindow(undefined, { isPrivate: true })
+    // 直前まで開いていたシークレットの消去が終わってから開く
+    await openPrivateWindow()
   })
 
   ipcMain.handle('nemo:set-sidebar-visible', (event, visible: unknown) => {
@@ -397,17 +397,18 @@ export function registerIpcHandlers(): void {
   })
 
   /* ---- ダウンロード ---- */
+  // 一覧に出していなくても id を知っていれば叩けるので、操作も scope で絞る
   ipcMain.handle('nemo:cancel-download', (event, id: unknown) => {
-    requireWindow(event)
-    cancelDownload(requireString(id, 'id'))
+    const win = requireWindow(event)
+    cancelDownload(requireString(id, 'id'), win.downloadScope)
   })
   ipcMain.handle('nemo:reveal-download', (event, id: unknown) => {
-    requireWindow(event)
-    revealDownload(requireString(id, 'id'))
+    const win = requireWindow(event)
+    revealDownload(requireString(id, 'id'), win.downloadScope)
   })
   ipcMain.handle('nemo:clear-downloads', (event) => {
-    requireWindow(event)
-    clearDownloads()
+    const win = requireWindow(event)
+    clearDownloads(win.downloadScope)
   })
 
   /* ---- ライブラリ（履歴 / アーカイブ） ---- */

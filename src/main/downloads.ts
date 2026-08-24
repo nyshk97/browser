@@ -50,8 +50,35 @@ function notify(): void {
   for (const listener of listeners) listener()
 }
 
-export function listDownloads(): DownloadState[] {
+/**
+ * そのウィンドウに見せてよいダウンロードだけを返す。
+ *
+ * **一覧は scope で必ず絞る**。絞らないと、シークレット窓を開いている間、
+ * 通常ウィンドウの一覧からファイル名・ホスト・保存先が見えてしまう
+ * （Finder で開けるし、キャンセルもできる）。
+ *
+ * @param scope `null` は常用、文字列はシークレットの partition 名
+ */
+export function listDownloads(scope: string | null = null): DownloadState[] {
+  return [...entries.values()]
+    .filter((entry) => entry.scope === scope)
+    .map((entry) => entry.state)
+    .sort((a, b) => b.startedAt - a.startedAt)
+}
+
+/** 全 scope の状態（上限で古いものを落とすときだけ使う）。 */
+function allStates(): DownloadState[] {
   return [...entries.values()].map((entry) => entry.state).sort((a, b) => b.startedAt - a.startedAt)
+}
+
+/**
+ * その id を、その scope から操作してよいか。
+ * **操作系は必ずこれを通す**（一覧に出さなくても id を知っていれば叩けてしまうため）。
+ */
+function ownedBy(id: string, scope: string | null): Entry | null {
+  const entry = entries.get(id)
+  if (!entry || entry.scope !== scope) return null
+  return entry
 }
 
 export function installDownloadHandler(pageSession: Session, scope: string | null = null): void {
@@ -132,15 +159,15 @@ function uniquePath(target: string): string {
 }
 
 function trim(): void {
-  const sorted = listDownloads()
+  const sorted = allStates()
   for (const state of sorted.slice(MAX_ENTRIES)) {
     if (state.state === 'progressing' || state.state === 'paused') continue
     entries.delete(state.id)
   }
 }
 
-export function cancelDownload(id: string): void {
-  const entry = entries.get(id)
+export function cancelDownload(id: string, scope: string | null = null): void {
+  const entry = ownedBy(id, scope)
   if (!entry) return
   if (entry.state.state === 'progressing' || entry.state.state === 'paused') {
     entry.item.cancel()
@@ -150,8 +177,8 @@ export function cancelDownload(id: string): void {
   notify()
 }
 
-export function revealDownload(id: string): void {
-  const entry = entries.get(id)
+export function revealDownload(id: string, scope: string | null = null): void {
+  const entry = ownedBy(id, scope)
   if (!entry || entry.state.state !== 'completed') return
   try {
     shell.showItemInFolder(entry.state.savePath)
@@ -185,9 +212,10 @@ export function forgetDownloadsForScope(scope: string): void {
   notify()
 }
 
-/** 終わったものだけ消す（進行中は残す）。 */
-export function clearDownloads(): void {
+/** 終わったものだけ消す（進行中は残す）。**自分の scope の分だけ**。 */
+export function clearDownloads(scope: string | null = null): void {
   for (const [id, entry] of entries) {
+    if (entry.scope !== scope) continue
     if (entry.state.state === 'progressing' || entry.state.state === 'paused') continue
     entries.delete(id)
   }

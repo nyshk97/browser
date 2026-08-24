@@ -7,6 +7,7 @@ import {
   createWindow,
   focusedOrFirstWindow,
   moveTabToWindow,
+  openPrivateWindow,
   removeTab,
   removeWindow,
   reopenClosedTab,
@@ -50,7 +51,7 @@ function runCommand(command: string): void {
   if (!win) {
     // ウィンドウが1つも無いときでも新規ウィンドウだけは作れるようにする
     if (command === 'new-window' || command === 'command-bar') createWindow()
-    if (command === 'new-private-window') createWindow(undefined, { isPrivate: true })
+    if (command === 'new-private-window') void openPrivateWindow()
     return
   }
 
@@ -78,7 +79,8 @@ function runCommand(command: string): void {
       createWindow()
       return
     case 'new-private-window':
-      createWindow(undefined, { isPrivate: true })
+      // 直前まで開いていたシークレットの消去が終わってから開く
+      void openPrivateWindow()
       return
     case 'close-tab':
       if (tab) removeTab(win, tab.key)

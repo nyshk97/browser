@@ -104,7 +104,12 @@ export const normalizeNavigationInput = normalizeNavigationInputImpl
 export function applySessionSecurityDefaults(
   session: Session,
   label: 'page' | 'ui',
-  resolveWindowId: (contents: WebContents) => number | null
+  resolveWindowId: (contents: WebContents) => number | null,
+  /**
+   * 権限の記憶をどこに置くか。`null` は常用プロファイル（永続）、
+   * 文字列はシークレットの partition 名（**メモリ上だけ**）。
+   */
+  permissionScope: string | null = null
 ): void {
   if (label === 'ui') {
     session.setPermissionRequestHandler((_wc, permission, callback) => {
@@ -117,7 +122,9 @@ export function applySessionSecurityDefaults(
   }
 
   session.setPermissionRequestHandler((contents, permission, callback, details) => {
-    void handlePermissionRequest(contents, permission, details, resolveWindowId).then(callback)
+    void handlePermissionRequest(contents, permission, details, resolveWindowId, permissionScope).then(
+      callback
+    )
   })
 
   // check は同期。**聞かずに答えられる場合だけ true**（未設定は false）。
@@ -125,7 +132,7 @@ export function applySessionSecurityDefaults(
     if (AUTO_ALLOWED.has(permission)) return true
     const origin = normalizeOrigin(requestingOrigin)
     if (!origin) return false
-    return getDecision(origin, permission as PermissionKind) === 'allow'
+    return getDecision(origin, permission as PermissionKind, permissionScope) === 'allow'
   })
 
   // デバイス選択（WebUSB / WebHID / シリアル）は既定で拒否する
@@ -136,7 +143,8 @@ async function handlePermissionRequest(
   contents: WebContents,
   permission: string,
   details: Electron.PermissionRequest,
-  resolveWindowId: (contents: WebContents) => number | null
+  resolveWindowId: (contents: WebContents) => number | null,
+  permissionScope: string | null
 ): Promise<boolean> {
   if (AUTO_ALLOWED.has(permission)) {
     log('permission.request', { partition: 'page', permission, allowed: true, auto: true })
@@ -149,7 +157,7 @@ async function handlePermissionRequest(
     return false
   }
 
-  const remembered = getDecision(origin, permission as PermissionKind)
+  const remembered = getDecision(origin, permission as PermissionKind, permissionScope)
   if (remembered) {
     log('permission.request', {
       partition: 'page',
@@ -172,7 +180,9 @@ async function handlePermissionRequest(
     permission: permission as PermissionKind
   })
   if (!answer || answer.kind !== 'permission') return false
-  if (answer.remember) rememberDecision(origin, permission as PermissionKind, answer.allow ? 'allow' : 'deny')
+  if (answer.remember) {
+    rememberDecision(origin, permission as PermissionKind, answer.allow ? 'allow' : 'deny', permissionScope)
+  }
   log('permission.request', { partition: 'page', permission, allowed: answer.allow })
   return answer.allow
 }
@@ -203,7 +213,8 @@ export function normalizeOrigin(value: string | undefined | null): string | null
  */
 export function applyWebContentsSecurityDefaults(
   contents: WebContents,
-  resolveWindowId: (contents: WebContents) => number | null
+  resolveWindowId: (contents: WebContents) => number | null,
+  permissionScope: string | null = null
 ): void {
   const policyForCurrentPage = (): NavigationPolicy => ({
     allowExtensionPages: isLoadedExtensionUrl(contents.getURL())
@@ -214,7 +225,7 @@ export function applyWebContentsSecurityDefaults(
     preventDefault()
     log('navigation.blocked', { phase, target: redactUrl(url) })
     // http(s) 以外は「外部アプリで開くか」を聞く経路に回す（既定は開かない）
-    void maybeOpenExternal(url, resolveWindowId(contents))
+    void maybeOpenExternal(url, resolveWindowId(contents), permissionScope)
   }
 
   contents.on('will-navigate', (event, url) => {
@@ -258,7 +269,11 @@ const EXTERNAL_SCHEMES = new Set([
 ])
 
 /** ページ / 拡張から要求された外部 protocol を、確認を挟んで OS に渡す。 */
-export async function maybeOpenExternal(url: string, windowId: number | null): Promise<boolean> {
+export async function maybeOpenExternal(
+  url: string,
+  windowId: number | null,
+  permissionScope: string | null = null
+): Promise<boolean> {
   let scheme: string
   try {
     scheme = new URL(url).protocol
@@ -270,7 +285,7 @@ export async function maybeOpenExternal(url: string, windowId: number | null): P
     return false
   }
 
-  const remembered = getSchemeDecision(scheme)
+  const remembered = getSchemeDecision(scheme, permissionScope)
   if (remembered === 'deny') return false
   if (remembered !== 'allow') {
     if (windowId === null) return false
@@ -280,7 +295,7 @@ export async function maybeOpenExternal(url: string, windowId: number | null): P
       display: redactUrl(url)
     })
     if (!answer || answer.kind !== 'external-protocol' || !answer.open) return false
-    if (answer.remember) rememberScheme(scheme, 'allow')
+    if (answer.remember) rememberScheme(scheme, 'allow', permissionScope)
   }
 
   try {

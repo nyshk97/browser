@@ -504,3 +504,44 @@ test('内容が同じなら push は空コミットを積まない', () =>
     m.run(['push'])
     assert.equal(count(), before + 1)
   }))
+
+test('push だけ失敗した回の commit を、次の実行で取り残さない', () =>
+  withSandbox(async ({ root }) => {
+    const bare = path.join(root, 'origin-retry.git')
+    execFileSync('git', ['init', '--bare', '-b', 'main', bare], { stdio: 'ignore' })
+    const m = machine(root, 'retry', bare)
+    m.setFavorite('first', 'https://first.example.com/')
+    m.run(['init'])
+    m.run(['push'])
+
+    const repo = path.join(m.home, 'repo')
+    const gitIn = (args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim()
+    const remoteCount = () =>
+      Number(execFileSync('git', ['rev-list', '--count', 'main'], { cwd: bare, encoding: 'utf8' }).trim())
+
+    // fetch は通るが push だけ失敗する状況を作る（pushurl だけ壊す）
+    gitIn(['remote', 'set-url', '--push', 'origin', path.join(root, 'does-not-exist.git')])
+    m.setFavorite('second', 'https://second.example.com/')
+    const stderr = m.expectFail(['push'])
+    assert.match(stderr, /git/)
+
+    const commitsAfterFail = Number(gitIn(['rev-list', '--count', 'HEAD']))
+    assert.equal(remoteCount(), commitsAfterFail - 1, 'commit は済んで push だけ失敗している')
+
+    // push できるようになってからやり直す。**worktree は clean**なので
+    // 「差分なし」で帰ってしまうと未送信の commit が永久に残る
+    gitIn(['remote', 'set-url', '--push', 'origin', bare])
+    const out = m.run(['push'])
+    assert.match(out, /未送信の commit/)
+    assert.equal(remoteCount(), commitsAfterFail, '取り残した commit が送られた')
+
+    // origin に無い commit を base にしていないこと
+    const config = JSON.parse(fs.readFileSync(path.join(m.home, 'sync.json'), 'utf8'))
+    assert.equal(config.channels.stable.baseCommit, gitIn(['rev-parse', 'HEAD']))
+
+    // 2台目から見て内容が届いている
+    const other = machine(root, 'retry-other', bare)
+    other.run(['init'])
+    other.run(['pull'])
+    assert.equal(other.favorites()[0].id, 'second')
+  }))

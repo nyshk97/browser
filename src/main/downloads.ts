@@ -27,6 +27,14 @@ function downloadDir(): string {
 interface Entry {
   state: DownloadState
   item: Electron.DownloadItem
+  /**
+   * どのセッションのダウンロードか。`null` は常用、文字列はシークレットの partition 名。
+   *
+   * **一覧は全ウィンドウ共通**なので、印を付けておかないと
+   * シークレットで落としたファイル名と保存先が、シークレットを閉じた後も
+   * 通常ウィンドウの一覧から見えて Finder で開けてしまう。
+   */
+  scope: string | null
 }
 
 const entries = new Map<string, Entry>()
@@ -46,7 +54,7 @@ export function listDownloads(): DownloadState[] {
   return [...entries.values()].map((entry) => entry.state).sort((a, b) => b.startedAt - a.startedAt)
 }
 
-export function installDownloadHandler(pageSession: Session): void {
+export function installDownloadHandler(pageSession: Session, scope: string | null = null): void {
   pageSession.on('will-download', (_event, item) => {
     const id = randomUUID()
     const host = redactUrl(item.getURL())
@@ -77,7 +85,7 @@ export function installDownloadHandler(pageSession: Session): void {
       startedAt: Date.now(),
       host
     }
-    entries.set(id, { state, item })
+    entries.set(id, { state, item, scope })
     trim()
     log('download.started', { host })
     notify()
@@ -150,6 +158,31 @@ export function revealDownload(id: string): void {
   } catch (error) {
     logError('download.reveal_failed', error)
   }
+}
+
+/**
+ * その scope のダウンロードを一覧から消す（シークレットが終わったとき）。
+ *
+ * **保存したファイル自体は消さない**（Chrome と同じ。落としたものは残る）。
+ * 消すのは「何を落としたか」が分かるメタデータの方。
+ * 進行中のものはセッションごと消えるので中止する。
+ */
+export function forgetDownloadsForScope(scope: string): void {
+  let removed = 0
+  for (const [id, entry] of entries) {
+    if (entry.scope !== scope) continue
+    if (entry.state.state === 'progressing' || entry.state.state === 'paused') {
+      try {
+        entry.item.cancel()
+      } catch {
+        // セッションが落ちた後は cancel が投げることがある。一覧から消せれば目的は足りる
+      }
+    }
+    entries.delete(id)
+    removed += 1
+  }
+  if (removed > 0) log('download.scope_forgotten', { removed })
+  notify()
 }
 
 /** 終わったものだけ消す（進行中は残す）。 */

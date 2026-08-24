@@ -337,29 +337,48 @@ function cmdPush() {
   const dirty = git(['status', '--porcelain=v1'], { allowFail: true }) ?? ''
   if (!dirty) {
     info('差分なし。何も commit しなかった')
-    // 内容が同じなら「この commit と一致している」と記録してよい
-    const head = headCommit()
-    if (head) writeBase(channel, head)
-    return
+  } else {
+    if (manifest) fs.writeFileSync(path.join(stagingDir(), manifest.name), manifest.text)
+    // 管理対象だけを add する（`-A` にしない）
+    git(['add', '--', ...managedFiles()])
+    const message = option('message', `chore(config): ${channel} の設定を同期`)
+    git(['commit', '-m', message])
+    info(`commit: ${message}`)
   }
-  if (manifest) fs.writeFileSync(path.join(stagingDir(), manifest.name), manifest.text)
 
-  // 管理対象だけを add する（`-A` にしない）
-  git(['add', '--', ...managedFiles()])
-  const message = option('message', `chore(config): ${channel} の設定を同期`)
-  git(['commit', '-m', message])
-  info(`commit: ${message}`)
+  // **差分の有無に関わらず**、送っていない commit があれば送る。
+  // commit だけ済んで push が失敗した回の後、次に「差分なし」で帰ると
+  // 未送信の commit が取り残されたまま base だけ進み、以後ずっと送られない。
+  pushPending(branch)
+}
+
+/**
+ * origin に無い commit を送り、送り終えた時点を base として記録する。
+ * **origin に無い commit を base にしない**（他の端末から見えないものを
+ * 「同期済み」と記録すると、次の push 判定が狂う）。
+ */
+function pushPending(branch) {
+  const head = headCommit()
 
   if (!hasRemote()) {
     info('origin が無いので push しなかった（mise run config:init で設定する）')
-    const local = headCommit()
-    if (local) writeBase(channel, local)
+    if (head) writeBase(channel, head)
     return
   }
+
+  if (head && head === remoteHead(branch)) {
+    // 送るものは無い。内容が一致しているので base を進めてよい
+    writeBase(channel, head)
+    return
+  }
+
+  info('未送信の commit があるので push する')
   execFileSync('git', ['push', '-u', 'origin', branch], { cwd: stagingDir(), stdio: 'inherit' })
   info('push した')
-  const head = headCommit()
-  if (head) writeBase(channel, head)
+
+  // push した結果を見てから記録する（push が通っても remote が動いていないなら記録しない）
+  const after = headCommit()
+  if (after && after === remoteHead(branch)) writeBase(channel, after)
 }
 
 /* ------------------------------------------------------------------ *

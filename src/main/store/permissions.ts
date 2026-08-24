@@ -7,6 +7,12 @@ import type { PermissionKind } from '../../shared/types.js'
 /**
  * origin 単位の権限の記憶（「今後も許可する」を選んだときだけ書く）。
  * 未設定は「毎回聞く」であって「許可」ではない。
+ *
+ * **scope** を持つ。`null` は常用プロファイル（`permissions.json` に永続化）、
+ * 文字列はシークレットセッションの partition 名で、**メモリ上だけ**に持つ。
+ * シークレットで選んだ「今後も同じ扱い」が常用プロファイルに残ると、
+ * *そのサイトをシークレットで開いただけ*なのに通常ウィンドウで自動許可されてしまう
+ * （ダイアログの「今後も」は既定で ON なので、まず確実に踏む）。
  */
 
 export type Decision = 'allow' | 'deny'
@@ -47,15 +53,43 @@ function normalize(raw: unknown): PermissionsData {
 
 let store: JsonStore<PermissionsData> | null = null
 
+/** シークレット用の揮発ストア（partition 名 → 記憶）。ディスクには一切書かない。 */
+const volatileScopes = new Map<string, PermissionsData>()
+
+/** その scope の記憶を読む。 */
+function read(scope: string | null): PermissionsData | null {
+  if (scope === null) return store?.get() ?? null
+  return volatileScopes.get(scope) ?? null
+}
+
 export function initPermissionStore(): void {
   store = new JsonStore<PermissionsData>(userDataPath('permissions.json'), PERMISSIONS_VERSION, normalize)
 }
 
-export function getDecision(origin: string, permission: PermissionKind): Decision | null {
-  return store?.get().origins[origin]?.[permission] ?? null
+export function getDecision(
+  origin: string,
+  permission: PermissionKind,
+  scope: string | null = null
+): Decision | null {
+  return read(scope)?.origins[origin]?.[permission] ?? null
 }
 
-export function rememberDecision(origin: string, permission: PermissionKind, decision: Decision): void {
+export function rememberDecision(
+  origin: string,
+  permission: PermissionKind,
+  decision: Decision,
+  scope: string | null = null
+): void {
+  if (scope !== null) {
+    const current = volatileScopes.get(scope) ?? { origins: {}, externalSchemes: {} }
+    volatileScopes.set(scope, {
+      ...current,
+      origins: { ...current.origins, [origin]: { ...current.origins[origin], [permission]: decision } }
+    })
+    // origin は伏せる（シークレットでどこを開いたかをログに残さない）
+    log('permission.remembered', { permission, decision, scope: 'private' })
+    return
+  }
   if (!store) return
   store.update((current) => ({
     ...current,
@@ -67,11 +101,20 @@ export function rememberDecision(origin: string, permission: PermissionKind, dec
   log('permission.remembered', { origin, permission, decision })
 }
 
-export function getSchemeDecision(scheme: string): Decision | null {
-  return store?.get().externalSchemes[scheme] ?? null
+export function getSchemeDecision(scheme: string, scope: string | null = null): Decision | null {
+  return read(scope)?.externalSchemes[scheme] ?? null
 }
 
-export function rememberScheme(scheme: string, decision: Decision): void {
+export function rememberScheme(scheme: string, decision: Decision, scope: string | null = null): void {
+  if (scope !== null) {
+    const current = volatileScopes.get(scope) ?? { origins: {}, externalSchemes: {} }
+    volatileScopes.set(scope, {
+      ...current,
+      externalSchemes: { ...current.externalSchemes, [scheme]: decision }
+    })
+    log('external_protocol.remembered', { scheme, decision, scope: 'private' })
+    return
+  }
   if (!store) return
   store.update((current) => ({
     ...current,
@@ -80,7 +123,13 @@ export function rememberScheme(scheme: string, decision: Decision): void {
   log('external_protocol.remembered', { scheme, decision })
 }
 
+/** シークレットが終わったら、その scope の記憶ごと捨てる。 */
+export function forgetPermissionScope(scope: string): void {
+  if (volatileScopes.delete(scope)) log('permission.scope_forgotten', { scope: 'private' })
+}
+
 export function closePermissionStore(): void {
   store?.close()
   store = null
+  volatileScopes.clear()
 }

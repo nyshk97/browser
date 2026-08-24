@@ -326,6 +326,65 @@ if (privateTarget) {
     check('2枚目のシークレット窓が開く', false, '見つからなかった')
   }
 
+  /* ---- 権限の記憶が常用プロファイルへ漏れないこと ---- */
+  // 権限ダイアログの「今後も同じ扱い」は**既定で ON**。
+  // シークレットで一度許可しただけの origin が permissions.json に残ると、
+  // 通常ウィンドウでも黙って自動許可される。
+  // `navigator.permissions.query` は Nemo の permission check handler の結果を返すので、
+  // 「記憶がどう見えているか」を OS の位置情報に触らずに確かめられる。
+  const QUERY = `navigator.permissions.query({ name: 'geolocation' }).then((r) => r.state)`
+  const permProbe = `${PAGES}/index.html?probe=private-perm`
+  await privateUi.ev(`window.nemo.createTab('${permProbe}').then(() => 'ok')`)
+  await sleep(1500)
+  const permPage = await connectTo(CDP, 'probe=private-perm', { type: 'page' })
+  check(
+    'シークレットの初期状態では権限を覚えていない',
+    (await permPage.ev(QUERY)) !== 'granted',
+    String(await permPage.ev(QUERY))
+  )
+
+  // ダイアログを出して「許可」（「今後も」は既定 ON）で答える
+  void permPage
+    .ev(`new Promise((r) => navigator.geolocation.getCurrentPosition(() => r('ok'), () => r('denied')))`)
+    .catch(() => {})
+  const privateOverlayTarget = (await listTargets(CDP)).find(
+    (t) => t.url.includes('view=overlay') && t.url.includes(`window=${privState.windowId}`)
+  )
+  if (privateOverlayTarget) {
+    const privateOverlay = await connect(privateOverlayTarget.webSocketDebuggerUrl)
+    const kind = await waitFor(
+      privateOverlay,
+      `(() => { const d = document.querySelector('[data-testid]'); return d ? d.getAttribute('data-testid') : '' })()`,
+      { timeoutMs: 10000 }
+    ).catch(() => '')
+    check('シークレットでも権限は自動許可せずダイアログを出す', kind === 'prompt-permission', kind)
+    // ボタンの文言は「許可する」。取り違えると**押せていないのに先へ進む**ので、
+    // 押せたかどうかを必ず確かめる。
+    const clicked = await privateOverlay.ev(
+      `(() => { const b = [...document.querySelectorAll('.dialog-actions button')].find((x) => x.textContent === '許可する'); if (!b) return 'none'; b.click(); return 'ok' })()`
+    )
+    check('権限ダイアログの「許可する」を押せる', clicked === 'ok', String(clicked))
+    await sleep(800)
+    check(
+      'シークレットの中では「今後も」が効く',
+      (await permPage.ev(QUERY)) === 'granted',
+      String(await permPage.ev(QUERY))
+    )
+    privateOverlay.close()
+  } else {
+    check('シークレット窓のオーバーレイが見つかる', false, '')
+  }
+  permPage.close()
+
+  // 同じ origin を通常ウィンドウで見ても、許可が移っていないこと
+  const normalPermProbe = `${PAGES}/index.html?probe=normal-perm`
+  await ui.ev(`window.nemo.createTab('${normalPermProbe}').then(() => 'ok')`)
+  await sleep(1500)
+  const normalPermPage = await connectTo(CDP, 'probe=normal-perm', { type: 'page' })
+  const leaked = await normalPermPage.ev(QUERY)
+  check('シークレットで許可した権限が常用プロファイルに漏れていない', leaked !== 'granted', String(leaked))
+  normalPermPage.close()
+
   // 通常ウィンドウには漏れていないこと
   const normalProbe = `${PAGES}/index.html?probe=normal-cookie`
   await ui.ev(`window.nemo.createTab('${normalProbe}').then(() => 'ok')`)

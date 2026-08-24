@@ -30,7 +30,13 @@ import {
 import { recordVisit, updateTitle } from './store/history.js'
 import { archiveTab, pruneArchive, type ArchiveReason } from './store/archive.js'
 import { saveSession, type SavedWindow } from './store/session.js'
-import { installDownloadHandler, listDownloads, onDownloadsChanged } from './downloads.js'
+import {
+  forgetDownloadsForScope,
+  installDownloadHandler,
+  listDownloads,
+  onDownloadsChanged
+} from './downloads.js'
+import { forgetPermissionScope } from './store/permissions.js'
 import { getUpdateState, onUpdateChanged } from './updater.js'
 import type { FindState, Prompt, SharedState, TabState, WindowState } from '../shared/types.js'
 
@@ -101,31 +107,62 @@ export function isTransferring(contents: WebContents): boolean {
  * non-persistent セッションに拡張を載せられない（README の Limitations）。
  * つまりシークレットウィンドウでは Bitwarden の自動入力が使えない。UI に必ず出す。
  */
-const PRIVATE_PARTITION = 'nemo-private'
+const PRIVATE_PARTITION_PREFIX = 'nemo-private-'
 
-let privateSessionPrepared = false
+/**
+ * 今あいているシークレットセッションの partition。
+ * 1つも開いていなければ null で、次に開くときは**別の番号**を採る。
+ */
+let currentPrivatePartition: string | null = null
+let privateGeneration = 0
 
 function ensurePrivateSession(): string {
-  if (privateSessionPrepared) return PRIVATE_PARTITION
-  const privateSession = session.fromPartition(PRIVATE_PARTITION)
-  // 権限・デバイスの既定は通常セッションと同じ（ここを省くと自動許可され得る）
-  applySessionSecurityDefaults(privateSession, 'page', findWindowIdForPageContents)
+  if (currentPrivatePartition) return currentPrivatePartition
+  privateGeneration += 1
+  const partition = `${PRIVATE_PARTITION_PREFIX}${privateGeneration}`
+  const privateSession = session.fromPartition(partition)
+  // 権限・デバイスの既定は通常セッションと同じ（ここを省くと自動許可され得る）。
+  // ただし**記憶はこの partition の中だけ**（常用プロファイルに残さない）。
+  applySessionSecurityDefaults(privateSession, 'page', findWindowIdForPageContents, partition)
   // ダウンロードもここで登録する。付けないと `will-download` に誰も応えず、
   // 保存先が決まらないまま失敗する（Nemo のダウンロード一覧にも出ない）。
-  // **保存したファイルはシークレットを閉じても残る**のは Chrome と同じ挙動。
-  installDownloadHandler(privateSession)
-  privateSessionPrepared = true
-  log('window.private_session_created', { partition: PRIVATE_PARTITION })
-  return PRIVATE_PARTITION
+  installDownloadHandler(privateSession, partition)
+  currentPrivatePartition = partition
+  log('window.private_session_created', { generation: privateGeneration })
+  return partition
 }
 
-/** シークレットウィンドウが1つも無くなったら、セッションの中身を消す。 */
-function clearPrivateSessionIfUnused(): void {
-  if (!privateSessionPrepared) return
+/**
+ * シークレットウィンドウが1つも無くなったときの後始末。
+ *
+ * **次に開くシークレットは別の partition にする**。消去は非同期なので、
+ * 同じ partition を即座に貼り直すと「遅れて終わった消去が、
+ * 新しいウィンドウで書いたばかりの cookie まで消す」競合になる。
+ * 番号を進めておけば、消している最中に開き直しても互いに干渉しない。
+ *
+ * 消すもの:
+ * - storage（cookie / localStorage / IndexedDB / service worker …）と cache
+ * - **HTTP 認証のキャッシュ**（`clearStorageData` では消えない。
+ *   消し忘れると Basic 認証が閉じても残る）
+ * - この partition で覚えた権限（メモリ上）
+ * - この partition のダウンロード一覧（ファイル自体は残す）
+ */
+function endPrivateSessionIfUnused(): void {
+  const partition = currentPrivatePartition
+  if (!partition) return
   const stillOpen = [...windowsById.values()].some((win) => !win.isDestroyed && win.isPrivate)
   if (stillOpen) return
-  const privateSession = session.fromPartition(PRIVATE_PARTITION)
-  void Promise.all([privateSession.clearStorageData(), privateSession.clearCache()]).then(
+
+  currentPrivatePartition = null
+  forgetPermissionScope(partition)
+  forgetDownloadsForScope(partition)
+
+  const privateSession = session.fromPartition(partition)
+  void Promise.all([
+    privateSession.clearStorageData(),
+    privateSession.clearCache(),
+    privateSession.clearAuthCache()
+  ]).then(
     () => log('window.private_session_cleared', {}),
     (error: unknown) => logError('window.private_session_clear_failed', error)
   )
@@ -239,7 +276,11 @@ export class NemoTab {
     this.crashed = false
 
     const wc = view.webContents
-    applyWebContentsSecurityDefaults(wc, (contents) => findWindowIdForPageContents(contents))
+    applyWebContentsSecurityDefaults(
+      wc,
+      (contents) => findWindowIdForPageContents(contents),
+      this.window.isPrivate ? this.window.partition : null
+    )
     attachTabEvents(this, wc)
 
     // ここに来る時点でウィンドウは生きている前提だが、
@@ -851,7 +892,7 @@ export class NemoWindow {
 
     windowsById.delete(this.id)
     // 最後のシークレットウィンドウが閉じたら中身を消す（UI で約束している挙動）
-    if (this.isPrivate) clearPrivateSessionIfUnused()
+    if (this.isPrivate) endPrivateSessionIfUnused()
     scheduleSessionSave()
   }
 

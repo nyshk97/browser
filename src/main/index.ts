@@ -23,6 +23,7 @@ import {
   windowsById
 } from './registry.js'
 import { installApplicationMenu, watchKeybindingChanges } from './menu.js'
+import { installTabSwitcher } from './tab-switcher.js'
 import { installRuntimeMarker } from './runtime-marker.js'
 import { flushOpenUrls, handleSecondInstance, installOpenUrlHandler } from './open-url.js'
 import { installDownloadHandler } from './downloads.js'
@@ -136,6 +137,7 @@ app
     registerIpcHandlers()
     installApplicationMenu()
     watchKeybindingChanges()
+    installTabSwitcher()
     startBackgroundWork()
     initUpdater()
 

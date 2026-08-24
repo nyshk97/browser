@@ -260,7 +260,15 @@ function endPrivateSessionIfUnused(): void {
  * ------------------------------------------------------------------ */
 
 export type OverlayKind =
-  'command-bar' | 'address-bar' | 'find' | 'prompt' | 'downloads' | 'library' | 'settings' | null
+  | 'command-bar'
+  | 'address-bar'
+  | 'find'
+  | 'prompt'
+  | 'downloads'
+  | 'library'
+  | 'settings'
+  | 'tab-switcher'
+  | null
 
 /** オーバーレイの種類ごとに、UI View が受け取る矩形を決める。 */
 function overlayBounds(
@@ -269,9 +277,11 @@ function overlayBounds(
   sidebarWidth: number
 ): Electron.Rectangle {
   switch (kind) {
+    // モーダル。背景を暗くするため全面を覆う。
+    // タブスイッチャーもカードのクリックを受けるので同じく全面に敷く
     case 'command-bar':
     case 'address-bar':
-      // モーダル。背景を暗くするため全面を覆う
+    case 'tab-switcher':
       return { x: 0, y: 0, width: content.width, height: content.height }
     case 'find': {
       const width = Math.min(460, Math.max(content.width - sidebarWidth - 24, 240))
@@ -688,6 +698,18 @@ function lockUiNavigation(contents: WebContents, view: 'sidebar' | 'overlay', ui
  * ウィンドウ
  * ------------------------------------------------------------------ */
 
+/**
+ * オーバーレイが変わったときに呼ぶ。タブスイッチャーが**別のオーバーレイに
+ * 差し替えられたら畳む**ために使う（ダイアログが割り込んできたときなど）。
+ *
+ * registry から `tab-switcher.ts` を import すると循環するので、注入で受ける。
+ */
+let overlayChangeListener: ((win: NemoWindow, kind: OverlayKind) => void) | null = null
+
+export function setOverlayChangeListener(fn: (win: NemoWindow, kind: OverlayKind) => void): void {
+  overlayChangeListener = fn
+}
+
 export class NemoWindow {
   static nextId = 1
 
@@ -880,6 +902,7 @@ export class NemoWindow {
     else this.getActiveTab()?.webContents?.focus()
     this.overlayWebContents.send('nemo:overlay', kind)
     this.pushState()
+    overlayChangeListener?.(this, kind)
   }
 
   setSidebarVisible(visible: boolean): void {
@@ -988,6 +1011,10 @@ export class NemoWindow {
     if (this.destroyed) return
     this.destroyed = true
     log('window.destroy', { windowId: this.id, tabs: this.tabs.length })
+
+    // 押しっぱなしの最中に閉じられた場合に、タイマーと入力フックを残さない。
+    // `destroyed` を立てた後に呼ぶので、受け手は View に触らずに畳む。
+    overlayChangeListener?.(this, null)
 
     // UI の準備待ちで積んであった処理は捨てる（破棄済みのウィンドウでは走らせない）。
     // 「準備できたか破棄されたか」を待っている側にはここで知らせる。

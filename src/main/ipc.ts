@@ -25,6 +25,7 @@ import {
 } from './registry.js'
 import { isUiUrl, normalizeNavigationInput } from './security.js'
 import { answerPrompt, currentPrompt } from './prompts.js'
+import { advanceSwitcher, cancelSwitcher, currentSwitcherState, pickSwitcherTab } from './tab-switcher.js'
 import { suggest } from './suggest.js'
 import { getSettings, updateSettings } from './store/settings.js'
 import {
@@ -357,7 +358,30 @@ export function registerIpcHandlers(): void {
   // ページ側の callback（権限・認証）が永久に解決しないまま残る。
   ipcMain.handle('nemo:get-overlay-state', (event) => {
     const win = requireWindow(event)
-    return { kind: win.overlay, prompt: currentPrompt(win.id) }
+    return { kind: win.overlay, prompt: currentPrompt(win.id), switcher: currentSwitcherState(win) }
+  })
+
+  // タブスイッチャーは main が並びとハイライト位置を握る（`set-overlay` では開けない）。
+  // UI から来るのは「進める」「カードを押した」「背景を押した」の3つだけで、
+  // どれもキーボードでできることと同じ。
+  ipcMain.handle('nemo:switch-tab', (event) => {
+    advanceSwitcher(requireWindow(event))
+  })
+
+  ipcMain.handle('nemo:pick-switcher-tab', (event, key: unknown) => {
+    // 位置ではなく key で受ける（帯の表示が1件ぶん古いときに別のタブへ飛ばさない）。
+    //
+    // **ここで `requireTab` を使わない**。帯を出したままタブが閉じられると、
+    // UI には既に無いタブのカードが残る。それを押したときに投げると
+    // renderer 側で unhandled rejection になり、帯も出たまま残る。
+    // 「今のセッションに載っている key か」は `pickSwitcherTab` が見るので、
+    // ここは送信元と型だけ検証して渡し、載っていなければ何もしない。
+    const win = requireWindow(event)
+    pickSwitcherTab(win, requireString(key, 'tab key'))
+  })
+
+  ipcMain.handle('nemo:cancel-switcher', (event) => {
+    cancelSwitcher(requireWindow(event))
   })
 
   ipcMain.handle('nemo:set-overlay', (event, kind: unknown) => {

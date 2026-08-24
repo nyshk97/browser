@@ -71,6 +71,10 @@ run = "node scripts/verify-session-migration.mjs"
 description = "旧スキーマの履歴 DB から起動して favicon_url 列の追加が壊れていないか確かめる"
 run = "node scripts/verify-db-migration.mjs"
 
+[tasks."verify:switcher"]
+description = "タブスイッチャー（⌃M）だけを検証する（Nemo を起動してから回す）"
+run = "node scripts/verify-switcher.mjs"
+
 [tasks."verify:ext"]
 description = "拡張互換の smoke test（自作テスト拡張・資格情報なし・CI の必須チェック）"
 run = "node scripts/verify-ext-smoke.mjs"

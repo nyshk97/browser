@@ -17,6 +17,7 @@ import {
   type NemoWindow
 } from './registry.js'
 import { checkForUpdatesManually } from './updater.js'
+import { advanceSwitcher } from './tab-switcher.js'
 
 /**
  * メニューバーとキーバインド（計画 1-7）。
@@ -135,6 +136,10 @@ function runCommand(command: string): void {
       // 実装は registry の addFavoriteFromTab に1本化する
       // （ピン留めとの排他＝「定義ごと移す」規則を1か所に寄せる）
       if (tab) addFavoriteFromTab(tab)
+      return
+    case 'switch-tab':
+      // 直近のタブを辿る（押しっぱなしの循環と確定は tab-switcher が握る）
+      advanceSwitcher(win)
       return
     case 'next-tab':
     case 'previous-tab': {

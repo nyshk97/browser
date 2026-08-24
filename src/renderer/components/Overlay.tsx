@@ -4,7 +4,7 @@ import { PromptDialog } from './PromptDialog.js'
 import { Library } from './Library.js'
 import { Favicon } from './Sidebar.js'
 import { Settings } from './Settings.js'
-import type { Prompt, Suggestion, WindowState } from '../../shared/types.js'
+import type { Prompt, Suggestion, SwitcherState, WindowState } from '../../shared/types.js'
 
 /**
  * オーバーレイ（コマンドバー / 検索バー / ダウンロード / ダイアログ）。
@@ -15,6 +15,7 @@ import type { Prompt, Suggestion, WindowState } from '../../shared/types.js'
 export function Overlay(): React.JSX.Element | null {
   const [kind, setKind] = useState<string | null>(null)
   const [prompt, setPrompt] = useState<Prompt | null>(null)
+  const [switcher, setSwitcher] = useState<SwitcherState | null>(null)
   /**
    * 状態はここで持つ。
    * バーの中で購読すると、**開いた瞬間はまだ `null`**（取得は IPC の往復）で、
@@ -26,6 +27,7 @@ export function Overlay(): React.JSX.Element | null {
   // push が先に届いていたら、後から返ってきた初期値で上書きしない
   const pushedKind = useRef(false)
   const pushedPrompt = useRef(false)
+  const pushedSwitcher = useRef(false)
 
   useEffect(
     () =>
@@ -43,6 +45,14 @@ export function Overlay(): React.JSX.Element | null {
       }),
     []
   )
+  useEffect(
+    () =>
+      window.nemo.onSwitcher((next) => {
+        pushedSwitcher.current = true
+        setSwitcher(next)
+      }),
+    []
+  )
 
   // 購読するだけだと、**購読より前に**出たダイアログを取りこぼす。
   // 起動直後に復元したタブが権限要求を出すと実際に起こりうる。
@@ -51,6 +61,7 @@ export function Overlay(): React.JSX.Element | null {
     void window.nemo.getOverlayState().then((state) => {
       if (!pushedKind.current) setKind(state.kind)
       if (!pushedPrompt.current) setPrompt(state.prompt)
+      if (!pushedSwitcher.current) setSwitcher(state.switcher)
     })
   }, [])
 
@@ -58,11 +69,13 @@ export function Overlay(): React.JSX.Element | null {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && !prompt) close()
+      // スイッチャーの Esc は main 側（`before-input-event`）で取消に落とす。
+      // ここで閉じると「オーバーレイだけ消えて押しっぱなしの状態が残る」ことになる。
+      if (event.key === 'Escape' && !prompt && kind !== 'tab-switcher') close()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [close, prompt])
+  }, [close, prompt, kind])
 
   if (prompt) return <PromptDialog prompt={prompt} />
   // 同じコマンドバーだが、⌘T（新規タブ）と ⌘L（現在のタブ）で既定の行き先が違う。
@@ -70,11 +83,52 @@ export function Overlay(): React.JSX.Element | null {
   if (kind === 'command-bar') return <CommandBar key="command-bar" onClose={close} state={state} newTab />
   if (kind === 'address-bar')
     return <CommandBar key="address-bar" onClose={close} state={state} newTab={false} />
+  // Esc・確定・ハイライトの移動は main が握る（⌃ を離した瞬間の確定と同じ経路に乗せる）
+  if (kind === 'tab-switcher') return switcher ? <TabSwitcher state={switcher} /> : null
   if (kind === 'find') return <FindBar onClose={close} state={state} />
   if (kind === 'downloads') return <Downloads onClose={close} />
   if (kind === 'library') return <Library onClose={close} />
   if (kind === 'settings') return <Settings onClose={close} />
   return null
+}
+
+/* ------------------------------------------------------------------ *
+ * タブスイッチャー（⌃M）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 直近に使ったタブの帯。**表示するだけ**で、並びもハイライト位置も main が持つ。
+ * ここで状態を持つと、⌃ を離した瞬間の確定と食い違う。
+ */
+function TabSwitcher({ state }: { state: SwitcherState }): React.JSX.Element {
+  const strip = useRef<HTMLDivElement>(null)
+
+  // 端のカードが隠れていたら寄せる（帯は横に溢れることがある）
+  useEffect(() => {
+    strip.current?.querySelector('.switch-card.on')?.scrollIntoView({ block: 'nearest', inline: 'center' })
+  }, [state.index])
+
+  return (
+    <div
+      className="backdrop switch-back"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) void window.nemo.cancelSwitcher()
+      }}
+    >
+      <div className="switch-strip" ref={strip}>
+        {state.tabs.map((tab, index) => (
+          <button
+            key={tab.key}
+            className={`switch-card${index === state.index ? ' on' : ''}`}
+            onClick={() => void window.nemo.pickSwitcherTab(tab.key)}
+          >
+            <Favicon url={tab.url} title={tab.title} src={tab.faviconUrl} />
+            <span className="switch-title">{tab.title}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 /* ------------------------------------------------------------------ *

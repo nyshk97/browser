@@ -3,7 +3,7 @@
  * 自走検証を一括で通す（`mise run verify`）。
  *
  *   ユニットテスト → ビルド → 拡張の照合 → ページサーバ → アプリ起動 →
- *   verify-spike → verify-phase1 → verify-phase2 → verify-pins →
+ *   verify-spike → verify-phase1 → verify-phase2 → verify-pins → verify-switcher →
  *   再起動をまたぐ永続性 → 旧版セッションからの移行 → 履歴 DB の列追加 → 後片付け
  *
  * 終了コードがそのまま合否になるので CI にも載せられる。
@@ -118,6 +118,7 @@ const spike = (args) => runVerify('scripts/verify-spike.mjs', args)
 const phase1 = (args) => runVerify('scripts/verify-phase1.mjs', args)
 const phase2 = (args) => runVerify('scripts/verify-phase2.mjs', args)
 const pins = (args) => runVerify('scripts/verify-pins.mjs', args)
+const switcher = (args) => runVerify('scripts/verify-switcher.mjs', args)
 
 let exitCode = 0
 try {
@@ -160,6 +161,10 @@ try {
   console.log('\n=== 自走検証（ピン留め / Favorites）')
   const pinsCode = await pins([])
   if (pinsCode !== 0) exitCode = pinsCode
+
+  console.log('\n=== 自走検証（タブスイッチャー ⌃M）')
+  const switcherCode = await switcher([])
+  if (switcherCode !== 0) exitCode = switcherCode
 
   console.log('\n=== 再起動をまたぐ永続性')
   await spike(['--storage-write'])

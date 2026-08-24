@@ -256,6 +256,28 @@ export interface Suggestion {
 }
 
 /* ------------------------------------------------------------------ *
+ * タブスイッチャー（⌃M）
+ * ------------------------------------------------------------------ */
+
+export interface SwitcherTab {
+  key: string
+  title: string
+  url: string
+  faviconUrl: string | null
+}
+
+/**
+ * ⌃M を押している間だけ出る、直近に使ったタブの並び。
+ * 並びは main が握る（押している最中に順番が変わると狙ったタブに行けない）。
+ */
+export interface SwitcherState {
+  /** MRU 順（先頭が今のタブ）。 */
+  tabs: SwitcherTab[]
+  /** 今ハイライトしている位置。 */
+  index: number
+}
+
+/* ------------------------------------------------------------------ *
  * ライブラリ（履歴 / アーカイブ）
  * ------------------------------------------------------------------ */
 
@@ -447,7 +469,25 @@ export interface NemoUiApi {
   restartForUpdate(): Promise<void>
 
   /** オーバーレイの現在の状態（購読より前に起きた分を取りこぼさないため）。 */
-  getOverlayState(): Promise<{ kind: string | null; prompt: Prompt | null }>
+  getOverlayState(): Promise<{
+    kind: string | null
+    prompt: Prompt | null
+    switcher: SwitcherState | null
+  }>
+
+  /* タブスイッチャー（⌃M） */
+  /**
+   * 帯を出す / 1つ先へ進める（⌃M と同じ）。
+   * 確定・取消・ハイライトの移動と同じ面に置いて、経路を1本にまとめている。
+   */
+  switchTab(): Promise<void>
+  /**
+   * カードをクリックしてそのタブへ確定する。
+   * **位置ではなく key で渡す**（帯の表示が1件ぶん古いときに別のタブへ飛ばさないため）。
+   */
+  pickSwitcherTab(key: string): Promise<void>
+  /** 切り替えをやめる（背景クリック）。 */
+  cancelSwitcher(): Promise<void>
 
   /* 購読 */
   onWindowState(listener: (state: WindowState) => void): () => void
@@ -455,6 +495,7 @@ export interface NemoUiApi {
   onPrompt(listener: (prompt: Prompt | null) => void): () => void
   onCommand(listener: (command: string) => void): () => void
   onOverlay(listener: (kind: string | null) => void): () => void
+  onSwitcher(listener: (state: SwitcherState | null) => void): () => void
 }
 
 export type PromptAnswer =

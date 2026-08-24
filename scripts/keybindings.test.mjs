@@ -1,6 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { COMMANDS, isValidAccelerator, resolveKeybindings } from '../src/shared/keybindings.js'
+import {
+  COMMANDS,
+  holdModifiersFor,
+  isValidAccelerator,
+  resolveKeybindings
+} from '../src/shared/keybindings.js'
 
 test('既定のアクセラレータはすべて妥当', () => {
   for (const command of COMMANDS) {
@@ -36,4 +41,29 @@ test('空文字は「割り当てなし」として通す', () => {
   const { bindings, problems } = resolveKeybindings({ 'pin-tab': '' })
   assert.equal(bindings['pin-tab'], '')
   assert.deepEqual(problems, [])
+})
+
+/* --- 押しっぱなしで確定するタブスイッチャー（⌃M） --- */
+
+test('直近のタブへ切り替えの既定は ⌃M', () => {
+  const { bindings } = resolveKeybindings({})
+  assert.equal(bindings['switch-tab'], 'Control+M')
+})
+
+test('離したら確定する修飾キーを取り出す', () => {
+  assert.deepEqual(holdModifiersFor('Control+M'), ['Control'])
+  assert.deepEqual(holdModifiersFor('Alt+Tab'), ['Alt'])
+  assert.deepEqual(holdModifiersFor('CmdOrCtrl+M', 'darwin'), ['Meta'])
+  assert.deepEqual(holdModifiersFor('CmdOrCtrl+M', 'win32'), ['Control'])
+})
+
+test('Shift は押しっぱなしの土台に数えない', () => {
+  // 先に ⇧ を離しただけで確定してしまうと「⇧ を足して逆回し」ができなくなる
+  assert.deepEqual(holdModifiersFor('Control+Shift+M'), ['Control'])
+  assert.deepEqual(holdModifiersFor('Shift+M'), [])
+})
+
+test('修飾キーの無い割り当ては押しっぱなしにできない', () => {
+  assert.deepEqual(holdModifiersFor('F5'), [])
+  assert.deepEqual(holdModifiersFor(''), [])
 })

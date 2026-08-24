@@ -12,6 +12,7 @@ import type {
   PromptAnswer,
   SharedState,
   Suggestion,
+  SwitcherState,
   WindowState
 } from '../shared/types.js'
 
@@ -101,13 +102,19 @@ const api: NemoUiApi = {
     ipcRenderer.invoke('nemo:get-overlay-state') as Promise<{
       kind: string | null
       prompt: Prompt | null
+      switcher: SwitcherState | null
     }>,
+
+  switchTab: () => ipcRenderer.invoke('nemo:switch-tab') as Promise<void>,
+  pickSwitcherTab: (key) => ipcRenderer.invoke('nemo:pick-switcher-tab', key) as Promise<void>,
+  cancelSwitcher: () => ipcRenderer.invoke('nemo:cancel-switcher') as Promise<void>,
 
   onWindowState: (listener) => subscribe<WindowState>('nemo:window-state', listener),
   onSharedState: (listener) => subscribe<SharedState>('nemo:shared-state', listener),
   onPrompt: (listener) => subscribe<Prompt | null>('nemo:prompt', listener),
   onCommand: (listener) => subscribe<string>('nemo:command', listener),
-  onOverlay: (listener) => subscribe<string | null>('nemo:overlay', listener)
+  onOverlay: (listener) => subscribe<string | null>('nemo:overlay', listener),
+  onSwitcher: (listener) => subscribe<SwitcherState | null>('nemo:switcher', listener)
 }
 
 function subscribe<T>(eventName: string, listener: (payload: T) => void): () => void {

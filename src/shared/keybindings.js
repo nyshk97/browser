@@ -70,6 +70,12 @@ export const COMMANDS = [
   { id: 'next-tab', label: '次のタブ', accelerator: 'Control+Tab', menu: 'tab' },
   { id: 'previous-tab', label: '前のタブ', accelerator: 'Control+Shift+Tab', menu: 'tab' },
   {
+    id: 'switch-tab',
+    label: '直近のタブへ切り替え',
+    accelerator: 'Control+M',
+    menu: 'tab'
+  },
+  {
     id: 'move-tab-to-new-window',
     label: 'タブを新規ウィンドウへ',
     accelerator: 'CmdOrCtrl+Shift+N',
@@ -199,4 +205,34 @@ export function resolveKeybindings(overrides = {}) {
   }
 
   return { bindings, problems }
+}
+
+/**
+ * アクセラレータの修飾キーのうち、「押しっぱなしで循環し、**離したら確定**」の
+ * 判定に使うもの（⌘Tab と同じ操作感を作る）。
+ *
+ * **Shift は含めない**。`Control+Shift+M` のような割り当てのとき、
+ * Shift を先に離しただけで確定してしまい「⇧ を足して逆回し」ができなくなる。
+ * 押しっぱなしの土台になるのは ⌃ / ⌘ / ⌥ の側なので、そこだけを見る。
+ *
+ * 返す名前は `KeyboardEvent.key`（Electron の `before-input-event` の `input.key`）に合わせる。
+ *
+ * @param {string} accelerator
+ * @param {NodeJS.Platform} [platform]
+ * @returns {string[]} 離したら確定する修飾キー。無ければ空配列（＝押しっぱなしにできない割り当て）
+ */
+export function holdModifiersFor(accelerator, platform = process.platform) {
+  if (typeof accelerator !== 'string' || accelerator === '') return []
+  /** @type {string[]} */
+  const keys = []
+  for (const part of accelerator.split('+').slice(0, -1)) {
+    let key = null
+    if (part === 'Command' || part === 'Cmd' || part === 'Super' || part === 'Meta') key = 'Meta'
+    else if (part === 'Control' || part === 'Ctrl') key = 'Control'
+    else if (part === 'CommandOrControl' || part === 'CmdOrCtrl')
+      key = platform === 'darwin' ? 'Meta' : 'Control'
+    else if (part === 'Alt' || part === 'Option' || part === 'AltGr') key = 'Alt'
+    if (key && !keys.includes(key)) keys.push(key)
+  }
+  return keys
 }

@@ -12,7 +12,10 @@
 export interface FavoriteItem {
   id: string
   url: string
+  /** 既定名（ピン時のページタイトル。読み込みのたびに更新される）。 */
   title: string
+  /** ユーザーが付けた名前。null なら未設定で、表示は `title` に戻る。 */
+  customTitle: string | null
 }
 
 /** ピン留め（フォルダで入れ子にできる）。全ウィンドウ共有。 */
@@ -21,7 +24,10 @@ export type PinnedNode = PinnedLink | PinnedFolder
 export interface PinnedLink {
   id: string
   kind: 'link'
+  /** 既定名（ピン時のページタイトル。読み込みのたびに更新される）。 */
   title: string
+  /** ユーザーが付けた名前。null なら未設定で、表示は `title` に戻る。 */
+  customTitle: string | null
   url: string
 }
 
@@ -29,8 +35,22 @@ export interface PinnedFolder {
   id: string
   kind: 'folder'
   title: string
+  customTitle: string | null
   collapsed: boolean
+  /** フォルダは1階層まで。ここに入るのは必ず link だけ。 */
   children: PinnedNode[]
+}
+
+/**
+ * 消えた（消える）定義の名前。
+ *
+ * 専用タブが一時タブへ降格するとき、**所属していた定義の名前をタブへ写す**必要がある。
+ * ID だけ返すと、定義に付けていた名前がその瞬間に失われる。
+ */
+export interface RemovedDefinition {
+  id: string
+  title: string
+  customTitle: string | null
 }
 
 /* ------------------------------------------------------------------ *
@@ -53,7 +73,18 @@ export interface TabState {
   chromeWindowId: number
   /** ピン留め定義に紐づいているタブなら、その定義 ID。一時タブなら null。 */
   pinnedId: string | null
+  /**
+   * Favorite 定義に紐づいているタブなら、その定義 ID。
+   * `pinnedId` とは**排他**（両方 non-null にはしない）。
+   */
+  favoriteId: string | null
   title: string
+  /**
+   * ユーザーが付けた名前（一時タブぶん）。null なら未設定。
+   * **専用タブ（pinnedId / favoriteId を持つ）の表示名は定義側が正**で、
+   * ここは降格したときに名前を引き継ぐための控えとして持つ。
+   */
+  customTitle: string | null
   url: string
   faviconUrl: string | null
   loading: boolean
@@ -250,6 +281,11 @@ export interface NemoSettings {
    * アーカイブされたタブは閉じるが、ライブラリから掘り返せる。
    */
   tabArchiveHours: number
+  /**
+   * サイドバーの表示状態。
+   * **起動時は必ず true に戻す**（隠したまま起動すると、戻す手段が ⌘S だけになり、
+   * 空タブと重なって手がかりの無い真っ黒な窓になる）。
+   */
   sidebarVisible: boolean
   /** 検索エンジンの URL テンプレート（`{q}` を置換する）。 */
   searchTemplate: string
@@ -322,7 +358,15 @@ export interface NemoUiApi {
   removeFavorite(favoriteId: string): Promise<void>
   openFavorite(favoriteId: string): Promise<void>
   createFolder(title: string): Promise<void>
-  renameNode(id: string, title: string): Promise<void>
+  /** 定義（ピン / フォルダ / Favorite）の名前を変える。`null` で解除して既定名に戻す。 */
+  renameNode(id: string, title: string | null): Promise<void>
+  /** タブの名前を変える（専用タブなら所属定義を、一時タブならタブ自身を）。`null` で解除。 */
+  renameTab(key: string, title: string | null): Promise<void>
+  /**
+   * そのタブが属するピン定義の URL を、今開いているページに差し替える。
+   * **定義 ID は渡さない**（main 側でタブから導出する）。
+   */
+  updatePinnedUrl(key: string): Promise<void>
   toggleFolder(id: string): Promise<void>
   /** ドラッグ & ドロップの結果を反映する。 */
   movePinned(id: string, parentId: string | null, index: number): Promise<void>

@@ -13,9 +13,9 @@ import {
   reopenClosedTab,
   selectTab,
   togglePin,
+  addFavoriteFromTab,
   type NemoWindow
 } from './registry.js'
-import { addFavorite } from './store/pins.js'
 import { checkForUpdatesManually } from './updater.js'
 
 /**
@@ -132,7 +132,9 @@ function runCommand(command: string): void {
       if (tab) togglePin(tab)
       return
     case 'add-favorite':
-      if (tab) addFavorite(tab.url, tab.title)
+      // 実装は registry の addFavoriteFromTab に1本化する
+      // （ピン留めとの排他＝「定義ごと移す」規則を1か所に寄せる）
+      if (tab) addFavoriteFromTab(tab)
       return
     case 'next-tab':
     case 'previous-tab': {

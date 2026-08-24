@@ -18,6 +18,10 @@ import { buildSwipeInjection } from '../shared/swipe-gesture.js'
 import { cancelPrompts, currentPrompt, setPromptNotifier } from './prompts.js'
 import { getSettings } from './store/settings.js'
 import {
+  addFavorite as addFavoriteDefinition,
+  convertFavoriteToPin,
+  convertPinToFavorite,
+  findFavorite,
   findPinned,
   findPinnedByUrl,
   getFavorites,
@@ -25,7 +29,12 @@ import {
   movePinned,
   onPinsChanged,
   pinUrl,
-  unpin as unpinDefinition
+  removeFavorite as removeFavoriteDefinition,
+  renameNode,
+  setPinnedTitle,
+  unpin as unpinDefinition,
+  updatePinnedUrl as updatePinnedUrlDefinition,
+  type ConversionResult
 } from './store/pins.js'
 import { recordVisit, updateTitle } from './store/history.js'
 import { archiveTab, pruneArchive, type ArchiveReason } from './store/archive.js'
@@ -38,7 +47,15 @@ import {
 } from './downloads.js'
 import { forgetPermissionScope } from './store/permissions.js'
 import { getUpdateState, onUpdateChanged } from './updater.js'
-import type { FindState, Prompt, SharedState, TabState, WindowState } from '../shared/types.js'
+import { resolveReopen, resolveTabOwnership } from '../shared/tab-ownership.js'
+import type {
+  FindState,
+  Prompt,
+  RemovedDefinition,
+  SharedState,
+  TabState,
+  WindowState
+} from '../shared/types.js'
 
 /**
  * タブとウィンドウの所有モデル（計画 1-2）。
@@ -295,6 +312,13 @@ export class NemoTab {
   readonly key = randomUUID()
   /** ピン留め定義に紐づいているなら、その ID。 */
   pinnedId: string | null = null
+  /** Favorite 定義に紐づいているなら、その ID（`pinnedId` とは排他）。 */
+  favoriteId: string | null = null
+  /**
+   * ユーザーが付けた名前（一時タブぶん）。
+   * **専用タブの表示名は定義側が正**で、ここは降格したときに引き継ぐための控え。
+   */
+  customTitle: string | null = null
 
   view: WebContentsView | null = null
   url: string
@@ -401,7 +425,9 @@ export class NemoTab {
       webContentsId: wc ? wc.id : null,
       chromeWindowId: this.window.baseWindow.isDestroyed() ? -1 : this.window.baseWindow.id,
       pinnedId: this.pinnedId,
+      favoriteId: this.favoriteId,
       title: displayTitle(this.title, this.url),
+      customTitle: this.customTitle,
       url: this.url,
       faviconUrl: this.faviconUrl,
       loading: wc ? wc.isLoading() : false,
@@ -442,7 +468,14 @@ function attachTabEvents(tab: NemoTab, wc: WebContents): void {
 
   wc.on('page-title-updated', (_event, title) => {
     tab.title = title
-    remember(() => updateTitle(tab.url, title))
+    // 専用タブなら定義の**既定名**も追従させる（ユーザーが付けた名前は触らない）。
+    // `remember` の中に置くのが肝で、**シークレットでは書かない**
+    // （pins.json は永続なので、書くと「閉じたら跡形もなく消える」が破れる）。
+    remember(() => {
+      updateTitle(tab.url, title)
+      const definitionId = tab.pinnedId ?? tab.favoriteId
+      if (definitionId) setPinnedTitle(definitionId, title)
+    })
     notify()
   })
   wc.on('page-favicon-updated', (_event, favicons) => {
@@ -917,21 +950,28 @@ export class NemoWindow {
     )
   }
 
+  /**
+   * セッションに残すぶん。
+   *
+   * **一時タブだけ**を保存する。ピン / Favorites のタブは枠（定義）の側から
+   * 作り直すので保存しない（起動時にタブ実体を1つも作らないための肝）。
+   * 絞り込みは `activeIndex` の算出とも**同じ配列**で行う。条件がズレると
+   * 復元後に別のタブが選択される。
+   */
   toSaved(): SavedWindow {
     const bounds = this.baseWindow.isDestroyed() ? null : this.baseWindow.getBounds()
-    const tabs = this.tabs
-      .filter((tab) => /^https?:\/\//.test(tab.url))
-      // lastActiveAt も保存する。落とすと自動アーカイブの寿命が再起動でリセットされる
-      .map((tab) => ({
-        url: tab.url,
-        title: tab.title,
-        pinnedId: tab.pinnedId,
-        lastActiveAt: tab.lastActiveAt
-      }))
+    const saved = this.tabs.filter(
+      (tab) => /^https?:\/\//.test(tab.url) && tab.pinnedId === null && tab.favoriteId === null
+    )
+    // lastActiveAt も保存する。落とすと自動アーカイブの寿命が再起動でリセットされる
+    const tabs = saved.map((tab) => ({
+      url: tab.url,
+      title: tab.title,
+      customTitle: tab.customTitle,
+      lastActiveAt: tab.lastActiveAt
+    }))
     const activeIndex = Math.max(
-      this.tabs
-        .filter((tab) => /^https?:\/\//.test(tab.url))
-        .findIndex((tab) => tab.key === this.activeTabKey),
+      saved.findIndex((tab) => tab.key === this.activeTabKey),
       0
     )
     return { bounds, tabs, activeIndex }
@@ -1056,7 +1096,11 @@ export interface CreateTabOptions {
   background?: boolean
   /** ピン留め定義に紐づくタブとして作る。 */
   pinnedId?: string | null
+  /** Favorite 定義に紐づくタブとして作る（`pinnedId` とは排他）。 */
+  favoriteId?: string | null
   title?: string
+  /** ユーザーが付けた名前（一時タブの復元・降格の引き継ぎ用）。 */
+  customTitle?: string | null
   /** 直後に selectTab しない（セッション復元でまとめて作るとき）。 */
   deferSelect?: boolean
   /**
@@ -1090,9 +1134,22 @@ export function createTab(win: NemoWindow, url: string = BLANK_URL, options: Cre
   if (typeof options.lastActiveAt === 'number' && Number.isFinite(options.lastActiveAt)) {
     tab.lastActiveAt = Math.min(options.lastActiveAt, Date.now())
   }
-  // 消えた定義への紐付けを持ち込ませない（セッション復元で古い pinnedId が来る）。
-  // 紐付いたままだと、サイドバーのどの層にも出ないタブになる。
-  tab.pinnedId = options.pinnedId && findPinned(options.pinnedId) ? options.pinnedId : null
+  tab.customTitle = options.customTitle ?? null
+  // 所属の不変条件（排他 / 実在 / 1 ウィンドウ 1 定義 1 タブ）は**ここで1度だけ**保証する。
+  // 呼び出し口が多いので、経路ごとに書くと必ずどれかで漏れる。
+  const ownership = resolveTabOwnership(
+    { pinnedId: options.pinnedId, favoriteId: options.favoriteId },
+    {
+      pinnedExists: (id) => findPinned(id) !== null,
+      favoriteExists: (id) => findFavorite(id) !== null,
+      windowTabs: win.tabs
+    }
+  )
+  if (ownership.dropped.length > 0) {
+    log('tab.ownership_dropped', { windowId: win.id, reasons: ownership.dropped.join(',') })
+  }
+  tab.pinnedId = ownership.pinnedId
+  tab.favoriteId = ownership.favoriteId
   win.tabs.push(tab)
   if (!options.asleep) tab.materialize()
   win.layout()
@@ -1146,8 +1203,19 @@ export function selectTab(win: NemoWindow, key: string): void {
   win.pushState()
 }
 
-/** 閉じたタブ（⌘⇧T で開き直す）。ウィンドウをまたいで1本のスタックにする。 */
-const closedTabs: { url: string; title: string; pinnedId: string | null }[] = []
+/**
+ * 閉じたタブ（⌘⇧T で開き直す）。ウィンドウをまたいで1本のスタックにする。
+ *
+ * **閉じた瞬間の URL / 名前 / 所属をそのまま持つ**。「登録 URL に戻る」のは
+ * サイドバーの枠をクリックしたときの規則で、⌘⇧T には適用しない。
+ */
+const closedTabs: {
+  url: string
+  title: string
+  pinnedId: string | null
+  favoriteId: string | null
+  customTitle: string | null
+}[] = []
 const CLOSED_TAB_LIMIT = 25
 
 export function removeTab(
@@ -1161,10 +1229,21 @@ export function removeTab(
 
   // シークレットのタブは ⌘⇧T の対象にしない（閉じたら跡形もなく消えるのが約束）
   if (/^https?:\/\//.test(tab.url) && !win.isPrivate) {
-    closedTabs.push({ url: tab.url, title: tab.title, pinnedId: tab.pinnedId })
+    closedTabs.push({
+      url: tab.url,
+      title: tab.title,
+      pinnedId: tab.pinnedId,
+      favoriteId: tab.favoriteId,
+      // 専用タブの名前は**定義から実効値を読む**。タブ側のフィールドだけ見ると、
+      // 定義を消した後に ⌘⇧T で戻したとき名前が失われる。
+      customTitle: effectiveCustomTitle(tab)
+    })
     if (closedTabs.length > CLOSED_TAB_LIMIT) closedTabs.shift()
-    // 一時タブを閉じたらアーカイブに残す（Arc と同じで、閉じても掘り返せる）
-    if (tab.pinnedId === null) archiveTab(tab.url, tab.title, options.archiveReason ?? 'closed')
+    // 一時タブを閉じたらアーカイブに残す（Arc と同じで、閉じても掘り返せる）。
+    // Favorite のタブもピン留めと同じ扱いで、アーカイブには載せない。
+    if (tab.pinnedId === null && tab.favoriteId === null) {
+      archiveTab(tab.url, tab.title, options.archiveReason ?? 'closed')
+    }
   }
 
   const wc = tab.webContents
@@ -1187,10 +1266,55 @@ export function removeTab(
   win.pushState()
 }
 
+/**
+ * 専用タブなら定義側、一時タブならタブ側の名前（表示の唯一の正）。
+ *
+ * **専用タブのリネームは定義だけを書き換える**（`renameTab`）ので、
+ * タブ側の `customTitle` を見ると古い名前のままになる。名前を読む側は必ずここを通す。
+ */
+export function effectiveCustomTitle(tab: NemoTab): string | null {
+  if (tab.pinnedId) return findPinned(tab.pinnedId)?.customTitle ?? null
+  if (tab.favoriteId) return findFavorite(tab.favoriteId)?.customTitle ?? null
+  return tab.customTitle
+}
+
+/** サイドバー・コマンドバーに出すタブの名前。 */
+export function tabDisplayName(tab: NemoTab): string {
+  return effectiveCustomTitle(tab) ?? displayTitle(tab.title, tab.url)
+}
+
+/**
+ * ⌘⇧T。閉じた瞬間の状態（URL / 名前 / 所属）に戻す。
+ *
+ * 不変条件が優先なので、例外が2つある。
+ * - **同じ定義のタブが既に開いている**（閉じた後にサイドバーから開き直した）
+ *   → 新しく作らず、そのタブを選ぶだけ。作ると同じ枠に2つぶら下がる
+ * - **定義が既に消えている**（閉じた後に解除した）→ 所属を外して一時タブとして戻す。
+ *   消えた ID のまま戻すと、どの層にも出ない不可視タブになる
+ */
 export function reopenClosedTab(win: NemoWindow): void {
   const entry = closedTabs.pop()
   if (!entry) return
-  createTab(win, entry.url, { pinnedId: entry.pinnedId, title: entry.title })
+
+  // 判定は純粋関数に寄せてある。この経路はメニューのアクセラレータからしか叩けず
+  // CDP から合成できないので、**規則そのもの**を `scripts/tab-ownership.test.mjs` で確かめる。
+  const decision = resolveReopen(entry, {
+    pinnedExists: (id) => findPinned(id) !== null,
+    favoriteExists: (id) => findFavorite(id) !== null,
+    windowTabs: win.tabs
+  })
+
+  if (decision.action === 'select') {
+    log('tab.reopen_selected_existing', { key: decision.key, windowId: win.id })
+    selectTab(win, decision.key)
+    return
+  }
+  createTab(win, decision.url, {
+    pinnedId: decision.pinnedId,
+    favoriteId: decision.favoriteId,
+    title: decision.title,
+    customTitle: decision.customTitle
+  })
 }
 
 /**
@@ -1284,39 +1408,134 @@ export function removeWindow(win: NemoWindow): void {
  * ------------------------------------------------------------------ */
 
 /**
- * ピン留め定義を消し、**全ウィンドウ**のタブから紐付けを外す。
+ * 専用タブを一時タブへ降格させる。
  *
- * 定義は全ウィンドウ共有なので、操作したウィンドウのタブだけ外すのでは足りない。
- * フォルダを消したときは子孫の定義も一緒に消えるため、その ID も外す。
- * ここを1か所に寄せておかないと、解除の経路（サイドバー / メニュー）ごとに漏れが出る。
+ * **降格が起きる経路は必ずここを通す**（解除 / フォルダ削除の巻き添え /
+ * 変換の写像で null に倒れる2種類）。経路ごとに書くと、必ずどれかで名前が消える。
+ *
+ * 定義の `customTitle` は **null も含めて常に代入する**（タブ側の古い値を優先しない）。
+ * 専用タブの表示名は定義が唯一の正なので、タブ側を優先すると
+ * 「A でピン留め → B にリネーム → 解除」で A に戻る、といった食い違いが出る。
  */
-export function unpinEverywhere(pinnedId: string): void {
-  const removed = unpinDefinition(pinnedId)
+function demoteTab(tab: NemoTab, definition: RemovedDefinition | null): void {
+  tab.customTitle = definition?.customTitle ?? null
+  tab.pinnedId = null
+  tab.favoriteId = null
+  log('tab.demoted', { key: tab.key, windowId: tab.window.id, definition: definition?.id ?? null })
+}
+
+/**
+ * タブを定義に所属させる。
+ * **同じウィンドウの先客は降格させる**（1 ウィンドウ 1 定義 1 タブ）。
+ */
+function assignDefinition(tab: NemoTab, kind: 'pinned' | 'favorite', definition: RemovedDefinition): void {
+  for (const other of tab.window.tabs) {
+    if (other === tab) continue
+    const owned = kind === 'pinned' ? other.pinnedId : other.favoriteId
+    if (owned === definition.id) demoteTab(other, definition)
+  }
+  tab.pinnedId = kind === 'pinned' ? definition.id : null
+  tab.favoriteId = kind === 'favorite' ? definition.id : null
+}
+
+/** 消えた定義に属していたタブを、**全ウィンドウ**で降格させる。 */
+function demoteEverywhere(removed: RemovedDefinition[], skip?: NemoTab): void {
   if (removed.length === 0) return
-  const removedIds = new Set(removed)
+  const byId = new Map(removed.map((definition) => [definition.id, definition]))
   for (const win of windowsById.values()) {
     if (win.isDestroyed) continue
     let changed = false
     for (const tab of win.tabs) {
-      if (tab.pinnedId && removedIds.has(tab.pinnedId)) {
-        tab.pinnedId = null
-        changed = true
-      }
+      if (tab === skip) continue
+      const owned = tab.pinnedId ?? tab.favoriteId
+      if (!owned) continue
+      const definition = byId.get(owned)
+      if (!definition) continue
+      demoteTab(tab, definition)
+      changed = true
     }
     if (changed) win.pushState()
   }
 }
 
-/** ⌘D。留めていなければ留め、留めていれば解除する（解除は全ウィンドウに効く）。 */
+/**
+ * ピン留め定義を消し、**全ウィンドウ**のタブから紐付けを外す。
+ *
+ * 定義は全ウィンドウ共有なので、操作したウィンドウのタブだけ外すのでは足りない。
+ * フォルダを消したときは子孫の定義も一緒に消えるため、その分も外す。
+ * ここを1か所に寄せておかないと、解除の経路（サイドバー / メニュー）ごとに漏れが出る。
+ *
+ * **変換（ピン ⇄ Favorite）からは呼ばない**。呼ぶと操作中のタブの所属まで外れる。
+ */
+export function unpinEverywhere(pinnedId: string): void {
+  demoteEverywhere(unpinDefinition(pinnedId))
+}
+
+/** `unpinEverywhere` と対称。Favorite 定義を消して全ウィンドウの紐付けを外す。 */
+export function removeFavoriteEverywhere(favoriteId: string): void {
+  demoteEverywhere(removeFavoriteDefinition(favoriteId))
+}
+
+/**
+ * 変換（ピン ⇄ Favorite）の結果を全ウィンドウのタブへ1度に反映する。
+ *
+ * 適用する写像は次の4つだけ:
+ * - 操作中のタブ … 変換元 ID → **変換先 ID**
+ * - 同じウィンドウで先に開いていた変換先のタブ … → **null**（降格）
+ * - その他のウィンドウの変換元のタブ … → **null**（降格）
+ * - その他のウィンドウの変換先のタブ … **変更なし**
+ */
+function applyConversion(tab: NemoTab, result: ConversionResult, kind: 'pinned' | 'favorite'): void {
+  // 操作中のタブは飛ばす（変換元 ID を持っているので、外すと写像の1行目が壊れる）
+  demoteEverywhere(result.removedDefinitions, tab)
+  assignDefinition(tab, kind, result.target)
+  tab.window.pushState()
+}
+
+/**
+ * ⌘D。留めていなければ留め、留めていれば解除する（解除は全ウィンドウに効く）。
+ *
+ * Favorite に属しているタブ（や、同じ URL の Favorite がある一時タブ）は
+ * **定義ごとピン留めへ移す**。所属だけ付け替えると同じ URL が両方の枠に残る。
+ */
 export function togglePin(tab: NemoTab): void {
   if (tab.pinnedId) {
     unpinEverywhere(tab.pinnedId)
     return
   }
-  const node = findPinnedByUrl(tab.url) ?? pinUrl(tab.url, tab.title)
+  const favoriteId = tab.favoriteId ?? findFavoriteByUrl(tab.url)?.id ?? null
+  if (favoriteId) {
+    const result = convertFavoriteToPin(favoriteId)
+    if (result) applyConversion(tab, result, 'pinned')
+    return
+  }
+  const node = findPinnedByUrl(tab.url) ?? pinUrl(tab.url, tab.title, tab.customTitle)
   if (!node) return
-  tab.pinnedId = node.id
+  assignDefinition(tab, 'pinned', { id: node.id, title: node.title, customTitle: node.customTitle })
   tab.window.pushState()
+}
+
+/**
+ * タブを Favorites に入れる（メニュー / サイドバーへの D&D）。
+ * `togglePin` と対称に、ピン留めに属していれば**定義ごと**移す。
+ */
+export function addFavoriteFromTab(tab: NemoTab): void {
+  if (tab.favoriteId) return
+  const pinnedId = tab.pinnedId ?? findPinnedByUrl(tab.url)?.id ?? null
+  if (pinnedId) {
+    const result = convertPinToFavorite(pinnedId)
+    if (result) applyConversion(tab, result, 'favorite')
+    return
+  }
+  const item = addFavoriteDefinition(tab.url, tab.title, tab.customTitle)
+  if (!item) return
+  assignDefinition(tab, 'favorite', { id: item.id, title: item.title, customTitle: item.customTitle })
+  tab.window.pushState()
+}
+
+/** URL から Favorite 定義を引く（同じ URL を両方の枠に置かないため）。 */
+function findFavoriteByUrl(url: string): { id: string } | null {
+  return getFavorites().find((item) => item.url === url) ?? null
 }
 
 /**
@@ -1326,18 +1545,17 @@ export function togglePin(tab: NemoTab): void {
  * 作り直すと ID が変わり、他ウィンドウで開いている同じピン留めの紐付けが切れる。
  */
 export function pinTabInto(tab: NemoTab, parentId: string | null, index: number): void {
-  let pinnedId = tab.pinnedId
-  if (!pinnedId) {
-    const node = findPinnedByUrl(tab.url) ?? pinUrl(tab.url, tab.title)
-    if (!node) return
-    pinnedId = node.id
-    tab.pinnedId = pinnedId
-    tab.window.pushState()
-  }
+  if (!tab.pinnedId) togglePin(tab)
+  const pinnedId = tab.pinnedId
+  if (!pinnedId) return
   movePinned(pinnedId, parentId, index)
 }
 
-/** ピン留め定義を、そのウィンドウで開く（既に開いていればそれを選ぶ）。 */
+/**
+ * ピン留め定義を、そのウィンドウで開く（既に開いていればそれを選ぶ）。
+ *
+ * **常に登録 URL を開く**（前回そのピンで見ていた URL は覚えない）。
+ */
 export function openPinned(win: NemoWindow, pinnedId: string): void {
   const node = findPinned(pinnedId)
   if (!node || node.kind !== 'link') return
@@ -1346,7 +1564,43 @@ export function openPinned(win: NemoWindow, pinnedId: string): void {
     selectTab(win, existing.key)
     return
   }
-  createTab(win, node.url, { pinnedId, title: node.title })
+  createTab(win, node.url, { pinnedId, title: node.title, customTitle: node.customTitle })
+}
+
+/** `openPinned` と対称。Favorite 定義をそのウィンドウで開く。 */
+export function openFavorite(win: NemoWindow, favoriteId: string): void {
+  const item = findFavorite(favoriteId)
+  if (!item) return
+  const existing = win.tabs.find((tab) => tab.favoriteId === favoriteId)
+  if (existing) {
+    selectTab(win, existing.key)
+    return
+  }
+  createTab(win, item.url, { favoriteId, title: item.title, customTitle: item.customTitle })
+}
+
+/**
+ * タブの名前を変える。専用タブなら**所属定義**を、一時タブならタブ自身を書き換える。
+ * `null` / 空文字で解除して実タイトルに戻る。
+ */
+export function renameTab(tab: NemoTab, title: string | null): void {
+  const definitionId = tab.pinnedId ?? tab.favoriteId
+  if (definitionId) {
+    renameNode(definitionId, title)
+    return
+  }
+  const trimmed = typeof title === 'string' ? title.trim().slice(0, 300) : ''
+  tab.customTitle = trimmed || null
+  tab.window.pushState()
+}
+
+/**
+ * そのタブが属するピン定義の URL を、今開いているページに差し替える。
+ * 定義 ID は**タブから導出する**（renderer に任意の定義 ID を指定させない）。
+ */
+export function updatePinnedUrlFromTab(tab: NemoTab): void {
+  if (!tab.pinnedId) return
+  updatePinnedUrlDefinition(tab.pinnedId, tab.url)
 }
 
 /* ------------------------------------------------------------------ *
@@ -1413,7 +1667,7 @@ function sweepSleep(): void {
 /**
  * 放置された一時タブを自動でアーカイブする（計画 2-4。既定 24 時間）。
  *
- * 対象は**一時タブだけ**。ピン留めしたタブは触らない（Arc と同じ）。
+ * 対象は**一時タブだけ**。ピン留め / Favorites のタブは触らない（Arc と同じ）。
  * アーカイブは「閉じる」だが**消さない**。ライブラリから掘り返せる。
  *
  * 触らないもの:
@@ -1429,7 +1683,8 @@ function sweepArchive(): void {
   for (const win of [...windowsById.values()]) {
     if (win.isDestroyed || win.isPrivate) continue
     for (const tab of [...win.tabs]) {
-      if (tab.pinnedId !== null) continue
+      // ピン留め / Favorites の専用タブは触らない（Arc と同じ）
+      if (tab.pinnedId !== null || tab.favoriteId !== null) continue
       if (tab.key === win.activeTabKey) continue
       if (tab.lastActiveAt > threshold) continue
       if (tab.webContents?.isCurrentlyAudible()) continue

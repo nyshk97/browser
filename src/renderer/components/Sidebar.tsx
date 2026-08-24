@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { prettyUrl, useCommand, useSharedState, useWindowState } from '../useNemo.js'
 import { PinnedTree } from './PinnedTree.js'
-import { TabRow } from './TabRow.js'
-import type { LoadedExtensionInfo, TabState, UpdateState } from '../../shared/types.js'
+import { TabRow, TAB_DRAG_TYPE, useDragEnd } from './TabRow.js'
+import { RenameInput, useDelayedClick } from './InlineRename.js'
+import { RowMenu, type RowMenuState } from './RowMenu.js'
+import type { FavoriteItem, LoadedExtensionInfo, TabState, UpdateState } from '../../shared/types.js'
 
 const PAGE_PARTITION = 'persist:nemo'
 
@@ -49,8 +51,19 @@ export function Sidebar(): React.JSX.Element {
     [state]
   )
 
+  /** Favorite に紐づいているタブ（グリッドに状態を重ねて出す）。 */
+  const favoriteTabs = useMemo(
+    () =>
+      new Map((state?.tabs ?? []).flatMap((tab) => (tab.favoriteId ? [[tab.favoriteId, tab] as const] : []))),
+    [state]
+  )
+
+  /**
+   * 一時タブ。**専用枠（ピン留め / Favorites）に属するタブはここに出さない**
+   * （出すと同じタブがサイドバーに2回並ぶ）。
+   */
   const ephemeral: TabState[] = useMemo(
-    () => (state?.tabs ?? []).filter((tab) => tab.pinnedId === null),
+    () => (state?.tabs ?? []).filter((tab) => tab.pinnedId === null && tab.favoriteId === null),
     [state]
   )
 
@@ -191,13 +204,13 @@ export function Sidebar(): React.JSX.Element {
         </button>
       </div>
 
-      <FavoriteGrid favorites={shared.favorites} />
+      <FavoriteGrid favorites={shared.favorites} tabs={favoriteTabs} />
 
       <div className="sep" />
 
       <div className="scroll">
         <div className="label">
-          ピン留め
+          <PinIcon />
           <button
             type="button"
             className="mini"
@@ -237,38 +250,183 @@ export function Sidebar(): React.JSX.Element {
   )
 }
 
+/**
+ * Favorites（サイドバー上部のアイコングリッド）。
+ *
+ * ピン留めと同じ**専用枠**として描く。押すと Favorite 定義に属するタブが開き、
+ * 下の一時タブ一覧には出ない。閉じてもグリッドからは消えない。
+ * 状態（読み込み中 / 未読 / アクティブ / 音）もピン留め行と同じ規則で重ねる。
+ */
 function FavoriteGrid({
-  favorites
+  favorites,
+  tabs
 }: {
-  favorites: { id: string; url: string; title: string }[]
-}): React.JSX.Element | null {
+  favorites: FavoriteItem[]
+  tabs: Map<string, TabState>
+}): React.JSX.Element {
   const [dragId, setDragId] = useState<string | null>(null)
-  if (favorites.length === 0) return null
+  const [dropping, setDropping] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [menu, setMenu] = useState<RowMenuState | null>(null)
+  const { schedule, cancel } = useDelayedClick()
+
+  // タブ行を掴んだドラッグは、グリッド側では `dragend` を受け取れない
+  useDragEnd(
+    useCallback(() => {
+      setDragId(null)
+      setDropping(false)
+    }, [])
+  )
+
+  const editing = favorites.find((favorite) => favorite.id === editingId) ?? null
+
+  /** 一時タブをグリッドへ落として Favorites に足す。 */
+  const dropTab = (event: React.DragEvent): boolean => {
+    const tabKey = event.dataTransfer.getData(TAB_DRAG_TYPE)
+    if (!tabKey) return false
+    void window.nemo.addFavorite(tabKey)
+    return true
+  }
+
+  const isTabDrag = (event: React.DragEvent): boolean => event.dataTransfer.types.includes(TAB_DRAG_TYPE)
+
+  // 空のときも受け皿を出す（出さないと最初の1件を D&D で作れない）
+  if (favorites.length === 0) {
+    return (
+      <div
+        className={`fav-empty droppable${dropping ? ' drop' : ''}`}
+        onDragOver={(event) => {
+          if (!isTabDrag(event)) return
+          event.preventDefault()
+          setDropping(true)
+        }}
+        onDragLeave={() => setDropping(false)}
+        onDrop={(event) => {
+          event.preventDefault()
+          setDropping(false)
+          dropTab(event)
+        }}
+      >
+        タブをここへドラッグして Favorites に追加
+      </div>
+    )
+  }
+
   return (
-    <div className="fav-grid">
-      {favorites.map((favorite, index) => (
-        <button
-          key={favorite.id}
-          type="button"
-          className="fav"
-          title={favorite.title}
-          draggable
-          onDragStart={() => setDragId(favorite.id)}
-          onDragOver={(event) => event.preventDefault()}
-          onDrop={() => {
-            if (dragId && dragId !== favorite.id) void window.nemo.moveFavorite(dragId, index)
-            setDragId(null)
-          }}
-          onClick={() => void window.nemo.openFavorite(favorite.id)}
-          onContextMenu={(event) => {
-            event.preventDefault()
-            void window.nemo.removeFavorite(favorite.id)
-          }}
-        >
-          <Favicon url={favorite.url} title={favorite.title} />
-        </button>
-      ))}
-    </div>
+    <>
+      <div
+        className={`fav-grid${dropping ? ' drop' : ''}`}
+        onDragOver={(event) => {
+          if (!isTabDrag(event)) return
+          event.preventDefault()
+          setDropping(true)
+        }}
+        onDragLeave={() => setDropping(false)}
+        onDrop={(event) => {
+          // 個々のセルで処理されなかったぶん（隙間へのドロップ）を拾う
+          event.preventDefault()
+          setDropping(false)
+          dropTab(event)
+        }}
+      >
+        {favorites.map((favorite, index) => {
+          const tab = tabs.get(favorite.id) ?? null
+          const name = favorite.customTitle ?? favorite.title
+          const classes = ['fav']
+          if (tab?.visible) classes.push('active')
+          if (!tab) classes.push('closed')
+          return (
+            <button
+              key={favorite.id}
+              type="button"
+              className={classes.join(' ')}
+              title={name}
+              draggable
+              onDragStart={() => setDragId(favorite.id)}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                setDropping(false)
+                if (dropTab(event)) return
+                if (dragId && dragId !== favorite.id) void window.nemo.moveFavorite(dragId, index)
+                setDragId(null)
+              }}
+              onClick={() => {
+                // 閉じている枠のクリックだけ遅らせる（ダブルクリックでのリネームを
+                // 拾うため。遅らせないと、名前を変えようとしただけで読み込みが走る）
+                if (tab) void window.nemo.openFavorite(favorite.id)
+                else schedule(() => void window.nemo.openFavorite(favorite.id))
+              }}
+              onDoubleClick={(event) => {
+                event.preventDefault()
+                cancel()
+                setEditingId(favorite.id)
+              }}
+              onContextMenu={(event) => {
+                // 右クリックで即削除はしない（取り消せない操作を1クリックに置かない）
+                event.preventDefault()
+                cancel()
+                setMenu({
+                  id: favorite.id,
+                  x: event.clientX,
+                  y: event.clientY,
+                  items: [
+                    { label: '名前を変更', run: () => setEditingId(favorite.id) },
+                    {
+                      label: 'Favorites から外す',
+                      danger: true,
+                      run: () => void window.nemo.removeFavorite(favorite.id)
+                    }
+                  ]
+                })
+              }}
+            >
+              {tab?.loading ? (
+                <span className="spin" />
+              ) : (
+                <Favicon url={favorite.url} title={name} src={tab?.faviconUrl ?? null} />
+              )}
+              {tab?.audible ? <span className="fav-mark">♪</span> : null}
+              {tab?.unread ? <span className="fav-dot" /> : null}
+            </button>
+          )
+        })}
+      </div>
+      {/*
+        グリッドのセルは小さすぎて中で名前を編集できないので、
+        編集中だけグリッドの下に入力欄を出す。
+      */}
+      {editing ? (
+        <div className="fav-edit">
+          <RenameInput
+            initial={editing.customTitle ?? editing.title}
+            onSubmit={(title) => {
+              setEditingId(null)
+              void window.nemo.renameNode(editing.id, title)
+            }}
+            onCancel={() => setEditingId(null)}
+          />
+        </div>
+      ) : null}
+      {menu ? <RowMenu state={menu} onClose={() => setMenu(null)} /> : null}
+    </>
+  )
+}
+
+/**
+ * ピン留めの見出しに出すピンのアイコン。
+ *
+ * 文字（"ピン留め"）より視線の邪魔にならず、Favorites との層の区別も付く。
+ * 絵文字ではなく **`currentColor` を継ぐ SVG** にして、見出しの色（`--nemo-ink-dim`）と
+ * 揃うようにする（絵文字だとここだけ極彩色になる）。
+ */
+function PinIcon(): React.JSX.Element {
+  return (
+    <svg className="label-icon" viewBox="0 0 24 24" role="img" aria-label="ピン留め">
+      <title>ピン留め</title>
+      <path d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z" />
+    </svg>
   )
 }
 

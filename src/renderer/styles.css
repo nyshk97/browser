@@ -14,6 +14,8 @@
   --nemo-hover: rgba(255, 255, 255, 0.06);
   --nemo-accent: #5b9dff;
   --nemo-danger: #ff6b6b;
+  /* フォルダのアイコン。Finder のフォルダに寄せた水色 */
+  --nemo-folder: #64b5f6;
 
   --nemo-row-h: 28px;
   --nemo-radius: 7px;
@@ -171,9 +173,19 @@ input {
 
 .fav-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /*
+   * `1fr` は `minmax(auto, 1fr)` なので、**中身の min-content で列が広がる**。
+   * `minmax(0, 1fr)` にして、何が入っても列がサイドバー幅を超えないようにする。
+   */
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 6px;
   padding: 2px 10px 10px;
+}
+
+/* タブを落とせる場所だと分かるようにする（グリッドの隙間へのドロップも拾う） */
+.fav-grid.drop {
+  box-shadow: inset 0 0 0 1px var(--nemo-accent);
+  border-radius: var(--nemo-radius);
 }
 
 .fav {
@@ -183,6 +195,7 @@ input {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
   transition:
     background 0.12s,
     transform 0.12s;
@@ -191,6 +204,69 @@ input {
 .fav:hover {
   background: var(--nemo-surface-hi);
   transform: translateY(-1px);
+}
+
+/* タイル（43px 角）は行より広いので、アイコンも少しだけ大きくする */
+.fav .fi {
+  width: 18px;
+  height: 18px;
+}
+
+.fav .fi.letter {
+  font-size: 10px;
+}
+
+/*
+ * Favorites はピン留めと同じ**専用枠**。開いているかどうかを枠の側に出す。
+ * 閉じている（タブ実体がまだ無い）ものは沈ませ、表示中のものは枠で示す。
+ */
+.fav.closed {
+  opacity: 0.62;
+}
+
+.fav.active {
+  background: var(--nemo-surface-hi);
+  box-shadow: inset 0 0 0 1.5px var(--nemo-accent);
+}
+
+/* 未読ドットと音符はセルの角に重ねる（行と違って横に並べる余白が無い） */
+.fav .fav-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--nemo-accent);
+}
+
+.fav .fav-mark {
+  position: absolute;
+  bottom: 2px;
+  right: 3px;
+  font-size: 9px;
+  opacity: 0.75;
+}
+
+/* Favorites が空のときの受け皿（最初の1件はここへドラッグして作る） */
+.fav-empty {
+  margin: 2px 10px 10px;
+  padding: 8px;
+  border: 1px dashed var(--nemo-border);
+  border-radius: var(--nemo-radius);
+  color: var(--nemo-ink-dim);
+  font-size: 11px;
+  text-align: center;
+}
+
+.fav-empty.drop {
+  color: var(--nemo-ink);
+  border-color: var(--nemo-accent);
+}
+
+/* Favorites の名前を変えるときだけ、グリッドの下に入力欄を出す */
+.fav-edit {
+  padding: 0 10px 8px;
 }
 
 .sep {
@@ -223,6 +299,13 @@ input {
   text-transform: uppercase;
   color: var(--nemo-ink-dim);
   padding: 10px 8px 4px;
+}
+
+/* 見出しのアイコン（"ピン留め" の代わり）。色は見出しの文字色を継ぐ */
+.label .label-icon {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
 }
 
 .label .mini {
@@ -288,6 +371,11 @@ input {
   opacity: 0.45;
 }
 
+/* まだタブ実体が無いピン留め（クリックした時点で読み込まれる） */
+.row.pin.closed {
+  opacity: 0.62;
+}
+
 .row.crashed {
   box-shadow: inset 2px 0 0 var(--nemo-danger);
 }
@@ -327,7 +415,12 @@ input {
   white-space: nowrap;
 }
 
-.row .fi {
+/*
+ * favicon。**行の外（Favorites グリッド・ライブラリ）でも同じサイズにする。**
+ * `.row` の下でだけ効かせると、グリッドに置いた <img> がページの実寸のまま出る
+ * （240px の favicon で列ごと押し広げられ、サイドバーからはみ出した実例あり）。
+ */
+.fi {
   width: 16px;
   height: 16px;
   border-radius: 4px;
@@ -335,7 +428,7 @@ input {
   object-fit: contain;
 }
 
-.row .fi.letter {
+.fi.letter {
   background: #3a3a45;
   display: flex;
   align-items: center;
@@ -375,15 +468,12 @@ input {
   background: var(--nemo-hover);
 }
 
-.row .caret {
-  font-size: 8px;
-  opacity: 0.6;
-  width: 10px;
-  transition: transform 0.18s;
-}
-
-.row.folder.open .caret {
-  transform: rotate(90deg);
+/*
+ * フォルダのアイコン。開閉は**アイコンの形**で示すので、キャレット（▶）は置かない。
+ * `.fi` の枠（16px）に乗せ、`.fi.letter` の背景チップは付けない。
+ */
+.fi.folder-icon {
+  fill: var(--nemo-folder);
 }
 
 .children {
@@ -406,6 +496,61 @@ input {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * インライン編集とコンテキストメニュー
+ * ------------------------------------------------------------------ */
+
+/* 行の中で名前を書き換える入力欄。行の高さを変えないようにする */
+.rename {
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  padding: 0 5px;
+  font: inherit;
+  color: #fff;
+  background: var(--nemo-surface-hi);
+  border: 1px solid var(--nemo-accent);
+  border-radius: 5px;
+  outline: none;
+  user-select: text;
+  cursor: text;
+}
+
+.fav-edit .rename {
+  width: 100%;
+  height: 22px;
+}
+
+/* サイドバー内に収まる軽量メニュー（Electron の Menu.popup は使わない） */
+.row-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 172px;
+  padding: 4px;
+  background: var(--nemo-surface);
+  border: 1px solid var(--nemo-border);
+  border-radius: var(--nemo-radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+}
+
+.row-menu button {
+  text-align: left;
+  padding: 4px 8px;
+  border-radius: 5px;
+  color: var(--nemo-ink);
+  white-space: nowrap;
+}
+
+.row-menu button:hover {
+  background: var(--nemo-hover);
+}
+
+.row-menu button.danger {
+  color: var(--nemo-danger);
 }
 
 /* 拡張のアイコン行 */

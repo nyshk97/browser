@@ -126,10 +126,21 @@ function clampNumber(value, fallback, min, max) {
  * ピン留め / Favorites
  * ------------------------------------------------------------------ */
 
-export const PINS_VERSION = 1
+/**
+ * ピン留め / Favorites のスキーマ版。
+ * - 1 … `title` だけ
+ * - 2 … `customTitle`（ユーザーが付けた名前）を持ち、フォルダは1階層まで
+ */
+export const PINS_VERSION = 2
 
-/** ピン留めツリーの入れ子の上限（循環・暴走を防ぐ）。 */
-export const MAX_PIN_DEPTH = 8
+/**
+ * ピン留めツリーの入れ子の上限。
+ *
+ * **1 = フォルダの中にフォルダを作れない**（root 直下のフォルダだけ）。
+ * 既存データや Arc の取り込みで2階層以上が来たら、**中身を親へ平坦化する**
+ * （切り捨てるとブックマークが黙って消える）。
+ */
+export const MAX_PIN_DEPTH = 1
 
 /**
  * 保存されたピン留め・Favorites を検査して正規化する。
@@ -162,7 +173,12 @@ function normalizeFavorite(raw, seen) {
   const id = normalizeId(raw['id'], seen)
   const url = normalizeStoredUrl(raw['url'])
   if (!id || !url) return null
-  return { id, url, title: normalizeTitle(raw['title'], url) }
+  return {
+    id,
+    url,
+    title: normalizeTitle(raw['title'], url),
+    customTitle: normalizeCustomTitle(raw['customTitle'])
+  }
 }
 
 /**
@@ -172,26 +188,41 @@ function normalizeFavorite(raw, seen) {
  * @returns {import('./types.js').PinnedNode[]}
  */
 function normalizePinnedList(raw, seen, depth) {
-  if (!Array.isArray(raw) || depth > MAX_PIN_DEPTH) return []
+  if (!Array.isArray(raw)) return []
   /** @type {import('./types.js').PinnedNode[]} */
   const result = []
   for (const item of raw) {
     if (!isRecord(item)) continue
-    const id = normalizeId(item['id'], seen)
-    if (!id) continue
     if (item['kind'] === 'folder') {
+      // 上限を超えたフォルダは**自分だけ消えて中身は親に残る**。
+      // ID は使わないので seen にも入れない（平坦化した子の ID はそのまま生きる）。
+      if (depth >= MAX_PIN_DEPTH) {
+        result.push(...normalizePinnedList(item['children'], seen, depth))
+        continue
+      }
+      const folderId = normalizeId(item['id'], seen)
+      if (!folderId) continue
       result.push({
-        id,
+        id: folderId,
         kind: 'folder',
         title: normalizeTitle(item['title'], 'フォルダ'),
+        customTitle: normalizeCustomTitle(item['customTitle']),
         collapsed: item['collapsed'] === true,
         children: normalizePinnedList(item['children'], seen, depth + 1)
       })
       continue
     }
+    const id = normalizeId(item['id'], seen)
+    if (!id) continue
     const url = normalizeStoredUrl(item['url'])
     if (!url) continue
-    result.push({ id, kind: 'link', title: normalizeTitle(item['title'], url), url })
+    result.push({
+      id,
+      kind: 'link',
+      title: normalizeTitle(item['title'], url),
+      customTitle: normalizeCustomTitle(item['customTitle']),
+      url
+    })
   }
   return result
 }
@@ -233,6 +264,17 @@ function normalizeTitle(value, fallback) {
   return value.slice(0, 300)
 }
 
+/**
+ * ユーザーが付けた名前。**空文字は「未設定」に倒す**（リネームの解除と同じ扱い）。
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+export function normalizeCustomTitle(value) {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed.slice(0, 300) : null
+}
+
 /* ------------------------------------------------------------------ *
  * セッション復元
  * ------------------------------------------------------------------ */
@@ -241,14 +283,15 @@ function normalizeTitle(value, fallback) {
  * セッションのスキーマ版。
  * - 1 … タブごとの `lastActiveAt` を持たない
  * - 2 … `lastActiveAt` を持つ（**自動アーカイブの寿命を再起動でリセットしないため**）
+ * - 3 … **一時タブだけ**を保存する（`pinnedId` を持たない）。`customTitle` を持つ
  */
-export const SESSION_VERSION = 2
+export const SESSION_VERSION = 3
 
 /**
  * @typedef {object} SavedTab
  * @property {string} url
  * @property {string} title
- * @property {string | null} pinnedId
+ * @property {string | null} customTitle ユーザーが付けた名前（無ければ null）
  * @property {number} lastActiveAt 最後にアクティブだった時刻
  */
 
@@ -272,6 +315,10 @@ export const SESSION_VERSION = 2
  * 版 1 には `lastActiveAt` が無い。**「たった今」に倒す**
  * （0 にすると、版を上げた直後の初回起動で古いタブが一斉に自動アーカイブされる）。
  *
+ * 版 2 までは**ピン留めのタブもセッションに入っている**。版 3 はピン / Favorites の
+ * タブを復元しない（枠をクリックした時点で作る）ので、`pinnedId` を持つレコードは
+ * **丸ごと落とす**。フィールドだけ捨てると、旧データのピンタブが一時タブとして復活する。
+ *
  * @param {unknown} raw
  * @returns {SessionData}
  */
@@ -280,26 +327,33 @@ export function normalizeSession(raw) {
   const windows = Array.isArray(input['windows'])
     ? input['windows'].flatMap((value) => {
         if (!isRecord(value)) return []
-        const tabs = Array.isArray(value['tabs'])
-          ? value['tabs'].flatMap((tab) => {
-              if (!isRecord(tab)) return []
-              const url = normalizeStoredUrl(tab['url'])
-              if (!url) return []
-              return [
-                {
-                  url,
-                  title: typeof tab['title'] === 'string' ? tab['title'].slice(0, 300) : '',
-                  pinnedId: typeof tab['pinnedId'] === 'string' ? tab['pinnedId'] : null,
-                  lastActiveAt: normalizeTimestamp(tab['lastActiveAt'])
-                }
-              ]
-            })
-          : []
+        const rawTabs = Array.isArray(value['tabs']) ? value['tabs'] : []
+        /** @type {SavedTab[]} */
+        const tabs = []
+        /** 元の添字 → 除外後の添字。**選択タブがずれないため**に持つ。 */
+        const moved = new Map()
+        for (const [index, tab] of rawTabs.entries()) {
+          if (!isRecord(tab)) continue
+          // 版 2 以前のピン留めタブ（枠の側から作り直されるので復元しない）
+          if (typeof tab['pinnedId'] === 'string') continue
+          const url = normalizeStoredUrl(tab['url'])
+          if (!url) continue
+          moved.set(index, tabs.length)
+          tabs.push({
+            url,
+            title: typeof tab['title'] === 'string' ? tab['title'].slice(0, 300) : '',
+            customTitle: normalizeCustomTitle(tab['customTitle']),
+            lastActiveAt: normalizeTimestamp(tab['lastActiveAt'])
+          })
+        }
         if (tabs.length === 0) return []
-        const activeIndex =
+        // 元の値を新しい長さに clamp するだけだと、先頭や中間のタブが落ちたときに
+        // **別のタブが選択される**。元のアクティブタブが残っていればその新しい位置へ。
+        const savedIndex =
           typeof value['activeIndex'] === 'number' && Number.isInteger(value['activeIndex'])
-            ? Math.min(Math.max(value['activeIndex'], 0), tabs.length - 1)
+            ? value['activeIndex']
             : 0
+        const activeIndex = moved.get(savedIndex) ?? 0
         return [{ bounds: normalizeBounds(value['bounds']), tabs, activeIndex }]
       })
     : []

@@ -63,6 +63,10 @@ depends = ["lint", "typecheck", "test"]
 description = "自走検証を通す（ユニットテスト→ビルド→アプリ起動→CDP で検証→後片付け）"
 run = "node scripts/verify-all.mjs"
 
+[tasks."verify:migration"]
+description = "旧版（セッション v2 / pins v1）のデータから起動して移行が壊れていないか確かめる"
+run = "node scripts/verify-session-migration.mjs"
+
 [tasks."verify:ext"]
 description = "拡張互換の smoke test（自作テスト拡張・資格情報なし・CI の必須チェック）"
 run = "node scripts/verify-ext-smoke.mjs"

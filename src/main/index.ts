@@ -27,7 +27,7 @@ import { installRuntimeMarker } from './runtime-marker.js'
 import { flushOpenUrls, handleSecondInstance, installOpenUrlHandler } from './open-url.js'
 import { installDownloadHandler } from './downloads.js'
 import { closeLogFile, log, logError, openLogFile } from './log.js'
-import { closeSettings, getSettings, initSettings } from './store/settings.js'
+import { closeSettings, getSettings, initSettings, updateSettings } from './store/settings.js'
 import { closePins, initPins } from './store/pins.js'
 import { closeDb, initDb } from './store/db.js'
 import { pruneArchive } from './store/archive.js'
@@ -97,6 +97,14 @@ app
     installRuntimeMarker()
 
     initSettings()
+    // **隠した状態は再起動に持ち越さない**。
+    // サイドバーを隠すと戻す手段が ⌘S だけになり（掴みしろを残していない）、
+    // 空タブと重なると「操作の手がかりが何も無い真っ黒な窓」で起動する。
+    // 設定ファイルの側も true に直しておく（実際の表示と食い違わせない）。
+    if (!getSettings().sidebarVisible) {
+      updateSettings({ sidebarVisible: true })
+      log('sidebar.restored_on_launch', {})
+    }
     initPins()
     initPermissionStore()
     initDb()
@@ -156,9 +164,13 @@ app
           saved.tabs.forEach((tab) => {
             // 復元直後は WebContents を作らない（数十タブを一斉に立ち上げない）。
             // 選んだ時点で読み込まれる。
+            //
+            // ピン留め / Favorites のタブは**そもそもセッションに入っていない**
+            // （枠をクリックした時点で作る）。ここで作るのは一時タブだけ。
             createTab(win, tab.url, {
-              pinnedId: tab.pinnedId,
               title: tab.title,
+              // 渡し忘れると一時タブに付けた名前が再起動で消える
+              customTitle: tab.customTitle,
               asleep: true,
               // 引き継がないと自動アーカイブの寿命が再起動のたびにリセットされる
               lastActiveAt: tab.lastActiveAt

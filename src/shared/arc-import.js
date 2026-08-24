@@ -13,6 +13,9 @@
  *   - `data.splitView` … 分割ビュー（子がタブ）。Nemo に対応物が無いので**子を平らに展開する**
  * - スペースは**無視してフラット化する**（計画の決定事項）。複数スペースのピン留めは順に連結する
  *
+ * Nemo のフォルダは**1階層まで**（`MAX_PIN_DEPTH = 1`）。Arc の深い階層は
+ * **中身を親フォルダへ平坦化して**取り込む（切り捨てるとブックマークが黙って消える）。
+ *
  * Electron 非依存にして `scripts/arc-import.test.mjs` から直接テストする。
  */
 import { MAX_PIN_DEPTH, normalizeStoredUrl } from './settings-schema.js'
@@ -125,7 +128,7 @@ export function parseArcSidebar(raw) {
         }
         emitted.add(childId)
         stats.tabs += 1
-        result.push({ id: childId, kind: 'link', title: titleOf(item) || url, url })
+        result.push({ id: childId, kind: 'link', title: titleOf(item) || url, customTitle: null, url })
         continue
       }
 
@@ -143,6 +146,8 @@ export function parseArcSidebar(raw) {
           id: childId,
           kind: 'folder',
           title: titleOf(item) || '（無題のフォルダ）',
+          // 取り込んだ分にユーザーが付けた名前は無い（後からリネームできる）
+          customTitle: null,
           collapsed: true,
           children: walk(item.childrenIds, depth + 1)
         })
@@ -171,7 +176,7 @@ export function parseArcSidebar(raw) {
     if (!node) continue
     for (const child of walk(node.childrenIds, 0)) {
       if (child.kind !== 'link') continue
-      favorites.push({ id: child.id, url: child.url, title: child.title })
+      favorites.push({ id: child.id, url: child.url, title: child.title, customTitle: null })
     }
   }
 

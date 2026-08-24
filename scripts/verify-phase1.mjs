@@ -57,6 +57,9 @@ const mode = process.argv[2]
 if (mode === '--session-write') {
   await ui.ev(`window.nemo.createTab('${PAGES}/login.html').then(() => 'ok')`)
   await ui.ev(`window.nemo.createTab('${PAGES}/iframe.html').then(() => 'ok')`)
+  // **サイドバーを隠した状態で終了する**（この設定は永続化される）。
+  // 次の起動でちゃんと出て来ることを --session-read で見る。
+  await ui.ev('window.nemo.setSidebarVisible(false).then(() => "ok")')
   // セッション保存はデバウンスされているので、書かれるまで待つ
   await sleep(3000)
   console.log('session-write done')
@@ -86,6 +89,14 @@ if (mode === '--session-read') {
     'セッション復元: 復元直後のタブは sleep 状態（一斉に読み込まない）',
     windows.every((w) => w.state.tabs.filter((t) => t.key !== w.state.activeTabKey).every((t) => t.asleep)),
     windows.flatMap((w) => w.state.tabs.map((t) => (t.asleep ? 'asleep' : 'awake'))).join(', ')
+  )
+
+  // 隠したまま起動すると、戻す手段が ⌘S だけになり（掴みしろを残していない）、
+  // 空タブと重なって手がかりの無い真っ黒な窓になる。**起動時は必ず出す**。
+  check(
+    'サイドバーを隠して終了しても、次の起動では出ている',
+    windows.every((w) => w.state.sidebarVisible === true),
+    windows.map((w) => String(w.state.sidebarVisible)).join(', ')
   )
 
   const sleeper = windows.find((w) => w.state.tabs.some((t) => t.key !== w.state.activeTabKey && t.asleep))

@@ -79,19 +79,79 @@ test('ピン留めは不正な項目を落として読む', () => {
   assert.equal(pinned[1].children.length, 1)
 })
 
-test('ピン留めの入れ子は上限で打ち切る', () => {
-  let node = { id: 'deep', kind: 'link', url: 'https://x.example/' }
-  for (let i = 0; i < MAX_PIN_DEPTH + 3; i += 1) {
-    node = { id: `f${i}`, kind: 'folder', title: 'f', children: [node] }
-  }
-  const { pinned } = normalizePins({ pinned: [node] })
-  let depth = 0
-  let current = pinned[0]
-  while (current?.kind === 'folder' && current.children.length > 0) {
-    depth += 1
-    current = current.children[0]
-  }
-  assert.ok(depth <= MAX_PIN_DEPTH + 1, `depth=${depth}`)
+test('2階層以上のフォルダは中身を親へ平坦化する（捨てない）', () => {
+  const { pinned } = normalizePins({
+    pinned: [
+      {
+        id: 'outer',
+        kind: 'folder',
+        title: '外',
+        children: [
+          { id: 'a', kind: 'link', url: 'https://a.example/', title: 'A' },
+          {
+            id: 'inner',
+            kind: 'folder',
+            title: '中',
+            children: [
+              { id: 'b', kind: 'link', url: 'https://b.example/', title: 'B' },
+              {
+                id: 'inner2',
+                kind: 'folder',
+                title: '奥',
+                children: [{ id: 'c', kind: 'link', url: 'https://c.example/', title: 'C' }]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  })
+  assert.equal(MAX_PIN_DEPTH, 1)
+  assert.equal(pinned.length, 1)
+  assert.equal(pinned[0].kind, 'folder')
+  // 中身は1件も落ちず、すべて root 直下のフォルダの子になる
+  assert.deepEqual(
+    pinned[0].children.map((node) => node.id),
+    ['a', 'b', 'c']
+  )
+  assert.ok(
+    pinned[0].children.every((node) => node.kind === 'link'),
+    'フォルダの中にフォルダが残っている'
+  )
+})
+
+test('customTitle は往復する（空文字と非文字列は未設定に倒す）', () => {
+  const { favorites, pinned } = normalizePins({
+    favorites: [{ id: 'f1', url: 'https://a.example/', title: 'A', customTitle: '  あだ名  ' }],
+    pinned: [
+      { id: 'p1', kind: 'link', url: 'https://b.example/', title: 'B', customTitle: 'B の別名' },
+      { id: 'p2', kind: 'link', url: 'https://c.example/', title: 'C', customTitle: '   ' },
+      { id: 'p3', kind: 'link', url: 'https://d.example/', title: 'D', customTitle: 123 },
+      { id: 'p4', kind: 'link', url: 'https://e.example/', title: 'E' },
+      { id: 'p5', kind: 'folder', title: 'F', customTitle: 'フォルダの別名', children: [] }
+    ]
+  })
+  assert.equal(favorites[0].customTitle, 'あだ名')
+  assert.equal(pinned[0].customTitle, 'B の別名')
+  assert.equal(pinned[1].customTitle, null, '空白だけは未設定')
+  assert.equal(pinned[2].customTitle, null, '非文字列は未設定')
+  assert.equal(pinned[3].customTitle, null, '無ければ未設定')
+  assert.equal(pinned[4].customTitle, 'フォルダの別名')
+})
+
+test('版 1 の pins.json（customTitle なし）がそのまま読める', () => {
+  const { favorites, pinned } = normalizePins({
+    favorites: [{ id: 'f1', url: 'https://a.example/', title: 'A' }],
+    pinned: [
+      { id: 'p1', kind: 'link', url: 'https://b.example/', title: 'B' },
+      { id: 'p2', kind: 'folder', title: 'F', collapsed: true, children: [] }
+    ]
+  })
+  assert.equal(favorites.length, 1)
+  assert.equal(favorites[0].customTitle, null)
+  assert.equal(pinned.length, 2)
+  assert.equal(pinned[0].customTitle, null)
+  assert.equal(pinned[1].collapsed, true)
 })
 
 /* ------------------------------------------------------------------ *
@@ -166,4 +226,75 @@ test('セッションの URL も http/https 以外を落とす', () => {
   })
   assert.equal(result.windows[0].tabs.length, 1)
   assert.equal(result.windows[0].tabs[0].url, 'https://ok.example.com/')
+})
+
+/* ------------------------------------------------------------------ *
+ * セッション（版 3 への移行 — ピン留めのタブを復元しない）
+ * ------------------------------------------------------------------ */
+
+/** 版 2 のウィンドウ1枚ぶんを組み立てる。 */
+function v2Window(tabs, activeIndex) {
+  return { bounds: null, activeIndex, tabs }
+}
+
+test('版 2 のピン留めタブはレコードごと落ちる（一時タブとして復活しない）', () => {
+  const result = normalizeSession({
+    windows: [
+      v2Window(
+        [
+          { url: 'https://pin.example/', title: 'pin', pinnedId: 'p1', lastActiveAt: 1 },
+          { url: 'https://tmp.example/', title: 'tmp', pinnedId: null, lastActiveAt: 1 }
+        ],
+        1
+      )
+    ]
+  })
+  assert.equal(result.windows[0].tabs.length, 1)
+  assert.equal(result.windows[0].tabs[0].url, 'https://tmp.example/')
+  assert.equal('pinnedId' in result.windows[0].tabs[0], false, 'pinnedId は版 3 では持たない')
+})
+
+test('ピン留めタブしか無かったウィンドウは丸ごと落ちる', () => {
+  const result = normalizeSession({
+    windows: [
+      v2Window([{ url: 'https://pin.example/', title: 'pin', pinnedId: 'p1', lastActiveAt: 1 }], 0),
+      v2Window([{ url: 'https://tmp.example/', title: 'tmp', pinnedId: null, lastActiveAt: 1 }], 0)
+    ]
+  })
+  assert.equal(result.windows.length, 1)
+  assert.equal(result.windows[0].tabs[0].url, 'https://tmp.example/')
+})
+
+test('セッションの customTitle は往復する', () => {
+  const result = normalizeSession({
+    windows: [
+      v2Window(
+        [
+          { url: 'https://a.example/', title: 'a', customTitle: '作業用', lastActiveAt: 1 },
+          { url: 'https://b.example/', title: 'b', customTitle: '  ', lastActiveAt: 1 }
+        ],
+        0
+      )
+    ]
+  })
+  assert.equal(result.windows[0].tabs[0].customTitle, '作業用')
+  assert.equal(result.windows[0].tabs[1].customTitle, null)
+})
+
+test('移行後の activeIndex は「元のアクティブタブの新しい位置」になる', () => {
+  const pin = (id) => ({ url: `https://pin${id}.example/`, title: 'pin', pinnedId: id, lastActiveAt: 1 })
+  const tmp = (n) => ({ url: `https://tmp${n}.example/`, title: `tmp${n}`, pinnedId: null, lastActiveAt: 1 })
+
+  // 先頭がピンタブ: 元 index 1（tmp1）→ 新 index 0
+  const head = normalizeSession({ windows: [v2Window([pin('p1'), tmp(1), tmp(2)], 1)] })
+  assert.equal(head.windows[0].tabs[head.windows[0].activeIndex].url, 'https://tmp1.example/')
+
+  // 中間がピンタブ: 元 index 2（tmp2）→ 新 index 1
+  const middle = normalizeSession({ windows: [v2Window([tmp(1), pin('p1'), tmp(2)], 2)] })
+  assert.equal(middle.windows[0].tabs[middle.windows[0].activeIndex].url, 'https://tmp2.example/')
+
+  // アクティブだったタブ自体がピンタブ: 残った先頭に倒す
+  const gone = normalizeSession({ windows: [v2Window([tmp(1), pin('p1'), tmp(2)], 1)] })
+  assert.equal(gone.windows[0].activeIndex, 0)
+  assert.equal(gone.windows[0].tabs[0].url, 'https://tmp1.example/')
 })

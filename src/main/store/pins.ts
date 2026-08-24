@@ -2,8 +2,19 @@ import { randomUUID } from 'node:crypto'
 import { JsonStore } from './json-store.js'
 import { userDataPath } from '../paths.js'
 import { log } from '../log.js'
-import { PINS_VERSION, normalizePins, normalizeStoredUrl } from '../../shared/settings-schema.js'
-import type { FavoriteItem, PinnedFolder, PinnedNode } from '../../shared/types.js'
+import {
+  PINS_VERSION,
+  normalizeCustomTitle,
+  normalizePins,
+  normalizeStoredUrl
+} from '../../shared/settings-schema.js'
+import type {
+  FavoriteItem,
+  PinnedFolder,
+  PinnedLink,
+  PinnedNode,
+  RemovedDefinition
+} from '../../shared/types.js'
 
 /**
  * Favorites / ピン留めの**定義**（全ウィンドウ共有・永続化）。
@@ -148,13 +159,25 @@ function isDescendant(node: PinnedNode, candidateId: string): boolean {
   return node.children.some((child) => isDescendant(child, candidateId))
 }
 
-export function pinUrl(url: string, title: string): PinnedNode | null {
+/**
+ * ピン留め定義を作る（同じ URL が既にあればそれを返す）。
+ *
+ * `customTitle` は**渡されたときだけ**入れる。常に null に倒すと、
+ * リネーム済みの一時タブをピン留めしたときに付けた名前が消える。
+ */
+export function pinUrl(url: string, title: string, customTitle?: string | null): PinnedNode | null {
   const normalized = normalizeStoredUrl(url)
   if (!normalized) return null
   const existing = findPinnedByUrl(normalized)
   if (existing) return existing
 
-  const node: PinnedNode = { id: randomUUID(), kind: 'link', title: title || normalized, url: normalized }
+  const node: PinnedNode = {
+    id: randomUUID(),
+    kind: 'link',
+    title: title || normalized,
+    customTitle: normalizeCustomTitle(customTitle),
+    url: normalized
+  }
   commit({ ...data(), pinned: [...data().pinned, node] })
   log('pin.added', { id: node.id })
   return node
@@ -163,31 +186,35 @@ export function pinUrl(url: string, title: string): PinnedNode | null {
 /**
  * ピン留め定義を消す。
  *
- * **消えた ID を（フォルダなら子孫も含めて）返す**のが肝。
- * 呼び出し側は「定義が消えたタブ」の紐付けを外す必要があり、
- * 返さないと子孫のぶんを取りこぼす。取りこぼしたタブは
+ * **消えた定義を（フォルダなら子孫も含めて）名前ごと返す**のが肝。
+ * 呼び出し側は「定義が消えたタブ」の紐付けを外し、**その定義に付いていた名前を
+ * タブへ写す**必要がある。ID しか返さないと降格したタブの名前が消え、
+ * 子孫を返さないとフォルダ削除の巻き添えぶんを取りこぼす。取りこぼしたタブは
  * サイドバーのどの層にも出なくなり、再起動しても直らない。
  */
-export function unpin(id: string): string[] {
+export function unpin(id: string): RemovedDefinition[] {
   const result = removeNode(data().pinned, id)
   if (!result.node) return []
-  const removed = collectIds(result.node)
+  const removed = collectDefinitions(result.node)
   commit({ ...data(), pinned: result.nodes })
   log('pin.removed', { id, removed: removed.length })
   return removed
 }
 
-/** ノードとその子孫の ID をすべて集める。 */
-function collectIds(node: PinnedNode): string[] {
-  if (node.kind !== 'folder') return [node.id]
-  return [node.id, ...node.children.flatMap(collectIds)]
+/** ノードとその子孫の「ID と名前」をすべて集める。 */
+function collectDefinitions(node: PinnedNode): RemovedDefinition[] {
+  const self: RemovedDefinition = { id: node.id, title: node.title, customTitle: node.customTitle }
+  if (node.kind !== 'folder') return [self]
+  return [self, ...node.children.flatMap(collectDefinitions)]
 }
 
-export function createFolder(title: string): PinnedFolder {
+/** フォルダは **root 直下だけ**（1階層）。 */
+export function createFolder(title: string, customTitle?: string | null): PinnedFolder {
   const folder: PinnedFolder = {
     id: randomUUID(),
     kind: 'folder',
     title: title || '新しいフォルダ',
+    customTitle: normalizeCustomTitle(customTitle),
     collapsed: false,
     children: []
   }
@@ -195,17 +222,82 @@ export function createFolder(title: string): PinnedFolder {
   return folder
 }
 
-export function renameNode(id: string, title: string): void {
-  const trimmed = title.trim().slice(0, 300)
-  if (!trimmed) return
+/**
+ * ユーザーが付けた名前を書き換える（ピン / フォルダ / Favorite を同じ経路で扱う）。
+ *
+ * `null` / 空文字は**解除**で、表示は既定名（`title`）に戻る。
+ * 既定名の側は触らない。ここを分けないと「解除したときに戻る先」が無くなる。
+ */
+export function renameNode(id: string, title: string | null): void {
+  const custom = normalizeCustomTitle(title)
   const rename = (nodes: PinnedNode[]): PinnedNode[] =>
     nodes.map((node) => {
-      if (node.id === id) return { ...node, title: trimmed }
+      if (node.id === id) return { ...node, customTitle: custom }
       if (node.kind === 'folder') return { ...node, children: rename(node.children) }
       return node
     })
-  const favorites = data().favorites.map((item) => (item.id === id ? { ...item, title: trimmed } : item))
+  const favorites = data().favorites.map((item) => (item.id === id ? { ...item, customTitle: custom } : item))
   commit({ favorites, pinned: rename(data().pinned) })
+  log('definition.renamed', { id, cleared: custom === null })
+}
+
+/**
+ * ページタイトルが取れたときに**既定名だけ**を更新する（`customTitle` は触らない）。
+ *
+ * 中身が変わらないなら書かない。ピンのタブを開くたびに
+ * `page-title-updated` が何度も飛ぶので、素通しにすると pins.json を書き続ける。
+ */
+export function setPinnedTitle(id: string, title: string): void {
+  const next = title.trim().slice(0, 300)
+  if (!next) return
+  let changed = false
+  const apply = (nodes: PinnedNode[]): PinnedNode[] =>
+    nodes.map((node) => {
+      if (node.id === id) {
+        if (node.title === next) return node
+        changed = true
+        return { ...node, title: next }
+      }
+      if (node.kind === 'folder') return { ...node, children: apply(node.children) }
+      return node
+    })
+  const pinned = apply(data().pinned)
+  const favorites = data().favorites.map((item) => {
+    if (item.id !== id || item.title === next) return item
+    changed = true
+    return { ...item, title: next }
+  })
+  if (!changed) return
+  commit({ favorites, pinned })
+}
+
+/**
+ * ピン定義の URL を差し替える（コンテキストメニューの「このページに更新」）。
+ *
+ * **別のピンが既にその URL を持っていたら何もしない**。
+ * 「同じ URL を二重にピン留めしない」不変（`findPinnedByUrl` が支えている）を
+ * ここで壊すと、同じ URL の枠が2つ並んでどちらから開いたかで別タブになる。
+ */
+export function updatePinnedUrl(id: string, url: string): boolean {
+  const normalized = normalizeStoredUrl(url)
+  if (!normalized) return false
+  const target = findPinned(id)
+  if (!target || target.kind !== 'link') return false
+  if (target.url === normalized) return true
+  const conflict = findPinnedByUrl(normalized)
+  if (conflict && conflict.id !== id) {
+    log('pin.url_update_rejected', { id, reason: 'duplicate_url' })
+    return false
+  }
+  const apply = (nodes: PinnedNode[]): PinnedNode[] =>
+    nodes.map((node) => {
+      if (node.id === id && node.kind === 'link') return { ...node, url: normalized }
+      if (node.kind === 'folder') return { ...node, children: apply(node.children) }
+      return node
+    })
+  commit({ ...data(), pinned: apply(data().pinned) })
+  log('pin.url_updated', { id })
+  return true
 }
 
 export function toggleFolder(id: string): void {
@@ -232,6 +324,11 @@ export function movePinned(id: string, parentId: string | null, index: number): 
   const target = findPinned(id)
   if (!target) return
   if (parentId !== null) {
+    // フォルダは1階層まで。フォルダをフォルダの中へは入れられない
+    if (target.kind === 'folder') {
+      log('pin.move_rejected', { id, reason: 'folder_into_folder' })
+      return
+    }
     if (isDescendant(target, parentId)) {
       log('pin.move_rejected', { id, reason: 'into_descendant' })
       return
@@ -251,24 +348,35 @@ export function movePinned(id: string, parentId: string | null, index: number): 
  * Favorites
  * ------------------------------------------------------------------ */
 
-export function addFavorite(url: string, title: string): FavoriteItem | null {
+/**
+ * Favorite 定義を作る（同じ URL が既にあればそれを返す）。
+ * `customTitle` は `pinUrl` と同じく**渡されたときだけ**入れる。
+ */
+export function addFavorite(url: string, title: string, customTitle?: string | null): FavoriteItem | null {
   const normalized = normalizeStoredUrl(url)
   if (!normalized) return null
   const current = data()
   const existing = current.favorites.find((item) => item.url === normalized)
   if (existing) return existing
-  const item: FavoriteItem = { id: randomUUID(), url: normalized, title: title || normalized }
+  const item: FavoriteItem = {
+    id: randomUUID(),
+    url: normalized,
+    title: title || normalized,
+    customTitle: normalizeCustomTitle(customTitle)
+  }
   commit({ ...current, favorites: [...current.favorites, item] })
   log('favorite.added', { id: item.id })
   return item
 }
 
-export function removeFavorite(id: string): void {
+/** Favorite 定義を消す。`unpin` と対称に**消えた定義を名前ごと**返す。 */
+export function removeFavorite(id: string): RemovedDefinition[] {
   const current = data()
-  const favorites = current.favorites.filter((item) => item.id !== id)
-  if (favorites.length === current.favorites.length) return
-  commit({ ...current, favorites })
+  const removed = current.favorites.find((item) => item.id === id)
+  if (!removed) return []
+  commit({ ...current, favorites: current.favorites.filter((item) => item.id !== id) })
   log('favorite.removed', { id })
+  return [{ id: removed.id, title: removed.title, customTitle: removed.customTitle }]
 }
 
 export function findFavorite(id: string): FavoriteItem | null {
@@ -288,4 +396,78 @@ export function moveFavorite(id: string, index: number): void {
 export function closePins(): void {
   store?.close()
   store = null
+}
+
+/* ------------------------------------------------------------------ *
+ * ピン留め ⇄ Favorites の変換
+ *
+ * 「定義ごと移す」。所属だけ付け替えると同じ URL が両方の枠に残り、
+ * どちらから開いたかで別タブになる。
+ *
+ * **名前を読む → 移動先を作る or 再利用する → 元定義を消す**までを1つの関数で行い、
+ * 「消えた定義（名前つき）」と「移動先の定義」を返す。呼び出し側（registry）は
+ * その戻り値だけで全ウィンドウのタブの所属を1度に付け替えられる。
+ * 先に `unpin` / `removeFavorite` を呼ぶと名前を読む前に定義が消え、
+ * 逆順にすると削除が 0 件になって他ウィンドウの所属が外れない。
+ * ------------------------------------------------------------------ */
+
+export interface ConversionResult {
+  /** 変換で消えた定義（＝他ウィンドウのタブを降格させるときの名前の出どころ）。 */
+  removedDefinitions: RemovedDefinition[]
+  /** 変換先の定義。 */
+  target: RemovedDefinition
+}
+
+/** ピン留め → Favorites。 */
+export function convertPinToFavorite(id: string): ConversionResult | null {
+  const node = findPinned(id)
+  if (!node || node.kind !== 'link') return null
+  const current = data()
+  const removal = removeNode(current.pinned, id)
+  const removedDefinitions = removal.node ? collectDefinitions(removal.node) : []
+
+  // 同じ URL の Favorite が既にあれば再利用し、名前は**既存側を優先**する
+  // （明示的に付けた名前を、変換のついでに上書きしない）。
+  const existing = current.favorites.find((item) => item.url === node.url)
+  const target: FavoriteItem = existing ?? {
+    id: randomUUID(),
+    url: node.url,
+    title: node.title,
+    customTitle: node.customTitle
+  }
+  const favorites = existing ? current.favorites : [...current.favorites, target]
+  commit({ favorites, pinned: removal.nodes })
+  log('pin.converted_to_favorite', { from: id, to: target.id, reused: Boolean(existing) })
+  return {
+    removedDefinitions,
+    target: { id: target.id, title: target.title, customTitle: target.customTitle }
+  }
+}
+
+/** Favorites → ピン留め。 */
+export function convertFavoriteToPin(id: string): ConversionResult | null {
+  const item = findFavorite(id)
+  if (!item) return null
+  const current = data()
+  const favorites = current.favorites.filter((favorite) => favorite.id !== id)
+
+  const existing = findPinnedByUrl(item.url)
+  const target: PinnedLink =
+    existing && existing.kind === 'link'
+      ? existing
+      : {
+          id: randomUUID(),
+          kind: 'link',
+          title: item.title,
+          customTitle: item.customTitle,
+          url: item.url
+        }
+  const reused = existing?.kind === 'link'
+  const pinned = reused ? current.pinned : [...current.pinned, target]
+  commit({ favorites, pinned })
+  log('favorite.converted_to_pin', { from: id, to: target.id, reused })
+  return {
+    removedDefinitions: [{ id: item.id, title: item.title, customTitle: item.customTitle }],
+    target: { id: target.id, title: target.title, customTitle: target.customTitle }
+  }
 }

@@ -2,6 +2,7 @@ import { getFavorites, getPinned } from './store/pins.js'
 import { searchHistory } from './store/history.js'
 import { normalizeNavigationInput } from './security.js'
 import { getSettings } from './store/settings.js'
+import { tabDisplayName } from './registry.js'
 import type { NemoWindow } from './registry.js'
 import type { PinnedNode, Suggestion } from '../shared/types.js'
 
@@ -19,11 +20,16 @@ import type { PinnedNode, Suggestion } from '../shared/types.js'
 
 const LIMIT_PER_KIND = 4
 
+/** 表示名。ユーザーが付けた名前があればそちらで引けないと意味が無い。 */
+function displayName(node: { title: string; customTitle: string | null }): string {
+  return node.customTitle ?? node.title
+}
+
 function flattenPinned(nodes: PinnedNode[], prefix = ''): { title: string; url: string }[] {
   return nodes.flatMap((node) =>
     node.kind === 'folder'
-      ? flattenPinned(node.children, `${prefix}${node.title} / `)
-      : [{ title: `${prefix}${node.title}`, url: node.url }]
+      ? flattenPinned(node.children, `${prefix}${displayName(node)} / `)
+      : [{ title: `${prefix}${displayName(node)}`, url: node.url }]
   )
 }
 
@@ -38,10 +44,13 @@ export function suggest(win: NemoWindow, rawQuery: string): Suggestion[] {
 
   if (query) {
     for (const tab of win.tabs.slice(0, 200)) {
-      if (!matches(query, tab.title, tab.url)) continue
+      // 専用タブの名前は**定義側が正**。タブの `customTitle` を直接見ると、
+      // リネーム後も古い名前で引っかかり、新しい名前では候補に出ない。
+      const label = tabDisplayName(tab)
+      if (!matches(query, label, tab.url)) continue
       results.push({
         kind: 'tab',
-        title: tab.title,
+        title: label,
         subtitle: tab.url,
         target: { type: 'select-tab', key: tab.key }
       })
@@ -62,10 +71,11 @@ export function suggest(win: NemoWindow, rawQuery: string): Suggestion[] {
 
     count = 0
     for (const favorite of getFavorites()) {
-      if (!matches(query, favorite.title, favorite.url)) continue
+      const label = displayName(favorite)
+      if (!matches(query, label, favorite.url)) continue
       results.push({
         kind: 'favorite',
-        title: favorite.title,
+        title: label,
         subtitle: favorite.url,
         target: { type: 'navigate', url: favorite.url }
       })

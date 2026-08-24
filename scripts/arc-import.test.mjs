@@ -75,7 +75,7 @@ test('Favorites は topAppsContainerIDs から取る', () => {
   )
 })
 
-test('スペースは無視してピン留めを連結する（フォルダ階層は保つ）', () => {
+test('スペースは無視してピン留めを連結する（フォルダは1階層に平坦化する）', () => {
   const { pinned, stats } = parseArcSidebar(fixture())
   assert.equal(stats.spaces, 2)
   assert.deepEqual(
@@ -86,14 +86,23 @@ test('スペースは無視してピン留めを連結する（フォルダ階�
   const folder = pinned.find((node) => node.id === 'f1')
   assert.equal(folder.kind, 'folder')
   assert.equal(folder.title, '仕事')
+  // 入れ子のフォルダ f2 は消えるが、その中身（t3）は親へ引き上がる
   assert.deepEqual(
     folder.children.map((node) => node.id),
-    ['t2', 'f2']
+    ['t2', 't3']
   )
-  assert.deepEqual(
-    folder.children[1].children.map((node) => node.id),
-    ['t3']
+  assert.ok(
+    folder.children.every((node) => node.kind === 'link'),
+    'フォルダの中にフォルダが残っている'
   )
+})
+
+test('取り込んだ定義は customTitle 未設定で入る', () => {
+  const { favorites, pinned } = parseArcSidebar(fixture())
+  assert.ok(favorites.every((item) => item.customTitle === null))
+  const flat = (nodes) =>
+    nodes.flatMap((node) => (node.kind === 'folder' ? [node, ...flat(node.children)] : [node]))
+  assert.ok(flat(pinned).every((node) => node.customTitle === null))
 })
 
 test('http/https でない URL は取り込まない', () => {
@@ -109,7 +118,7 @@ test('タイトルは title → savedTitle → URL の順に落とす', () => {
   assert.equal(noTitle.title, 'https://one.example.com/')
 })
 
-test('深さの上限を超えるフォルダは切り捨てずに親へ展開する', () => {
+test('1階層を超えるフォルダは切り捨てずに親へ展開する', () => {
   // MAX_PIN_DEPTH より深いフォルダの連鎖を作る
   const depth = MAX_PIN_DEPTH + 3
   const items = ['root', { id: 'root', title: null, childrenIds: ['d0'], data: { itemContainer: {} } }]
@@ -144,6 +153,14 @@ test('深さの上限を超えるフォルダは切り捨てずに親へ展開�
   const normalized = normalizePins({ favorites: [], pinned: parsed.pinned })
   assert.equal(JSON.stringify(normalized).includes('https://deep.example.com/'), true)
   assert.ok(parsed.stats.flattened >= 1)
+  // 正規化後もフォルダは1階層まで（root 直下のフォルダの子は必ず link）
+  for (const node of normalized.pinned) {
+    if (node.kind !== 'folder') continue
+    assert.ok(
+      node.children.every((child) => child.kind === 'link'),
+      'フォルダの中にフォルダが残っている'
+    )
+  }
 })
 
 test('2回取り込んでも増えない（冪等）', () => {
@@ -155,8 +172,16 @@ test('2回取り込んでも増えない（冪等）', () => {
 
 test('Nemo で自分でピン留めしたものは残る', () => {
   const mine = {
-    favorites: [{ id: 'mine-f', url: 'https://mine.example.com/', title: '自分' }],
-    pinned: [{ id: 'mine-p', kind: 'link', url: 'https://mine.example.com/p', title: '自分のピン' }]
+    favorites: [{ id: 'mine-f', url: 'https://mine.example.com/', title: '自分', customTitle: null }],
+    pinned: [
+      {
+        id: 'mine-p',
+        kind: 'link',
+        url: 'https://mine.example.com/p',
+        title: '自分のピン',
+        customTitle: null
+      }
+    ]
   }
   const merged = mergeIntoPins(mine, parseArcSidebar(fixture()))
   assert.ok(merged.favorites.some((item) => item.id === 'mine-f'))

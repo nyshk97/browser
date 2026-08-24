@@ -3,7 +3,8 @@
  * 自走検証を一括で通す（`mise run verify`）。
  *
  *   ユニットテスト → ビルド → 拡張の照合 → ページサーバ → アプリ起動 →
- *   verify-spike → verify-phase1 → verify-phase2 → 再起動をまたぐ永続性 → 後片付け
+ *   verify-spike → verify-phase1 → verify-phase2 → verify-pins →
+ *   再起動をまたぐ永続性 → 旧版セッションからの移行 → 後片付け
  *
  * 終了コードがそのまま合否になるので CI にも載せられる。
  *
@@ -116,6 +117,7 @@ const runVerify = (script, args = []) =>
 const spike = (args) => runVerify('scripts/verify-spike.mjs', args)
 const phase1 = (args) => runVerify('scripts/verify-phase1.mjs', args)
 const phase2 = (args) => runVerify('scripts/verify-phase2.mjs', args)
+const pins = (args) => runVerify('scripts/verify-pins.mjs', args)
 
 let exitCode = 0
 try {
@@ -155,9 +157,16 @@ try {
   const phase2Code = await phase2([])
   if (phase2Code !== 0) exitCode = phase2Code
 
+  console.log('\n=== 自走検証（ピン留め / Favorites）')
+  const pinsCode = await pins([])
+  if (pinsCode !== 0) exitCode = pinsCode
+
   console.log('\n=== 再起動をまたぐ永続性')
   await spike(['--storage-write'])
   await phase1(['--session-write'])
+  // ピン / Favorites の遅延ロードも再起動をまたぐので、同じ再起動に相乗りする
+  const lazyWriteCode = await pins(['--lazy-write'])
+  if (lazyWriteCode !== 0) exitCode = lazyWriteCode
   await stopAll()
 
   await startPagesServer()
@@ -166,6 +175,15 @@ try {
   if (storageCode !== 0) exitCode = storageCode
   const sessionCode = await phase1(['--session-read'])
   if (sessionCode !== 0) exitCode = sessionCode
+  const lazyReadCode = await pins(['--lazy-read'])
+  if (lazyReadCode !== 0) exitCode = lazyReadCode
+
+  // 旧版セッションからの移行は**自分でアプリを起動して**確かめる（別プロファイル）。
+  // ここまでの起動を止めてから回す（同時に2つの Nemo を立てない）。
+  await stopAll()
+  console.log('\n=== 旧版セッションからの移行')
+  const migrationCode = await runToCompletion(process.execPath, ['scripts/verify-session-migration.mjs'])
+  if (migrationCode !== 0) exitCode = migrationCode
 } catch (error) {
   console.error(`\n[verify] ${error instanceof Error ? error.message : String(error)}`)
   exitCode = 1

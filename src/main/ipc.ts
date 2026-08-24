@@ -3,17 +3,22 @@ import { PAGE_PARTITION, userDataPath } from './paths.js'
 import { restartServiceWorkers } from './extensions.js'
 import { log } from './log.js'
 import {
+  addFavoriteFromTab,
   createTab,
   createWindow,
   findWindowByUiWebContents,
   moveTabToWindow,
+  openFavorite,
   openPinned,
   pinTabInto,
+  removeFavoriteEverywhere,
   removeTab,
+  renameTab,
   selectTab,
   togglePin,
   openPrivateWindow,
   unpinEverywhere,
+  updatePinnedUrlFromTab,
   type NemoTab,
   type NemoWindow,
   type OverlayKind
@@ -23,14 +28,11 @@ import { answerPrompt, currentPrompt } from './prompts.js'
 import { suggest } from './suggest.js'
 import { getSettings, updateSettings } from './store/settings.js'
 import {
-  addFavorite,
   createFolder,
-  findFavorite,
   getFavorites,
   getPinned,
   moveFavorite,
   movePinned,
-  removeFavorite,
   renameNode,
   toggleFolder
 } from './store/pins.js'
@@ -116,6 +118,13 @@ function requireString(value: unknown, what: string): string {
 function optionalString(value: unknown, what: string): string | undefined {
   if (value === undefined || value === null) return undefined
   return requireString(value, what)
+}
+
+/** リネームの引数。`null` / 空文字は「解除」なので通す。 */
+function optionalTitle(value: unknown): string | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'string' || value.length > 4096) throw new Error('invalid title')
+  return value
 }
 
 function requireRecord(value: unknown, what: string): Record<string, unknown> {
@@ -269,21 +278,19 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('nemo:add-favorite', (event, key: unknown) => {
     const { tab } = requireTab(event, key)
-    addFavorite(tab.url, tab.title)
+    // ピン留めとの排他（定義ごと移す）を registry の1経路に寄せる
+    addFavoriteFromTab(tab)
   })
 
   ipcMain.handle('nemo:remove-favorite', (event, favoriteId: unknown) => {
     requireWindow(event)
-    removeFavorite(requireString(favoriteId, 'favoriteId'))
+    // 定義は全ウィンドウ共有なので、紐付けを外すのも全ウィンドウに効かせる
+    removeFavoriteEverywhere(requireString(favoriteId, 'favoriteId'))
   })
 
   ipcMain.handle('nemo:open-favorite', (event, favoriteId: unknown) => {
     const win = requireWindow(event)
-    const favorite = findFavorite(requireString(favoriteId, 'favoriteId'))
-    if (!favorite) return
-    const existing = win.tabs.find((tab) => tab.url === favorite.url)
-    if (existing) selectTab(win, existing.key)
-    else createTab(win, favorite.url, { title: favorite.title })
+    openFavorite(win, requireString(favoriteId, 'favoriteId'))
   })
 
   ipcMain.handle('nemo:create-folder', (event, title: unknown) => {
@@ -291,9 +298,22 @@ export function registerIpcHandlers(): void {
     createFolder(optionalString(title, 'title') ?? '新しいフォルダ')
   })
 
+  // 名前は null / 空文字で「解除」（既定名に戻す）なので、非空を要求しない
   ipcMain.handle('nemo:rename-node', (event, id: unknown, title: unknown) => {
     requireWindow(event)
-    renameNode(requireString(id, 'id'), requireString(title, 'title'))
+    renameNode(requireString(id, 'id'), optionalTitle(title))
+  })
+
+  ipcMain.handle('nemo:rename-tab', (event, key: unknown, title: unknown) => {
+    const { tab } = requireTab(event, key)
+    renameTab(tab, optionalTitle(title))
+  })
+
+  // 引数はタブの key だけ。定義 ID は main 側でタブから導出する
+  // （renderer から無関係な定義を書き換えられる口を作らない）。
+  ipcMain.handle('nemo:update-pinned-url', (event, key: unknown) => {
+    const { tab } = requireTab(event, key)
+    updatePinnedUrlFromTab(tab)
   })
 
   ipcMain.handle('nemo:toggle-folder', (event, id: unknown) => {

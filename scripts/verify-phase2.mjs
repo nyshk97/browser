@@ -215,7 +215,11 @@ if (privateTarget) {
   const privateFavicon = await privateUi.ev(
     `window.nemo.getWindowState().then((s) => (s.tabs.find((t) => t.key === ${JSON.stringify(privateKey)})?.faviconUrl ? 'shown' : 'none'))`
   )
-  check('シークレットのタブでも favicon は表示される（記録しないだけ）', privateFavicon === 'shown', String(privateFavicon))
+  check(
+    'シークレットのタブでも favicon は表示される（記録しないだけ）',
+    privateFavicon === 'shown',
+    String(privateFavicon)
+  )
   check(
     'シークレットで開いたページの favicon は履歴に書かれない',
     (await history('probe=private-only')).every((entry) => !entry.faviconUrl)

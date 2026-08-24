@@ -181,12 +181,13 @@ function readDb(dir) {
   const db = new Database(path.join(dir, 'history.db'), { readonly: true })
   try {
     return {
-      columns: db.prepare('PRAGMA table_info(pages)').all().map((c) => c.name),
-      rows: db
-        .prepare('SELECT url, title, visit_count, last_visited_at FROM pages ORDER BY url')
-        .all(),
+      columns: db
+        .prepare('PRAGMA table_info(pages)')
+        .all()
+        .map((c) => c.name),
+      rows: db.prepare('SELECT url, title, visit_count, last_visited_at FROM pages ORDER BY url').all(),
       ftsHits: db
-        .prepare("SELECT p.url FROM pages_fts f JOIN pages p ON p.rowid = f.rowid WHERE pages_fts MATCH ?")
+        .prepare('SELECT p.url FROM pages_fts f JOIN pages p ON p.rowid = f.rowid WHERE pages_fts MATCH ?')
         .all('"議事録"')
         .map((r) => r.url)
     }
@@ -235,14 +236,15 @@ try {
   const preserved = SEED.every((seed) => {
     const row = after.rows.find((r) => r.url === seed.url)
     return (
-      row &&
-      row.title === seed.title &&
-      row.visit_count === seed.visits &&
-      row.last_visited_at === seed.at
+      row && row.title === seed.title && row.visit_count === seed.visits && row.last_visited_at === seed.at
     )
   })
   check('既存行の内容（title / visit_count / last_visited_at）が保たれている', preserved)
-  check('FTS が壊れていない（日本語の部分一致が引ける）', after.ftsHits.includes('https://example.com/alpha'), after.ftsHits.join(', '))
+  check(
+    'FTS が壊れていない（日本語の部分一致が引ける）',
+    after.ftsHits.includes('https://example.com/alpha'),
+    after.ftsHits.join(', ')
+  )
 
   /* --- 2回目の起動: 冪等 --- */
   {

@@ -100,6 +100,7 @@ export function Library({ onClose }: { onClose: () => void }): React.JSX.Element
                 key={entry.url}
                 url={entry.url}
                 title={entry.title}
+                faviconUrl={entry.faviconUrl}
                 meta={`${formatWhen(entry.lastVisitedAt)}・${entry.visitCount} 回`}
                 onOpen={() => open(entry.url)}
                 onRemove={() => void window.nemo.removeHistory(entry.url).then(reload)}
@@ -129,12 +130,15 @@ const REASON_LABEL: Record<string, string> = {
 function LibraryRow({
   url,
   title,
+  faviconUrl,
   meta,
   onOpen,
   onRemove
 }: {
   url: string
   title: string
+  /** 履歴には記録がある。アーカイブは持っていないので省略（頭文字に落ちる）。 */
+  faviconUrl?: string | null
   meta: string
   onOpen: () => void
   onRemove: () => void
@@ -143,7 +147,7 @@ function LibraryRow({
   return (
     <div className="lib-row" onDoubleClick={onOpen}>
       <button type="button" className="lib-main" onClick={onOpen} title={url}>
-        <Favicon url={url} title={title} />
+        <Favicon url={url} title={title} src={faviconUrl} />
         <span className="lib-title">{title || shown}</span>
         <span className="lib-url">{shown}</span>
       </button>

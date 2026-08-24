@@ -1,5 +1,5 @@
 import { logError } from '../log.js'
-import { FTS_MIN_LENGTH, getDb, hasFts } from './db.js'
+import { FTS_MIN_LENGTH, faviconColumn, getDb, hasFaviconColumn, hasFts } from './db.js'
 import type { HistoryEntry } from '../../shared/types.js'
 
 /**
@@ -14,6 +14,8 @@ interface HistoryRow {
   title: string
   visit_count: number
   last_visited_at: number
+  /** 列が無い環境では `NULL AS favicon_url` が返るので、常に読める。 */
+  favicon_url: string | null
 }
 
 export function recordVisit(url: string, title: string): void {
@@ -50,6 +52,58 @@ export function updateTitle(url: string, title: string): void {
 }
 
 /**
+ * ページが申告した favicon の URL を覚える（コマンドバーの候補に出すため）。
+ *
+ * **行は作らない**（INSERT しない）。行を作るのは `recordVisit` の責務で、
+ * ここで作ると `about:` や拡張ページを弾いている条件をすり抜ける口ができる。
+ * favicon だけ先に届いて行が無ければその回は捨てる（次の訪問で入る）。
+ *
+ * 条件の `IS NOT` は **NULL を含めて比較できる**（`<>` は NULL に対して NULL を返す）。
+ * 引数は必ず非 NULL なので「今 NULL」「今 別の値」のときだけ UPDATE が走り、
+ * **同じ値なら1行も触らない**。ここを緩めると `pages_fts` の同期トリガが
+ * ページ遷移のたびに空撃ちされる（`pages` への UPDATE すべてで発火するため）。
+ */
+export function recordFavicon(url: string, faviconUrl: string | null): void {
+  const db = getDb()
+  if (!db || !hasFaviconColumn() || !faviconUrl) return
+  if (!/^https?:\/\//.test(url)) return
+  try {
+    db.prepare('UPDATE pages SET favicon_url = ? WHERE url = ? AND favicon_url IS NOT ?').run(
+      faviconUrl,
+      url,
+      faviconUrl
+    )
+  } catch (error) {
+    logError('history.write_failed', error)
+  }
+}
+
+/**
+ * URL → favicon をまとめて引く（コマンドバーの候補用）。
+ *
+ * 1件ずつ引かない。候補は最大 12 件で、入力1文字ごとに走る場所なので
+ * 往復の回数がそのまま入力の重さになる。
+ */
+export function getFavicons(urls: string[]): Map<string, string> {
+  const found = new Map<string, string>()
+  const db = getDb()
+  if (!db || !hasFaviconColumn() || urls.length === 0) return found
+  const unique = [...new Set(urls)]
+  try {
+    const rows = db
+      .prepare(
+        `SELECT url, favicon_url FROM pages
+         WHERE favicon_url IS NOT NULL AND url IN (${unique.map(() => '?').join(', ')})`
+      )
+      .all(...unique) as { url: string; favicon_url: string }[]
+    for (const row of rows) found.set(row.url, row.favicon_url)
+  } catch (error) {
+    logError('history.query_failed', error)
+  }
+  return found
+}
+
+/**
  * コマンドバーの補完候補。
  * 訪問回数と最終訪問の新しさで並べる（頻繁に使うものが上に来る）。
  */
@@ -60,7 +114,7 @@ export function searchHistory(query: string, limit = 8): HistoryRow[] {
   try {
     return db
       .prepare(
-        `SELECT url, title, visit_count, last_visited_at FROM pages
+        `SELECT url, title, visit_count, last_visited_at, ${faviconColumn()} FROM pages
          WHERE url LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\'
          ORDER BY visit_count DESC, last_visited_at DESC
          LIMIT ?`
@@ -90,7 +144,7 @@ export function queryHistory(query: string, limit = 200): HistoryEntry[] {
       return toEntries(
         db
           .prepare(
-            `SELECT url, title, visit_count, last_visited_at FROM pages
+            `SELECT url, title, visit_count, last_visited_at, ${faviconColumn()} FROM pages
              ORDER BY last_visited_at DESC LIMIT ?`
           )
           .all(limit) as HistoryRow[]
@@ -100,7 +154,7 @@ export function queryHistory(query: string, limit = 200): HistoryEntry[] {
     if (hasFts() && text.length >= FTS_MIN_LENGTH) {
       const rows = db
         .prepare(
-          `SELECT p.url, p.title, p.visit_count, p.last_visited_at
+          `SELECT p.url, p.title, p.visit_count, p.last_visited_at, ${faviconColumn('p')}
            FROM pages_fts f JOIN pages p ON p.rowid = f.rowid
            WHERE pages_fts MATCH ?
            ORDER BY p.last_visited_at DESC
@@ -115,7 +169,7 @@ export function queryHistory(query: string, limit = 200): HistoryEntry[] {
     return toEntries(
       db
         .prepare(
-          `SELECT url, title, visit_count, last_visited_at FROM pages
+          `SELECT url, title, visit_count, last_visited_at, ${faviconColumn()} FROM pages
            WHERE url LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\'
            ORDER BY last_visited_at DESC LIMIT ?`
         )
@@ -142,7 +196,8 @@ function toEntries(rows: HistoryRow[]): HistoryEntry[] {
     url: row.url,
     title: row.title,
     visitCount: row.visit_count,
-    lastVisitedAt: row.last_visited_at
+    lastVisitedAt: row.last_visited_at,
+    faviconUrl: row.favicon_url
   }))
 }
 

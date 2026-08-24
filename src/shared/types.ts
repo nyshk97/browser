@@ -243,6 +243,12 @@ export type SuggestionKind = 'tab' | 'pinned' | 'favorite' | 'history' | 'search
 export interface Suggestion {
   kind: SuggestionKind
   title: string
+  /**
+   * 行頭に出すアイコン。**解決は main 側で完結させる**（renderer は DB を持たない）。
+   * null ならホスト頭文字のレターアバターに落ちる。`kind: 'search'` は常に null で、
+   * renderer が虫眼鏡を描く。
+   */
+  faviconUrl: string | null
   /** 表示用の副題（URL など）。 */
   subtitle: string
   /** 選択したときに実行する対象。 */
@@ -258,6 +264,8 @@ export interface HistoryEntry {
   title: string
   visitCount: number
   lastVisitedAt: number
+  /** ページが申告した favicon。未記録なら null（ホスト頭文字で代用する）。 */
+  faviconUrl: string | null
 }
 
 export interface ArchivedTab {

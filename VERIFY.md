@@ -33,6 +33,7 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 | 拡張まわり・Electron のバージョン | `mise run verify:ext`（+ 実機で Bitwarden） |
 | パッケージング・ネイティブ依存・fuses | `mise run package` → `mise run verify:packaged` |
 | 履歴 / アーカイブ・シークレット・設定画面・既定ブラウザ | `mise run verify`（`verify-phase2.mjs` が含まれる） |
+| **履歴 DB のスキーマ**（列追加・インデックス） | `mise run verify:db-migration` |
 | 設定同期・Arc 移行・拡張の版確認 | `mise run check`（ユニットテスト）→ 下の「設定同期」「Arc からの移行」 |
 
 **検証系は Nemo が起動していると実行を拒否する**（拡張や lock を触るため）。
@@ -70,6 +71,13 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 - Favorites の追加・削除
 - コマンドバーが開いているタブを候補に出す / URL でない入力は検索に回る
 - **コマンドバーの決定先**（⌘T / ＋ は新規タブ・⌘L は現在のタブ・⇧Enter はその逆）
+- **候補の上下移動**（↑↓ と ⌃P / ⌃N。⌃ 付きは `defaultPrevented` まで見る ——
+  macOS の入力欄は ⌃P / ⌃N を行移動として食うので、止め忘れるとキャレットだけ動く）
+- **コマンドバーの縦位置**（箱の中心が画面中心より上・候補が満杯でも下がはみ出さない）。
+  実ウィンドウをリサイズする API は無いので `Emulation.setDeviceMetricsOverride` で
+  ビューポートだけ差し替え、既定（860px）と最小（480px）の両端で見る。
+  **候補は kind ごとに 4 件で頭打ち**なので履歴を積んでも満杯にならない。
+  高さの上限を見るときは行を複製して 12 件に膨らませる
 - ページ内検索がヒット数を返す・終了できる
 - zoom の変更と上限
 - ダウンロードが完了として記録され、消せること
@@ -134,6 +142,18 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 - 版 2 の `session.json` から起動して、**旧ピンタブが一時タブとして復活しない**こと
 - **移行後も元のアクティブタブが選ばれたまま**であること（先頭・中間のピンタブが落ちてもずれない）
 - 版 1 の `pins.json` が読めること / **2階層目のフォルダが中身を親へ平坦化して読める**こと
+
+履歴 DB の列追加（`mise run verify:db-migration` / `scripts/verify-db-migration.mjs`）:
+
+- **旧スキーマの `history.db`（`favicon_url` の無い `pages`）を置いてから起動する**。
+  `mise run verify` は毎回まっさらな userData を作る（`mkdtempSync`）ので、
+  **既存テーブルへの `ALTER TABLE` を一度も通らない**。列を足す変更はここで見る
+- 列が**1つだけ**足されること / 既存行の `title`・`visit_count`・`last_visited_at` が保たれること
+- `pages_fts` が壊れていないこと（**日本語タイトルの部分一致**が引けること。trigram が効いている証拠）
+- **2回目の起動でも列が増えず、未捕捉例外も出ない**こと（冪等）
+- `history.db` を**読み取り専用にして起動しても履歴候補が返る**こと。
+  列を足せない環境では `NULL AS favicon_url` に落ちる作りなので、ここが崩れると
+  SELECT が例外 → `catch` で空配列となり、**履歴機能が黙って死ぬ**
 
 > 合成ドラッグは **dragstart と drop の間を空ける**。ピン留めツリーは「何を掴んでいるか」を
 > React の state に持つので、続けて撃つと drop の時点でまだ state が入っておらず、

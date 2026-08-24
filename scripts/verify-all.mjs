@@ -4,7 +4,7 @@
  *
  *   ユニットテスト → ビルド → 拡張の照合 → ページサーバ → アプリ起動 →
  *   verify-spike → verify-phase1 → verify-phase2 → verify-pins →
- *   再起動をまたぐ永続性 → 旧版セッションからの移行 → 後片付け
+ *   再起動をまたぐ永続性 → 旧版セッションからの移行 → 履歴 DB の列追加 → 後片付け
  *
  * 終了コードがそのまま合否になるので CI にも載せられる。
  *
@@ -184,6 +184,12 @@ try {
   console.log('\n=== 旧版セッションからの移行')
   const migrationCode = await runToCompletion(process.execPath, ['scripts/verify-session-migration.mjs'])
   if (migrationCode !== 0) exitCode = migrationCode
+
+  // 履歴 DB の列追加も同じ理由で別建て。ここまでの userData は毎回まっさらなので、
+  // **既存の pages テーブルへの ALTER TABLE を一度も通らない**。
+  console.log('\n=== 旧スキーマの履歴 DB からの移行')
+  const dbMigrationCode = await runToCompletion(process.execPath, ['scripts/verify-db-migration.mjs'])
+  if (dbMigrationCode !== 0) exitCode = dbMigrationCode
 } catch (error) {
   console.error(`\n[verify] ${error instanceof Error ? error.message : String(error)}`)
   exitCode = 1

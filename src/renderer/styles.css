@@ -613,9 +613,16 @@ input {
   background: rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(2px);
   display: flex;
+  /* 上端を固定して候補は下へ伸ばす。align-items: center にすると
+     入力するたびに箱の高さが変わってバー全体が上下に跳ねる */
   align-items: flex-start;
   justify-content: center;
-  padding-top: 88px;
+  /* 箱の**中心**を画面の中心よりわずかに上（46%）に置く。
+     上端は `padding-top` で決まるので、そこから箱の高さの半分を引く。
+     140px は候補が数件出た状態の半分の高さで、**あえて定数にしている**
+     ―― 実際の高さに追随させると入力のたびにバーが上下に跳ねる。
+     `max()` は小さいウィンドウで負にならないための下限。 */
+  padding-top: max(24px, calc(46vh - 140px));
   animation: nemo-fade 0.12s ease-out;
 }
 
@@ -629,44 +636,58 @@ input {
   width: min(620px, 72%);
   background: #232329;
   border: 1px solid #3a3a44;
-  border-radius: var(--nemo-radius-lg);
+  /* コマンドバーだけ丸みを強くする。--nemo-radius-lg を上げると
+     ダイアログ・ダウンロードパネルまで一緒に丸くなる */
+  border-radius: 14px;
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55);
   overflow: hidden;
 }
 
-.cmd > input {
-  width: 100%;
-  padding: 13px 14px;
-  font-size: 14px;
+.cmd-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+/* 選択中の候補のアイコンを入力欄の左に出す（何を開こうとしているかが一目で分かる） */
+.cmd-input > .fi,
+.cmd-input > .glass {
+  flex: 0 0 auto;
+}
+
+/* 検索候補の行頭。favicon と同じ座組みに収まるようサイズを揃える */
+.glass {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+
+.cmd-input > input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 16px;
   color: #fff;
 }
 
 .sugs {
-  max-height: 320px;
+  /* 上端は 30vh に固定なので、高さの上限を px だけで決めると
+     小さいウィンドウ（minHeight 480px）で下がはみ出して候補が隠れる */
+  max-height: min(360px, 45vh);
   overflow-y: auto;
+  padding: 0 6px 6px;
 }
 
 .sug {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 6px 14px;
-  font-size: 12px;
+  align-items: center;
+  gap: 9px;
+  height: 40px;
+  padding: 0 9px;
+  border-radius: 8px;
+  font-size: 13px;
   color: #b8b8c6;
-}
-
-.sug.on {
-  background: rgba(91, 157, 255, 0.16);
-  color: #fff;
-}
-
-.sug .k {
-  font-size: 9.5px;
-  opacity: 0.6;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 4px;
-  padding: 0 4px;
-  flex: 0 0 auto;
 }
 
 .sug .t {
@@ -674,22 +695,64 @@ input {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 0 1 auto;
+  color: var(--nemo-ink);
 }
 
 .sug .s {
   color: var(--nemo-ink-dim);
-  font-size: 11px;
+  font-size: 11.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1 1 auto;
+  min-width: 0;
 }
 
-.hint {
-  padding: 6px 14px 8px;
-  font-size: 10.5px;
+.sug .s::before {
+  content: '— ';
+}
+
+/* 「Enter を押したら何が起きるか」。選択行にだけ出す（全行に出すと視線が散る） */
+.sug .act {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.sug .act svg {
+  width: 15px;
+  height: 15px;
+  opacity: 0.9;
+}
+
+.sug.on {
+  background: var(--nemo-accent);
+}
+
+.sug.on .t {
+  color: #fff;
+}
+
+.sug.on .s {
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.sug.on .glass {
+  opacity: 1;
+}
+
+/* 塗りつぶしの上ではレターアバターの地が沈むので、白の透過に差し替える */
+.sug.on .fi.letter {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+
+.sug.dim {
   color: var(--nemo-ink-dim);
-  border-top: 1px solid var(--nemo-border);
+  font-size: 12px;
 }
 
 /* 検索バー */

@@ -1,5 +1,5 @@
 import { getFavorites, getPinned } from './store/pins.js'
-import { searchHistory } from './store/history.js'
+import { getFavicons, searchHistory } from './store/history.js'
 import { normalizeNavigationInput } from './security.js'
 import { getSettings } from './store/settings.js'
 import { tabDisplayName } from './registry.js'
@@ -52,6 +52,7 @@ export function suggest(win: NemoWindow, rawQuery: string): Suggestion[] {
         kind: 'tab',
         title: label,
         subtitle: tab.url,
+        faviconUrl: tab.faviconUrl,
         target: { type: 'select-tab', key: tab.key }
       })
       if (results.length >= LIMIT_PER_KIND) break
@@ -64,6 +65,7 @@ export function suggest(win: NemoWindow, rawQuery: string): Suggestion[] {
         kind: 'pinned',
         title: pin.title,
         subtitle: pin.url,
+        faviconUrl: null,
         target: { type: 'navigate', url: pin.url }
       })
       if (++count >= LIMIT_PER_KIND) break
@@ -77,6 +79,7 @@ export function suggest(win: NemoWindow, rawQuery: string): Suggestion[] {
         kind: 'favorite',
         title: label,
         subtitle: favorite.url,
+        faviconUrl: null,
         target: { type: 'navigate', url: favorite.url }
       })
       if (++count >= LIMIT_PER_KIND) break
@@ -90,6 +93,7 @@ export function suggest(win: NemoWindow, rawQuery: string): Suggestion[] {
         kind: 'history',
         title: page.title || page.url,
         subtitle: page.url,
+        faviconUrl: page.favicon_url,
         target: { type: 'navigate', url: page.url }
       })
       if (results.filter((item) => item.kind === 'history').length >= LIMIT_PER_KIND) break
@@ -100,13 +104,71 @@ export function suggest(win: NemoWindow, rawQuery: string): Suggestion[] {
   const decision = normalizeNavigationInput(query, getSettings().searchTemplate)
   if (query && decision.allowed) {
     const isSearch = decision.url.startsWith(getSettings().searchTemplate.split('{q}')[0])
+    // タイトルは入力そのまま。「検索する / 開く」は選択行の右端のアクションが担う
     results.unshift({
       kind: isSearch ? 'search' : 'url',
-      title: isSearch ? `“${query}” を検索` : query,
+      title: query,
       subtitle: decision.url,
+      // 検索行は虫眼鏡（renderer が描く）。URL 直打ちは後段でアイコンを引く。
+      faviconUrl: null,
       target: { type: 'navigate', url: decision.url }
     })
   }
 
-  return results.slice(0, 12)
+  const trimmed = results.slice(0, 12)
+  resolveFavicons(win, trimmed)
+  return trimmed
+}
+
+/**
+ * 行頭のアイコンを埋める。
+ *
+ * **候補を組み終わってから最後に1回だけ回す**。kind ごとに散らすと、
+ * 先頭へ `unshift` する URL 候補が漏れる。
+ *
+ * 解決の順番:
+ *   1. 開いているタブ … その `faviconUrl`（`suggest` の中で入れ済み）
+ *   2. 履歴 … URL 完全一致で引いた `favicon_url`
+ *   3. **同じホストで開いているタブ**から借りる
+ *   4. 無ければ null（renderer がホスト頭文字のレターアバターに落とす）
+ *
+ * 3 は `favicon_url` 列を足した直後の移行期間を埋めるための措置。
+ * 再訪問すれば 2 で埋まるので、**履歴をホストで引く経路は作らない**
+ * （`pages` に host 列も index も無く、既定の LIKE は PK の index に乗らないので
+ * 全履歴の走査になる。入力1文字ごとに走る場所で払うコストではない）。
+ */
+function resolveFavicons(win: NemoWindow, items: Suggestion[]): void {
+  const pending = items.filter((item) => item.kind !== 'search' && !item.faviconUrl)
+  if (pending.length === 0) return
+
+  const fromHistory = getFavicons(pending.map((item) => item.subtitle))
+  for (const item of pending) {
+    item.faviconUrl = fromHistory.get(item.subtitle) ?? null
+  }
+
+  const stillEmpty = pending.filter((item) => !item.faviconUrl)
+  if (stillEmpty.length === 0) return
+
+  // ホスト → favicon は**このウィンドウのタブからだけ**作る。
+  // 他のウィンドウを覗くと、シークレットウィンドウの favicon が通常の候補に漏れる。
+  const byHost = new Map<string, string>()
+  for (const tab of win.tabs) {
+    if (!tab.faviconUrl) continue
+    const host = hostOf(tab.url)
+    if (host && !byHost.has(host)) byHost.set(host, tab.faviconUrl)
+  }
+  if (byHost.size === 0) return
+
+  for (const item of stillEmpty) {
+    const host = hostOf(item.subtitle)
+    if (host) item.faviconUrl = byHost.get(host) ?? null
+  }
+}
+
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).host || null
+  } catch {
+    return null
+  }
 }

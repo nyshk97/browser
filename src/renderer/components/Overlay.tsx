@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useCommand, useSharedState, useWindowState } from '../useNemo.js'
 import { PromptDialog } from './PromptDialog.js'
 import { Library } from './Library.js'
+import { Favicon } from './Sidebar.js'
 import { Settings } from './Settings.js'
 import type { Prompt, Suggestion, WindowState } from '../../shared/types.js'
 
@@ -147,6 +148,32 @@ function CommandBar({
   /** 決定時に Shift が押されていたか（既定の行き先を反転させる）。 */
   const shiftHeld = useRef(false)
 
+  /**
+   * ⇧ を押している「間」の表示用。決定時の判定は上の ref（イベントの `shiftKey`）が正で、
+   * こちらは右端のアクション文言を反転させるためだけに持つ。
+   * **キーを押したままバーが閉じたときに残らないよう** blur でも倒す。
+   */
+  const [shiftDown, setShiftDown] = useState(false)
+  useEffect(() => {
+    const down = (event: KeyboardEvent): void => {
+      if (event.key === 'Shift') setShiftDown(true)
+    }
+    const up = (event: KeyboardEvent): void => {
+      if (event.key === 'Shift') setShiftDown(false)
+    }
+    const clear = (): void => setShiftDown(false)
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', clear)
+    return () => {
+      window.removeEventListener('keydown', down)
+      window.removeEventListener('keyup', up)
+      window.removeEventListener('blur', clear)
+    }
+  }, [])
+
+  const selected = items[cursor]
+
   return (
     <div className="backdrop" onMouseDown={onClose}>
       <div
@@ -154,30 +181,43 @@ function CommandBar({
         data-mode={newTab ? 'new-tab' : 'address'}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <input
-          ref={inputRef}
-          value={query}
-          spellCheck={false}
-          placeholder={
-            newTab ? '新しいタブで開く / 検索する / タブを探す' : 'URL を開く / 検索する / タブを探す'
-          }
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowDown') {
-              event.preventDefault()
-              setCursor((current) => Math.min(current + 1, items.length - 1))
-            } else if (event.key === 'ArrowUp') {
-              event.preventDefault()
-              setCursor((current) => Math.max(current - 1, 0))
-            } else if (event.key === 'Enter') {
-              event.preventDefault()
-              shiftHeld.current = event.shiftKey
-              run(items[cursor])
-            } else if (event.key === 'Escape') {
-              onClose()
+        <div className="cmd-input">
+          {selected && selected.kind !== 'search' ? (
+            <Favicon url={selected.subtitle} title={selected.title} src={selected.faviconUrl} />
+          ) : (
+            <GlassIcon />
+          )}
+          <input
+            ref={inputRef}
+            value={query}
+            spellCheck={false}
+            placeholder={
+              newTab ? '新しいタブで開く / 検索する / タブを探す' : 'URL を開く / 検索する / タブを探す'
             }
-          }}
-        />
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              // ↑↓ のほかに ⌃P / ⌃N でも動かせる。
+              // **macOS の入力欄はこの2つを既定で行移動として食う**ので、
+              // preventDefault を必ず通す（そうしないとキャレットだけ動いて候補が動かない）。
+              const emacs = event.ctrlKey && !event.metaKey && !event.altKey
+              const moveDown = event.key === 'ArrowDown' || (emacs && event.key.toLowerCase() === 'n')
+              const moveUp = event.key === 'ArrowUp' || (emacs && event.key.toLowerCase() === 'p')
+              if (moveDown) {
+                event.preventDefault()
+                setCursor((current) => Math.min(current + 1, items.length - 1))
+              } else if (moveUp) {
+                event.preventDefault()
+                setCursor((current) => Math.max(current - 1, 0))
+              } else if (event.key === 'Enter') {
+                event.preventDefault()
+                shiftHeld.current = event.shiftKey
+                run(items[cursor])
+              } else if (event.key === 'Escape') {
+                onClose()
+              }
+            }}
+          />
+        </div>
         <div className="sugs">
           {items.map((item, index) => (
             <div
@@ -190,28 +230,60 @@ function CommandBar({
                 run(item)
               }}
             >
-              <span className="k">{KIND_LABEL[item.kind]}</span>
+              {item.kind === 'search' ? (
+                <GlassIcon />
+              ) : (
+                <Favicon url={item.subtitle} title={item.title} src={item.faviconUrl} />
+              )}
               <span className="t">{item.title}</span>
-              <span className="s">{item.subtitle}</span>
+              {/* 検索行の副題は検索エンジンの長い URL になるので出さない（Arc も出さない） */}
+              {item.kind === 'search' ? null : <span className="s">{item.subtitle}</span>}
+              {index === cursor ? (
+                <span className="act">
+                  {actionLabel(item, newTab, shiftDown)}
+                  <EnterIcon />
+                </span>
+              ) : null}
             </div>
           ))}
           {items.length === 0 ? <div className="sug dim">入力すると候補が出ます</div> : null}
-        </div>
-        <div className="hint">
-          {newTab ? 'Enter で新規タブ / ⇧Enter で現在のタブ' : 'Enter で現在のタブ / ⇧Enter で新規タブ'}
         </div>
       </div>
     </div>
   )
 }
 
-const KIND_LABEL: Record<Suggestion['kind'], string> = {
-  tab: 'タブ',
-  pinned: 'ピン',
-  favorite: 'お気に入り',
-  history: '履歴',
-  search: '検索',
-  url: '開く'
+/**
+ * 選択行の右端に出す「Enter を押したら何が起きるか」。
+ *
+ * 下部の説明行の代わりで、⇧ を押している間だけ行き先が反転する。
+ * **開いているタブへの切り替えだけは反転しない** —— `run()` が `select-tab` を
+ * `newTab` / Shift を見ずに `selectTab` へ倒しているので、文言だけ変えると実挙動と食い違う。
+ */
+function actionLabel(item: Suggestion, newTab: boolean, shift: boolean): string {
+  if (item.target.type === 'select-tab') return 'タブへ切り替え'
+  const verb = item.kind === 'search' ? '検索' : '開く'
+  return `${newTab !== shift ? '新規タブで' : 'このタブで'}${verb}`
+}
+
+/** 検索候補の行頭。favicon の代わりに置く。 */
+function GlassIcon(): React.JSX.Element {
+  return (
+    <svg className="glass" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5}>
+      <circle cx="7" cy="7" r="4.4" />
+      <path d="M10.3 10.3 14 14" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+/** 右端のアクションに添える「実行」の記号。 */
+function EnterIcon(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4}>
+      <rect x="1.6" y="1.6" width="12.8" height="12.8" rx="3.4" />
+      <path d="M5.6 8h4.8M8.3 5.9 10.5 8l-2.2 2.1" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
 }
 
 /* ------------------------------------------------------------------ *

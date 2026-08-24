@@ -36,7 +36,7 @@ import {
   updatePinnedUrl as updatePinnedUrlDefinition,
   type ConversionResult
 } from './store/pins.js'
-import { recordVisit, updateTitle } from './store/history.js'
+import { recordFavicon, recordVisit, updateTitle } from './store/history.js'
 import { archiveTab, pruneArchive, type ArchiveReason } from './store/archive.js'
 import { saveSession, type SavedWindow } from './store/session.js'
 import {
@@ -479,7 +479,14 @@ function attachTabEvents(tab: NemoTab, wc: WebContents): void {
     notify()
   })
   wc.on('page-favicon-updated', (_event, favicons) => {
-    tab.faviconUrl = favicons[0] ?? null
+    // **空で飛んできたら今の favicon を維持する**。読み込みの途中で一時的に空が来ることがあり、
+    // そこで消しにいくとアイコンがちらつき、履歴側にも無駄な UPDATE を撃つ。
+    // 「サイトが favicon をやめた」は、次に非空が来たときに上書きされる。
+    const next = favicons[0]
+    if (!next) return
+    tab.faviconUrl = next
+    // `remember` の中に置く（シークレットウィンドウでは履歴に一切書かない）
+    remember(() => recordFavicon(tab.url, next))
     notify()
   })
   wc.on('did-start-loading', notify)

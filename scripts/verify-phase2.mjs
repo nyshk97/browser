@@ -210,6 +210,16 @@ if (privateTarget) {
   await sleep(800)
 
   check('シークレットで開いたページは履歴に残らない', (await history('probe=private-only')).length === 0)
+  // favicon の記録も同じ `remember()` の内側にある。タブ側には出ていても、
+  // 履歴に行が無い＝ favicon も書かれていないことを、タブと履歴の両方で見る。
+  const privateFavicon = await privateUi.ev(
+    `window.nemo.getWindowState().then((s) => (s.tabs.find((t) => t.key === ${JSON.stringify(privateKey)})?.faviconUrl ? 'shown' : 'none'))`
+  )
+  check('シークレットのタブでも favicon は表示される（記録しないだけ）', privateFavicon === 'shown', String(privateFavicon))
+  check(
+    'シークレットで開いたページの favicon は履歴に書かれない',
+    (await history('probe=private-only')).every((entry) => !entry.faviconUrl)
+  )
   check('シークレットのタブはアーカイブにも残らない', (await archive('probe=private-only')).length === 0)
 
   await privateUi.ev(`window.nemo.closeTab(${JSON.stringify(privateKey)}).then(() => 'ok')`)

@@ -18,6 +18,16 @@ let db: Database.Database | null = null
 /** 全文検索（FTS5）が使えるか。使えなければ LIKE 検索に落ちる。 */
 let ftsAvailable = false
 
+/**
+ * `pages.favicon_url` が使えるか。
+ *
+ * この列は後から足したもので、**追加に失敗しうる**（DB が読み取り専用など）。
+ * 失敗を握りつぶしたまま SELECT に列名を書くと、クエリが例外になって
+ * `catch` で空配列に落ち、**履歴の候補と一覧がまるごと消える**。
+ * 「favicon が出ないだけ」に留めるために、有無をここで持って読み側が分岐する。
+ */
+let faviconColumnAvailable = false
+
 export function initDb(): void {
   try {
     db = new Database(userDataPath('history.db'))
@@ -47,12 +57,55 @@ export function initDb(): void {
       CREATE INDEX IF NOT EXISTS archived_at_idx ON archived_tabs(archived_at DESC);
     `)
     ftsAvailable = setUpFts(db)
-    log('db.opened', { fts: ftsAvailable })
+    faviconColumnAvailable = addFaviconColumn(db)
+    log('db.opened', { fts: ftsAvailable, favicon: faviconColumnAvailable })
   } catch (error) {
     logError('db.open_failed', error)
     db = null
     ftsAvailable = false
+    faviconColumnAvailable = false
   }
+}
+
+/**
+ * `pages.favicon_url` を後から足す（コマンドバーの候補にアイコンを出すため）。
+ *
+ * この DB にはマイグレーション機構が無いので、**列の有無を見てから `ALTER TABLE`** する。
+ * 2回目以降の起動では何もしない。
+ *
+ * FTS の作り直しは要らない。`pages_fts` は `content='pages'` の external content だが、
+ * インデックスの対象は `url, title` の2列で、同期トリガも列を明示している。
+ */
+function addFaviconColumn(database: Database.Database): boolean {
+  try {
+    const columns = database.prepare('PRAGMA table_info(pages)').all() as { name: string }[]
+    if (columns.some((column) => column.name === 'favicon_url')) return true
+    database.exec('ALTER TABLE pages ADD COLUMN favicon_url TEXT')
+    log('db.favicon_column_added')
+    return true
+  } catch (error) {
+    // 履歴そのものは使える（アイコンがホスト頭文字に落ちるだけ）
+    logError('db.favicon_column_unavailable', error)
+    return false
+  }
+}
+
+export function hasFaviconColumn(): boolean {
+  return faviconColumnAvailable
+}
+
+/**
+ * SELECT に書く favicon の列式。
+ *
+ * 列が無い環境では `NULL AS favicon_url` に落とし、**呼び出し側の SQL を分岐させない**。
+ * 履歴の SELECT は5本あり（`searchHistory` に1本・`queryHistory` に3本）、
+ * うち FTS の JOIN だけ別名が要る。列名を直に書くと必ずどれかが漏れる。
+ *
+ * @param alias テーブル別名（`'p'` など）。省略すると修飾しない。
+ */
+export function faviconColumn(alias?: string): string {
+  if (!faviconColumnAvailable) return 'NULL AS favicon_url'
+  return alias ? `${alias}.favicon_url` : 'favicon_url'
 }
 
 /**
@@ -115,4 +168,5 @@ export function closeDb(): void {
   }
   db = null
   ftsAvailable = false
+  faviconColumnAvailable = false
 }

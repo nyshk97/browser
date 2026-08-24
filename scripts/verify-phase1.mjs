@@ -389,6 +389,129 @@ await ui.ev(`window.nemo.addFavorite(${JSON.stringify(reopened)}).then(() => 'ok
 }
 
 /* ------------------------------------------------------------------ *
+ * 1-5c 候補の上下移動（↑↓ と ⌃P / ⌃N）と、コマンドバーの縦位置
+ * ------------------------------------------------------------------ */
+
+{
+  await openCommandBar('command-bar')
+  await overlay.ev(`(() => {
+    const input = document.querySelector('.cmd input')
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+    setter.call(input, 'login')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    return 'ok'
+  })()`)
+  // 2件以上出ていないと「動いた」ことを見分けられない
+  await waitFor(overlay, `document.querySelectorAll('.cmd .sug:not(.dim)').length >= 2 ? 'ready' : ''`)
+
+  /** 何番目の候補が選ばれているか。 */
+  const cursor = () =>
+    overlay.ev(`[...document.querySelectorAll('.cmd .sug')].findIndex((r) => r.classList.contains('on'))`)
+
+  /**
+   * 入力欄にキーを撃つ。`ctrl` を渡すと ⌃ 付きで撃つ。
+   * **戻り値は defaultPrevented**。macOS の入力欄は ⌃P / ⌃N を行移動として
+   * 既定で食うので、止められているかどうかまで見ないと意味がない。
+   */
+  const press = (k, ctrl = false) =>
+    overlay.ev(`(() => {
+      const input = document.querySelector('.cmd input')
+      const e = new KeyboardEvent('keydown', {
+        key: ${JSON.stringify(k)},
+        ctrlKey: ${ctrl},
+        bubbles: true,
+        cancelable: true
+      })
+      input.dispatchEvent(e)
+      return e.defaultPrevented
+    })()`)
+
+  check('開いた直後は先頭の候補が選ばれている', (await cursor()) === 0, String(await cursor()))
+
+  const downPrevented = await press('n', true)
+  check('⌃N で1つ下へ動く', (await cursor()) === 1, String(await cursor()))
+  check('⌃N は既定動作を止める（キャレットだけ動くのを防ぐ）', downPrevented === true)
+
+  await press('n', true)
+  check('⌃N を続けて撃つとさらに下へ動く', (await cursor()) === 2, String(await cursor()))
+
+  const upPrevented = await press('p', true)
+  check('⌃P で1つ上へ戻る', (await cursor()) === 1, String(await cursor()))
+  check('⌃P は既定動作を止める', upPrevented === true)
+
+  await press('ArrowDown')
+  check('↑↓ も従来どおり効く', (await cursor()) === 2, String(await cursor()))
+
+  await press('p', true)
+  await press('p', true)
+  await press('p', true)
+  check('先頭より上へは行かない', (await cursor()) === 0, String(await cursor()))
+
+  // ⌃ が付いていない素の n / p は文字入力なので、候補を動かしてはいけない
+  const before = await cursor()
+  await press('n')
+  check('⌃ の付かない n は候補を動かさない', (await cursor()) === before, String(await cursor()))
+
+  /* --- 縦位置。箱の中心が画面の中心よりわずかに上に来ること --- */
+
+  // 実ウィンドウをリサイズする API は無いので、ビューポートだけ差し替えて CSS の効きを見る。
+  // 位置も高さの上限も vh で決まるので、これで両端（既定と最小 minHeight 480px）を確かめられる。
+  for (const [w, h] of [
+    [1280, 860],
+    [640, 480]
+  ]) {
+    await overlay.send('Emulation.setDeviceMetricsOverride', {
+      width: w,
+      height: h,
+      deviceScaleFactor: 0,
+      mobile: false
+    })
+    await sleep(300)
+
+    const box = await overlay
+      .ev(
+        `JSON.stringify({ vh: innerHeight, box: document.querySelector('.cmd').getBoundingClientRect().toJSON() })`
+      )
+      .then(JSON.parse)
+    const delta = Math.round(box.box.top + box.box.height / 2 - box.vh / 2)
+    check(`${box.vh}px の窓: コマンドバーの中心が画面中心より上`, delta < 0, `${delta}px`)
+
+    // 候補は kind ごとに 4 件（全体 12 件）で頭打ちなので、履歴だけでは満杯にできない。
+    // 高さの上限（`.sugs` の max-height）が効いているかを見たいので、行を複製して膨らませる。
+    const full = await overlay
+      .ev(
+        `(() => {
+          const list = document.querySelector('.sugs')
+          const seed = list.querySelector('.sug')
+          while (list.children.length < 12) list.appendChild(seed.cloneNode(true))
+          const b = document.querySelector('.cmd').getBoundingClientRect()
+          return JSON.stringify({ bottom: b.bottom, vh: innerHeight, rows: list.children.length })
+        })()`
+      )
+      .then(JSON.parse)
+    check(
+      `${box.vh}px の窓: 候補が満杯でもコマンドバーの下がはみ出さない`,
+      full.bottom <= full.vh,
+      `bottom=${Math.round(full.bottom)} / vh=${full.vh}`
+    )
+
+    // 複製した行を消すため、入力し直して候補を作り直す
+    await overlay.ev(`(() => {
+      const input = document.querySelector('.cmd input')
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+      setter.call(input, 'login')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      return 'ok'
+    })()`)
+    await sleep(400)
+  }
+  await overlay.send('Emulation.clearDeviceMetricsOverride')
+
+  await ui.ev(`window.nemo.setOverlay(null).then(() => 'ok')`)
+  await waitFor(overlay, `document.querySelector('.cmd') ? '' : 'closed'`)
+}
+
+/* ------------------------------------------------------------------ *
  * 1-5b コマンドバーの決定先（⌘T は新規タブ / ⌘L は現在のタブ）
  * ------------------------------------------------------------------ */
 

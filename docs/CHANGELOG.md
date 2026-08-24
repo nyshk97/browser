@@ -36,6 +36,11 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 - 設定とピン留めを 2 台目と同期するコマンド（`mise run config:push` / `config:pull`）
 - 拡張に新しい版が出ていないか確認するコマンド（`mise run ext:outdated`）
 
+### 修正
+
+- Google Meet などでマイク・カメラが使えなかった問題。Nemo で許可すると macOS 側の許可も求めるようになった
+- 画面共有（`getDisplayMedia`）ができなかった問題。macOS の共有ピッカーで画面やウインドウを選べる
+
 ## [0.1.1] - 2026-08-23
 
 ### 修正

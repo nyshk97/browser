@@ -83,6 +83,11 @@ dmg:
 
 mac:
   category: public.app-category.productivity
+  # TCC のダイアログに出る文言。**キーが無いとダイアログすら出せず即クラッシュする**。
+  # electron-builder の既定は英語なので、日本語に差し替える。
+  extendInfo:
+    NSMicrophoneUsageDescription: 開いているページがマイクを使うときに必要です。ページごとに Nemo が確認します。
+    NSCameraUsageDescription: 開いているページがカメラを使うときに必要です。ページごとに Nemo が確認します。
   # dmg は人が入れるため、zip は electron-updater が差分更新に使うため
   # （macOS の自動更新は zip でしか適用できない）。dev 版は dmg だけに絞る。
   target:

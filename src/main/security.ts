@@ -1,5 +1,12 @@
-import { app, shell, type Session, type WebContents } from 'electron'
+import { app, desktopCapturer, shell, webContents, type Session, type WebContents } from 'electron'
 import { log, logError, redactUrl } from './log.js'
+import {
+  ensureSystemMediaAccess,
+  isSystemMediaDenied,
+  mediaKindsFor,
+  openMediaSettings,
+  type MediaKind
+} from './media-access.js'
 import { ask } from './prompts.js'
 import { getDecision, getSchemeDecision, rememberDecision, rememberScheme } from './store/permissions.js'
 import {
@@ -132,8 +139,13 @@ export function applySessionSecurityDefaults(
     if (AUTO_ALLOWED.has(permission)) return true
     const origin = normalizeOrigin(requestingOrigin)
     if (!origin) return false
-    return getDecision(origin, permission as PermissionKind, permissionScope) === 'allow'
+    if (getDecision(origin, permission as PermissionKind, permissionScope) !== 'allow') return false
+    // Nemo が許可していても、OS 側で拒まれていれば使えない（`media-access.ts`）。
+    const kinds = mediaKindsFor(permission)
+    return kinds.length === 0 || !kinds.every(isSystemMediaDenied)
   })
+
+  installDisplayMediaHandler(session, resolveWindowId, permissionScope)
 
   // デバイス選択（WebUSB / WebHID / シリアル）は既定で拒否する
   session.setDevicePermissionHandler(() => false)
@@ -157,7 +169,34 @@ async function handlePermissionRequest(
     return false
   }
 
-  const remembered = getDecision(origin, permission as PermissionKind, permissionScope)
+  const windowId = resolveWindowId(contents)
+  if (!(await decidePermission(origin, permission as PermissionKind, windowId, permissionScope))) {
+    return false
+  }
+
+  // Nemo が許可した後に **OS の許可**を取る。ここを通さないと、ページは
+  // 「許可されているのに無音・真っ暗」になる（`media-access.ts`）。
+  const kinds = mediaKindsFor(permission, details)
+  if (kinds.length === 0) return true
+
+  const denied = await ensureSystemMediaAccess(kinds)
+  if (denied.length === 0) return true
+
+  log('permission.os_denied', { permission, denied: denied.join(',') })
+  // 案内は待たない（ページを止めないため）。
+  void promptSystemMediaSettings(windowId, denied[0])
+  // 一部だけ拒まれたなら残りで通す（カメラだけ拒否 → 音声だけで参加する）。
+  return denied.length < kinds.length
+}
+
+/** 記憶済みならそれに従い、無ければユーザーに聞く。 */
+async function decidePermission(
+  origin: string,
+  permission: PermissionKind,
+  windowId: number | null,
+  permissionScope: string | null
+): Promise<boolean> {
+  const remembered = getDecision(origin, permission, permissionScope)
   if (remembered) {
     log('permission.request', {
       partition: 'page',
@@ -168,23 +207,101 @@ async function handlePermissionRequest(
     return remembered === 'allow'
   }
 
-  const windowId = resolveWindowId(contents)
   if (windowId === null) {
     log('permission.request', { partition: 'page', permission, allowed: false, reason: 'no_window' })
     return false
   }
 
-  const answer = await ask(windowId, {
-    type: 'permission',
-    origin,
-    permission: permission as PermissionKind
-  })
+  const answer = await ask(windowId, { type: 'permission', origin, permission })
   if (!answer || answer.kind !== 'permission') return false
   if (answer.remember) {
-    rememberDecision(origin, permission as PermissionKind, answer.allow ? 'allow' : 'deny', permissionScope)
+    rememberDecision(origin, permission, answer.allow ? 'allow' : 'deny', permissionScope)
   }
   log('permission.request', { partition: 'page', permission, allowed: answer.allow })
   return answer.allow
+}
+
+/** OS 側で拒まれていることを伝えて、システム設定への導線を出す。 */
+async function promptSystemMediaSettings(windowId: number | null, kind: MediaKind): Promise<void> {
+  if (windowId === null) return
+  const answer = await ask(windowId, { type: 'system-media', kind })
+  if (answer?.kind === 'system-media' && answer.openSettings) openMediaSettings(kind)
+}
+
+/* ------------------------------------------------------------------ *
+ * 画面共有（getDisplayMedia）
+ * ------------------------------------------------------------------ */
+
+/**
+ * `setDisplayMediaRequestHandler` を設定しないと、Electron では
+ * `getDisplayMedia()` が **必ず失敗する**（Meet の「画面を共有できません」はこれ）。
+ *
+ * macOS では OS のネイティブ共有ピッカーに任せる（`useSystemPicker`）。
+ * 「どれを共有するか」をユーザーが OS のピッカーで選ぶこと自体が同意になるので、
+ * 使える環境ではこのハンドラは呼ばれない。
+ * 呼ばれた場合（ピッカーが使えない環境）は Nemo のダイアログで確認してから画面全体を渡す。
+ */
+function installDisplayMediaHandler(
+  session: Session,
+  resolveWindowId: (contents: WebContents) => number | null,
+  permissionScope: string | null
+): void {
+  session.setDisplayMediaRequestHandler(
+    (request, callback) => {
+      void handleDisplayMediaRequest(request, resolveWindowId, permissionScope).then(callback)
+    },
+    { useSystemPicker: true }
+  )
+}
+
+/** 要求元のフレームから、ダイアログを出すウィンドウを引く（破棄済みなら null）。 */
+function displayMediaWindowId(
+  frame: Electron.WebFrameMain,
+  resolveWindowId: (contents: WebContents) => number | null
+): number | null {
+  try {
+    const contents = webContents.fromFrame(frame)
+    return contents ? resolveWindowId(contents) : null
+  } catch {
+    return null
+  }
+}
+
+/** 空の `Streams` を返すと、ページ側は拒否（`NotAllowedError`）になる。 */
+const DENY_DISPLAY_MEDIA: Electron.Streams = {}
+
+async function handleDisplayMediaRequest(
+  request: Electron.DisplayMediaRequestHandlerHandlerRequest,
+  resolveWindowId: (contents: WebContents) => number | null,
+  permissionScope: string | null
+): Promise<Electron.Streams> {
+  const origin = normalizeOrigin(request.securityOrigin)
+  const frame = request.frame
+  if (!origin || !frame) {
+    log('display_capture.request', { allowed: false, reason: 'no_origin' })
+    return DENY_DISPLAY_MEDIA
+  }
+
+  const windowId = displayMediaWindowId(frame, resolveWindowId)
+
+  if (!(await decidePermission(origin, 'display-capture', windowId, permissionScope))) {
+    return DENY_DISPLAY_MEDIA
+  }
+
+  try {
+    // ピッカーが無い経路なので、選ばせずに画面全体を渡す（ウィンドウ単位は選べない）。
+    const sources = await desktopCapturer.getSources({ types: ['screen'] })
+    const video = sources[0]
+    if (!video) {
+      log('display_capture.request', { allowed: false, reason: 'no_source' })
+      return DENY_DISPLAY_MEDIA
+    }
+    log('display_capture.request', { allowed: true, fallback: true })
+    return { video }
+  } catch (error) {
+    logError('display_capture.failed', error, {})
+    return DENY_DISPLAY_MEDIA
+  }
 }
 
 /** `https://example.com` の形にする。ここを通らないものは permission を扱わない。 */

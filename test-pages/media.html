@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>マイク / カメラ / 画面共有</title>
+    <style>
+      body { font: 15px/1.6 -apple-system, sans-serif; margin: 40px; max-width: 720px; }
+      button { font: inherit; padding: 6px 12px; margin-right: 8px; }
+      #result { white-space: pre-wrap; background: #eee; padding: 12px; border-radius: 6px; min-height: 3em; }
+      video { width: 320px; background: #000; margin-top: 12px; display: block; }
+    </style>
+  </head>
+  <body>
+    <h1>マイク / カメラ / 画面共有</h1>
+    <p>
+      Nemo のダイアログで許可した後、<b>macOS 側の許可</b>まで通っているかを見る。
+      取得できたトラックの種類とデバイス名が出れば pass。
+    </p>
+    <p>
+      <button id="mic">マイク</button>
+      <button id="cam">カメラ</button>
+      <button id="both">マイク + カメラ</button>
+      <button id="screen">画面共有</button>
+      <button id="stop">停止</button>
+    </p>
+    <div id="result">（未実行）</div>
+    <video id="preview" autoplay muted playsinline></video>
+    <script>
+      const result = document.getElementById('result')
+      const preview = document.getElementById('preview')
+      let current = null
+
+      function show(text) {
+        result.textContent = text
+        // 自走検証から読めるように残す
+        window.__mediaResult = text
+      }
+
+      function stop() {
+        for (const track of current?.getTracks() ?? []) track.stop()
+        current = null
+        preview.srcObject = null
+      }
+
+      async function run(label, getStream) {
+        show(`${label}: 要求中…`)
+        try {
+          stop()
+          const stream = await getStream()
+          current = stream
+          preview.srcObject = stream
+          const tracks = stream.getTracks().map((t) => `${t.kind}:${t.label || '(名前なし)'}`)
+          show(`${label}: OK\n${tracks.join('\n')}`)
+        } catch (error) {
+          show(`${label}: NG\n${error.name}: ${error.message}`)
+        }
+      }
+
+      const gum = (constraints) => () => navigator.mediaDevices.getUserMedia(constraints)
+      document.getElementById('mic').onclick = () => run('マイク', gum({ audio: true }))
+      document.getElementById('cam').onclick = () => run('カメラ', gum({ video: true }))
+      document.getElementById('both').onclick = () => run('マイク + カメラ', gum({ audio: true, video: true }))
+      document.getElementById('screen').onclick = () =>
+        run('画面共有', () => navigator.mediaDevices.getDisplayMedia({ video: true }))
+      document.getElementById('stop').onclick = () => {
+        stop()
+        show('（停止）')
+      }
+    </script>
+  </body>
+</html>

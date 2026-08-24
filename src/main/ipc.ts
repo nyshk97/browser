@@ -545,6 +545,8 @@ function validateAnswer(value: unknown): PromptAnswer {
         open: answer['open'] === true,
         remember: answer['remember'] === true
       }
+    case 'system-media':
+      return { kind: 'system-media', openSettings: answer['openSettings'] === true }
     default:
       throw new Error('invalid answer')
   }

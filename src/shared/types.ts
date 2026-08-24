@@ -220,7 +220,19 @@ export interface ExternalProtocolPrompt {
   display: string
 }
 
-export type Prompt = PermissionPrompt | AuthPrompt | CertificatePrompt | ExternalProtocolPrompt
+/**
+ * macOS 側（システム設定 > プライバシーとセキュリティ）でマイク / カメラが
+ * 拒否されている、という案内。Nemo が許可してもページには何も渡らないので、
+ * 「許可したのに映らない・聞こえない」で詰まらないように出す。
+ */
+export interface SystemMediaPrompt {
+  type: 'system-media'
+  id: string
+  kind: 'microphone' | 'camera'
+}
+
+export type Prompt =
+  PermissionPrompt | AuthPrompt | CertificatePrompt | ExternalProtocolPrompt | SystemMediaPrompt
 
 /* ------------------------------------------------------------------ *
  * コマンドバーの候補
@@ -443,3 +455,4 @@ export type PromptAnswer =
   | { kind: 'auth-cancel' }
   | { kind: 'certificate'; proceed: boolean }
   | { kind: 'external-protocol'; open: boolean; remember: boolean }
+  | { kind: 'system-media'; openSettings: boolean }

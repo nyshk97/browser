@@ -210,6 +210,44 @@ document.querySelector('[data-testid]')?.getAttribute('data-testid')  // prompt-
 
 権限要求は**アクティブなタブから**でないと Chromium 側で保留され、ダイアログまで届かない。
 
+### マイク / カメラ / 画面共有
+
+テストページ `http://127.0.0.1:8787/media.html` のボタンを押して、
+取得できたトラックの種類とデバイス名が出れば pass（結果は `window.__mediaResult` にも入る）。
+
+**`mise run dev` で起動した Nemo では macOS の許可ダイアログが出ない**。
+TCC は「責任プロセス」（プロセスツリーを遡って最初の非 Apple バイナリ = ターミナルや
+Claude Code）にダイアログを紐づけるので、bundle でない親から起動すると
+`askForMediaAccess()` が**ダイアログを出さないまま即 false を返す**
+（ログの `media.os_access` が `status:"not-determined", granted:false` になる）。
+**アプリとして起動し直す**と出る:
+
+```bash
+pnpm exec electron-vite build
+node scripts/test-server.mjs &
+open -n --env NEMO_REMOTE_DEBUGGING_PORT=9334 node_modules/electron/dist/Electron.app \
+  --args "$PWD/out/main/index.js"
+```
+
+出た TCC ダイアログは AXPress で答えられる:
+
+```bash
+osascript -e 'tell application "System Events" to tell process "UserNotificationCenter" \
+  to click button "許可" of window 1'
+```
+
+macOS 側で拒否されている状態は、TCC を直接見れば分かる（`auth_value` 2 = 許可）:
+
+```bash
+sqlite3 "$HOME/Library/Application Support/com.apple.TCC/TCC.db" \
+  "select service,client,auth_value from access where client like '%nemo%';"
+```
+
+画面共有は **macOS のネイティブ共有ピッカー**（`useSystemPicker`）に出る。
+画面上部に「ウインドウまたは画面全体を共有」のバーが出れば経路は通っている
+（`screencapture -x` で確認できる）。選ばずに放置すると
+ページ側は `AbortError: Timeout starting video source` になる。
+
 ### スクリーンショット
 
 ```bash

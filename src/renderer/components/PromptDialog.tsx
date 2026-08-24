@@ -17,6 +17,8 @@ export function PromptDialog({ prompt }: { prompt: Prompt }): React.JSX.Element 
       return <CertificatePrompt prompt={prompt} />
     case 'external-protocol':
       return <ExternalProtocolPrompt prompt={prompt} />
+    case 'system-media':
+      return <SystemMediaPrompt prompt={prompt} />
   }
 }
 
@@ -65,6 +67,53 @@ function PermissionPrompt({
           }
         >
           許可する
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const SYSTEM_MEDIA_LABEL: Record<string, string> = {
+  microphone: 'マイク',
+  camera: 'カメラ'
+}
+
+/**
+ * macOS 側でマイク / カメラが拒否されている、という案内。
+ * Nemo で許可しても OS が渡さないので、システム設定に誘導する。
+ */
+function SystemMediaPrompt({
+  prompt
+}: {
+  prompt: Extract<Prompt, { type: 'system-media' }>
+}): React.JSX.Element {
+  const label = SYSTEM_MEDIA_LABEL[prompt.kind] ?? prompt.kind
+  return (
+    <div className="dialog" data-testid="prompt-system-media">
+      <div className="dialog-title">
+        macOS の設定で Nemo の<b>{label}</b>の使用が拒否されています
+      </div>
+      <div className="dialog-sub">
+        システム設定 &gt; プライバシーとセキュリティ &gt; {label} で Nemo をオンにしてから、
+        ページを読み込み直してください。
+      </div>
+      <div className="dialog-actions">
+        <button
+          type="button"
+          onClick={() =>
+            void window.nemo.resolvePrompt(prompt.id, { kind: 'system-media', openSettings: false })
+          }
+        >
+          閉じる
+        </button>
+        <button
+          type="button"
+          className="primary"
+          onClick={() =>
+            void window.nemo.resolvePrompt(prompt.id, { kind: 'system-media', openSettings: true })
+          }
+        >
+          システム設定を開く
         </button>
       </div>
     </div>

@@ -545,3 +545,55 @@ test('push だけ失敗した回の commit を、次の実行で取り残さな�
     other.run(['pull'])
     assert.equal(other.favorites()[0].id, 'second')
   }))
+
+/* ------------------------------------------------------------------ *
+ * 「起動中か」の判定（Nemo と Nemo-dev を取り違えない）
+ * ------------------------------------------------------------------ */
+
+test('--user-data-dir は引数まるごとで一致させる（Nemo と Nemo-dev を混同しない）', async () => {
+  const { matchesUserDataArg } = await import('./lib/config-sync.mjs')
+  const support = '/Users/someone/Library/Application Support'
+  // 実際の ps 出力に近い形（パスに空白が入るのが厄介なところ）
+  const devLine =
+    `123 /Applications/Nemo Dev.app/Contents/Frameworks/Nemo Dev Helper.app/Contents/MacOS/Nemo Dev Helper` +
+    ` --type=gpu-process --user-data-dir=${support}/Nemo-dev --gpu-preferences=X`
+  const stableLine =
+    `456 /Applications/Nemo.app/Contents/Frameworks/Nemo Helper.app/Contents/MacOS/Nemo Helper` +
+    ` --type=gpu-process --user-data-dir=${support}/Nemo --gpu-preferences=X`
+
+  // ここが前方一致だと、Nemo Dev を開いているだけで常用側の操作が止まる
+  assert.equal(matchesUserDataArg(devLine, `${support}/Nemo`), false)
+  assert.equal(matchesUserDataArg(devLine, `${support}/Nemo-dev`), true)
+  assert.equal(matchesUserDataArg(stableLine, `${support}/Nemo`), true)
+  assert.equal(matchesUserDataArg(stableLine, `${support}/Nemo-dev`), false)
+
+  // 行末で終わる場合も拾う
+  assert.equal(matchesUserDataArg(`789 x --user-data-dir=${support}/Nemo`, `${support}/Nemo`), true)
+  // 別プロファイルには一致しない
+  assert.equal(matchesUserDataArg(`789 x --user-data-dir=/tmp/other`, `${support}/Nemo`), false)
+})
+
+test('Nemo Dev だけが動いていても stable の同期は止まらない', () =>
+  withSandbox(async ({ root, lib }) => {
+    // 実プロセスは使えないので、判定に使う ps 相当の行で確かめる（上のテストと対で見る）。
+    // ここでは「dev のマーカーがあっても stable は起動中と見なさない」ことを見る。
+    const markerDir = path.join(lib.projectRoot, '.nemo-run')
+    fs.mkdirSync(markerDir, { recursive: true })
+    const marker = path.join(markerDir, `${process.pid}.json`)
+    const existed = fs.existsSync(marker)
+    const saved = existed ? fs.readFileSync(marker, 'utf8') : null
+    // 自分の pid で「dev のデータディレクトリを使って起動中」を作る
+    fs.writeFileSync(marker, JSON.stringify({ pid: process.pid, userData: path.join(root, 'Nemo-dev') }))
+    try {
+      const stableDir = path.join(root, 'Nemo')
+      process.env['NEMO_USER_DATA_DIR'] = stableDir
+      const fresh = await import(`./lib/config-sync.mjs?marker=${Date.now()}`)
+      assert.deepEqual(fresh.findRunningForChannel('stable'), [], 'dev のマーカーで stable を止めない')
+      process.env['NEMO_USER_DATA_DIR'] = path.join(root, 'Nemo-dev')
+      const forDev = await import(`./lib/config-sync.mjs?marker=${Date.now()}-2`)
+      assert.equal(forDev.findRunningForChannel('dev').length, 1, 'dev は自分のマーカーで止まる')
+    } finally {
+      if (saved === null) fs.rmSync(marker, { force: true })
+      else fs.writeFileSync(marker, saved)
+    }
+  }))

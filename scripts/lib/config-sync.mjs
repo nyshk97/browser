@@ -229,6 +229,26 @@ export function aheadBehind() {
 const PRODUCT_NAME = { dev: 'Nemo Dev', stable: 'Nemo' }
 
 /**
+ * `ps` の1行が `--user-data-dir=<target>` を**引数まるごと**として含むか。
+ *
+ * 単純な `includes` だと **`.../Nemo` が `.../Nemo-dev` に前方一致する**ので、
+ * Nemo Dev を開いているだけで常用側の操作が「起動中」と誤判定される。
+ * パスの直後が空白か行末であることまで見る。
+ *
+ * @param {string} line
+ * @param {string} target 解決済みのデータディレクトリ
+ */
+export function matchesUserDataArg(line, target) {
+  const needle = `--user-data-dir=${target}`
+  for (let index = line.indexOf(needle); index !== -1; index = line.indexOf(needle, index + 1)) {
+    const after = line[index + needle.length]
+    // 行末 / 空白なら、その引数はちょうど target を指している
+    if (after === undefined || after === ' ' || after === '\t' || after === '\n') return true
+  }
+  return false
+}
+
+/**
  * その channel の Nemo が動いているか。
  * パッケージ版は `.app/Contents/MacOS/<名前>`、開発起動は `.nemo-run/<pid>.json` で見る。
  */
@@ -252,8 +272,9 @@ export function findRunningForChannel(channel) {
       const pid = Number(line.trim().split(/\s+/)[0])
       if (!Number.isInteger(pid)) continue
 
-      // ヘルパープロセスは `--user-data-dir=<パス>` を持つので、狙ったプロファイルだけ拾える
-      if (line.includes(`--user-data-dir=${target}`)) {
+      // ヘルパープロセスは `--user-data-dir=<パス>` を持つので、狙ったプロファイルだけ拾える。
+      // **前方一致では駄目**（`.../Nemo` は `.../Nemo-dev` にも一致する）
+      if (matchesUserDataArg(line, target)) {
         if (!found.some((item) => item.pid === pid)) {
           found.push({ pid, source: 'ps', command: line.trim() })
         }

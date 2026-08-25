@@ -35,6 +35,9 @@ import { closeDb, initDb } from './store/db.js'
 import { pruneArchive } from './store/archive.js'
 import { closePermissionStore, initPermissionStore } from './store/permissions.js'
 import { closeSession, initSession, markCleanExit } from './store/session.js'
+import { closeCallWindowStore, initCallWindowStore } from './store/call-window.js'
+import { configureMeetTestUrlPrefix } from './meet-adapter.js'
+import { startCallCoordinator, stopCallCoordinator } from './call-coordinator.js'
 import { markReadyWhen, setExtensionCount } from './app-status.js'
 import { initUpdater, stopUpdater } from './updater.js'
 import { getDefaultBrowserStatus } from './default-browser.js'
@@ -109,6 +112,7 @@ app
     }
     initPins()
     initPermissionStore()
+    initCallWindowStore()
     initDb()
     pruneArchive()
     const restored = initSession()
@@ -141,6 +145,19 @@ app
     installTabSwitcher()
     startBackgroundWork()
     initUpdater()
+
+    // 会議の判定 URL の差し替え口（自走検証用）。
+    // **ゲートは `!app.isPackaged`**。`isDevChannel` では塞げない
+    // （`paths.ts` は `app.isPackaged ? BUILD_CHANNEL : 'dev'` なので、
+    //  **dev パッケージでも `isDevChannel === true`** になり裏口が残る）。
+    const meetTestPrefix = process.env['NEMO_MEET_TEST_URL_PREFIX']
+    if (meetTestPrefix && !app.isPackaged) {
+      configureMeetTestUrlPrefix(meetTestPrefix)
+      log('call.test_url_prefix', { prefix: meetTestPrefix })
+    } else if (meetTestPrefix) {
+      console.error('[nemo] パッケージ版では NEMO_MEET_TEST_URL_PREFIX を無視した')
+    }
+    startCallCoordinator()
 
     try {
       const loaded = await loadLockedExtensions(pageSession)
@@ -257,10 +274,13 @@ app.on('before-quit', () => {
   markCleanExit(collectSession())
   stopBackgroundWork()
   stopUpdater()
+  // 会議の小窓は復元しない。**ここで必ず破棄する**（webContents を残さない）
+  stopCallCoordinator()
   closeSettings()
   closePins()
   closePermissionStore()
   closeSession()
+  closeCallWindowStore()
   closeDb()
   log('app.quit', {})
   closeLogFile()

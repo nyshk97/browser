@@ -43,10 +43,13 @@ import { clearHistory, queryHistory, removeHistory } from './store/history.js'
 import { clearArchive, queryArchive, removeArchived } from './store/archive.js'
 import { getDefaultBrowserStatus, requestDefaultBrowser } from './default-browser.js'
 import { getAppStatus } from './app-status.js'
+import { isCallWindowContents } from './call-window.js'
+import { dismissCall, focusCallTarget, getCallState, toggleCallDevice } from './call-coordinator.js'
 import { checkForUpdatesManually, getUpdateState, promptRestart } from './updater.js'
 import { windowsById } from './registry.js'
 import type {
   AppStatus,
+  CallState,
   LoadedExtensionInfo,
   PromptAnswer,
   SharedState,
@@ -97,6 +100,29 @@ function senderFrameUrl(event: IpcMainInvokeEvent): string {
     return frame.url
   } catch {
     return ''
+  }
+}
+
+/**
+ * 会議の小窓（`?view=call`）からの IPC を検証する。
+ *
+ * `requireWindow` は通せない —— 会議の小窓は `NemoWindow` ではなく
+ * `windowsById` にも居ないので、必ず `unknown_sender` で弾かれる。
+ * **`windowsById` に無理に登録もしない**（`sweepSleep` など既存の全ループが
+ * タブ前提で舐めており、タブを持たないウィンドウを混ぜると壊れる）。
+ *
+ * 検査は `requireWindow` と**同じ二段**にする。
+ * 1. 送信元が coordinator が持っている小窓の UI WebContents 自身であること
+ * 2. `isUiUrl(senderFrameUrl(event))` で origin を見ること
+ */
+function requireCallWindow(event: IpcMainInvokeEvent): void {
+  if (!isCallWindowContents(event.sender)) {
+    log('ipc.rejected', { reason: 'unknown_sender', senderId: event.sender.id })
+    throw new Error('sender is not the Nemo call window')
+  }
+  if (!isUiUrl(senderFrameUrl(event))) {
+    log('ipc.rejected', { reason: 'sender_not_ui_origin', channel: 'call' })
+    throw new Error('sender is not on the Nemo UI origin')
   }
 }
 
@@ -547,6 +573,31 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('nemo:restart-for-update', (event) => {
     requireWindow(event)
     promptRestart()
+  })
+
+  /* ---- 会議の小窓 ---- */
+  // **どれも引数を取らない**。renderer に tab key を持たせず、
+  // 対象は main 側の coordinator が解決する
+  // （renderer から任意のタブを触れる経路を作らない）。
+  ipcMain.handle('call:getState', (event): CallState | null => {
+    requireCallWindow(event)
+    return getCallState()
+  })
+  ipcMain.handle('call:focusTab', (event) => {
+    requireCallWindow(event)
+    focusCallTarget()
+  })
+  ipcMain.handle('call:toggleMic', async (event) => {
+    requireCallWindow(event)
+    await toggleCallDevice('mic')
+  })
+  ipcMain.handle('call:toggleCam', async (event) => {
+    requireCallWindow(event)
+    await toggleCallDevice('cam')
+  })
+  ipcMain.handle('call:dismiss', (event) => {
+    requireCallWindow(event)
+    dismissCall()
   })
 }
 

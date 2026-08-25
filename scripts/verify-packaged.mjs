@@ -95,7 +95,11 @@ try {
       // 渡すこと自体はしない — 「常用版では何があっても開かない」を検証側でも守る。
       ...(channel === 'dev' ? { NEMO_REMOTE_DEBUGGING_PORT: debugPort } : {}),
       NEMO_USER_DATA_DIR: userDataDir,
-      NEMO_DOWNLOAD_DIR: downloadDir
+      NEMO_DOWNLOAD_DIR: downloadDir,
+      // **わざと渡す**。会議の判定 URL の差し替え口がパッケージ版で塞がっていることを
+      // 見るには、渡したうえで効かないことを確かめるしかない（計画 R6）。
+      // 「渡さずに起動して出なかった」では塞がった証明にならない。
+      NEMO_MEET_TEST_URL_PREFIX: `${pages}/meet-fake.html`
     }
   })
   if (channel === 'stable') {
@@ -160,6 +164,29 @@ try {
       versionText === `v${expectedVersion}`,
       `${versionText}（期待: v${expectedVersion}）`
     )
+
+    /*
+     * 会議の小窓の裏口（`NEMO_MEET_TEST_URL_PREFIX`）が塞がっていること（計画 R6）。
+     *
+     * ゲートは **`!app.isPackaged`**。`isDevChannel` では塞げない
+     * （`paths.ts` は `app.isPackaged ? BUILD_CHANNEL : 'dev'` なので、
+     *  **dev パッケージでも `isDevChannel === true`**）。
+     * つまり dev 版のパッケージで確かめるのが要点で、ここがその場所。
+     */
+    const meetKey = await ui.ev(
+      `window.nemo.createTab('${pages}/meet-fake.html?state=joined', { background: true }).then((k) => k)`
+    )
+    await sleep(4000)
+    const callTargets = (await (await fetch(`${cdp}/json/list`)).json()).filter((t) =>
+      t.url.includes('view=call')
+    )
+    check(
+      'パッケージ版では NEMO_MEET_TEST_URL_PREFIX が効かない（会議の小窓が出ない）',
+      callTargets.length === 0,
+      `call target ${callTargets.length} 件`
+    )
+    check('差し替えを受け付けたログも残っていない', countLogEvents(userDataDir, 'call.test_url_prefix') === 0)
+    await ui.ev(`window.nemo.closeTab(${JSON.stringify(meetKey)}).then(() => 'ok')`)
 
     // 診断ログがデータディレクトリに出ている
     const logDir = path.join(userDataDir, 'logs')

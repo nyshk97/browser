@@ -30,8 +30,8 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 毎回回すので 1 回 3 分半かかるが、関係するものだけなら 40 秒以内で終わる
 （`phase1` + `pins` の実測で 36 秒）。**最後に 1 回だけフルを通す**。
 
-指定できるのは `spike` / `phase1` / `phase2` / `pins` / `switcher` / `peek` / `restart` /
-`migration` / `db`。
+指定できるのは `spike` / `phase1` / `phase2` / `pins` / `switcher` / `peek` / `call` /
+`restart` / `migration` / `db`。
 
 - 知らない名前はエラーにする（typo で「何も回さずに PASS」にしない）
 - 回さなかったものは実行中と最後のサマリの両方に出る（フルで通ったと読み違えないため）
@@ -50,6 +50,7 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 | **Peek（ウィンドウ内ポップアップ）・小窓（Little Nemo）**・popup の受け皿・⌘O の昇格 | `mise run verify`（`verify-peek.mjs` が含まれる）+ 下の「Peek と小窓（実機）」 |
 | タブ / ウィンドウ・サイドバー・**ツールバー（アドレスバー）**・コマンドバー・ダウンロード・権限 | `mise run verify` |
 | **空状態（タブが 1 つも無いときの画面）** | `mise run verify:only phase1`（1-10。View 単位でスクショも撮れる） |
+| **会議の小窓（Meet の通話コントロール）**・`meet-adapter.ts`・sleep の除外 | `mise run verify:only call restart` + 下の「会議の小窓（実機）」 |
 | **拡張アイコンの popup の位置**（ツールバーの View オフセット） | `mise run verify:ext` |
 | 拡張まわり・Electron のバージョン | `mise run verify:ext`（+ 実機で Bitwarden） |
 | パッケージング・ネイティブ依存・fuses | `mise run package` → `mise run verify:packaged` |
@@ -760,6 +761,53 @@ mise run ext:outdated     # 新しい版が出ているかだけ見る。**何�
 
 5. **一時タブの自動アーカイブ**を実運用の設定（24 時間）で確認するのは現実的でないので、
    設定画面で 1 時間などに落として翌日見る。**ピン留めしたタブが消えていないこと**を必ず見る
+
+## 会議の小窓（Meet の通話コントロール）
+
+自走検証は `mise run verify:only call restart`。**`restart` も一緒に回す**
+（位置の復元は再起動をまたぐので、`call` だけだと `--position-read` が走らない）。
+
+`verify-call.mjs` が見ているもの:
+
+- 会議タブから離れると出る / 戻ると **hide だけ**（破棄しない）/ ✕ のあとは戻るまで出ない
+- 小窓のマイク・カメラが**ページ側の `data-is-muted` を実際に変える**（押した結果をページで裏取り）。
+  逆にページ側でミュートすると小窓が追従する
+- 縮退（プローブが読めない）→ 戻るボタンだけ・経過時間を出さない → **復帰しても経過時間が 0 に戻らない**。
+  再参加のときだけ 0 から数え直す
+- 複数 Meet / retarget / `dismissed` はタブ単位 / 古いプローブ応答で復活しない
+- **会議中のタブが寝ない**（✕ のあとも・縮退中も）。会議が終わったら寝るようになる
+- 開閉 10 回でページ target 数がベースへ戻る（`webContents` の閉じ漏れ）
+- 小窓以外の sender から `call:*` を撃つと弾かれる
+
+**偽 Meet は `test-pages/meet-fake.html`**。本物と同じ目印（`[data-is-muted]` の 2 ボタン・
+Material Icons の合字・参加中だけ現れる `[data-participant-id]`）を持たせてある。
+判定 URL の差し替えは **`NEMO_MEET_TEST_URL_PREFIX`（URL の prefix 単位）**で、
+`verify-all.mjs` の `startApp()` が採番済みポートから組んで渡す。
+**origin 単位にしない** —— `test-pages/` は単一ポートから配信しているので、
+`index.html` まで会議候補になってフル検証中ずっと縮退した小窓が出る。
+
+裏口が塞がっていることは `mise run package` → `mise run verify:packaged` で見る。
+**環境変数を実際に渡して**偽 Meet の URL を開き、小窓が出ないことまで確かめる
+（渡さずに起動して出なかった、では証明にならない）。
+
+### 実機で人が見る分
+
+自走検証では **Space・フォーカス・⌘H** が原理的に見られないので、ここは人が見る。
+
+1. 実際の Meet の会議に参加し、**他アプリへ移ると小窓が出る**こと。Nemo で別タブを
+   見ているときも出ること。会議タブへ戻ると引っ込むこと
+2. **他アプリをフルスクリーンにしても小窓が浮いている**こと（R2。`type: 'panel'` +
+   `setAlwaysOnTop(true, 'floating')` で成立しているか）
+3. **⌘H すると小窓も一緒に隠れる**（R1 の結論。Electron に `canHide` 相当の API が無い）。
+   ⌘Tab で戻せば再び出る
+4. マイク・カメラを押すと**実際に切り替わり、Meet 側の表示と一致する**こと
+   （反転していないこと。ここを間違えると「ミュートしたつもりで喋り続ける」）
+5. 戻るボタンで会議タブに 1 クリックで戻れること（別ウィンドウ・別 Space でも）
+6. バーを掴んで動かし、**次に出たとき同じ位置に出る**こと
+7. 会議を抜けると小窓が消えること。会議を数回やっても Nemo のメモリが増えていかないこと
+   （`WebContentsView` 1 枚で約 89MB。閉じ漏れると会議のたびに漏れる）
+8. **Dock アイコンが消えたりちらついたりしない**こと（`setVisibleOnAllWorkspaces` を
+   使っていないことの確認。小窓と同じ）
 
 ## Peek と小窓（実機で人が見る分）
 

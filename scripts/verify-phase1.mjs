@@ -548,7 +548,8 @@ await ui.ev(`window.nemo.addFavorite(${JSON.stringify(reopened)}).then(() => 'ok
    * DESIGN.md が「わずかに上」と言っているのは**候補が数件出た状態**のことなので、
    * 候補を積んだまま測ると仕様どおりでも落ちる（実際に踏んだ）。
    */
-  for (const key of seeded) await ui.ev(`window.nemo.closeTab(${JSON.stringify('%KEY%')}).then(() => 'ok')`.replace('%KEY%', key))
+  for (const key of seeded)
+    await ui.ev(`window.nemo.closeTab(${JSON.stringify('%KEY%')}).then(() => 'ok')`.replace('%KEY%', key))
   seeded.length = 0
   await overlay.ev(`(() => {
     const input = document.querySelector('.cmd input')
@@ -1032,8 +1033,7 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
   let url = null
   for (let i = 0; i < 40 && !url; i += 1) {
     url =
-      (await listTargets(CDP)).find((t) => t.url.includes('view=sidebar') && !known.has(t.url))?.url ??
-      null
+      (await listTargets(CDP)).find((t) => t.url.includes('view=sidebar') && !known.has(t.url))?.url ?? null
     if (!url) await sleep(300)
   }
   const windowId = url?.match(/window=(\d+)/)?.[1] ?? null
@@ -1078,11 +1078,7 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
         .then(JSON.parse)
       check('マークは 64px', dom.mark.size === 64, `${dom.mark.size}px`)
       check('マークは中央にある', Math.abs(dom.mark.cx - dom.w / 2) <= 1, `cx=${dom.mark.cx} w=${dom.w}`)
-      check(
-        'マークの色は --nemo-ghost',
-        dom.markColor === 'rgba(232, 232, 238, 0.14)',
-        dom.markColor
-      )
+      check('マークの色は --nemo-ghost', dom.markColor === 'rgba(232, 232, 238, 0.14)', dom.markColor)
       check(
         'キーの表記は英語',
         dom.keys.join('|') === '⌘TNew Tab|⌘⇧TReopen Closed Tab',

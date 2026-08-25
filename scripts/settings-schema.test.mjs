@@ -7,7 +7,9 @@ import {
   normalizeSettings,
   normalizeStoredUrl,
   readVersioned,
-  normalizeSession
+  normalizeSession,
+  normalizeCallWindow,
+  fitsAnyWorkArea
 } from '../src/shared/settings-schema.js'
 
 test('壊れた設定は既定値に落ちる', () => {
@@ -297,4 +299,41 @@ test('移行後の activeIndex は「元のアクティブタブの新しい位�
   const gone = normalizeSession({ windows: [v2Window([tmp(1), pin('p1'), tmp(2)], 1)] })
   assert.equal(gone.windows[0].activeIndex, 0)
   assert.equal(gone.windows[0].tabs[0].url, 'https://tmp1.example/')
+})
+
+/* ------------------------------------------------------------------ *
+ * 会議の小窓の位置
+ * ------------------------------------------------------------------ */
+
+test('会議の小窓の位置は壊れていれば null に落ちる', () => {
+  assert.deepEqual(normalizeCallWindow(null), { position: null })
+  assert.deepEqual(normalizeCallWindow({}), { position: null })
+  assert.deepEqual(normalizeCallWindow({ position: { x: 10 } }), { position: null })
+  assert.deepEqual(normalizeCallWindow({ position: { x: 'a', y: 1, displayId: 1 } }), { position: null })
+})
+
+test('会議の小窓の位置は整数へ丸めて読む', () => {
+  assert.deepEqual(normalizeCallWindow({ position: { x: 10.4, y: 20.6, displayId: 7 } }), {
+    position: { x: 10, y: 21, displayId: 7 }
+  })
+})
+
+test('保存位置は workArea に収まるときだけ使う（画面外なら捨てる）', () => {
+  const size = { width: 304, height: 52 }
+  const laptop = { x: 0, y: 25, width: 1440, height: 875 }
+  const external = { x: 1440, y: 0, width: 1920, height: 1080 }
+
+  // 収まる
+  assert.equal(fitsAnyWorkArea({ x: 1100, y: 800 }, size, [laptop]), true)
+  // 右端をわずかにはみ出す（幅ぶんを見ていない実装だとここが通ってしまう）
+  assert.equal(fitsAnyWorkArea({ x: 1200, y: 800 }, size, [laptop]), false)
+  // 下端をはみ出す
+  assert.equal(fitsAnyWorkArea({ x: 100, y: 870 }, size, [laptop]), false)
+  // メニューバーぶん上にはみ出す
+  assert.equal(fitsAnyWorkArea({ x: 100, y: 0 }, size, [laptop]), false)
+  // 外部モニタを外したあと（そのモニタの座標にはもう収まらない）
+  assert.equal(fitsAnyWorkArea({ x: 3000, y: 500 }, size, [laptop, external]), true)
+  assert.equal(fitsAnyWorkArea({ x: 3000, y: 500 }, size, [laptop]), false)
+  // モニタが1枚も無い（起動直後の異常系）
+  assert.equal(fitsAnyWorkArea({ x: 0, y: 0 }, size, []), false)
 })

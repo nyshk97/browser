@@ -10,20 +10,18 @@ import {
   type WebContents
 } from 'electron'
 import { randomUUID } from 'node:crypto'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import type { ElectronChromeExtensions } from 'electron-chrome-extensions'
-import { PAGE_PARTITION, UI_INDEX_URL, UI_PARTITION } from './paths.js'
+import { PAGE_PARTITION } from './paths.js'
 import {
   BLANK_URL,
   applySessionSecurityDefaults,
   applyWebContentsSecurityDefaults,
   isLoadedExtensionUrl,
-  isUiUrl,
   redactUrl,
   resolveNavigationTarget
 } from './security.js'
 import { log, logError } from './log.js'
+import { createUiView, disposeUiView, type UiViewKind } from './ui-view.js'
 import { buildSwipeInjection } from '../shared/swipe-gesture.js'
 import { cancelPrompts, currentPrompt, setPromptNotifier } from './prompts.js'
 import { getSettings } from './store/settings.js'
@@ -139,9 +137,6 @@ const MINI_SIZE = { width: 460, height: 560 }
 const MINI_CASCADE_STEP = 30
 /** 小窓の上限。**ソフト上限**で、opener チェーンを守っている間だけ超過を許す（計画 R10）。 */
 const MINI_WINDOW_CAP = 4
-
-const moduleDir = path.dirname(fileURLToPath(import.meta.url))
-const uiPreloadPath = path.join(moduleDir, '..', 'preload', 'ui.cjs')
 
 let extensions: ElectronChromeExtensions | null = null
 
@@ -534,6 +529,7 @@ export class NemoTab {
       wc.close()
     }
     log('tab.slept', { key: this.key, windowId: this.window.id })
+    notifyCall()
   }
 
   toState(): TabState {
@@ -615,17 +611,22 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
     if (win().activeTabKey !== tab.key) tab.unread = true
     notify()
   })
+  // 会議の検知は **`dom-ready` / `did-navigate` / `did-navigate-in-page` の3つ**で拾う。
+  // **`did-navigate` を必ず入れる**（bfcache から復元されると `dom-ready` は出ない）。
+  wc.on('dom-ready', () => notifyCall(tab))
   wc.on('did-navigate', (_event, url) => {
     syncUrl()
     remember(() => recordVisit(url, tab.title))
     tab.find = null
     notify()
+    notifyCall(tab)
   })
   wc.on('did-navigate-in-page', (_event, url, isMainFrame) => {
     if (!isMainFrame) return
     syncUrl()
     remember(() => recordVisit(url, tab.title))
     notify()
+    notifyCall(tab)
   })
   wc.on('did-finish-load', () => {
     syncUrl()
@@ -876,65 +877,6 @@ function attachSwipeNavigation(tab: NemoTab, wc: WebContents): void {
   })
 }
 
-/**
- * ブラウザ UI の WebContents を `nemo://ui/` から出さない。
- *
- * UI の preload は `window.nemo`（タブ操作・ナビゲーション）を公開している。
- * もし UI View が外部ページへ遷移すると、**そのページに特権 API が渡る**。
- * UI に掛けた CSP は遷移先には効かないので、ここで塞ぐ必要がある。
- *
- * 現実の経路として一番ありうるのは「リンクやファイルをサイドバーに
- * ドラッグ & ドロップする」で、これは普通にナビゲーションを起こす。
- */
-/**
- * ブラウザ UI の View 種別。
- * - `sidebar` … 常時表示のサイドバー
- * - `toolbar` … ページ領域の上端に敷くアドレスバー（通常ウィンドウのみ・常時表示）
- * - `overlay` … コマンドバー等（必要なときだけ）
- * - `peek` … Peek の暗幕と ✕ / ⌘O ボタン（透明）
- * - `empty` … タブが 1 つも無いときにページ領域へ敷く画面
- * - `mini` … 小窓の上部バー
- */
-export type UiViewKind = 'sidebar' | 'toolbar' | 'overlay' | 'peek' | 'empty' | 'mini'
-
-function lockUiNavigation(contents: WebContents, view: UiViewKind, uiUrl: string): void {
-  const guard = (phase: string, url: string, preventDefault: () => void): void => {
-    if (isUiUrl(url)) return
-    preventDefault()
-    log('ui.navigation_blocked', { view, phase, target: redactUrl(url) })
-  }
-
-  contents.on('will-navigate', (event, url) => {
-    guard('will-navigate', url, () => event.preventDefault())
-  })
-  contents.on('will-redirect', (event, url) => {
-    guard('will-redirect', url, () => event.preventDefault())
-  })
-  contents.on('will-frame-navigate', (event) => {
-    guard('will-frame-navigate', event.url, () => event.preventDefault())
-  })
-
-  // UI から新しいウィンドウは開かせない（開くのは Nemo 側の createWindow だけ）
-  contents.setWindowOpenHandler(({ url }) => {
-    log('ui.window_open_blocked', { view, target: redactUrl(url) })
-    return { action: 'deny' }
-  })
-
-  contents.on('will-attach-webview', (event) => {
-    event.preventDefault()
-    log('ui.webview_blocked', { view })
-  })
-
-  // 最後の砦。上のどれかをすり抜けて外部ページに着いてしまったら、
-  // 特権つきのまま放置せず UI に戻す（戻り先は必ず UI なのでループしない）。
-  contents.on('did-navigate', (_event, url) => {
-    if (isUiUrl(url)) return
-    log('ui.navigation_reverted', { view, target: redactUrl(url) })
-    // 戻り先は自分の view の URL（`?view=` を落とすと別の UI になってしまう）
-    void contents.loadURL(uiUrl)
-  })
-}
-
 /* ------------------------------------------------------------------ *
  * ウィンドウ
  * ------------------------------------------------------------------ */
@@ -949,6 +891,35 @@ let overlayChangeListener: ((win: NemoWindow, kind: OverlayKind) => void) | null
 
 export function setOverlayChangeListener(fn: (win: NemoWindow, kind: OverlayKind) => void): void {
   overlayChangeListener = fn
+}
+
+/**
+ * 会議の小窓の coordinator（`call-coordinator.ts`）。
+ *
+ * registry から import すると循環するので**注入で受ける**（`overlayChangeListener` と同じ形）。
+ * - `refresh` … 候補・表示対象を計算し直す。**何度呼んでもよい**（冪等）
+ * - `isSleepExempt` … そのタブを sleep / 自動アーカイブの対象から外すか（計画 R3）
+ */
+interface CallWatcher {
+  refresh(navigated?: NemoTab): void
+  isSleepExempt(tab: NemoTab): boolean
+}
+
+let callWatcher: CallWatcher | null = null
+
+export function setCallWatcher(watcher: CallWatcher): void {
+  callWatcher = watcher
+}
+
+/**
+ * 「会議タブの候補・見え方が変わったかもしれない」を coordinator へ知らせる。
+ *
+ * `navigated` を渡すと「そのタブは今 document が変わった」の合図になり、
+ * coordinator は次の周期を待たずにプローブし直す。
+ * これが無いと、**タブを開いてから参加が検知されるまで最大5秒かかる**。
+ */
+function notifyCall(navigated?: NemoTab): void {
+  callWatcher?.refresh(navigated)
 }
 
 /**
@@ -1057,7 +1028,13 @@ export class NemoWindow {
 
     // 通常ウィンドウの MRU を記録する（小窓の昇格先を決めるのに使う）。
     // **小窓は記録しない**。記録すると小窓から小窓へ昇格しようとする。
-    this.baseWindow.on('focus', () => rememberNormalWindowFocus(this))
+    this.baseWindow.on('focus', () => {
+      rememberNormalWindowFocus(this)
+      // 「会議タブが見えているか」は**フォーカスにも依る**（他アプリへ移ったら出す）。
+      // ここを拾わないと、アプリを行き来しても小窓が出入りしない。
+      notifyCall()
+    })
+    this.baseWindow.on('blur', () => notifyCall())
 
     this.baseWindow.on('resize', () => this.layout())
     this.baseWindow.on('enter-full-screen', () => {
@@ -1078,50 +1055,36 @@ export class NemoWindow {
     })
   }
 
+  /** UI View を作る（生成とナビゲーション防御は `ui-view.ts` に寄せてある）。 */
   private createUiView(view: UiViewKind): WebContentsView {
-    // オーバーレイと Peek の暗幕は下のページを透かす必要がある
-    const transparent = view === 'overlay' || view === 'peek'
-    const contentsView = new WebContentsView({
-      webPreferences: {
-        // UI はページと別セッションに置く（拡張の content script を UI に入れない）
-        session: session.fromPartition(UI_PARTITION),
-        preload: uiPreloadPath,
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-        transparent
-      }
+    return createUiView({
+      view,
+      windowId: this.id,
+      isPrivate: this.isPrivate,
+      onLoad: () => this.onUiViewLoaded(view)
     })
-    if (transparent) contentsView.setBackgroundColor('#00000000')
+  }
 
-    const uiUrl = `${UI_INDEX_URL}?view=${view}&window=${this.id}${this.isPrivate ? '&private=1' : ''}`
-    lockUiNavigation(contentsView.webContents, view, uiUrl)
-
-    void contentsView.webContents.loadURL(uiUrl)
-
-    // `once` ではなく `on`。dev の HMR や、何らかの理由で読み直したときにも
-    // 状態を送り直さないと、UI が空のまま復帰しない。
-    contentsView.webContents.on('did-finish-load', () => {
-      if (view === 'sidebar' || view === 'mini') {
-        // 小窓はサイドバーを持たないので、上部バーの読み込み完了を「UI が揃った」とみなす
-        this.uiReady = true
-        const queued = this.pendingAfterReady
-        this.pendingAfterReady = []
-        // 破棄済みなら実行しない（ロード完了と close が競合する）
-        if (!this.destroyed) for (const fn of queued) fn()
-        this.settle()
-      } else if (view === 'overlay') {
-        // オーバーレイは購読しかしないので、読み込み直後に**今の状態を送り直す**。
-        // ここが無いと、起動直後に出た権限・認証ダイアログが
-        // 「購読前に送られて誰も受け取らない」状態になり、
-        // ページ側の callback が永久に解決しない（実際に競合しうる）。
-        this.overlayWebContents.send('nemo:overlay', this.overlay)
-        this.pushPrompt(currentPrompt(this.id))
-      }
-      this.pushState()
-      this.pushShared()
-    })
-    return contentsView
+  /** UI View の読み込みが終わるたびに呼ばれる（`once` ではない。HMR や読み直しでも通る）。 */
+  private onUiViewLoaded(view: UiViewKind): void {
+    if (view === 'sidebar' || view === 'mini') {
+      // 小窓はサイドバーを持たないので、上部バーの読み込み完了を「UI が揃った」とみなす
+      this.uiReady = true
+      const queued = this.pendingAfterReady
+      this.pendingAfterReady = []
+      // 破棄済みなら実行しない（ロード完了と close が競合する）
+      if (!this.destroyed) for (const fn of queued) fn()
+      this.settle()
+    } else if (view === 'overlay') {
+      // オーバーレイは購読しかしないので、読み込み直後に**今の状態を送り直す**。
+      // ここが無いと、起動直後に出た権限・認証ダイアログが
+      // 「購読前に送られて誰も受け取らない」状態になり、
+      // ページ側の callback が永久に解決しない（実際に競合しうる）。
+      this.overlayWebContents.send('nemo:overlay', this.overlay)
+      this.pushPrompt(currentPrompt(this.id))
+    }
+    this.pushState()
+    this.pushShared()
   }
 
   /**
@@ -1524,15 +1487,22 @@ export class NemoWindow {
     this.tabs.length = 0
     this.activeTabKey = null
 
-    for (const view of [this.chromeView, this.overlayView, this.peekChromeViewRef, this.emptyViewRef]) {
+    for (const view of [
+      this.chromeView,
+      this.toolbarView,
+      this.overlayView,
+      this.peekChromeViewRef,
+      this.emptyViewRef
+    ]) {
       if (!view) continue
-      this.baseWindow.contentView.removeChildView(view)
-      if (!view.webContents.isDestroyed()) view.webContents.close()
+      disposeUiView(this.baseWindow.contentView, view)
     }
     this.peekChromeViewRef = null
     this.emptyViewRef = null
 
     windowsById.delete(this.id)
+    // 会議タブごと消えた可能性があるので、候補と表示対象を見直す
+    notifyCall()
     // 覚えている「chrome から見た active」を捨てる。
     // WebContents の id は再利用されるので、残すと別ウィンドウの同期を握り潰しうる。
     lastForegroundContentsId.delete(this.id)
@@ -1764,6 +1734,7 @@ export function createTab(win: NemoWindow, url: string = BLANK_URL, options: Cre
   }
 
   win.pushState()
+  notifyCall()
   return tab
 }
 
@@ -1841,6 +1812,7 @@ export function selectTab(win: NemoWindow, key: string): void {
   if (already) {
     // 既に選択済みでも、Peek の出入りで前面のページが変わっていることがある
     syncForegroundTab(win)
+    notifyCall()
     return
   }
 
@@ -1848,6 +1820,7 @@ export function selectTab(win: NemoWindow, key: string): void {
   syncForegroundTab(win)
   log('tab.select', { key: tab.key, windowId: win.id })
   win.pushState()
+  notifyCall()
 }
 
 /* ------------------------------------------------------------------ *
@@ -2039,6 +2012,7 @@ export function removeTab(
   win.layout()
   syncForegroundTab(win)
   win.pushState()
+  notifyCall()
 }
 
 /**
@@ -2661,6 +2635,9 @@ function sweepSleep(): void {
       if (tab.lastActiveAt > threshold) continue
       // 音が出ているタブは寝かせない
       if (tab.webContents?.isCurrentlyAudible()) continue
+      // 会議中のタブは寝かせない（計画 R3）。全員ミュートの静かな瞬間は
+      // `isCurrentlyAudible()` が false なので、これが無いと会議中に切れる
+      if (callWatcher?.isSleepExempt(tab)) continue
       tab.sleep()
       slept = true
     }
@@ -2695,6 +2672,8 @@ function sweepArchive(): void {
       if (tab.peek) continue
       if (tab.lastActiveAt > threshold) continue
       if (tab.webContents?.isCurrentlyAudible()) continue
+      // 会議中のタブは閉じない（sleep と同じ除外。計画 R3）
+      if (callWatcher?.isSleepExempt(tab)) continue
       if (!/^https?:\/\//.test(tab.url)) {
         // 空タブは残しても意味が無いので、記録せずに閉じるだけ
         removeTab(win, tab.key)

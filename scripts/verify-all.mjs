@@ -50,12 +50,13 @@ const KNOWN_TARGETS = [
   'pins', // ピン留め / Favorites
   'switcher', // タブスイッチャー（⌃M）
   'peek', // Peek と小窓
+  'call', // 会議の小窓（Meet の通話コントロール）
   'restart', // 再起動をまたぐ永続性（spike / phase1 / pins の write → read）
   'migration', // 旧版セッションからの移行
   'db' // 旧スキーマの履歴 DB からの移行
 ]
 /** アプリとページサーバを立てる必要があるもの（migration / db は自分で起動する）。 */
-const NEEDS_APP = ['spike', 'phase1', 'phase2', 'pins', 'switcher', 'peek', 'restart']
+const NEEDS_APP = ['spike', 'phase1', 'phase2', 'pins', 'switcher', 'peek', 'call', 'restart']
 
 const onlyAt = process.argv.indexOf('--only')
 const only = new Set(
@@ -67,9 +68,7 @@ if (onlyAt !== -1 && only.size === 0) {
 }
 const unknown = [...only].filter((name) => !KNOWN_TARGETS.includes(name))
 if (unknown.length > 0) {
-  console.error(
-    `[verify] 知らない検証名: ${unknown.join(', ')}\n  使えるのは: ${KNOWN_TARGETS.join(' / ')}`
-  )
+  console.error(`[verify] 知らない検証名: ${unknown.join(', ')}\n  使えるのは: ${KNOWN_TARGETS.join(' / ')}`)
   process.exit(2)
 }
 /** その検証を回すか（`--only` を渡していなければ全部回す）。 */
@@ -80,6 +79,15 @@ const debugPort = String(await getFreePort())
 const pagesPort = String(await getFreePort())
 const cdp = `http://127.0.0.1:${debugPort}`
 const pages = `http://127.0.0.1:${pagesPort}`
+/**
+ * 会議として扱う URL の差し替え口（会議の小窓の検証）。
+ *
+ * **URL の prefix 単位**にする。origin 単位にすると `test-pages/` は単一ポートから
+ * 配信されているので `index.html` や `login.html` まで会議候補になり、
+ * フル検証のあいだじゅう縮退した小窓が出て他の検証に干渉する（計画 R11）。
+ * 値は**採番済みのポートから組む**（固定値を書かない）。
+ */
+const meetPrefix = `${pages}/meet-fake.html`
 
 /**
  * 自走検証は CDP を開けるので、**実 Vault の入ったプロファイルでは絶対に回さない**。
@@ -137,7 +145,9 @@ async function startApp() {
       ...process.env,
       NEMO_REMOTE_DEBUGGING_PORT: debugPort,
       NEMO_USER_DATA_DIR: userDataDir,
-      NEMO_DOWNLOAD_DIR: downloadDir
+      NEMO_DOWNLOAD_DIR: downloadDir,
+      // **アプリ側へ渡すのがここ**。検証スクリプトにだけ渡しても届かない
+      NEMO_MEET_TEST_URL_PREFIX: meetPrefix
     }
   })
   await waitForHttp(`${cdp}/json/list`, {
@@ -161,7 +171,8 @@ const runVerify = (script, args = []) =>
       NEMO_CDP: cdp,
       NEMO_TEST_PAGES: pages,
       NEMO_USER_DATA_DIR: userDataDir,
-      NEMO_DOWNLOAD_DIR: downloadDir
+      NEMO_DOWNLOAD_DIR: downloadDir,
+      NEMO_MEET_TEST_URL_PREFIX: meetPrefix
     }
   })
 
@@ -171,6 +182,7 @@ const phase2 = (args) => runVerify('scripts/verify-phase2.mjs', args)
 const pins = (args) => runVerify('scripts/verify-pins.mjs', args)
 const switcher = (args) => runVerify('scripts/verify-switcher.mjs', args)
 const peek = (args) => runVerify('scripts/verify-peek.mjs', args)
+const call = (args) => runVerify('scripts/verify-call.mjs', args)
 
 let exitCode = 0
 try {
@@ -240,6 +252,12 @@ try {
     if (peekCode !== 0) exitCode = peekCode
   }
 
+  if (want('call')) {
+    console.log('\n=== 自走検証（会議の小窓）')
+    const callCode = await call([])
+    if (callCode !== 0) exitCode = callCode
+  }
+
   if (want('restart')) {
     console.log('\n=== 再起動をまたぐ永続性')
     await spike(['--storage-write'])
@@ -249,6 +267,13 @@ try {
     if (lazyWriteCode !== 0) exitCode = lazyWriteCode
     await stopAll()
 
+    // 会議の小窓の位置は**アプリを止めてから**仕込む。
+    // 起動中に書くと、終了時の `closeCallWindowStore()` が上書きしてしまう。
+    if (want('call')) {
+      const plantCode = await call(['--position-plant'])
+      if (plantCode !== 0) exitCode = plantCode
+    }
+
     await startPagesServer()
     await startApp()
     const storageCode = await spike(['--storage-read'])
@@ -257,6 +282,12 @@ try {
     if (sessionCode !== 0) exitCode = sessionCode
     const lazyReadCode = await pins(['--lazy-read'])
     if (lazyReadCode !== 0) exitCode = lazyReadCode
+    // **タブを作る検証はいちばん最後に置く**。会議の小窓を出すには会議タブが要るが、
+    // その1枚が「復元直後のタブは sleep 状態」の検査に混ざって落とす（実際に踏んだ）。
+    if (want('call')) {
+      const positionCode = await call(['--position-read'])
+      if (positionCode !== 0) exitCode = positionCode
+    }
   }
 
   if (want('migration')) {
@@ -311,7 +342,5 @@ try {
 }
 
 const scope = only.size > 0 ? `（--only ${[...only].join(' ')} だけ）` : ''
-console.log(
-  exitCode === 0 ? `\n=== 自走検証: すべて PASS${scope}` : `\n=== 自走検証: FAIL あり${scope}`
-)
+console.log(exitCode === 0 ? `\n=== 自走検証: すべて PASS${scope}` : `\n=== 自走検証: FAIL あり${scope}`)
 process.exit(exitCode)

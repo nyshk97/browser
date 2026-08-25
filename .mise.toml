@@ -65,7 +65,7 @@ run = "node scripts/verify-all.mjs"
 
 [tasks."verify:only"]
 description = "自走検証のうち指定したものだけ回す（例: mise run verify:only phase1 pins）"
-usage = 'arg "<targets>" var=#true help="spike / phase1 / phase2 / pins / switcher / peek / restart / migration / db"'
+usage = 'arg "<targets>" var=#true help="spike / phase1 / phase2 / pins / switcher / peek / call / restart / migration / db"'
 run = '''
 #!/usr/bin/env bash
 set -euo pipefail

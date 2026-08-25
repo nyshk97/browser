@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>偽 Meet（会議の小窓の検証用）</title>
+    <style>
+      body {
+        font: 13px/1.6 -apple-system, sans-serif;
+        background: #202124;
+        color: #e8eaed;
+        padding: 24px;
+      }
+      button {
+        font: inherit;
+        color: inherit;
+        background: #3c4043;
+        border: 1px solid #5f6368;
+        border-radius: 6px;
+        padding: 6px 12px;
+        cursor: pointer;
+      }
+      .bar {
+        display: flex;
+        gap: 8px;
+        margin: 16px 0;
+      }
+      .ctl[data-is-muted='true'] {
+        background: #ea4335;
+      }
+      pre {
+        background: #303134;
+        padding: 12px;
+        border-radius: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>偽 Meet</h1>
+    <p>
+      会議の小窓（<code>call-coordinator.ts</code> / <code>meet-adapter.ts</code>）の自走検証用。
+      <b>本物と同じ目印</b>を持たせてある。
+    </p>
+    <ul>
+      <li><code>[data-is-muted]</code> を持つボタン 2 つ（マイク / カメラ）。<b>true = 切れている</b></li>
+      <li>見分けは Material Icons の合字テキスト（<code>mic</code> / <code>videocam</code>）</li>
+      <li>参加中の目印は <code>[data-participant-id]</code>（待機画面には無い）</li>
+    </ul>
+
+    <!--
+      会議の映像タイル。**参加中だけ存在する**。
+      本物の Meet も待機画面（グリーンルーム）には参加者タイルを出さないので、
+      「参加中か」の判定はこの有無で行う（URL も document も変わらないため）。
+    -->
+    <div id="stage"></div>
+
+    <!-- マイク / カメラ。本物と同じく `data-is-muted` を持つ -->
+    <div class="bar" id="controls">
+      <button class="ctl" id="mic" data-is-muted="false">
+        <i class="google-material-icons">mic</i>
+        <span>マイク</span>
+      </button>
+      <button class="ctl" id="cam" data-is-muted="false">
+        <i class="google-material-icons">videocam</i>
+        <span>カメラ</span>
+      </button>
+    </div>
+
+    <div class="bar">
+      <button id="join">参加する</button>
+      <button id="leave">退出する（待機画面へ）</button>
+      <button id="break">プローブを壊す（コントロールを消す）</button>
+      <button id="repair">プローブを直す</button>
+      <button id="go-away">別のページへ移動する</button>
+    </div>
+
+    <pre id="status"></pre>
+
+    <script>
+      const params = new URLSearchParams(location.search)
+      const stage = document.getElementById('stage')
+      const controls = document.getElementById('controls')
+      const mic = document.getElementById('mic')
+      const cam = document.getElementById('cam')
+      const status = document.getElementById('status')
+
+      /** 押された回数。**小窓のボタンが本当にページへ届いたか**をここで裏取りする。 */
+      window.__clicks = { mic: 0, cam: 0 }
+
+      function setJoined(joined) {
+        stage.innerHTML = joined
+          ? '<div data-participant-id="fake-self">参加中（自分のタイル）</div>'
+          : '<p>待機画面（まだ参加していない）</p>'
+        render()
+      }
+
+      function render() {
+        status.textContent = JSON.stringify(
+          {
+            joined: stage.querySelector('[data-participant-id]') !== null,
+            micMuted: mic.getAttribute('data-is-muted'),
+            camMuted: cam.getAttribute('data-is-muted'),
+            controlsAttached: controls.isConnected,
+            clicks: window.__clicks
+          },
+          null,
+          2
+        )
+      }
+
+      for (const [el, name] of [
+        [mic, 'mic'],
+        [cam, 'cam']
+      ]) {
+        el.addEventListener('click', () => {
+          const muted = el.getAttribute('data-is-muted') === 'true'
+          el.setAttribute('data-is-muted', muted ? 'false' : 'true')
+          window.__clicks[name] += 1
+          render()
+        })
+      }
+
+      document.getElementById('join').addEventListener('click', () => setJoined(true))
+      document.getElementById('leave').addEventListener('click', () => setJoined(false))
+      // コントロールごと消すと `[data-is-muted]` が 0 件になり、プローブが null を返す（縮退）
+      document.getElementById('break').addEventListener('click', () => {
+        controls.remove()
+        render()
+      })
+      document.getElementById('repair').addEventListener('click', () => {
+        if (!controls.isConnected) stage.after(controls)
+        render()
+      })
+      document.getElementById('go-away').addEventListener('click', () => {
+        location.href = '/index.html'
+      })
+
+      // 初期状態はクエリで決める（`?state=joined` / 既定は待機画面）
+      setJoined(params.get('state') === 'joined')
+      if (params.get('mic') === 'off') mic.setAttribute('data-is-muted', 'true')
+      if (params.get('cam') === 'off') cam.setAttribute('data-is-muted', 'true')
+      render()
+    </script>
+  </body>
+</html>

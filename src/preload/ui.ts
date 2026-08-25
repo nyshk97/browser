@@ -3,6 +3,7 @@ import { injectBrowserAction } from 'electron-chrome-extensions/browser-action'
 import type {
   AppStatus,
   ArchivedTab,
+  CallState,
   DefaultBrowserStatus,
   HistoryEntry,
   LoadedExtensionInfo,
@@ -111,6 +112,13 @@ const api: NemoUiApi = {
   switchTab: () => ipcRenderer.invoke('nemo:switch-tab') as Promise<void>,
   pickSwitcherTab: (key) => ipcRenderer.invoke('nemo:pick-switcher-tab', key) as Promise<void>,
   cancelSwitcher: () => ipcRenderer.invoke('nemo:cancel-switcher') as Promise<void>,
+
+  getCallState: () => ipcRenderer.invoke('call:getState') as Promise<CallState | null>,
+  callFocusTab: () => ipcRenderer.invoke('call:focusTab') as Promise<void>,
+  callToggleMic: () => ipcRenderer.invoke('call:toggleMic') as Promise<void>,
+  callToggleCam: () => ipcRenderer.invoke('call:toggleCam') as Promise<void>,
+  callDismiss: () => ipcRenderer.invoke('call:dismiss') as Promise<void>,
+  onCallState: (listener) => subscribe<CallState>('call:state', listener),
 
   onWindowState: (listener) => subscribe<WindowState>('nemo:window-state', listener),
   onSharedState: (listener) => subscribe<SharedState>('nemo:shared-state', listener),

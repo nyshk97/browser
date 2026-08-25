@@ -6,6 +6,7 @@ import { Overlay } from './components/Overlay.js'
 import { EmptyState } from './components/EmptyState.js'
 import { Peek } from './components/Peek.js'
 import { MiniBar } from './components/MiniBar.js'
+import { CallBar } from './components/CallBar.js'
 import './styles.css'
 
 const root = document.getElementById('root')
@@ -21,6 +22,7 @@ if (!root) throw new Error('#root not found')
  * - `peek` … Peek の暗幕と ✕ / ⌘O（Peek が出ているときだけ）
  * - `empty` … タブが 1 つも無いときの画面（そのときだけ）
  * - `mini` … 小窓の上部バー
+ * - `call` … 会議の小窓（他アプリの上に浮くバー。**ウィンドウの中身がこれ1枚だけ**）
  */
 const view = new URLSearchParams(location.search).get('view')
 document.body.dataset['view'] = view ?? 'sidebar'
@@ -31,6 +33,7 @@ function Root(): React.JSX.Element | null {
   if (view === 'peek') return <Peek />
   if (view === 'empty') return <EmptyState />
   if (view === 'mini') return <MiniBar />
+  if (view === 'call') return <CallBar />
   return <Sidebar />
 }
 

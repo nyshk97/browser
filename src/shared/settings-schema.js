@@ -383,3 +383,64 @@ function normalizeBounds(raw) {
   if (width < 200 || height < 200) return null
   return { x, y, width, height }
 }
+
+/* ------------------------------------------------------------------ *
+ * 会議の小窓の位置
+ * ------------------------------------------------------------------ */
+
+/** 会議の小窓の位置ファイルのスキーマ版。 */
+export const CALL_WINDOW_VERSION = 1
+
+/**
+ * @typedef {object} CallWindowPosition
+ * @property {number} x
+ * @property {number} y
+ * @property {number} displayId 保存したときに載っていた display の ID
+ */
+
+/**
+ * @typedef {object} CallWindowData
+ * @property {CallWindowPosition | null} position
+ */
+
+/**
+ * 会議の小窓の位置。**サイズは保存しない**（固定なので覚える意味がない）。
+ *
+ * `displayId` まで持つのは、モニタ構成が変わったときに
+ * 「保存した座標がどの display の workArea にも収まらない」を検出して
+ * 既定位置へ戻すため（画面外に出したまま復元しない）。
+ *
+ * @param {unknown} raw
+ * @returns {CallWindowData}
+ */
+export function normalizeCallWindow(raw) {
+  const input = isRecord(raw) ? raw : {}
+  const position = input['position']
+  if (!isRecord(position)) return { position: null }
+  const values = ['x', 'y', 'displayId'].map((key) => position[key])
+  if (!values.every((v) => typeof v === 'number' && Number.isFinite(v))) return { position: null }
+  const [x, y, displayId] = /** @type {number[]} */ (values)
+  return { position: { x: Math.round(x), y: Math.round(y), displayId } }
+}
+
+/**
+ * 保存した位置を復元してよいか。
+ *
+ * **どの workArea にも収まらない座標は捨てる**（モニタを外した / 解像度が変わった後に、
+ * 画面外へ出したまま復元しない）。Electron の `screen` に触らない純粋関数にしてあるので、
+ * 表示環境に依らず両方の分岐をユニットテストで確かめられる。
+ *
+ * @param {{ x: number, y: number }} position
+ * @param {{ width: number, height: number }} size
+ * @param {{ x: number, y: number, width: number, height: number }[]} workAreas
+ * @returns {boolean}
+ */
+export function fitsAnyWorkArea(position, size, workAreas) {
+  return workAreas.some(
+    (area) =>
+      position.x >= area.x &&
+      position.y >= area.y &&
+      position.x + size.width <= area.x + area.width &&
+      position.y + size.height <= area.y + area.height
+  )
+}

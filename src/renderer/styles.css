@@ -1521,3 +1521,138 @@ body[data-view='empty'] {
   background: var(--nemo-accent);
   color: #fff;
 }
+
+/* ------------------------------------------------------------------ *
+ * 会議の小窓（DESIGN.md「会議の小窓」）
+ * ------------------------------------------------------------------ */
+
+/* ウィンドウの中身がこのバー1枚だけ。枠は frameless なので自分で描く */
+body[data-view='call'] {
+  background: var(--nemo-sidebar);
+}
+
+.call-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 7px 0 11px;
+  box-sizing: border-box;
+  /* 地はドラッグ領域。**各ボタンは no-drag にする**（でないと押せない） */
+  -webkit-app-region: drag;
+  user-select: none;
+  box-shadow: inset 0 0 0 1px var(--nemo-border);
+  border-radius: var(--nemo-radius-lg);
+}
+
+.call-meta {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+  margin-right: 2px;
+}
+
+.call-host {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--nemo-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 会議中であることの合図。縮退中は出さない */
+.call-live {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: #4ade80;
+}
+
+.call-elapsed {
+  font-size: 10.5px;
+  color: var(--nemo-ink-dim);
+  font-variant-numeric: tabular-nums;
+  padding-left: 11px;
+}
+
+.call-btn {
+  -webkit-app-region: no-drag;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--nemo-radius);
+  background: var(--nemo-surface);
+  color: var(--nemo-ink);
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+
+.call-btn:hover:not(:disabled) {
+  background: var(--nemo-surface-hi);
+}
+
+.call-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.call-back {
+  width: auto;
+  padding: 0 10px;
+  font-size: 11.5px;
+}
+
+/*
+ * 切れているとき。**面は沈めたまま、色は文字（アイコン）だけ**に載せる。
+ * 面ごと赤くすると、他アプリの上に浮くバーの中でそこだけ主張が強すぎる。
+ * 色だけに頼らないよう斜線も重ねる。
+ */
+.call-device.off {
+  color: var(--nemo-danger);
+}
+
+.call-glyph {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+}
+
+.call-slash {
+  position: absolute;
+  inset: 0;
+}
+
+.call-sep {
+  flex: none;
+  width: 1px;
+  height: 20px;
+  background: var(--nemo-border);
+}
+
+.call-close {
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  color: var(--nemo-ink-dim);
+  font-size: 13px;
+}
+
+.call-close:hover {
+  background: var(--nemo-hover);
+  color: var(--nemo-ink);
+}

@@ -380,6 +380,35 @@ export interface AppStatus {
   extensions: number
 }
 
+/* ------------------------------------------------------------------ *
+ * 会議の小窓（Meet の通話コントロール）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 会議の小窓に出す状態。
+ *
+ * 真偽の向きは **`*Enabled` に統一**する（`micEnabled: true` = マイクが生きている
+ * = UI の「ON」）。Meet の DOM は `data-is-muted="true"` が「切れている」で向きが逆なので、
+ * **反転はアダプタ（`meet-adapter.ts`）の中の1か所だけ**で行う。
+ * `mic` のような向きの分からない名前は使わない（反転事故が見た目では分からない）。
+ *
+ * **`null` は「不明」**で、`false`（切れている）とは別物。
+ * プローブが読めないとき（縮退）は3つとも `null` にする。
+ */
+export interface CallState {
+  /** 表示するホスト名（`meet.google.com`）。 */
+  host: string
+  /**
+   * 参加を検知した時刻。**経過時間は renderer 側でここから数える**（毎秒 IPC を撃たない）。
+   * 縮退中は `null`（経過時間を出さない）。
+   */
+  joinedAt: number | null
+  micEnabled: boolean | null
+  camEnabled: boolean | null
+  /** プローブが読めていない（戻るボタンだけの小窓になる）。 */
+  degraded: boolean
+}
+
 export interface NemoUiApi {
   /* 状態 */
   getAppStatus(): Promise<AppStatus>
@@ -499,6 +528,18 @@ export interface NemoUiApi {
     prompt: Prompt | null
     switcher: SwitcherState | null
   }>
+
+  /* 会議の小窓（`?view=call` からだけ呼べる。**引数は取らない**） */
+  getCallState(): Promise<CallState | null>
+  /** 会議タブへ戻る（ウィンドウを前面に + そのタブをアクティブに）。 */
+  callFocusTab(): Promise<void>
+  /** マイクを切り替える。**楽観更新しない**（結果は push を待つ）。 */
+  callToggleMic(): Promise<void>
+  /** カメラを切り替える。**楽観更新しない**。 */
+  callToggleCam(): Promise<void>
+  /** ✕。会議タブに一度戻るまで出さない。 */
+  callDismiss(): Promise<void>
+  onCallState(listener: (state: CallState) => void): () => void
 
   /* タブスイッチャー（⌃M） */
   /**

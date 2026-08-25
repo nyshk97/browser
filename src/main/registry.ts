@@ -703,9 +703,13 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
     // ここは Electron のハンドラの中なので、投げると main プロセスまで届く。
     // 開き元のウィンドウが閉じかけているときに createTab が拒否することがあるので握る。
     try {
-      // ⌘クリック（背面タブ）だけは今までどおり。
+      // ⌘クリック（背面タブ）だけは今までどおり背面タブ。
       // 検索結果から何本も背面に溜める操作を Peek で殺さない。
-      if (disposition === 'background-tab') {
+      //
+      // **ただし小窓の中は例外**（計画 R8）。小窓はタブを増やせないので、
+      // ここへ流すと `createTab` が例外になり、⌘クリックが黙って捨てられる。
+      // 小窓の中の新規 browsing context 要求は**前面・背面を問わずもう1枚の小窓**にする。
+      if (disposition === 'background-tab' && canHostAdditionalTabs(win())) {
         const newTab = createTab(win(), popupTarget, { background: true })
         log('popup.tab_created', { key: newTab.key, opener: tab.key, background: true })
         return { action: 'deny' }
@@ -1948,6 +1952,11 @@ export function removeTab(
       return
     }
   }
+  // **必ずレイアウトし直す**。Peek だけを閉じた経路では `activeTabKey` が親のままなので
+  // 上の `selectTab` を通らず、`layout()` が一度も走らない。
+  // Peek 用の透明 View を隠すのは `layout()` の中だけなので、省くと
+  // **✕ / Esc / ⌘W のあとも暗幕の View が最前面に残り、ページのクリックを丸ごと遮る**。
+  win.layout()
   syncForegroundTab(win)
   win.pushState()
 }
@@ -2233,10 +2242,14 @@ function isOpenerOfLiveMini(candidate: NemoWindow): boolean {
  * 閉じられる候補が無ければ**上限を超えたまま開く**（計画 R10）。
  * 超過は放置せず、子が閉じたときにもう一度ここを通して詰める。
  */
-function trimMiniWindows(): void {
+function trimMiniWindows(protect?: NemoWindow): void {
   let windows = miniWindows()
   while (windows.length > MINI_WINDOW_CAP) {
-    const victim = windows.find((win) => !isOpenerOfLiveMini(win))
+    // **今開いたばかりの小窓は候補から外す**。opener チェーンが 5 段になると
+    // 既存 4 枚はすべて誰かの opener なので保護され、**まだ誰の opener でもない
+    // 5 枚目（＝たった今開いたもの）が victim に選ばれて即座に閉じる**。
+    // R10 で守りたいのは逆（既存を保護して一時的に上限を超える）。
+    const victim = windows.find((win) => win !== protect && !isOpenerOfLiveMini(win))
     if (!victim) {
       log('mini.cap_exceeded', { count: windows.length, cap: MINI_WINDOW_CAP })
       return
@@ -2287,7 +2300,7 @@ function fillMiniWindow(win: NemoWindow, url: string, adopt: WebContents | undef
   })
 
   presentMiniWindow(win)
-  trimMiniWindows()
+  trimMiniWindows(win)
   log('mini.open', {
     windowId: win.id,
     adopted: adopt !== undefined,

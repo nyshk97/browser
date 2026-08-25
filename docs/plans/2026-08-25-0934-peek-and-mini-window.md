@@ -673,6 +673,26 @@ return { action: 'allow', outlivesOpener: true, createWindow: () => peek.webCont
 
 ### 方針変更
 
+- 2026-08-25 レビュー対応（4件）:
+  - **Peek だけを閉じる経路で `layout()` が走っていなかった**。`activeTabKey` は親のままなので
+    `removeTab` の末尾が `selectTab` を通らず、暗幕の透明 View が最前面に残って
+    **ページのクリックを丸ごと遮っていた**。`removeTab` の末尾で必ず `layout()` を通す。
+  - **小窓の中の ⌘クリックが黙って捨てられていた**。`background-tab` を先に
+    `createTab` へ流していたが、小窓はタブを増やせないので例外 → catch → deny になる。
+    背面タブの分岐に `canHostAdditionalTabs(win())` を足し、小窓では前面・背面を問わず
+    もう1枚の小窓にする（計画 R8 のとおり）。
+  - **5段ネストで、たった今開いた5枚目が即座に閉じられていた**。既存4枚はすべて opener で
+    保護されるが、5枚目はまだ誰の opener でもないので `find` が選んでしまう。
+    R10 の意図は逆（既存を守って一時超過）なので、`trimMiniWindows(protect)` で
+    今開いた小窓を候補から外す。
+  - **暗幕にフォーカスがあると ⌃M の keyUp を取り逃していた**。`attachInput` の
+    張り先に `peekChromeView` が無かった。帯が出たまま残る。
+- 2026-08-25: 上の4件はすべて `verify-peek.mjs` に検査を足し、**修正前のコードで
+  FAIL することを確認**してから直した（暗幕の可視性は Peek 用 UI View の
+  `document.visibilityState` が View の可視性に連動するのを使って機械判定する）。
+  **⌘クリックだけは合成できない**（`disposition: 'background-tab'` は修飾キー込みの
+  実クリックでしか作れない）ので、VERIFY.md の実機手順に落とした。
+
 - 2026-08-25 Phase 0: **小窓は `type: 'panel'`（NSPanel）で作り、`setVisibleOnAllWorkspaces` は
   使わない**ことに決めた。当初の案（通常ウィンドウ + 全 Space 指定 + `app.focus({steal:true})`）は
   **キーフォーカスを取ろうとした瞬間に Space が切り替わる**ので、この計画の目的

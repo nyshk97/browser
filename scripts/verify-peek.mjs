@@ -74,6 +74,7 @@ async function evUser(session, expression) {
  * `ev` の応答が返ってこず永久に待つ。撃ちっぱなしにして時間で切り上げる。
  */
 async function evSuicidal(session, expression) {
+  if (!session) return
   await Promise.race([session.ev(expression).catch(() => null), sleep(2500).then(() => null)])
 }
 
@@ -469,6 +470,70 @@ console.log('\n--- R9: Peek を持つ親タブの移動')
 }
 
 /* ------------------------------------------------------------------ *
+ * 5.5 暗幕（Peek 用の透明 View）の後始末と ⌃M
+ * ------------------------------------------------------------------ */
+
+console.log('\n--- 暗幕の出し入れと ⌃M')
+
+{
+  const parent = await openParent('scrim')
+  await evUser(parent.page, "document.querySelector('#open-blank').click()")
+  await sleep(1200)
+  const peek = peekOf(await state(), parent.key)
+  check('Peek ができている（前提）', peek !== null)
+
+  // 暗幕は独立した UI View。**`document.visibilityState` が View の可視性に連動する**ので、
+  // 「閉じたのに最前面へ残ってページのクリックを遮る」をここで機械的に検出できる。
+  const scrim = await connectUi(CDP, 'peek', { waitReady: false })
+  const visibleWhileOpen = await scrim.ev('document.visibilityState')
+  check(
+    'Peek が出ている間は暗幕の View が表示されている',
+    visibleWhileOpen === 'visible',
+    String(visibleWhileOpen)
+  )
+
+  /* ⌃M: 暗幕にフォーカスがあるときも「⌃ を離したら確定」できること */
+  const beforeActive = (await state()).activeTabKey
+  await call('window.nemo.switchTab()')
+  await sleep(500)
+  const opened = JSON.parse(await ui.ev('window.nemo.getOverlayState().then((s) => JSON.stringify(s))'))
+  check('⌃M で帯が出る（前提）', opened.kind === 'tab-switcher', JSON.stringify(opened.kind))
+  await scrim.send('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: 'Control',
+    code: 'ControlLeft',
+    windowsVirtualKeyCode: 17,
+    nativeVirtualKeyCode: 17
+  })
+  await sleep(700)
+  const afterSwitch = JSON.parse(await ui.ev('window.nemo.getOverlayState().then((s) => JSON.stringify(s))'))
+  check(
+    '暗幕にフォーカスがあっても ⌃ の keyUp で確定する（帯が残らない）',
+    afterSwitch.kind === null,
+    JSON.stringify(afterSwitch.kind)
+  )
+  const switched = await state()
+  check('⌃M の確定で別のタブへ移っている', switched.activeTabKey !== beforeActive)
+  await call(`window.nemo.selectTab(${JSON.stringify(parent.key)})`)
+  await sleep(400)
+
+  /* ✕ で閉じたあと、暗幕の View が残っていないこと（残るとページを触れなくなる） */
+  await call('window.nemo.closePeek()')
+  await sleep(800)
+  const visibleAfterClose = await scrim.ev('document.visibilityState')
+  check(
+    'Peek を閉じたら暗幕の View も隠れる（ページのクリックを遮らない）',
+    visibleAfterClose === 'hidden',
+    String(visibleAfterClose)
+  )
+  scrim.close()
+
+  await call(`window.nemo.closeTab(${JSON.stringify(parent.key)})`)
+  parent.page.close()
+  await sleep(500)
+}
+
+/* ------------------------------------------------------------------ *
  * 6. Peek を持つ親タブは寝ない
  * ------------------------------------------------------------------ */
 
@@ -664,6 +729,91 @@ async function miniStates() {
   }
   await sleep(800)
   check('後片付けで小窓が残らない', (await miniTargets()).length === 0, `${(await miniTargets()).length} 枚`)
+
+  /* ------------------------------------------------------------------ *
+   * R8 / R10 — 小窓の中の popup と opener チェーン
+   * ------------------------------------------------------------------ */
+
+  // **小窓を5段ネストさせる**（独立した5枚ではない）。
+  // 既存4枚がすべて次の小窓の opener になるので、上限で閉じられる候補が無くなる。
+  // R10 は「opener を切って OAuth を壊すより、一時的に上限を超える」を選ぶ仕様。
+  await openExternalUrl(`${PAGES}/peek.html?site=chain0`)
+  let previous = await connectPage(`${PAGES}/peek.html?site=chain0`)
+  await waitFor(previous, "document.readyState === 'complete' ? 'ok' : ''")
+  check('小窓が1枚できた（チェーンの起点）', (await miniTargets()).length === 1)
+
+  for (let step = 1; step <= 4; step += 1) {
+    const url = `${PAGES}/peek.html?site=chain${step}`
+    await evUser(previous, `window.open(${JSON.stringify(url)}, '_blank')`)
+    await sleep(1500)
+    if (step === 1) {
+      check(
+        'R8: 小窓の中の popup がもう1枚の小窓になる',
+        (await miniTargets()).length === 2,
+        `${(await miniTargets()).length} 枚`
+      )
+      check(
+        'R8: 1枚目（= 子の opener）が生きている',
+        (await pageTargetCount(`${PAGES}/peek.html?site=chain0`)) === 1
+      )
+    }
+    // **開けなかったら FAIL にして打ち切る**（例外にすると以降の検査が丸ごと飛ぶ）。
+    // 上限の trim が「たった今開いた小窓」を victim に選ぶと、ここで消える。
+    let next
+    try {
+      next = await connectPage(url, { timeoutMs: 4000 })
+    } catch {
+      check(
+        `R10: ${step + 1} 枚目の小窓が開いた直後に閉じられていない`,
+        false,
+        `chain${step} が見つからない（小窓 ${(await miniTargets()).length} 枚）`
+      )
+      break
+    }
+    await waitFor(next, "document.readyState === 'complete' ? 'ok' : ''")
+    previous.close()
+    previous = next
+  }
+
+  const chained = await miniTargets()
+  check('R10: opener チェーンが5段なら上限4枚を一時的に超える', chained.length === 5, `${chained.length} 枚`)
+  check(
+    'R10: 超過したことがログに残る',
+    countLogEvents(USER_DATA, 'mini.cap_exceeded') > 0,
+    `${countLogEvents(USER_DATA, 'mini.cap_exceeded')} 件`
+  )
+
+  // 末端を閉じたら、超過を放置せず4枚まで詰める
+  const chainStates = await miniStates()
+  const tail = chainStates
+    .filter((m) => (m.s.tabs[0]?.url ?? '').includes('site=chain'))
+    .sort((a, b) => a.s.windowId - b.s.windowId)
+    .pop()
+  await evSuicidal(
+    tail?.session,
+    `window.nemo.closeTab(${JSON.stringify(tail?.s.tabs[0]?.key ?? '')}).then(() => 'ok').catch(() => 'ok')`
+  )
+  previous.close()
+  await sleep(1800)
+  check(
+    'R10: 末端を閉じたら4枚まで詰まる',
+    (await miniTargets()).length === 4,
+    `${(await miniTargets()).length} 枚`
+  )
+
+  for (const m of await miniStates()) {
+    await evSuicidal(
+      m.session,
+      `window.nemo.closeTab(${JSON.stringify(m.s.tabs[0]?.key ?? '')}).then(() => 'ok').catch(() => 'ok')`
+    )
+    m.session.close()
+  }
+  await sleep(800)
+  check(
+    'チェーンの後片付けで小窓が残らない',
+    (await miniTargets()).length === 0,
+    `${(await miniTargets()).length} 枚`
+  )
   check('検証中に main の未捕捉例外が出ていない', countLogEvents(USER_DATA, 'app.uncaught_exception') === 0)
 }
 

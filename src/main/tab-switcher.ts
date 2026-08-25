@@ -137,6 +137,10 @@ function armTimer(win: NemoWindow, session: SwitchSession): void {
  */
 function attachInput(win: NemoWindow, session: SwitchSession): void {
   const targets: WebContents[] = [win.overlayWebContents, win.chromeWebContents]
+  // **Peek の暗幕にも張る**。暗幕をクリックするとフォーカスがそこへ移るので、
+  // 張り忘れると ⌃ の keyUp を取り逃して**帯が出たまま残る**。
+  const peekChrome = win.peekChromeView
+  if (peekChrome) targets.push(peekChrome.webContents)
   // **ここは `normalTabs` に絞らない**。全 WebContents への入力監視なので、
   // Peek にフォーカスがあるときの keyUp / Esc も拾う必要がある。
   // 絞ると「Peek を見ている最中に ⌃M を離しても確定しない」で壊れる。

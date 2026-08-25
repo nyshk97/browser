@@ -87,6 +87,8 @@
       window.__clicks = { mic: 0, cam: 0 }
 
       function setJoined(joined) {
+        // ここは同期のまま。参加の検知は「小窓から押す」経路ではないので、
+        // rAF を挟むと**検証したいものと関係ない待ちが増える**だけになる
         stage.innerHTML = joined
           ? '<div data-participant-id="fake-self">参加中（自分のタイル）</div>'
           : '<p>待機画面（まだ参加していない）</p>'
@@ -112,10 +114,15 @@
         [cam, 'cam']
       ]) {
         el.addEventListener('click', () => {
-          const muted = el.getAttribute('data-is-muted') === 'true'
-          el.setAttribute('data-is-muted', muted ? 'false' : 'true')
           window.__clicks[name] += 1
-          render()
+          // **属性の書き換えは requestAnimationFrame 越しにする**（本物の Meet と同じ）。
+          // 背面タブでは rAF が止まるので、ここを同期で書くと
+          // 「小窓から押しても前面に戻るまで反映されない」バグを再現できない。
+          requestAnimationFrame(() => {
+            const muted = el.getAttribute('data-is-muted') === 'true'
+            el.setAttribute('data-is-muted', muted ? 'false' : 'true')
+            render()
+          })
         })
       }
 

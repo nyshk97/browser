@@ -4,13 +4,13 @@
  *
  * 見るもの（計画の R3 / R5 / R6 / R7 / R9 / R10 / R11 に対応）:
  *
- * - 会議タブから離れると出る / 戻ると消える / ✕ のあとは戻るまで出ない
+ * - 会議タブから離れると出る / 戻ると引っ込む（破棄はしない）
  * - マイク・カメラのボタンが**ページ側の属性を実際に変える**（押した結果をページで裏取り）
  * - ページ側でミュートすると小窓の表示が追従する
- * - **R3**: 会議中のタブが sleep しない（✕ のあとも / 縮退中も）。会議が終われば寝る
+ * - **R3**: 会議中のタブが sleep しない（縮退中も）。会議が終われば寝る
  * - **R5**: 縮退（プローブが読めない）と、そこからの復帰。経過時間が 0 に戻らない
  * - **R7**: 開閉 10 回でページ target 数がベースへ戻る（`webContents` の閉じ漏れ）
- * - **R10**: 複数 Meet／retarget／`dismissed` はタブ単位／古い応答で復活しない
+ * - **R10**: 複数 Meet／retarget／古い応答で復活しない
  * - **R11**: 同じ origin の別ページ（`index.html`）は候補にならない
  * - IPC の拒否: 小窓以外の sender から `call:*` を撃つと弾かれる
  *
@@ -24,6 +24,7 @@
  *   node scripts/verify-call.mjs --position-plant … 位置を仕込む（**アプリを止めてから**）
  *   node scripts/verify-call.mjs --position-read  … 仕込んだ位置の扱いを確かめる（再起動後）
  */
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { connect, connectUi, listTargets, sleep, waitFor } from './lib/cdp.mjs'
@@ -171,7 +172,8 @@ function barInfo() {
         elapsed: text('.call-elapsed'),
         mic: device('mic') ? device('mic').dataset.enabled : null,
         cam: device('cam') ? device('cam').dataset.enabled : null,
-        hasBack: document.querySelector('.call-back') !== null
+        hasGoto: document.querySelector('.call-goto') !== null,
+        hasClose: document.querySelector('.call-close') !== null
       })
     })()`)
     return JSON.parse(raw)
@@ -331,14 +333,41 @@ await sleep(1500)
 
 {
   const targets = await callTargets()
+  const ok = targets.length === 0
   check(
     '会議タブを見ている間は小窓が出ない',
-    targets.length === 0,
-    targets.length === 0
-      ? ''
-      : '出てしまった。Nemo のウィンドウが前面にあるか確認する' +
-          '（他アプリにフォーカスがあると「見えていない」と判定されるので常に出る）'
+    ok,
+    ok ? '' : '出てしまった（＝会議タブが「見えていない」と判定された）'
   )
+  if (!ok) {
+    /*
+     * **ここで打ち切る**。「見えているか」はウィンドウのフォーカスにも依るので、
+     * 検証用ウィンドウが前面に無いと以降の検査は**全部**意味を成さず、
+     * 10 件以上の FAIL が並んで本当の原因が埋もれる（実際に埋もれた）。
+     *
+     * 一番ありがちなのは**常用の Nemo が前面にいる**こと。
+     * `assertNemoNotRunning` はリポジトリの node_modules から起動したものしか見ないので、
+     * パッケージ済みの .app は素通りする。ここで名指しして終わる。
+     */
+    let running = ''
+    try {
+      running = execFileSync('/bin/ps', ['ax', '-o', 'pid=,command='], { encoding: 'utf8' })
+        .split('\n')
+        .filter((line) => /\/MacOS\/Nemo( Dev)?$/.test(line.trim()))
+        .map((line) => `    ${line.trim()}`)
+        .join('\n')
+    } catch {
+      /* ps が使えなくても案内は出す */
+    }
+    console.log(
+      '\n[verify-call] 検証用ウィンドウが前面にない。以降の検査は成立しないので中断する。\n' +
+        '  「会議タブが見えているか」はウィンドウのフォーカスにも依る（他アプリ作業中に小窓を出すための機能なので）。\n' +
+        (running ? `  前面を奪っていそうな Nemo:\n${running}\n` : '') +
+        '  起動中の Nemo を終了してからやり直す。'
+    )
+    ui.close()
+    process.exit(1)
+  }
 }
 
 await selectTab(parkKey)
@@ -399,18 +428,22 @@ await meet.act('mic')
 }
 
 /* ------------------------------------------------------------------ *
- * 3. 戻る / ✕
+ * 3. 会議へ移動する
  * ------------------------------------------------------------------ */
 
-console.log('\n--- 戻る / ✕')
+console.log('\n--- 会議へ移動する')
 
-await clickBar('.call-back')
+await clickBar('.call-goto')
 {
   const ok = await waitUntil(async () => {
-    const s = await windowState()
-    return s.activeTabKey === meet.key ? s : null
+    const state = await windowState()
+    return state.activeTabKey === meet.key ? state : null
   })
-  check('戻るボタンで会議タブがアクティブになる', ok !== null, `active=${(await windowState()).activeTabKey}`)
+  check(
+    'ドメイン名を押すと会議タブがアクティブになる',
+    ok !== null,
+    `active=${(await windowState()).activeTabKey}`
+  )
   const gone = await waitUntil(async () => ((await callTargets()).length === 0 ? 'destroyed' : null), {
     timeoutMs: 3000
   })
@@ -427,23 +460,12 @@ await clickBar('.call-back')
   )
 }
 
-await selectTab(parkKey)
-await waitBar()
-await clickBar('.call-close')
-{
-  const gone = await waitUntil(async () => ((await callTargets()).length === 0 ? 'gone' : null))
-  check('✕ で小窓が消える（他に候補が無いので破棄まで行く）', gone !== null)
-  await sleep(3000)
-  check('✕ のあと放っておいても出てこない', (await callTargets()).length === 0)
-}
-
-// 「会議タブに一度戻る」で解除される
-await selectTab(meet.key)
-await sleep(600)
+// 離れればまた出る。**閉じる手段は置いていない**ので、会議中はこの往復だけになる
 await selectTab(parkKey)
 {
   const info = await waitBar()
-  check('会議タブに戻ると ✕ が解除され、離れたらまた出る', info?.present === true, JSON.stringify(info))
+  check('また離れると出てくる', info?.present === true, JSON.stringify(info))
+  check('✕ は置いていない（会議中はいつでも出ている）', info?.hasClose === false, JSON.stringify(info))
 }
 
 /* ------------------------------------------------------------------ *
@@ -467,7 +489,7 @@ await meet.act('break')
     info?.mic === null && info?.cam === null,
     JSON.stringify(info)
   )
-  check('縮退時は戻るボタンだけ残る', info?.hasBack === true, JSON.stringify(info))
+  check('縮退時は会議へ移動するボタンだけ残る', info?.hasGoto === true, JSON.stringify(info))
   check(
     '縮退時は経過時間を出さない（0:00 で止まって見せない）',
     info?.elapsed === null,
@@ -545,7 +567,7 @@ await waitUntil(async () => ((await callTargets()).length === 0 ? 'gone' : null)
 }
 
 /* ------------------------------------------------------------------ *
- * 7. R10 — 複数 Meet / retarget / dismissed はタブ単位
+ * 7. R10 — 複数 Meet と retarget
  * ------------------------------------------------------------------ */
 
 console.log('\n--- R10: 複数 Meet')
@@ -564,7 +586,7 @@ await selectTab(parkKey)
 {
   const info = await waitBar()
   check('参加中の会議があれば小窓が出る（直近が未参加でも）', info?.present === true, JSON.stringify(info))
-  await clickBar('.call-back')
+  await clickBar('.call-goto')
   const active = await waitUntil(async () => {
     const s = await windowState()
     return s.activeTabKey === older.key ? s.activeTabKey : null
@@ -576,7 +598,7 @@ await selectTab(parkKey)
   )
 }
 
-// 2 つとも参加中にして retarget と dismissed を見る
+// 2 つとも参加中にして「直近のほうが対象になる」と retarget を見る
 await newer.act('join')
 // **参加が検知されるまで待つ**（プローブは最大5秒ごと）。
 // 待たずに進むと「まだ未参加の側」を対象から外して判定してしまう
@@ -597,7 +619,7 @@ await waitUntil(async () => {
 
 {
   // `lastActiveAt` が最大なのは newer なので、それが対象
-  await clickBar('.call-back')
+  await clickBar('.call-goto')
   const first = await waitUntil(async () => {
     const s = await windowState()
     return s.activeTabKey === newer.key ? s.activeTabKey : null
@@ -609,33 +631,9 @@ await waitUntil(async () => {
   )
 }
 
-await selectTab(parkKey)
-await waitBar()
-const targetsBeforeDismiss = (await callTargets()).length
-await clickBar('.call-close')
-{
-  const info = await waitUntil(async () => {
-    const value = await barInfo()
-    return value?.present === true ? value : null
-  })
-  check(
-    '✕ しても他に会議が残っていれば小窓は消えず retarget される',
-    info !== null && targetsBeforeDismiss === 1,
-    JSON.stringify(info)
-  )
-  await clickBar('.call-back')
-  const active = await waitUntil(async () => {
-    const s = await windowState()
-    return s.activeTabKey === older.key ? s.activeTabKey : null
-  })
-  check(
-    'dismissed はタブ単位（前の会議で閉じたことを次の会議に持ち越さない）',
-    active !== null,
-    `active=${(await windowState()).activeTabKey}`
-  )
-}
-
-// retarget のとき経過時間は「移った先が持っている値」になる
+// retarget を見るために、**古いほうの会議を直近にして対象へ引き戻す**
+await selectTab(older.key)
+await sleep(300)
 await selectTab(parkKey)
 await waitBar()
 {
@@ -738,17 +736,6 @@ const asleepOf = async (key) => {
 check('比較用の普通のタブは寝る（除外の検査が空振りしていない証拠）', (await asleepOf(sleeper)) === true)
 check('会議中のタブは寝ない', (await asleepOf(bf.key)) === false, `asleep=${await asleepOf(bf.key)}`)
 
-// ✕ で閉じたあとも寝ない（`dismissed` を除外条件に混ぜていないこと）
-await selectTab(parkKey)
-await waitBar()
-await clickBar('.call-close')
-await sleep(12000)
-check(
-  '✕ で小窓を閉じたあとも会議タブは寝ない（dismissed を除外に混ぜていない）',
-  (await asleepOf(bf.key)) === false,
-  `asleep=${await asleepOf(bf.key)}`
-)
-
 // 縮退中でも寝ない
 await bf.act('break')
 await sleep(12000)
@@ -809,7 +796,7 @@ for (const [name, expression] of [
   ['call:getState', 'window.nemo.getCallState()'],
   ['call:focusTab', 'window.nemo.callFocusTab()'],
   ['call:toggleMic', 'window.nemo.callToggleMic()'],
-  ['call:dismiss', 'window.nemo.callDismiss()']
+  ['call:toggleCam', 'window.nemo.callToggleCam()']
 ]) {
   const result = await ui.ev(`${expression}.then(() => 'allowed', (e) => 'rejected:' + String(e.message))`)
   check(`サイドバーから ${name} は弾かれる`, String(result).startsWith('rejected:'), String(result))

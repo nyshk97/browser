@@ -22,7 +22,7 @@ import type { CallState } from '../shared/types.js'
  */
 
 /** バーの寸法（DESIGN.md「会議の小窓」と一致させる）。**記憶しない**（位置だけ覚える）。 */
-const CALL_SIZE = { width: 304, height: 52 }
+const CALL_SIZE = { width: 336, height: 60 }
 /** 既定位置（画面右下）の余白。 */
 const CALL_MARGIN = 24
 

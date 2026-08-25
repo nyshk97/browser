@@ -537,8 +537,6 @@ export interface NemoUiApi {
   callToggleMic(): Promise<void>
   /** カメラを切り替える。**楽観更新しない**。 */
   callToggleCam(): Promise<void>
-  /** ✕。会議タブに一度戻るまで出さない。 */
-  callDismiss(): Promise<void>
   onCallState(listener: (state: CallState) => void): () => void
 
   /* タブスイッチャー（⌃M） */

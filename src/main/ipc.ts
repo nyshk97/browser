@@ -44,7 +44,7 @@ import { clearArchive, queryArchive, removeArchived } from './store/archive.js'
 import { getDefaultBrowserStatus, requestDefaultBrowser } from './default-browser.js'
 import { getAppStatus } from './app-status.js'
 import { isCallWindowContents } from './call-window.js'
-import { dismissCall, focusCallTarget, getCallState, toggleCallDevice } from './call-coordinator.js'
+import { focusCallTarget, getCallState, toggleCallDevice } from './call-coordinator.js'
 import { checkForUpdatesManually, getUpdateState, promptRestart } from './updater.js'
 import { windowsById } from './registry.js'
 import type {
@@ -594,10 +594,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('call:toggleCam', async (event) => {
     requireCallWindow(event)
     await toggleCallDevice('cam')
-  })
-  ipcMain.handle('call:dismiss', (event) => {
-    requireCallWindow(event)
-    dismissCall()
   })
 }
 

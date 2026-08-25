@@ -82,13 +82,13 @@ interface CandidateState {
   joinedAt: number | null
   micEnabled: boolean | null
   camEnabled: boolean | null
-  /** ✕ で閉じられたか。**タブ単位**（前の会議で閉じたことを次の会議へ持ち越さない）。 */
-  dismissed: boolean
   /** 一度でもアクティブになったか（縮退時の誤爆よけ。計画 R5）。 */
   everActive: boolean
   /** 候補に入れた時点の URL。変わったら世代を上げて状態を捨てる。 */
   url: string
   lastProbeAt: number
+  /** 背面スロットリングを外してあるか（下の `syncBackgroundThrottling` を見る）。 */
+  throttlingDisabled: boolean
 }
 
 const candidates = new Map<string, CandidateState>()
@@ -116,32 +116,60 @@ function tabOnScreen(tab: NemoTab): boolean {
 }
 
 /**
- * 表示してよい候補か。
+ * 表示してよい候補か。**sleep / 自動アーカイブの除外条件も同じ**（計画 R3）。
  *
  * **`joined` だけに絞らない**。プローブが読めない（縮退）タブも、
- * URL が Meet で一度アクティブになったことがあるなら「戻るボタンだけの小窓」を出す。
- */
-function isShowable(candidate: CandidateState): boolean {
-  if (candidate.dismissed) return false
-  return showableIgnoringDismissed(candidate)
-}
-
-/**
- * ✕ を無視した `showable`。**sleep / 自動アーカイブの除外条件はこちら**（計画 R3）。
- *
- * `dismissed` を混ぜてはいけない —— ✕ で小窓を閉じても会議は続いているので、
- * そこで除外を外すと会議タブが寝て通話が切れる。
+ * URL が Meet なら「会議へ移動するボタンだけの小窓」を出す。
  *
  * 縮退（`unknown`）を通す条件が2つあるのが肝。
  * - `everActive` … 一度アクティブになったタブ（復元直後の誤爆よけ。計画 R5）
  * - `joinedAt !== null` … **参加中だと観測したあとでプローブが読めなくなった**タブ。
  *   ここを落とすと「プローブが一時的に読めなくなった直後に会議タブが寝る」
  *   （＝通話が切れる）。自走検証で実際に踏んだので、`everActive` だけにしない
+ *
+ * **「ユーザーが閉じたか」は持たない**。✕ を置いていないので閉じる操作が無い
+ * （会議中はいつでも出ている、が仕様）。
  */
-function showableIgnoringDismissed(candidate: CandidateState): boolean {
+function isShowable(candidate: CandidateState): boolean {
   if (candidate.state === 'joined') return true
   if (candidate.state !== 'unknown') return false
   return candidate.everActive || candidate.joinedAt !== null
+}
+
+/**
+ * 会議中のタブだけ**背面スロットリングを外す**。
+ *
+ * Chromium は隠れたページで `requestAnimationFrame` を止める。Meet は
+ * ボタンを押した結果の反映を rAF 越しに行うので、素のままだと
+ * **小窓からミュートを押しても、会議タブを前面に戻すまで実際には切り替わらない**
+ * （押した本人は「効いていない」と思って何度も押すことになる）。実測:
+ *
+ * ```
+ * 背面でクリック 3 秒後  vis=hidden  raf=1    clicks=1  muted=false  ← 効いていない
+ * 前面へ戻したあと       vis=visible raf=74   clicks=1  muted=true   ← ここで初めて適用
+ * ```
+ *
+ * 外すのは**会議中の対象タブだけ・会議中だけ**にする。
+ * 増えるのは CPU だけで、通信量もメモリも増えない。会議が終われば元に戻す。
+ */
+function syncBackgroundThrottling(candidate: CandidateState): void {
+  const wanted = isShowable(candidate)
+  if (wanted === candidate.throttlingDisabled) return
+  const wc = candidate.tab.webContents
+  if (!wc) return
+  wc.setBackgroundThrottling(!wanted)
+  candidate.throttlingDisabled = wanted
+  log('call.background_throttling', { key: candidate.tab.key, throttled: !wanted })
+}
+
+/** 候補から外れる / 会議が終わったタブのスロットリングを戻す。 */
+function restoreBackgroundThrottling(candidate: CandidateState): void {
+  if (!candidate.throttlingDisabled) return
+  candidate.throttlingDisabled = false
+  const wc = candidate.tab.webContents
+  if (!wc) return
+  wc.setBackgroundThrottling(true)
+  log('call.background_throttling', { key: candidate.tab.key, throttled: true })
 }
 
 /** 表示対象（`showable` のうち `lastActiveAt` が最大のもの）。 */
@@ -190,10 +218,10 @@ export function refreshCallCoordinator(navigated?: NemoTab): void {
         joinedAt: null,
         micEnabled: null,
         camEnabled: null,
-        dismissed: false,
         everActive: false,
         url: tab.url,
-        lastProbeAt: 0
+        lastProbeAt: 0,
+        throttlingDisabled: false
       }
       candidates.set(tab.key, created)
       log('call.candidate_added', { key: tab.key, windowId: tab.window.id })
@@ -207,8 +235,6 @@ export function refreshCallCoordinator(navigated?: NemoTab): void {
       existing.joinedAt = null
       existing.micEnabled = null
       existing.camEnabled = null
-      // 別の会議なので ✕ も持ち越さない（`dismissed` はタブ単位だが会議単位でもない）
-      existing.dismissed = false
       existing.lastProbeAt = 0
       log('call.candidate_url_changed', { key: tab.key })
     }
@@ -216,17 +242,14 @@ export function refreshCallCoordinator(navigated?: NemoTab): void {
     const candidate = candidates.get(tab.key)
     if (!candidate) continue
     if (tab.window.activeTabKey === tab.key) candidate.everActive = true
-    // 会議タブに一度戻ったら ✕ を解除する（そこからまた出せるようにする）
-    if (candidate.dismissed && tabOnScreen(tab)) {
-      candidate.dismissed = false
-      log('call.dismiss_cleared', { key: tab.key })
-    }
   }
 
   // Meet でなくなった / タブが破棄された候補は外す。
   // **世代は単調増加なので、外して入り直しても古い応答は照合で落ちる**
   for (const key of [...candidates.keys()]) {
     if (seen.has(key)) continue
+    const removed = candidates.get(key)
+    if (removed) restoreBackgroundThrottling(removed)
     candidates.delete(key)
     log('call.candidate_removed', { key })
   }
@@ -304,6 +327,8 @@ async function probe(candidate: CandidateState): Promise<void> {
   }
 
   applyProbe(live, parseProbe(raw))
+  // 参加 / 退出が確定したこの時点で、背面スロットリングの要否も更新する
+  syncBackgroundThrottling(live)
   applyWindow()
 }
 
@@ -421,7 +446,6 @@ export function focusCallTarget(): void {
   win.baseWindow.focus()
   app.focus({ steal: true })
   selectTab(win, target.tab.key)
-  target.dismissed = false
   log('call.focus_tab', { key: target.tab.key, windowId: win.id })
   refreshCallCoordinator()
 }
@@ -448,16 +472,6 @@ export async function toggleCallDevice(kind: 'mic' | 'cam'): Promise<void> {
   target.lastProbeAt = 0
 }
 
-/** ✕。そのタブについては「会議タブに一度戻る」まで出さない。 */
-export function dismissCall(): void {
-  const target = pickTarget()
-  if (!target) return
-  target.dismissed = true
-  log('call.dismissed', { key: target.tab.key })
-  // 他に `showable` があればそちらへ retarget して出し直す
-  refreshCallCoordinator()
-}
-
 /* ------------------------------------------------------------------ *
  * 起動 / 終了
  * ------------------------------------------------------------------ */
@@ -469,7 +483,7 @@ export function startCallCoordinator(): void {
     refresh: (navigated) => refreshCallCoordinator(navigated),
     isSleepExempt: (tab) => {
       const candidate = candidates.get(tab.key)
-      return candidate ? showableIgnoringDismissed(candidate) : false
+      return candidate ? isShowable(candidate) : false
     }
   })
   refreshCallCoordinator()
@@ -480,6 +494,7 @@ export function stopCallCoordinator(): void {
   started = false
   if (timer) clearInterval(timer)
   timer = null
+  for (const candidate of candidates.values()) restoreBackgroundThrottling(candidate)
   candidates.clear()
   destroyCallWindow('shutdown')
 }

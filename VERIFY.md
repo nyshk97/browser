@@ -357,11 +357,12 @@ end tell'
 screencapture -x -R<x,y,w,h> /path/to/out.png
 ```
 
-**AI が自走で見た目を確かめるときは、この osascript を使わない**。System Events は
-アクセシビリティ権限のプロンプトで固まり、5 分待っても返ってこない（実際に踏んだ）。
-サイドバーとツールバーは**別の WebContentsView** なので、CDP の `Page.captureScreenshot` を
-View ごとに撮るほうが速くて確実。常用の Nemo を止めずに済むよう、
-**使い捨ての userData** で開発版を起動する。
+**AI が自走で見た目を確かめるときは、View 単位で撮るほうが速い**。上の手順は
+ウィンドウ全体を撮るためにウィンドウ位置を要求するが、サイドバーとツールバーは
+**別の WebContentsView** なので、CDP の `Page.captureScreenshot` を View ごとに撮れば
+位置を知らなくても済む（`osascript` の System Events が Claude Code の Bash から
+通るかは未確認。上のブロックは人が手で叩く用と考える）。
+常用の Nemo を止めずに済むよう、**使い捨ての userData** で開発版を起動する。
 
 ```bash
 TMP=$(mktemp -d)
@@ -378,6 +379,11 @@ pkill -f "$TMP"; rm -rf "$TMP"
   IPC が `unknown_sender` で弾かれる。`toolbar&window=<windowId>` まで指定する
 - CDP を使う使い捨てスクリプトは**最後に `process.exit(0)`** を置く。
   WebSocket が開いたままだと node が終了せず、タイムアウトまで待たされる
+  （`node ... | tail` のようにパイプで受けていると、原因が「アプリが応答しない」に見える）
+- `window.screenX` は**その View のオフセットを含まない**（ウィンドウのスクリーン位置が返る。
+  サイドバーの View とツールバーの View で同じ値になる）。View 内の要素のスクリーン座標が
+  要るときは、サイドバー幅などを自分で足す —— 足し忘れると 260px ずれた値を「正解」として
+  比べることになる
 
 ## 拡張の lock まわり
 

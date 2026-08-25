@@ -9,6 +9,11 @@
  *
  * 終了コードがそのまま合否になるので CI にも載せられる。
  *
+ * `--only <名前...>` で回すものを絞れる（`mise run verify:only phase1 pins`）。
+ * **1か所直して確かめ直す**ループで無関係な検証まで毎回回すと1回3分かかるが、
+ * 関係するものだけなら十数秒で済む。絞ったときは**何を飛ばしたかを必ず出す**
+ * （出さないと「フルで通った」と読み違える）。
+ *
  * 検証対象の取り違えを防ぐための決まりごと:
  * - ポートは毎回空きを採番する（固定ポートだと別プロセスを検証して PASS しうる。実際に踏んだ）
  * - 採番したエンドポイントは verify-spike に env で明示的に渡す
@@ -33,6 +38,43 @@ import {
 
 const require = createRequire(import.meta.url)
 const electronPath = require('electron')
+
+/**
+ * 回せる検証の名前。`--only` はここに無い名前を**エラーにする**
+ * （typo を黙って無視すると「何も回さずに PASS」になる）。
+ */
+const KNOWN_TARGETS = [
+  'spike', // Phase 0: 拡張
+  'phase1', // ブラウザ本体
+  'phase2', // ライブラリ・アーカイブ・シークレット
+  'pins', // ピン留め / Favorites
+  'switcher', // タブスイッチャー（⌃M）
+  'peek', // Peek と小窓
+  'restart', // 再起動をまたぐ永続性（spike / phase1 / pins の write → read）
+  'migration', // 旧版セッションからの移行
+  'db' // 旧スキーマの履歴 DB からの移行
+]
+/** アプリとページサーバを立てる必要があるもの（migration / db は自分で起動する）。 */
+const NEEDS_APP = ['spike', 'phase1', 'phase2', 'pins', 'switcher', 'peek', 'restart']
+
+const onlyAt = process.argv.indexOf('--only')
+const only = new Set(
+  onlyAt === -1 ? [] : process.argv.slice(onlyAt + 1).filter((arg) => !arg.startsWith('--'))
+)
+if (onlyAt !== -1 && only.size === 0) {
+  console.error(`[verify] --only には回すものを渡す。使えるのは: ${KNOWN_TARGETS.join(' / ')}`)
+  process.exit(2)
+}
+const unknown = [...only].filter((name) => !KNOWN_TARGETS.includes(name))
+if (unknown.length > 0) {
+  console.error(
+    `[verify] 知らない検証名: ${unknown.join(', ')}\n  使えるのは: ${KNOWN_TARGETS.join(' / ')}`
+  )
+  process.exit(2)
+}
+/** その検証を回すか（`--only` を渡していなければ全部回す）。 */
+const want = (name) => only.size === 0 || only.has(name)
+const needsApp = NEEDS_APP.some(want)
 
 const debugPort = String(await getFreePort())
 const pagesPort = String(await getFreePort())
@@ -134,6 +176,10 @@ let exitCode = 0
 try {
   assertNemoNotRunning('verify')
   console.log(`（CDP ${cdp} / テストページ ${pages} / userData ${userDataDir}）`)
+  if (only.size > 0) {
+    const skipped = KNOWN_TARGETS.filter((name) => !only.has(name))
+    console.log(`（--only ${[...only].join(' ')} … 回さない: ${skipped.join(' ')}）`)
+  }
 
   console.log('\n=== ユニットテスト')
   if ((await runToCompletion(process.execPath, ['--test', 'scripts/*.test.mjs'])) !== 0) {
@@ -150,65 +196,86 @@ try {
     throw new Error('拡張が lock と一致しない')
   }
 
-  console.log('\n=== ページサーバ')
-  await startPagesServer()
+  if (needsApp) {
+    console.log('\n=== ページサーバ')
+    await startPagesServer()
 
-  console.log('=== Nemo 起動')
-  await startApp()
+    console.log('=== Nemo 起動')
+    await startApp()
+  }
 
-  console.log('\n=== 自走検証（Phase 0: 拡張）')
-  const spikeCode = await spike([])
-  if (spikeCode !== 0) exitCode = spikeCode
+  if (want('spike')) {
+    console.log('\n=== 自走検証（Phase 0: 拡張）')
+    const spikeCode = await spike([])
+    if (spikeCode !== 0) exitCode = spikeCode
+  }
 
-  console.log('\n=== 自走検証（Phase 1: ブラウザ本体）')
-  const phase1Code = await phase1([])
-  if (phase1Code !== 0) exitCode = phase1Code
+  if (want('phase1')) {
+    console.log('\n=== 自走検証（Phase 1: ブラウザ本体）')
+    const phase1Code = await phase1([])
+    if (phase1Code !== 0) exitCode = phase1Code
+  }
 
-  console.log('\n=== 自走検証（Phase 2: ライブラリ・アーカイブ・シークレット）')
-  const phase2Code = await phase2([])
-  if (phase2Code !== 0) exitCode = phase2Code
+  if (want('phase2')) {
+    console.log('\n=== 自走検証（Phase 2: ライブラリ・アーカイブ・シークレット）')
+    const phase2Code = await phase2([])
+    if (phase2Code !== 0) exitCode = phase2Code
+  }
 
-  console.log('\n=== 自走検証（ピン留め / Favorites）')
-  const pinsCode = await pins([])
-  if (pinsCode !== 0) exitCode = pinsCode
+  if (want('pins')) {
+    console.log('\n=== 自走検証（ピン留め / Favorites）')
+    const pinsCode = await pins([])
+    if (pinsCode !== 0) exitCode = pinsCode
+  }
 
-  console.log('\n=== 自走検証（タブスイッチャー ⌃M）')
-  const switcherCode = await switcher([])
-  if (switcherCode !== 0) exitCode = switcherCode
+  if (want('switcher')) {
+    console.log('\n=== 自走検証（タブスイッチャー ⌃M）')
+    const switcherCode = await switcher([])
+    if (switcherCode !== 0) exitCode = switcherCode
+  }
 
-  console.log('\n=== 自走検証（Peek と小窓）')
-  const peekCode = await peek([])
-  if (peekCode !== 0) exitCode = peekCode
+  if (want('peek')) {
+    console.log('\n=== 自走検証（Peek と小窓）')
+    const peekCode = await peek([])
+    if (peekCode !== 0) exitCode = peekCode
+  }
 
-  console.log('\n=== 再起動をまたぐ永続性')
-  await spike(['--storage-write'])
-  await phase1(['--session-write'])
-  // ピン / Favorites の遅延ロードも再起動をまたぐので、同じ再起動に相乗りする
-  const lazyWriteCode = await pins(['--lazy-write'])
-  if (lazyWriteCode !== 0) exitCode = lazyWriteCode
-  await stopAll()
+  if (want('restart')) {
+    console.log('\n=== 再起動をまたぐ永続性')
+    await spike(['--storage-write'])
+    await phase1(['--session-write'])
+    // ピン / Favorites の遅延ロードも再起動をまたぐので、同じ再起動に相乗りする
+    const lazyWriteCode = await pins(['--lazy-write'])
+    if (lazyWriteCode !== 0) exitCode = lazyWriteCode
+    await stopAll()
 
-  await startPagesServer()
-  await startApp()
-  const storageCode = await spike(['--storage-read'])
-  if (storageCode !== 0) exitCode = storageCode
-  const sessionCode = await phase1(['--session-read'])
-  if (sessionCode !== 0) exitCode = sessionCode
-  const lazyReadCode = await pins(['--lazy-read'])
-  if (lazyReadCode !== 0) exitCode = lazyReadCode
+    await startPagesServer()
+    await startApp()
+    const storageCode = await spike(['--storage-read'])
+    if (storageCode !== 0) exitCode = storageCode
+    const sessionCode = await phase1(['--session-read'])
+    if (sessionCode !== 0) exitCode = sessionCode
+    const lazyReadCode = await pins(['--lazy-read'])
+    if (lazyReadCode !== 0) exitCode = lazyReadCode
+  }
 
-  // 旧版セッションからの移行は**自分でアプリを起動して**確かめる（別プロファイル）。
-  // ここまでの起動を止めてから回す（同時に2つの Nemo を立てない）。
-  await stopAll()
-  console.log('\n=== 旧版セッションからの移行')
-  const migrationCode = await runToCompletion(process.execPath, ['scripts/verify-session-migration.mjs'])
-  if (migrationCode !== 0) exitCode = migrationCode
+  if (want('migration')) {
+    // 旧版セッションからの移行は**自分でアプリを起動して**確かめる（別プロファイル）。
+    // ここまでの起動を止めてから回す（同時に2つの Nemo を立てない）。
+    await stopAll()
+    console.log('\n=== 旧版セッションからの移行')
+    const migrationCode = await runToCompletion(process.execPath, ['scripts/verify-session-migration.mjs'])
+    if (migrationCode !== 0) exitCode = migrationCode
+  }
 
-  // 履歴 DB の列追加も同じ理由で別建て。ここまでの userData は毎回まっさらなので、
-  // **既存の pages テーブルへの ALTER TABLE を一度も通らない**。
-  console.log('\n=== 旧スキーマの履歴 DB からの移行')
-  const dbMigrationCode = await runToCompletion(process.execPath, ['scripts/verify-db-migration.mjs'])
-  if (dbMigrationCode !== 0) exitCode = dbMigrationCode
+  if (want('db')) {
+    // 履歴 DB の列追加も同じ理由で別建て。ここまでの userData は毎回まっさらなので、
+    // **既存の pages テーブルへの ALTER TABLE を一度も通らない**。
+    await stopAll()
+    console.log('\n=== 旧スキーマの履歴 DB からの移行')
+    const dbMigrationCode = await runToCompletion(process.execPath, ['scripts/verify-db-migration.mjs'])
+    if (dbMigrationCode !== 0) exitCode = dbMigrationCode
+  }
 } catch (error) {
   console.error(`\n[verify] ${error instanceof Error ? error.message : String(error)}`)
   exitCode = 1
@@ -243,5 +310,8 @@ try {
   }
 }
 
-console.log(exitCode === 0 ? '\n=== 自走検証: すべて PASS' : '\n=== 自走検証: FAIL あり')
+const scope = only.size > 0 ? `（--only ${[...only].join(' ')} だけ）` : ''
+console.log(
+  exitCode === 0 ? `\n=== 自走検証: すべて PASS${scope}` : `\n=== 自走検証: FAIL あり${scope}`
+)
 process.exit(exitCode)

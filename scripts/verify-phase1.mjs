@@ -456,16 +456,41 @@ await ui.ev(`window.nemo.addFavorite(${JSON.stringify(reopened)}).then(() => 'ok
  * ------------------------------------------------------------------ */
 
 {
+  /*
+   * **候補は自分で用意する**。前の検証が作ったタブや履歴に頼ると、
+   * `--only phase1` で回したときに候補が 2 件しか出ず、
+   * 「2つ下へ動く」検査が『動かない』で落ちる（実際に踏んだ）。
+   * 下へ 2 回動くので、選べる候補が**3 件以上**必要。
+   */
+  const seeded = []
+  for (const probe of ['a', 'b', 'c']) {
+    seeded.push(
+      await ui.ev(
+        `window.nemo.createTab(${JSON.stringify(`${PAGES}/index.html?cursor=`)} + ${JSON.stringify(probe)})`
+      )
+    )
+  }
+
   await openCommandBar('command-bar')
+  /*
+   * 引く語は**この検証専用**にする（`cursor`）。縦位置の検証は `login` の候補を見ており、
+   * 同じ語で引くと、ここで開いたタブが**閉じた後も履歴として候補に残って**件数を押し上げ、
+   * 「箱の中心が画面中心より上」を壊す（実際に踏んだ）。
+   */
   await overlay.ev(`(() => {
     const input = document.querySelector('.cmd input')
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
-    setter.call(input, 'login')
+    setter.call(input, 'cursor')
     input.dispatchEvent(new Event('input', { bubbles: true }))
     return 'ok'
   })()`)
-  // 2件以上出ていないと「動いた」ことを見分けられない
-  await waitFor(overlay, `document.querySelectorAll('.cmd .sug:not(.dim)').length >= 2 ? 'ready' : ''`)
+  // **3件以上**出ていないと「2つ下へ動いた」ことを見分けられない
+  await waitFor(overlay, `document.querySelectorAll('.cmd .sug:not(.dim)').length >= 3 ? 'ready' : ''`)
+  check(
+    '候補が3件以上出ている（上下移動を見分けられる状態）',
+    (await overlay.ev(`document.querySelectorAll('.cmd .sug:not(.dim)').length`)) >= 3,
+    String(await overlay.ev(`document.querySelectorAll('.cmd .sug:not(.dim)').length`))
+  )
 
   /** 何番目の候補が選ばれているか。 */
   const cursor = () =>
@@ -517,6 +542,23 @@ await ui.ev(`window.nemo.addFavorite(${JSON.stringify(reopened)}).then(() => 'ok
 
   /* --- 縦位置。箱の中心が画面の中心よりわずかに上に来ること --- */
 
+  /*
+   * **上下移動のために増やしたタブはここで閉じる**。
+   * コマンドバーは箱の上端を固定して候補を下へ伸ばすので、候補が多いほど中心は下がる。
+   * DESIGN.md が「わずかに上」と言っているのは**候補が数件出た状態**のことなので、
+   * 候補を積んだまま測ると仕様どおりでも落ちる（実際に踏んだ）。
+   */
+  for (const key of seeded) await ui.ev(`window.nemo.closeTab(${JSON.stringify('%KEY%')}).then(() => 'ok')`.replace('%KEY%', key))
+  seeded.length = 0
+  await overlay.ev(`(() => {
+    const input = document.querySelector('.cmd input')
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+    setter.call(input, 'login')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    return 'ok'
+  })()`)
+  await sleep(400)
+
   // 実ウィンドウをリサイズする API は無いので、ビューポートだけ差し替えて CSS の効きを見る。
   // 位置も高さの上限も vh で決まるので、これで両端（既定と最小 minHeight 480px）を確かめられる。
   for (const [w, h] of [
@@ -537,7 +579,9 @@ await ui.ev(`window.nemo.addFavorite(${JSON.stringify(reopened)}).then(() => 'ok
       )
       .then(JSON.parse)
     const delta = Math.round(box.box.top + box.box.height / 2 - box.vh / 2)
-    check(`${box.vh}px の窓: コマンドバーの中心が画面中心より上`, delta < 0, `${delta}px`)
+    const rows = await overlay.ev(`document.querySelectorAll('.cmd .sug').length`)
+    // **候補の件数も出す**。箱の高さは件数で変わるので、落ちたときにどちらが原因か分かる
+    check(`${box.vh}px の窓: コマンドバーの中心が画面中心より上`, delta < 0, `${delta}px / 候補 ${rows} 件`)
 
     // 候補は kind ごとに 4 件（全体 12 件）で頭打ちなので、履歴だけでは満杯にできない。
     // 高さの上限（`.sugs` の max-height）が効いているかを見たいので、行を複製して膨らませる。
@@ -572,6 +616,9 @@ await ui.ev(`window.nemo.addFavorite(${JSON.stringify(reopened)}).then(() => 'ok
 
   await ui.ev(`window.nemo.setOverlay(null).then(() => 'ok')`)
   await waitFor(overlay, `document.querySelector('.cmd') ? '' : 'closed'`)
+
+  // 候補用に開いたタブは片付ける（後続の検証はタブの本数を見る）
+  for (const key of seeded) await ui.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
 }
 
 /* ------------------------------------------------------------------ *

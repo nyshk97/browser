@@ -17,6 +17,7 @@ mise run dev       # 開発版 Nemo を起動（HMR あり）
 ```bash
 mise run check              # lint → typecheck → ユニットテスト（Electron 不要・数秒）
 mise run verify             # 自走検証（ビルド→起動→CDP で検証→後片付け）。終了コードが合否
+mise run verify:only phase1 pins  # そのうち指定したものだけ回す（1回あたり数十秒）
 mise run verify:switcher    # タブスイッチャー（⌃M）だけを個別に回す
 mise run verify:ext         # 拡張互換 smoke（自作テスト拡張・資格情報なし・CI 必須と同じもの）
 mise run verify:ext-idle    # 上に service worker の idle 停止をまたぐ確認を足す（+2分ほど）
@@ -24,6 +25,21 @@ mise run package            # パッケージして成果物を検査（fuses・
 mise run verify:packaged    # パッケージした .app を起動して smoke test
 mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残ることを実物で検証
 ```
+
+**1か所直して確かめ直すときは `verify:only` で絞る**。`mise run verify` は 9 本すべてを
+毎回回すので 1 回 3 分半かかるが、関係するものだけなら 40 秒以内で終わる
+（`phase1` + `pins` の実測で 36 秒）。**最後に 1 回だけフルを通す**。
+
+指定できるのは `spike` / `phase1` / `phase2` / `pins` / `switcher` / `peek` / `restart` /
+`migration` / `db`。
+
+- 知らない名前はエラーにする（typo で「何も回さずに PASS」にしない）
+- 回さなかったものは実行中と最後のサマリの両方に出る（フルで通ったと読み違えないため）
+- `migration` / `db` は自分でアプリを起動するので、それだけ指定したときはアプリを立てない
+- **検証どうしの前段依存に注意**。絞って回すと、前の検証が作ったタブや履歴が無いぶん
+  候補や件数が足りずに落ちることがある。落ちたら「絞ったせい」で済ませず、
+  **その検証が自分で前提を作るように直す**（コマンドバーの上下移動がこれで落ちた実例あり。
+  候補を 3 件以上作ってから撃つように直した）
 
 **どれを回すか**:
 

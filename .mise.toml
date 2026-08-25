@@ -63,6 +63,18 @@ depends = ["lint", "typecheck", "test"]
 description = "自走検証を通す（ユニットテスト→ビルド→アプリ起動→CDP で検証→後片付け）"
 run = "node scripts/verify-all.mjs"
 
+[tasks."verify:only"]
+description = "自走検証のうち指定したものだけ回す（例: mise run verify:only phase1 pins）"
+usage = 'arg "<targets>" var=#true help="spike / phase1 / phase2 / pins / switcher / peek / restart / migration / db"'
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+# 可変長引数は `$usage_<arg名>` に**1つの文字列**で入る（要素ごとにクォートが付くことがある）。
+# eval で位置パラメータに開き直してから渡す。
+eval "set -- ${usage_targets:-}"
+node scripts/verify-all.mjs --only "$@"
+'''
+
 [tasks."verify:migration"]
 description = "旧版（セッション v2 / pins v1）のデータから起動して移行が壊れていないか確かめる"
 run = "node scripts/verify-session-migration.mjs"

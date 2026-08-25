@@ -3,6 +3,7 @@ import { log, logError, redactUrl } from './log.js'
 import {
   ensureSystemMediaAccess,
   isSystemMediaDenied,
+  mediaCheckKinds,
   mediaKindsFor,
   openMediaSettings,
   type MediaKind
@@ -135,20 +136,57 @@ export function applySessionSecurityDefaults(
   })
 
   // check は同期。**聞かずに答えられる場合だけ true**（未設定は false）。
-  session.setPermissionCheckHandler((_wc, permission, requestingOrigin) => {
+  session.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) => {
     if (AUTO_ALLOWED.has(permission)) return true
     const origin = normalizeOrigin(requestingOrigin)
     if (!origin) return false
-    if (getDecision(origin, permission as PermissionKind, permissionScope) !== 'allow') return false
+
     // Nemo が許可していても、OS 側で拒まれていれば使えない（`media-access.ts`）。
-    const kinds = mediaKindsFor(permission)
-    return kinds.length === 0 || !kinds.every(isSystemMediaDenied)
+    // **check の details は `mediaType`（単数）**なので `mediaCheckKinds` で受ける。
+    const kinds = mediaCheckKinds(permission, details)
+    if (kinds.length > 0 && kinds.every(isSystemMediaDenied)) return false
+
+    const decision = getDecision(origin, permission as PermissionKind, permissionScope)
+    // **未決定を「拒否」に見せない**（下の説明）。ユーザーが明示的に拒否したものは通さない。
+    if (decision === null && permission === 'media' && isPermissionsQueryCheck(details)) return true
+    return decision === 'allow'
   })
 
   installDisplayMediaHandler(session, resolveWindowId, permissionScope)
 
   // デバイス選択（WebUSB / WebHID / シリアル）は既定で拒否する
   session.setDevicePermissionHandler(() => false)
+}
+
+/**
+ * `navigator.permissions.query` からの検査か。
+ *
+ * Electron の permission check handler は **boolean しか返せず、
+ * 「未決定（prompt）」を表現できない**。false を返すと `permissions.query` は
+ * `denied` を返すので、**query の結果でゲートするサイトは `getUserMedia` を呼ばなくなり、
+ * Nemo の許可ダイアログに永久に到達できない**（Google Meet がまさにこれで、
+ * 「マイクの使用がブロックされています」から一歩も進めなくなる）。
+ *
+ * かといって未決定で一律 true を返すと、**`enumerateDevices()` のデバイス名が
+ * 同意なしに漏れる**。macOS の Continuity Camera はデバイス名に**本名**が入るので、
+ * これは許容できない（実測で確認した）。
+ *
+ * 幸い、この2つは `details` の形で見分けられる（Electron 41 で実測）。
+ *
+ * | 経路 | `securityOrigin` | `embeddingOrigin` |
+ * |---|---|---|
+ * | `navigator.permissions.query` | 無い | **ある** |
+ * | `enumerateDevices()`（デバイス名の露出） | **ある** | 無い |
+ *
+ * **両方の条件を要求する**ので、Chromium 側で形が変わったら
+ * 「Meet がまた出なくなる」側（fail-closed）に倒れる。デバイス名が漏れる側には倒れない。
+ * どちらに倒れたかは自走検証が両方向から見張っている（`verify-phase1.mjs`）。
+ *
+ * **ここで true を返しても、録音・撮影が同意なしに始まることは無い**。
+ * `getUserMedia` は check ではなく `setPermissionRequestHandler` を通る（実測）。
+ */
+function isPermissionsQueryCheck(details: Electron.PermissionCheckHandlerHandlerDetails): boolean {
+  return details.securityOrigin === undefined && details.embeddingOrigin !== undefined
 }
 
 async function handlePermissionRequest(

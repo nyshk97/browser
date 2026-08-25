@@ -37,6 +37,26 @@ export function mediaKindsFor(
   return kinds
 }
 
+/**
+ * permission **check** の details から OS 側に要る許可の種類を割り出す。
+ *
+ * `mediaKindsFor` と分けてあるのは、**check と request で details の形が違う**ため。
+ * request は `mediaTypes`（配列）、check は `mediaType`（単数）で来る。
+ * 同じ関数で受けようとすると check 側が常に空を返し、
+ * **OS 側の拒否を見ているつもりのコードが何も見ていない**状態になる（実際にそうなっていた）。
+ */
+export function mediaCheckKinds(
+  permission: string,
+  details?: { mediaType?: 'video' | 'audio' | 'unknown' }
+): MediaKind[] {
+  if (permission === 'microphone') return ['microphone']
+  if (permission === 'camera') return ['camera']
+  if (permission !== 'media') return []
+  if (details?.mediaType === 'audio') return ['microphone']
+  if (details?.mediaType === 'video') return ['camera']
+  return []
+}
+
 /** OS 側で拒否されているか（同期・ダイアログを出さない）。permission check 用。 */
 export function isSystemMediaDenied(kind: MediaKind): boolean {
   if (process.platform !== 'darwin') return false

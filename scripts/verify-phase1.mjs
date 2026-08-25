@@ -797,6 +797,44 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
   page.close()
 }
 
+/*
+ * 未決定のマイク・カメラの見え方（`security.ts` の `isPermissionsQueryCheck`）。
+ *
+ * **両方向から見張る**。Electron の check handler は boolean しか返せず
+ * 「未決定」を表現できないので、どちらかに倒すしかない。
+ * - `denied` に倒すと **`permissions.query` でゲートするサイトが `getUserMedia` を
+ *   呼ばなくなり、許可ダイアログに永久に到達できない**（Google Meet がこれで詰む）
+ * - 一律 `granted` に倒すと **`enumerateDevices()` のデバイス名が同意なしに漏れる**
+ *   （macOS の Continuity Camera はデバイス名に**本名**が入る）
+ *
+ * どちらに転んでも気づけるよう、2つ並べて見る。
+ */
+{
+  const key = await ui.ev(`window.nemo.createTab('${PAGES}/index.html?probe=media-check').then(k => k)`)
+  const page = await connectTo(CDP, 'probe=media-check')
+  await waitFor(page, "document.readyState === 'complete' ? 'ok' : ''")
+
+  const state = await page.ev(`navigator.permissions.query({ name: 'microphone' }).then((r) => r.state)`)
+  check(
+    '未決定のマイクは permissions.query で denied にならない（サイトが getUserMedia を諦めない）',
+    state !== 'denied',
+    String(state)
+  )
+
+  const labels = await page.ev(
+    `navigator.mediaDevices.enumerateDevices().then((d) => JSON.stringify(d.map((x) => x.label)))`
+  )
+  const leaked = JSON.parse(labels).filter(Boolean)
+  check(
+    '未決定のうちはデバイス名が漏れない（本名が載りうる）',
+    leaked.length === 0,
+    leaked.length === 0 ? `${JSON.parse(labels).length} 件すべて空` : labels
+  )
+
+  page.close()
+  await ui.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
+}
+
 // 権限ダイアログ（要求元は**アクティブなタブ**でなければならない。
 // 背景タブからの要求は Chromium 側で保留され、ダイアログまで届かない）
 {

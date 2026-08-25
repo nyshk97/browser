@@ -266,6 +266,15 @@ await window.nemo.restartServiceWorkers()
 > タブの ID は **`key`（UUID 文字列）**。`webContentsId` は `chrome.tabs` との対応を見るための
 > 参考値で、sleep 中は `null` になる。
 
+**CDP で自走検証を書くときの罠が2つある。**
+
+- **`window.open` は素の `Runtime.evaluate` では popup ブロッカーに弾かれる**。
+  `userGesture: true` を付ける。付け忘れると「popup が開かない」のではなく**何も起きない**ので、
+  実装のバグと見分けが付かない
+- **自分が繋いでいる WebContents ごと消える操作**（小窓を閉じる ⌘W / ⌘O など）を `ev` で撃つと、
+  **応答が返らず永久に待つ**。撃ちっぱなしにして時間で切り上げる
+  （`Promise.race([session.ev(...), sleep(2500)])`）。ここでハングすると以降の検査が丸ごと飛ぶ
+
 確認すべき代表的な項目:
 
 | 確認したいこと | 見るもの |

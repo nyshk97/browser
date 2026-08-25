@@ -1015,6 +1015,96 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
   )
 }
 
+/* ------------------------------------------------------------------ *
+ * 1-10 空状態（タブが 1 つも無いとき）
+ *
+ * **専用のウィンドウを作ってそこで確かめる**。ここではタブを全部閉じるので、
+ * 元のウィンドウでやると後続（phase2 / pins …）の前提を壊す。
+ * 最後にタブを 1 つ作って空のウィンドウを残さない（残すと `connectUi` が
+ * そちらを掴んだときに軒並み落ちる）。
+ * ------------------------------------------------------------------ */
+
+{
+  const known = new Set(
+    (await listTargets(CDP)).filter((t) => t.url.includes('view=sidebar')).map((t) => t.url)
+  )
+  await ui.ev('window.nemo.createWindow().then(() => "ok")')
+  let url = null
+  for (let i = 0; i < 40 && !url; i += 1) {
+    url =
+      (await listTargets(CDP)).find((t) => t.url.includes('view=sidebar') && !known.has(t.url))?.url ??
+      null
+    if (!url) await sleep(300)
+  }
+  const windowId = url?.match(/window=(\d+)/)?.[1] ?? null
+  check('空状態の検証用にウィンドウを作れる', Boolean(windowId), url ?? 'target が増えない')
+
+  if (windowId) {
+    const side = await connectUi(CDP, `sidebar&window=${windowId}`)
+    // **初期タブができるのを待つ**。`getAppStatus().ready` はアプリ全体の初期化であって
+    // このウィンドウの初期タブ生成ではないので、待たずに閉じると
+    // 「まだ 0 本」を「全部閉じた」と読み違え、その後にタブが生えて空状態が出ない。
+    await waitFor(side, 'window.nemo.getWindowState().then(s => s.tabs.length > 0 ? "ok" : "")')
+    const keys = await side
+      .ev('window.nemo.getWindowState().then(s => JSON.stringify(s.tabs.map(t => t.key)))')
+      .then(JSON.parse)
+    for (const key of keys) {
+      await side.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
+    }
+    const left = await side.ev('window.nemo.getWindowState().then(s => s.tabs.length)')
+    check('最後のタブを閉じてもウィンドウは残る', left === 0, `tabs=${left}`)
+
+    const empty = await connectTo(CDP, `view=empty&window=${windowId}`, { timeoutMs: 15000 }).catch(
+      () => null
+    )
+    check('タブが 0 本になると空状態の View が出る', Boolean(empty))
+    if (empty) {
+      await waitFor(empty, "document.querySelector('.empty-mark') ? 'ok' : ''")
+      const dom = await empty
+        .ev(
+          `JSON.stringify({
+            vis: document.visibilityState,
+            w: innerWidth,
+            mark: (() => {
+              const r = document.querySelector('.empty-mark').getBoundingClientRect()
+              return { size: r.width, cx: Math.round(r.left + r.width / 2) }
+            })(),
+            markColor: getComputedStyle(document.querySelector('.empty-mark')).color,
+            keys: [...document.querySelectorAll('.empty-keys span')].map((s) => s.textContent),
+            clickable: document.querySelectorAll('.empty-state button, .empty-state a').length,
+            bg: getComputedStyle(document.body).backgroundColor
+          })`
+        )
+        .then(JSON.parse)
+      check('マークは 64px', dom.mark.size === 64, `${dom.mark.size}px`)
+      check('マークは中央にある', Math.abs(dom.mark.cx - dom.w / 2) <= 1, `cx=${dom.mark.cx} w=${dom.w}`)
+      check(
+        'マークの色は --nemo-ghost',
+        dom.markColor === 'rgba(232, 232, 238, 0.14)',
+        dom.markColor
+      )
+      check(
+        'キーの表記は英語',
+        dom.keys.join('|') === '⌘TNew Tab|⌘⇧TReopen Closed Tab',
+        JSON.stringify(dom.keys)
+      )
+      check('空状態に押せるものは置かない', dom.clickable === 0, `${dom.clickable} 個ある`)
+      check('下地はページ領域と同じ色', dom.bg === 'rgb(14, 14, 17)', dom.bg)
+      check('タブが無い間は見えている', dom.vis === 'visible', dom.vis)
+
+      await side.ev(`window.nemo.createTab('${PAGES}/index.html').then(() => 'ok')`)
+      const hidden = await waitFor(empty, "document.visibilityState === 'hidden' ? 'hidden' : ''", {
+        timeoutMs: 5000
+      }).catch(() => 'visible のまま')
+      check('タブができたら隠す', hidden === 'hidden', hidden)
+      empty.close()
+    } else {
+      await side.ev(`window.nemo.createTab('${PAGES}/index.html').then(() => 'ok')`)
+    }
+    side.close()
+  }
+}
+
 ui.close()
 overlay.close()
 console.log(failures === 0 ? '\nverify-phase1: すべて PASS' : `\nverify-phase1: ${failures} 件 FAIL`)

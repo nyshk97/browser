@@ -16,6 +16,8 @@
   --nemo-danger: #ff6b6b;
   /* フォルダのアイコン。Finder のフォルダに寄せた水色 */
   --nemo-folder: #64b5f6;
+  /* 空状態のマーク。地に溶けかける濃さ（気配だけ残す） */
+  --nemo-ghost: rgba(232, 232, 238, 0.14);
 
   --nemo-row-h: 40px;
   --nemo-radius: 7px;
@@ -1403,6 +1405,52 @@ body[data-view='toolbar'] {
   padding: 0;
   justify-content: center;
   font-size: 13px;
+}
+
+/* ------------------------------------------------------------------ *
+ * 空状態（タブが 1 つも無いとき）
+ *
+ * ページ領域いっぱいの View。下に敷かれるものが無いので**透過させない**
+ * （ページの地と同じ色を自分で塗る）。
+ * ------------------------------------------------------------------ */
+
+body[data-view='empty'] {
+  background: var(--nemo-page-bg);
+}
+
+.empty-state {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+}
+
+.empty-mark {
+  display: block;
+  color: var(--nemo-ghost);
+}
+
+.empty-keys {
+  display: flex;
+  gap: 16px;
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--nemo-ink-dim);
+  /* マークが気配だけなので、キーの表記もそれに合わせて一段落とす */
+  opacity: 0.8;
+}
+
+.empty-keys kbd {
+  margin-right: 5px;
+  padding: 1.5px 5px;
+  border: 1px solid var(--nemo-border);
+  border-radius: 4px;
+  background: var(--nemo-surface);
+  color: var(--nemo-ink);
+  font: inherit;
+  font-size: 0.93em;
 }
 
 /* ------------------------------------------------------------------ *

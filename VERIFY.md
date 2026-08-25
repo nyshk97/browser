@@ -49,6 +49,7 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 | **タブスイッチャー（⌃M）**・MRU の並び・オーバーレイの割り込み | `mise run verify:switcher` |
 | **Peek（ウィンドウ内ポップアップ）・小窓（Little Nemo）**・popup の受け皿・⌘O の昇格 | `mise run verify`（`verify-peek.mjs` が含まれる）+ 下の「Peek と小窓（実機）」 |
 | タブ / ウィンドウ・サイドバー・**ツールバー（アドレスバー）**・コマンドバー・ダウンロード・権限 | `mise run verify` |
+| **空状態（タブが 1 つも無いときの画面）** | `mise run verify:only phase1`（1-10。View 単位でスクショも撮れる） |
 | **拡張アイコンの popup の位置**（ツールバーの View オフセット） | `mise run verify:ext` |
 | 拡張まわり・Electron のバージョン | `mise run verify:ext`（+ 実機で Bitwarden） |
 | パッケージング・ネイティブ依存・fuses | `mise run package` → `mise run verify:packaged` |
@@ -300,6 +301,11 @@ await window.nemo.restartServiceWorkers()
 - **自分が繋いでいる WebContents ごと消える操作**（小窓を閉じる ⌘W / ⌘O など）を `ev` で撃つと、
   **応答が返らず永久に待つ**。撃ちっぱなしにして時間で切り上げる
   （`Promise.race([session.ev(...), sleep(2500)])`）。ここでハングすると以降の検査が丸ごと飛ぶ
+- **`createWindow()` した直後のウィンドウは、まだタブが 0 本**。`connectUi` が待つ
+  `getAppStatus().ready` は**アプリ全体**の初期化であって、そのウィンドウの初期タブ生成ではない。
+  待たずに「全タブを閉じる」と、閉じる対象が 0 件のまま **`tabs.length === 0` を満たしてしまい**、
+  その後に初期タブが生えて検査が空振りする（空状態の検証で踏んだ）。
+  `waitFor(side, '… s.tabs.length > 0 …')` を先に入れる
 
 確認すべき代表的な項目:
 

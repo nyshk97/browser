@@ -47,6 +47,23 @@ Patron License を買わない以上 GPL-3.0 を選ぶことになる。GPL-3.0 
 
 GPL-3.0 と衝突するライセンス（AGPL・独自の商用ライセンス専用など）は 1 件も無い。
 
+## コードに埋め込んだ第三者アセット
+
+`node_modules` を経由しない（= `mise run licenses` の集計に出ない）ので、ここに手で残す。
+
+| 出どころ | 使っている場所 | ライセンス | 判断 |
+|---|---|---|---|
+| [Lucide](https://lucide.dev/) の `fish-symbol` | `src/renderer/components/EmptyState.tsx`（タブが無いときのマーク） | ISC | 著作権表示の保持だけが条件。GPL-3.0 と衝突しない |
+
+Lucide の著作権表示:
+
+```
+ISC License
+
+Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of Feather (MIT).
+All other copyright (c) for Lucide are held by Lucide Contributors 2022.
+```
+
 ## Phase 1-1 に残す作業
 
 - 依存ライブラリの notice を成果物に同梱する（`electron-builder` の `extraResources` 等）

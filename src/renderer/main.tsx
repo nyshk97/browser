@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { Sidebar } from './components/Sidebar.js'
 import { Toolbar } from './components/Toolbar.js'
 import { Overlay } from './components/Overlay.js'
+import { EmptyState } from './components/EmptyState.js'
 import { Peek } from './components/Peek.js'
 import { MiniBar } from './components/MiniBar.js'
 import './styles.css'
@@ -18,6 +19,7 @@ if (!root) throw new Error('#root not found')
  * - `toolbar` … ページ領域の上端のアドレスバー（通常ウィンドウのみ）
  * - `overlay` … コマンドバー・検索バー・ダイアログ（必要なときだけ）
  * - `peek` … Peek の暗幕と ✕ / ⌘O（Peek が出ているときだけ）
+ * - `empty` … タブが 1 つも無いときの画面（そのときだけ）
  * - `mini` … 小窓の上部バー
  */
 const view = new URLSearchParams(location.search).get('view')
@@ -27,6 +29,7 @@ function Root(): React.JSX.Element | null {
   if (view === 'toolbar') return <Toolbar />
   if (view === 'overlay') return <Overlay />
   if (view === 'peek') return <Peek />
+  if (view === 'empty') return <EmptyState />
   if (view === 'mini') return <MiniBar />
   return <Sidebar />
 }

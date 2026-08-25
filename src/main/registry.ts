@@ -892,9 +892,10 @@ function attachSwipeNavigation(tab: NemoTab, wc: WebContents): void {
  * - `toolbar` … ページ領域の上端に敷くアドレスバー（通常ウィンドウのみ・常時表示）
  * - `overlay` … コマンドバー等（必要なときだけ）
  * - `peek` … Peek の暗幕と ✕ / ⌘O ボタン（透明）
+ * - `empty` … タブが 1 つも無いときにページ領域へ敷く画面
  * - `mini` … 小窓の上部バー
  */
-export type UiViewKind = 'sidebar' | 'toolbar' | 'overlay' | 'peek' | 'mini'
+export type UiViewKind = 'sidebar' | 'toolbar' | 'overlay' | 'peek' | 'empty' | 'mini'
 
 function lockUiNavigation(contents: WebContents, view: UiViewKind, uiUrl: string): void {
   const guard = (phase: string, url: string, preventDefault: () => void): void => {
@@ -984,6 +985,7 @@ export class NemoWindow {
    * Peek を一度も使わないウィンドウで WebContents を1つ増やさないため。
    */
   private peekChromeViewRef: WebContentsView | null = null
+  private emptyViewRef: WebContentsView | null = null
   readonly tabs: NemoTab[] = []
   activeTabKey: string | null = null
   sidebarVisible: boolean
@@ -1182,6 +1184,30 @@ export class NemoWindow {
     return this.peekChromeViewRef
   }
 
+  /**
+   * 空状態（タブが 1 つも無いとき）の UI View（無ければ作る）。
+   *
+   * **起動時には作らない**。起動直後は必ずタブが 1 つ以上あるので、
+   * ここで作ると「枠が何十個あっても起動が重くならない」方針に穴を開けるだけになる。
+   */
+  ensureEmptyView(): WebContentsView {
+    if (this.emptyViewRef && !this.emptyViewRef.webContents.isDestroyed()) {
+      return this.emptyViewRef
+    }
+    const view = this.createUiView('empty')
+    this.emptyViewRef = view
+    this.baseWindow.contentView.addChildView(view)
+    view.setVisible(false)
+    return view
+  }
+
+  /** 既に作ってあれば空状態の UI View。無ければ null（作らない）。 */
+  get emptyView(): WebContentsView | null {
+    if (!this.emptyViewRef) return null
+    if (this.emptyViewRef.webContents.isDestroyed()) return null
+    return this.emptyViewRef
+  }
+
   /** この UI View 群（IPC の宛先・送信元検証に使う）。 */
   private get uiContents(): WebContents[] {
     const list = [this.chromeWebContents, this.overlayWebContents]
@@ -1247,6 +1273,19 @@ export class NemoWindow {
     for (const tab of this.tabs) {
       // Peek はページ領域の中央に小さく置く（ページはページ領域いっぱい）
       tab.view?.setBounds(tab.peekOf ? peekArea : pageBounds)
+    }
+
+    // タブが 1 つも無いときだけ、ページ領域に空状態を敷く（DESIGN.md「空状態」）。
+    // **タブがあるときは必ず隠す**。ページの上に残るとクリックを丸ごと遮る
+    // （Peek の暗幕で踏んだのと同じ罠）。
+    if (this.normalTabs.length === 0) {
+      const empty = this.ensureEmptyView()
+      empty.setBounds(pageBounds)
+      empty.setVisible(true)
+      this.baseWindow.contentView.removeChildView(empty)
+      this.baseWindow.contentView.addChildView(empty)
+    } else {
+      this.emptyView?.setVisible(false)
     }
 
     // z 順は毎回作り直す。**タブを作ると子 View の順序が変わる**ので、
@@ -1485,12 +1524,13 @@ export class NemoWindow {
     this.tabs.length = 0
     this.activeTabKey = null
 
-    for (const view of [this.chromeView, this.overlayView, this.peekChromeViewRef]) {
+    for (const view of [this.chromeView, this.overlayView, this.peekChromeViewRef, this.emptyViewRef]) {
       if (!view) continue
       this.baseWindow.contentView.removeChildView(view)
       if (!view.webContents.isDestroyed()) view.webContents.close()
     }
     this.peekChromeViewRef = null
+    this.emptyViewRef = null
 
     windowsById.delete(this.id)
     // 覚えている「chrome から見た active」を捨てる。

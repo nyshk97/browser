@@ -32,7 +32,8 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 | ナビゲーション判定・設定スキーマ・キーバインド・ログ | `mise run check` |
 | **タブスイッチャー（⌃M）**・MRU の並び・オーバーレイの割り込み | `mise run verify:switcher` |
 | **Peek（ウィンドウ内ポップアップ）・小窓（Little Nemo）**・popup の受け皿・⌘O の昇格 | `mise run verify`（`verify-peek.mjs` が含まれる）+ 下の「Peek と小窓（実機）」 |
-| タブ / ウィンドウ・サイドバー・コマンドバー・ダウンロード・権限 | `mise run verify` |
+| タブ / ウィンドウ・サイドバー・**ツールバー（アドレスバー）**・コマンドバー・ダウンロード・権限 | `mise run verify` |
+| **拡張アイコンの popup の位置**（ツールバーの View オフセット） | `mise run verify:ext` |
 | 拡張まわり・Electron のバージョン | `mise run verify:ext`（+ 実機で Bitwarden） |
 | パッケージング・ネイティブ依存・fuses | `mise run package` → `mise run verify:packaged` |
 | 履歴 / アーカイブ・シークレット・設定画面・既定ブラウザ | `mise run verify`（`verify-phase2.mjs` が含まれる） |
@@ -59,6 +60,9 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 - 拡張から渡された URL がナビゲーション検証を通ること（`file:` は拒否 / 自分の拡張ページは許可）
 - 拡張の service worker が動いていること・再起動要求が通ること
 - 使えない `chrome.*` API の列挙（現状 `declarativeNetRequest` と `sidePanel.setOptions`）
+- **拡張アイコンの popup がツールバーのアイコンの真下に出ること**（`verify:ext`）。
+  ライブラリは popup の位置を「アンカーの**View 内座標** + ウィンドウの左上」で決めるので、
+  足し戻しを外すとサイドバー幅ぶん左（サイドバーの上）に出る
 - タブを閉じたときの registry の後始末 / IPC が未所有のタブを拒否すること
 - `chrome.storage.local` が再起動をまたいで残ること
 
@@ -104,7 +108,13 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
   落とし直しても定義を作り直さないこと）
 - **落とし先が掴んだ場所で前後しないこと**（同じ階層で上へ動かしても下へ動かしても、
   落とした行の手前に入る）
-- サイドバーの並び（一時タブに見出しを出さず、「新しいタブ」行がその先頭にあること）
+- サイドバーの並び（一時タブに見出しを出さず、「New Tab」行がその先頭にあること）
+- **サイドバーの寸法**（行の高さ 40px・閉じる × の当たり判定 26×26）
+- **ツールバー**（高さ 40px・サイドバーの右を埋める・**ページがツールバーぶん下がる**・
+  アドレスバーが現在のページを出す・サイドバー側にアドレスバーとナビ行が無いこと）。
+  main の bounds は CDP から直接見られないので、**View ごとの `innerWidth` / `innerHeight` の関係**で見る
+- **フォルダのダブルクリックでリネームに入らないこと**（開閉の状態も元のまま。
+  リネームは右クリックの「名前を変更」だけ）
 - **main プロセスの例外が診断ログに1件も無いこと**
 
 
@@ -347,6 +357,28 @@ end tell'
 screencapture -x -R<x,y,w,h> /path/to/out.png
 ```
 
+**AI が自走で見た目を確かめるときは、この osascript を使わない**。System Events は
+アクセシビリティ権限のプロンプトで固まり、5 分待っても返ってこない（実際に踏んだ）。
+サイドバーとツールバーは**別の WebContentsView** なので、CDP の `Page.captureScreenshot` を
+View ごとに撮るほうが速くて確実。常用の Nemo を止めずに済むよう、
+**使い捨ての userData** で開発版を起動する。
+
+```bash
+TMP=$(mktemp -d)
+NEMO_USER_DATA_DIR="$TMP" node scripts/dev.mjs --built &   # CDP は 9333
+# scripts/lib/cdp.mjs の connectUi(cdp, 'sidebar' | `toolbar&window=<id>`) で繋いで
+#   await session.send('Page.enable')
+#   const r = await session.send('Page.captureScreenshot', { format: 'png' })
+# を撮る
+pkill -f "$TMP"; rm -rf "$TMP"
+```
+
+- `connectUi(cdp, 'toolbar')` と**ウィンドウを指定せずに繋がない**。破棄したウィンドウの
+  UI ターゲットもしばらく `/json/list` に残るので、死んだ View に繋がって
+  IPC が `unknown_sender` で弾かれる。`toolbar&window=<windowId>` まで指定する
+- CDP を使う使い捨てスクリプトは**最後に `process.exit(0)`** を置く。
+  WebSocket が開いたままだと node が終了せず、タイムアウトまで待たされる
+
 ## 拡張の lock まわり
 
 ```bash
@@ -568,7 +600,8 @@ mise run dev:popup
    - ⌘F 検索 → ⌘G 次 → ⌘⇧G 前 / ⌘+ ⌘- ⌘0 zoom / ⌃⌘F フルスクリーン
    - ⌘W タブを閉じる / ⌘⇧T 開き直す / ⌃Tab タブ送り / ⌘1〜⌘9
    - ⌘⌥I ページの DevTools / ⌘⌥⇧I ブラウザ UI の DevTools
-2. **サイドバーの見た目**（DESIGN.md との一致・favicon・未読ドット・sleep の薄さ）
+2. **サイドバーとツールバーの見た目**（DESIGN.md との一致・favicon・未読ドット・sleep の薄さ・
+   信号機とアドレスバーが同じ行に並ぶこと・**サイドバーを隠したときに信号機とボタンが重ならないこと**）
 3. **ドラッグ & ドロップ**（ピン留めの並べ替え・フォルダへの出し入れ・Favorites の並べ替え・
    **一時タブの行をピン留めへ落とす** / **Favorites グリッドへ落とす**）
 4. **ダブルクリックでのリネーム**（実マウスでの手触り・**IME の変換確定 Enter で編集が閉じないこと**。

@@ -243,15 +243,34 @@ export function watchServiceWorkerStatus(session: Electron.Session): void {
  * `PopupView.maybeClose` は DevTools が開いていれば閉じないので、
  * **生成された瞬間に開く**のが確実。dev で明示的に有効にしたときだけ動く。
  */
-/** popup が画面（work area）からはみ出していたら押し戻す。 */
-function keepPopupOnScreen(popup: { browserWindow?: Electron.BrowserWindow }): void {
+/**
+ * popup を出す View（ツールバー）のオフセット。
+ *
+ * electron-chrome-extensions は `<browser-action-list>` の
+ * **View 内クライアント座標**にウィンドウの左上を足して popup を置く
+ * （`PopupView.updatePosition`）。アイコンはサイドバーの右にある
+ * ツールバー View に載っているので、足し戻さないとサイドバー幅ぶん
+ * 左（＝サイドバーの上）にずれて出る。
+ */
+function popupAnchorOffset(popupWindow: Electron.BrowserWindow): number {
+  const parent = popupWindow.getParentWindow()
+  if (!parent) return 0
+  const win = findWindowByBaseWindow(parent)
+  // 小窓は拡張アイコンを持たない（そもそも popup が出ない）
+  if (!win || win.kind === 'mini') return 0
+  return win.sidebarWidth
+}
+
+/** popup を View のオフセットぶんずらし、画面（work area）からはみ出していたら押し戻す。 */
+function placePopup(popup: { browserWindow?: Electron.BrowserWindow }): void {
   const win = popup.browserWindow
   if (!win || win.isDestroyed()) return
   const bounds = win.getBounds()
-  const area = screen.getDisplayMatching(bounds).workArea
+  const shifted = { ...bounds, x: bounds.x + popupAnchorOffset(win) }
+  const area = screen.getDisplayMatching(shifted).workArea
   // popup が work area より大きいときは、左上を優先して合わせる（右下を切る）
-  const x = Math.max(area.x, Math.min(bounds.x, area.x + area.width - bounds.width))
-  const y = Math.max(area.y, Math.min(bounds.y, area.y + area.height - bounds.height))
+  const x = Math.max(area.x, Math.min(shifted.x, area.x + area.width - shifted.width))
+  const y = Math.max(area.y, Math.min(shifted.y, area.y + area.height - shifted.height))
   if (x === bounds.x && y === bounds.y) return
   win.setBounds({ ...bounds, x: Math.round(x), y: Math.round(y) })
 }
@@ -273,13 +292,13 @@ export function watchExtensionPopups(extensions: ElectronChromeExtensions): void
 
     log('extension.popup_created', { extensionId: popup.extensionId, devtools: openDevTools })
 
-    // popup の位置は electron-chrome-extensions が決めるが、**画面内に収める処理が無い**。
-    // 伸びる向き（Sidebar の `alignment`）を直しても、ウィンドウが画面の端にあれば
-    // popup の反対側が画面外へ出る。ライブラリは移動・リサイズのたびに位置を計算し直すので、
-    // その直後に毎回押し戻す。`setBounds` はこれらのイベントを再発火しないので再帰しない。
-    keepPopupOnScreen(popup)
-    popup.on('moved', () => keepPopupOnScreen(popup))
-    popup.on('resized', () => keepPopupOnScreen(popup))
+    // popup の位置は electron-chrome-extensions が決めるが、**アンカーを載せている
+    // View のオフセットを見ておらず、画面内に収める処理も無い**。
+    // ライブラリは移動・リサイズのたびに位置を計算し直すので、その直後に毎回置き直す。
+    // `setBounds` はこれらのイベントを再発火しないので再帰しない。
+    placePopup(popup)
+    popup.on('moved', () => placePopup(popup))
+    popup.on('resized', () => placePopup(popup))
 
     contents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
       logError('extension.popup_load_failed', new Error(errorDescription), {

@@ -273,18 +273,33 @@ try {
 
   /* ---- 5b. popup の表示位置 ---- */
   {
-    // `chrome.action.openPopup()` はウィンドウ右上の擬似アンカーで開くので、
-    // **サイドバーのボタンを実際にクリックする経路**でないと alignment を検証できない。
-    // electron-chrome-extensions の既定はアンカーの右端に popup の右端を合わせる（左へ伸びる）ため、
-    // サイドバーが左端にある Nemo では popup が画面外へ見切れる（実機で発生した）。
-    const anchor = await ui
+    /*
+     * `chrome.action.openPopup()` はウィンドウ右上の擬似アンカーで開くので、
+     * **ツールバーのボタンを実際にクリックする経路**でないと位置を検証できない。
+     *
+     * アンカー（`<browser-action-list>`）はサイドバーの右の**ツールバー View**に載る。
+     * electron-chrome-extensions は View 内の座標にウィンドウの左上を足すだけなので、
+     * 足し戻さないと**サイドバー幅ぶん左**（サイドバーの上）に出る
+     * （`extensions.ts` の `popupAnchorOffset`）。
+     * 伸びる向きは既定（アンカーの右端に popup の右端を合わせて左へ伸びる）。
+     * ツールバーの右端にアイコンがあるので、右へ伸ばすと画面外に見切れる。
+     */
+    await ui.ev("window.nemo.setSidebarVisible(true).then(() => 'ok')")
+    const windowId = (
+      await ui.ev('window.nemo.getWindowState().then((s) => JSON.stringify(s))').then(JSON.parse)
+    ).windowId
+    // **ウィンドウ ID まで指定して繋ぐ**（破棄したウィンドウの UI ターゲットも一覧に残る）
+    const toolbar = await connectUi(cdp, `toolbar&window=${windowId}`)
+    const sidebarWidth = JSON.parse(await ui.ev('JSON.stringify(innerWidth)'))
+    const anchor = await toolbar
       .ev(
         `(() => {
-          const btn = document.querySelector('browser-action-list')?.shadowRoot?.querySelector('.action')
+          const list = document.querySelector('browser-action-list')
+          const btn = list && (list.shadowRoot ?? list).querySelector('.action')
           if (!btn) return JSON.stringify({ ok: false })
           const r = btn.getBoundingClientRect()
           btn.click()
-          return JSON.stringify({ ok: true, left: window.screenX + r.left })
+          return JSON.stringify({ ok: true, right: window.screenX + ${sidebarWidth} + r.right })
         })()`
       )
       .then(JSON.parse)
@@ -313,17 +328,18 @@ try {
           box.top + box.height <= box.availTop + box.availHeight,
         JSON.stringify(box)
       )
-      // 画面端で押し戻された場合を誤検出しないよう、右に伸びる余地があるときだけ見る
-      if (anchor.left + box.width <= box.availLeft + box.availWidth) {
+      // 画面端で押し戻された場合を誤検出しないよう、そのまま置ける位置のときだけ見る
+      if (anchor.right - box.width >= box.availLeft && anchor.right <= box.availLeft + box.availWidth) {
         check(
-          'popup がアンカーから右へ開く',
-          box.left >= anchor.left - 1,
-          `anchor ${anchor.left} / popup ${box.left}`
+          'popup の右端がアイコンの右端に合う（サイドバー幅ぶん左にずれない）',
+          Math.abs(box.left + box.width - anchor.right) <= 2,
+          `popup right ${box.left + box.width} / anchor right ${anchor.right}`
         )
       }
       await popup.ev('window.close()').catch(() => {})
     }
     popup?.close()
+    toolbar.close()
     await sleep(500)
   }
 

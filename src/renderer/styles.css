@@ -17,7 +17,7 @@
   /* フォルダのアイコン。Finder のフォルダに寄せた水色 */
   --nemo-folder: #64b5f6;
 
-  --nemo-row-h: 28px;
+  --nemo-row-h: 40px;
   --nemo-radius: 7px;
   --nemo-radius-lg: 11px;
 }
@@ -87,6 +87,99 @@ input {
 }
 
 /* ------------------------------------------------------------------ *
+ * ツールバー（ページ領域の上端）
+ *
+ * サイドバーとは**別の WebContentsView**。高さは main の `TOOLBAR_HEIGHT`。
+ * ------------------------------------------------------------------ */
+
+body[data-view='toolbar'] {
+  background: var(--nemo-sidebar);
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 100%;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--nemo-border);
+  /* 空きを掴んでウィンドウを動かせるようにする（信号機と同じ行にあるので自然） */
+  -webkit-app-region: drag;
+}
+
+.toolbar.private {
+  background: #241c30;
+}
+
+/* サイドバーを隠すと、この View がウィンドウの左端まで来る＝信号機と重なる */
+.toolbar.inset {
+  padding-left: 82px;
+}
+
+.toolbar button,
+.toolbar .addr,
+.toolbar browser-action-list {
+  -webkit-app-region: no-drag;
+}
+
+/*
+ * アドレスバー。**幅を上限で止める**（ウィンドウを広げたときに、
+ * 意味のない長さの入力欄が伸び続けないようにする）。
+ */
+.toolbar .addr {
+  flex: 1;
+  min-width: 0;
+  max-width: 620px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  margin-left: 4px;
+  padding: 0 10px;
+  background: var(--nemo-surface);
+  border-radius: var(--nemo-radius);
+  color: #c9c9d4;
+  font-size: 12.5px;
+  text-align: left;
+  transition: background 0.12s;
+}
+
+.toolbar .addr:hover {
+  background: #2c2c35;
+}
+
+.toolbar .addr.editing {
+  background: var(--nemo-surface-hi);
+}
+
+.toolbar .addr input {
+  width: 100%;
+  color: #fff;
+  cursor: text;
+}
+
+.toolbar .addr .u {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* ホストだけ白くする（長い URL でも見ているサイトが一目で分かる） */
+.toolbar .addr .u b {
+  color: #fff;
+  font-weight: 500;
+}
+
+.toolbar .lock {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  fill: currentColor;
+  opacity: 0.5;
+}
+
+/* ------------------------------------------------------------------ *
  * サイドバー
  * ------------------------------------------------------------------ */
 
@@ -96,23 +189,12 @@ input {
   height: 100%;
 }
 
-/* 信号機ボタンぶんの余白。ここをドラッグでウィンドウを動かせるようにする */
+/* 信号機ボタンぶんの余白。ここをドラッグでウィンドウを動かせるようにする。
+   高さは main の `TOOLBAR_HEIGHT` と揃える（信号機とアドレスバーが同じ行に並ぶ） */
 .drag-strip {
-  height: 34px;
+  height: 40px;
   flex: 0 0 auto;
   -webkit-app-region: drag;
-}
-
-.nav-row,
-.actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 0 8px;
-}
-
-.actions {
-  padding: 6px 8px 8px;
 }
 
 .icon {
@@ -157,24 +239,6 @@ input {
   height: 6px;
   border-radius: 50%;
   background: var(--nemo-accent);
-}
-
-.address {
-  padding: 4px 10px 0;
-}
-
-.address input {
-  width: 100%;
-  background: var(--nemo-surface);
-  border-radius: var(--nemo-radius);
-  padding: 6px 9px;
-  font-size: 12px;
-  color: #c9c9d4;
-}
-
-.address input:focus {
-  background: var(--nemo-surface-hi);
-  color: #fff;
 }
 
 .fav-grid {
@@ -396,7 +460,7 @@ input {
   box-shadow: inset 0 0 0 1px var(--nemo-accent);
 }
 
-/* 一時タブの先頭に置く「新しいタブ」。タブ行と同じ高さで、色だけ落とす */
+/* 一時タブの先頭に置く「New Tab」。タブ行と同じ高さで、色だけ落とす */
 .row.new-tab {
   width: 100%;
   color: var(--nemo-ink-dim);
@@ -456,13 +520,23 @@ input {
   opacity: 0.7;
 }
 
+/*
+ * 閉じる（×）。**行の高さに対して十分な当たり判定を持たせる**。
+ * 文字の大きさだけ上げても押しやすくならないので、箱ごと 26px の正方形にする。
+ */
 .row .x {
   opacity: 0;
-  font-size: 12px;
+  width: 26px;
+  height: 26px;
+  font-size: 18px;
   line-height: 1;
-  padding: 2px 3px;
-  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
   flex: 0 0 auto;
+  /* 行の右パディング（8px）に食い込ませて、見た目の余白を詰める */
+  margin-right: -2px;
 }
 
 .row:hover .x {
@@ -471,7 +545,7 @@ input {
 
 .row .x:hover {
   opacity: 1;
-  background: var(--nemo-hover);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 /*
@@ -512,7 +586,7 @@ input {
 .rename {
   flex: 1;
   min-width: 0;
-  height: 20px;
+  height: 24px;
   padding: 0 5px;
   font: inherit;
   color: #fff;

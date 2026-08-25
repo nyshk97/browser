@@ -748,6 +748,59 @@ const settle = () => sleep(250)
   await settle()
 }
 
+/* --- フォルダはダブルクリックでリネームしない（導線は右クリックだけ） --- */
+{
+  await resetDefinitions()
+  await closeEphemeralTabs()
+
+  await ui.ev(`window.nemo.createFolder('検証フォルダ').then(() => 'ok')`)
+  await settle()
+
+  const before = flatten((await shared()).pinned).find((n) => n.kind === 'folder')
+  await ui.ev(
+    `(() => { window.__nemoVerify.doubleClick(document.querySelector('.row.folder')); return 'ok' })()`
+  )
+  await sleep(CLICK_DELAY_WAIT_MS)
+  {
+    const editing = await ui.ev(`Boolean(document.querySelector('.row.folder .rename'))`)
+    const after = flatten((await shared()).pinned).find((n) => n.kind === 'folder')
+    check('フォルダのダブルクリックでは編集に入らない', editing === false)
+    // 開閉が2回走って元に戻る（＝クリックはフォルダの開閉のまま）
+    check(
+      'ダブルクリックしても開閉の状態は元のまま',
+      Boolean(after?.collapsed) === Boolean(before?.collapsed),
+      `${json(before?.collapsed)} -> ${json(after?.collapsed)}`
+    )
+  }
+
+  // 右クリックからは今までどおり名前を変えられる
+  await ui.ev(`(() => {
+    const row = document.querySelector('.row.folder')
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 80 }))
+    return 'ok'
+  })()`)
+  await settle()
+  await ui.ev(`(() => {
+    const item = [...document.querySelectorAll('.row-menu button')].find((b) => b.textContent === '名前を変更')
+    item.click()
+    return 'ok'
+  })()`)
+  await settle()
+  check(
+    'フォルダは右クリックの「名前を変更」で編集に入る',
+    (await ui.ev(`Boolean(document.querySelector('.row.folder .rename'))`)) === true
+  )
+  await ui.ev(`(() => {
+    document.querySelector('.row.folder .rename').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    return 'ok'
+  })()`)
+  await settle()
+
+  await resetDefinitions()
+  await closeEphemeralTabs()
+  await settle()
+}
+
 /* --- 一時タブを Favorites グリッドへ落として追加する（空のときと、既にあるとき） --- */
 {
   await resetDefinitions()

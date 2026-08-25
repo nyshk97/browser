@@ -1,30 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { prettyUrl, useCommand, useSharedState, useWindowState } from '../useNemo.js'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCommand, useSharedState, useWindowState } from '../useNemo.js'
 import { PinnedTree } from './PinnedTree.js'
 import { TabRow, TAB_DRAG_TYPE, useDragEnd } from './TabRow.js'
 import { RenameInput, useDelayedClick } from './InlineRename.js'
 import { RowMenu, type RowMenuState } from './RowMenu.js'
 import type { FavoriteItem, LoadedExtensionInfo, TabState, UpdateState } from '../../shared/types.js'
 
-const PAGE_PARTITION = 'persist:nemo'
-
 /**
  * サイドバー（DESIGN.md「3層の並び」）。
- * アドレスバー → Favorites → ピン留め → 一時タブ の順で固定する。
+ * Favorites → ピン留め → 一時タブ の順で固定する。
+ * **アドレスバーとナビゲーションはここには無い**（ページ領域の上端の `Toolbar`）。
  */
 export function Sidebar(): React.JSX.Element {
   const state = useWindowState()
   const shared = useSharedState()
   const [extensions, setExtensions] = useState<LoadedExtensionInfo[]>([])
-  /**
-   * アドレスバーの入力。
-   * `null` は「編集していない」= 現在タブの URL をそのまま出す、という意味。
-   * タブの URL を effect で state に写すと、タブを切り替えるたびに
-   * 追加のレンダリングが走るうえ、編集中の内容を踏み潰す。
-   */
-  const [draft, setDraft] = useState<string | null>(null)
-  const addressRef = useRef<HTMLInputElement>(null)
-
   useEffect(() => {
     void window.nemo.getExtensions().then(setExtensions)
   }, [])
@@ -73,15 +63,6 @@ export function Sidebar(): React.JSX.Element {
     [state]
   )
 
-  const submitAddress = (event: React.FormEvent): void => {
-    event.preventDefault()
-    const input = draft ?? activeTab?.url ?? ''
-    setDraft(null)
-    addressRef.current?.blur()
-    if (activeTab) void window.nemo.navigate(activeTab.key, input)
-    else void window.nemo.createTab(input)
-  }
-
   const isPrivate = state?.isPrivate === true
 
   return (
@@ -100,115 +81,6 @@ export function Sidebar(): React.JSX.Element {
           <span>拡張は動かない（Bitwarden の自動入力は使えない）</span>
         </div>
       ) : null}
-
-      <div className="nav-row">
-        <button
-          type="button"
-          className="icon nav"
-          title="戻る"
-          disabled={!activeTab?.canGoBack}
-          onClick={() => activeTab && void window.nemo.goBack(activeTab.key)}
-        >
-          ‹
-        </button>
-        <button
-          type="button"
-          className="icon nav"
-          title="進む"
-          disabled={!activeTab?.canGoForward}
-          onClick={() => activeTab && void window.nemo.goForward(activeTab.key)}
-        >
-          ›
-        </button>
-        <button
-          type="button"
-          className="icon nav"
-          title={activeTab?.loading ? '停止' : '再読み込み（右クリックでキャッシュを無視）'}
-          disabled={!activeTab}
-          onClick={() =>
-            activeTab &&
-            void (activeTab.loading ? window.nemo.stop(activeTab.key) : window.nemo.reload(activeTab.key))
-          }
-          onContextMenu={(event) => {
-            // スーパーリロード。⌘⇧R と同じ経路（キャッシュを捨てて読み直す）
-            event.preventDefault()
-            if (activeTab) void window.nemo.reload(activeTab.key, { ignoreCache: true })
-          }}
-        >
-          {activeTab?.loading ? '×' : '⟳'}
-        </button>
-        <div className="spacer" />
-        <button
-          type="button"
-          className="icon"
-          title="サイドバーを隠す（⌘S）"
-          onClick={() => void window.nemo.setSidebarVisible(false)}
-        >
-          ⇤
-        </button>
-      </div>
-
-      <form className="address" onSubmit={submitAddress}>
-        <input
-          ref={addressRef}
-          value={draft ?? prettyUrl(activeTab?.url ?? '')}
-          spellCheck={false}
-          placeholder="URL または検索"
-          onFocus={(event) => {
-            // 編集を始めたら、表示用に短くした形ではなく生の URL を入れる
-            setDraft(activeTab?.url ?? '')
-            requestAnimationFrame(() => event.target.select())
-          }}
-          onChange={(event) => setDraft(event.target.value)}
-          onBlur={() => setDraft(null)}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              setDraft(null)
-              addressRef.current?.blur()
-            }
-          }}
-        />
-      </form>
-
-      <div className="actions">
-        {/*
-          alignment は「popup がどちら向きに伸びるか」。
-          electron-chrome-extensions は既定でアンカーの**右端に popup の右端を合わせる**
-          （= 左へ伸びる）ので、サイドバーが左端にある Nemo では画面外へ見切れる。
-          `right` を含めるとアンカーの左端に popup の左端が合い、右へ伸びる。
-        */}
-        {/*
-          シークレットウィンドウには拡張がロードされていない。
-          ここにアイコンを出すと「押せるのに何も起きない」ので、そもそも出さない
-          （partition が違うため、押しても通常セッションのタブを対象にしてしまう）。
-        */}
-        {isPrivate ? null : <browser-action-list partition={PAGE_PARTITION} alignment="bottom right" />}
-        <div className="spacer" />
-        <button
-          type="button"
-          className="icon"
-          title="ダウンロード（⌘⇧J）"
-          onClick={() => void window.nemo.setOverlay('downloads')}
-        >
-          ↓{shared.downloads.some((item) => item.state === 'progressing') ? <span className="badge" /> : null}
-        </button>
-        <button
-          type="button"
-          className="icon"
-          title="履歴とアーカイブ（⌘Y）"
-          onClick={() => void window.nemo.setOverlay('library')}
-        >
-          🕘
-        </button>
-        <button
-          type="button"
-          className="icon"
-          title="新規タブ（⌘T）"
-          onClick={() => void window.nemo.setOverlay('command-bar')}
-        >
-          ＋
-        </button>
-      </div>
 
       <FavoriteGrid favorites={shared.favorites} tabs={favoriteTabs} />
 
@@ -229,7 +101,7 @@ export function Sidebar(): React.JSX.Element {
         <PinnedTree nodes={shared.pinned} openIds={openPinnedIds} tabs={pinnedTabs} />
 
         {/*
-          ここから下が一時タブ。見出しは置かず、区切り線と「新しいタブ」行で
+          ここから下が一時タブ。見出しは置かず、区切り線と「New Tab」行で
           ピン留めとの境目を示す（Arc と同じ並び）。
         */}
         <div className="tabs-sep" />
@@ -239,7 +111,7 @@ export function Sidebar(): React.JSX.Element {
           onClick={() => void window.nemo.setOverlay('command-bar')}
         >
           <span className="plus">＋</span>
-          <span className="tt">新しいタブ</span>
+          <span className="tt">New Tab</span>
         </button>
         {ephemeral.map((tab) => (
           <TabRow key={tab.key} tab={tab} active={tab.key === state?.activeTabKey} />

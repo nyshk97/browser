@@ -84,6 +84,12 @@ import type {
 /** サイドバーの幅。 */
 const SIDEBAR_WIDTH = 260
 /**
+ * ページ領域の上に敷くツールバー（アドレスバー）の高さ。
+ * **信号機ボタンと同じ行**にするため、`TRAFFIC_LIGHT_INSET` と辻褄を合わせる
+ * （ボタンは 12px なので上端の余白は (40 - 12) / 2 = 14）。
+ */
+const TOOLBAR_HEIGHT = 40
+/**
  * Peek（ウィンドウ内ポップアップ）の寸法。ページ領域に対する割合で固定する。
  * DESIGN.md「Peek」と一致させる。
  */
@@ -123,8 +129,8 @@ const PAGE_WEB_PREFERENCES = {
 } as const
 /** サイドバーを隠しているときに残す掴みしろ（macOS の信号機ボタンぶん）。 */
 const SIDEBAR_HIDDEN_WIDTH = 0
-/** 信号機ボタンと重ならないようにする上端の余白。 */
-const TRAFFIC_LIGHT_INSET = { x: 14, y: 18 }
+/** 信号機ボタンと重ならないようにする上端の余白。**ツールバーの中央に来るように置く**。 */
+const TRAFFIC_LIGHT_INSET = { x: 14, y: 14 }
 /** 小窓の信号機（バーが 38px なので通常より上に寄せる）。 */
 const MINI_TRAFFIC_LIGHT_INSET = { x: 12, y: 13 }
 /** 小窓の既定の寸法。**記憶しない**（常に同じ場所・同じ大きさで出す）。 */
@@ -326,11 +332,18 @@ export type OverlayKind =
   | 'tab-switcher'
   | null
 
-/** オーバーレイの種類ごとに、UI View が受け取る矩形を決める。 */
+/**
+ * オーバーレイの種類ごとに、UI View が受け取る矩形を決める。
+ *
+ * `toolbarHeight` は**ページ領域の上端**（アドレスバーの下）。モーダル以外は
+ * ここより下に置く —— 上に重ねるとアドレスバーが隠れ、「今どのページか」が
+ * 見えないままダイアログに答えることになる。小窓はツールバーを持たないので 0。
+ */
 function overlayBounds(
   kind: Exclude<OverlayKind, null>,
   content: { width: number; height: number },
-  sidebarWidth: number
+  sidebarWidth: number,
+  toolbarHeight: number
 ): Electron.Rectangle {
   switch (kind) {
     // モーダル。背景を暗くするため全面を覆う。
@@ -341,19 +354,19 @@ function overlayBounds(
       return { x: 0, y: 0, width: content.width, height: content.height }
     case 'find': {
       const width = Math.min(460, Math.max(content.width - sidebarWidth - 24, 240))
-      return { x: content.width - width - 12, y: 12, width, height: 68 }
+      return { x: content.width - width - 12, y: toolbarHeight + 12, width, height: 68 }
     }
     case 'prompt': {
       const width = Math.min(560, Math.max(content.width - sidebarWidth - 24, 320))
-      return { x: sidebarWidth + 12, y: 12, width, height: 220 }
+      return { x: sidebarWidth + 12, y: toolbarHeight + 12, width, height: 220 }
     }
     case 'downloads': {
       const width = 380
       return {
         x: Math.max(content.width - width - 12, 0),
-        y: 12,
+        y: toolbarHeight + 12,
         width,
-        height: Math.min(460, content.height - 24)
+        height: Math.max(Math.min(460, content.height - toolbarHeight - 24), 120)
       }
     }
     // ライブラリと設定はページの上に大きく重ねる（別ウィンドウにしない）。
@@ -363,8 +376,8 @@ function overlayBounds(
     case 'settings': {
       const margin = 24
       const width = Math.min(920, Math.max(content.width - sidebarWidth - margin * 2, 360))
-      const height = Math.max(content.height - margin * 2, 240)
-      return { x: sidebarWidth + margin, y: margin, width, height }
+      const height = Math.max(content.height - toolbarHeight - margin * 2, 240)
+      return { x: sidebarWidth + margin, y: toolbarHeight + margin, width, height }
     }
   }
 }
@@ -551,10 +564,10 @@ export class NemoTab {
   }
 }
 
-/** 空タブは URL をそのまま出さずに「新しいタブ」と表示する。 */
+/** 空タブは URL をそのまま出さずに「New Tab」と表示する（サイドバーの New Tab 行と揃える）。 */
 function displayTitle(title: string, url: string): string {
   if (title && title !== BLANK_URL) return title
-  if (!url || url === BLANK_URL) return '新しいタブ'
+  if (!url || url === BLANK_URL) return 'New Tab'
   return url
 }
 
@@ -876,11 +889,12 @@ function attachSwipeNavigation(tab: NemoTab, wc: WebContents): void {
 /**
  * ブラウザ UI の View 種別。
  * - `sidebar` … 常時表示のサイドバー
+ * - `toolbar` … ページ領域の上端に敷くアドレスバー（通常ウィンドウのみ・常時表示）
  * - `overlay` … コマンドバー等（必要なときだけ）
  * - `peek` … Peek の暗幕と ✕ / ⌘O ボタン（透明）
  * - `mini` … 小窓の上部バー
  */
-export type UiViewKind = 'sidebar' | 'overlay' | 'peek' | 'mini'
+export type UiViewKind = 'sidebar' | 'toolbar' | 'overlay' | 'peek' | 'mini'
 
 function lockUiNavigation(contents: WebContents, view: UiViewKind, uiUrl: string): void {
   const guard = (phase: string, url: string, preventDefault: () => void): void => {
@@ -958,6 +972,11 @@ export class NemoWindow {
   readonly baseWindow: BaseWindow
   /** サイドバー（常時表示）。 */
   readonly chromeView: WebContentsView
+  /**
+   * ページ領域の上端に敷くアドレスバー（常時表示）。
+   * **小窓は持たない**（小窓の上部バーは `chromeView` の側で描く）。
+   */
+  readonly toolbarView: WebContentsView | null
   /** コマンドバー・検索バー・ダイアログ用（必要なときだけ表示）。 */
   readonly overlayView: WebContentsView
   /**
@@ -1025,8 +1044,12 @@ export class NemoWindow {
 
     // 小窓はサイドバーの代わりに上部バーを持つ（同じ `chromeView` の枠を使う）
     this.chromeView = this.createUiView(kind === 'mini' ? 'mini' : 'sidebar')
+    // アドレスバーはページ領域の上（サイドバーの右）に別 View で敷く。
+    // サイドバーの View を L 字には広げられないので、View を分けるしかない。
+    this.toolbarView = kind === 'mini' ? null : this.createUiView('toolbar')
     this.overlayView = this.createUiView('overlay')
     this.baseWindow.contentView.addChildView(this.chromeView)
+    if (this.toolbarView) this.baseWindow.contentView.addChildView(this.toolbarView)
     this.baseWindow.contentView.addChildView(this.overlayView)
     this.overlayView.setVisible(false)
 
@@ -1162,6 +1185,7 @@ export class NemoWindow {
   /** この UI View 群（IPC の宛先・送信元検証に使う）。 */
   private get uiContents(): WebContents[] {
     const list = [this.chromeWebContents, this.overlayWebContents]
+    if (this.toolbarView) list.push(this.toolbarView.webContents)
     const peek = this.peekChromeView
     if (peek) list.push(peek.webContents)
     return list.filter((contents) => !contents.isDestroyed())
@@ -1194,14 +1218,30 @@ export class NemoWindow {
     this.chromeView.setBounds({ x: 0, y: 0, width: sidebar, height })
     this.chromeView.setVisible(this.sidebarVisible)
 
+    /*
+     * アドレスバーはページ領域の上端（サイドバーの右）。
+     * **サイドバーを隠したら左端まで伸ばす** —— サイドバーを隠すボタンも
+     * ここにあるので、伸ばさないと戻す導線ごと消える。
+     */
+    const toolbarHeight = this.toolbarView ? TOOLBAR_HEIGHT : 0
+    if (this.toolbarView) {
+      this.toolbarView.setBounds({
+        x: sidebar,
+        y: 0,
+        width: Math.max(width - sidebar, 0),
+        height: toolbarHeight
+      })
+      this.toolbarView.setVisible(true)
+    }
+
     // 表示・非表示は setVisible で制御し、bounds は全タブに与えておく。
     // バックグラウンドタブが 0x0 のままだと、選択した瞬間にレイアウトが走って
     // 一瞬崩れて見えるうえ、chrome.tabs のサイズも 0 になる。
     const pageBounds = {
       x: sidebar,
-      y: 0,
+      y: toolbarHeight,
       width: Math.max(width - sidebar, 0),
-      height: Math.max(height, 0)
+      height: Math.max(height - toolbarHeight, 0)
     }
     const peekArea = peekBounds(pageBounds)
     for (const tab of this.tabs) {
@@ -1231,7 +1271,7 @@ export class NemoWindow {
     }
 
     if (this.overlay) {
-      this.overlayView.setBounds(overlayBounds(this.overlay, { width, height }, sidebar))
+      this.overlayView.setBounds(overlayBounds(this.overlay, { width, height }, sidebar, toolbarHeight))
       this.overlayView.setVisible(true)
       // オーバーレイは必ず最前面にする（タブを作ると子 View の順序が変わる）
       this.baseWindow.contentView.removeChildView(this.overlayView)
@@ -1260,7 +1300,7 @@ export class NemoWindow {
     // 権限・認証・証明書のダイアログはページ側から出る。
     // ここを塞ぐと callback が永久に解決せず、小窓のページが黙って止まる。
     if (this.overlay) {
-      this.overlayView.setBounds(overlayBounds(this.overlay, { width, height }, 0))
+      this.overlayView.setBounds(overlayBounds(this.overlay, { width, height }, 0, 0))
       this.overlayView.setVisible(true)
       this.baseWindow.contentView.removeChildView(this.overlayView)
       this.baseWindow.contentView.addChildView(this.overlayView)

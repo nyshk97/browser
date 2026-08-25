@@ -349,24 +349,87 @@ await ui.ev(`window.nemo.addFavorite(${JSON.stringify(reopened)}).then(() => 'ok
   for (const node of ids) await ui.ev(`window.nemo.unpin(${JSON.stringify(node.id)}).then(() => 'ok')`)
 }
 
-// サイドバーの並び（見出しを置かず、一時タブの先頭に「新しいタブ」を出す）
+// サイドバーの並び（見出しを置かず、一時タブの先頭に「New Tab」を出す）
 {
   const dom = JSON.parse(
     await ui.ev(`JSON.stringify({
       todayLabel: document.body.innerText.includes('今日のタブ'),
       newTabRow: Boolean(document.querySelector('.row.new-tab')),
+      newTabLabel: document.querySelector('.row.new-tab .tt')?.textContent ?? '',
       newTabAboveTabs: (() => {
         const rows = [...document.querySelectorAll('.scroll .row')]
         const at = rows.findIndex((r) => r.classList.contains('new-tab'))
         return at >= 0 && rows.slice(at + 1).every((r) => !r.classList.contains('pin'))
       })(),
-      tabsDraggable: Boolean(document.querySelector('.scroll .row[draggable="true"]'))
+      tabsDraggable: Boolean(document.querySelector('.scroll .row[draggable="true"]')),
+      // 行の高さと閉じる（×）の当たり判定は DESIGN.md「サイズ」の値そのもの。
+      // **実測値を出す**（セレクタが外れて 0 のまま PASS するのを防ぐ）
+      rowHeight: (() => {
+        const row = document.querySelector('.scroll .row.new-tab')
+        return row ? Math.round(row.getBoundingClientRect().height) : 0
+      })(),
+      closeBox: (() => {
+        const x = document.querySelector('.scroll .row .x')
+        if (!x) return null
+        const rect = x.getBoundingClientRect()
+        return [Math.round(rect.width), Math.round(rect.height)]
+      })(),
+      // アドレスバーとナビゲーションはツールバーへ移した（サイドバーには無い）
+      noAddress: !document.querySelector('.address'),
+      noNavRow: !document.querySelector('.nav-row')
     })`)
   )
   check('一時タブに見出し（今日のタブ）を出さない', dom.todayLabel === false)
-  check('「新しいタブ」行がある', dom.newTabRow)
-  check('「新しいタブ」はピン留めより下・一時タブより上にある', dom.newTabAboveTabs)
+  check('「New Tab」行がある', dom.newTabRow)
+  check('「New Tab」の文言', dom.newTabLabel === 'New Tab', dom.newTabLabel)
+  check('「New Tab」はピン留めより下・一時タブより上にある', dom.newTabAboveTabs)
   check('タブ行はドラッグできる（ピン留めへ落とせる）', dom.tabsDraggable)
+  check('行の高さは 40px', dom.rowHeight === 40, `${dom.rowHeight}px`)
+  check(
+    '閉じる（×）の当たり判定は 26×26',
+    Array.isArray(dom.closeBox) && dom.closeBox[0] === 26 && dom.closeBox[1] === 26,
+    JSON.stringify(dom.closeBox)
+  )
+  check('サイドバーにアドレスバーとナビ行を置かない', dom.noAddress && dom.noNavRow)
+}
+
+/*
+ * ツールバー（アドレスバーはページ領域の上端。DESIGN.md「ツールバー」）。
+ *
+ * main の bounds は CDP から直接見られないので、**View ごとの innerWidth /
+ * innerHeight の関係**で確かめる（サイドバーは全高・ページはツールバーぶん低い）。
+ */
+{
+  await ui.ev("window.nemo.setSidebarVisible(true).then(() => 'ok')")
+  // **ウィンドウ ID まで指定して繋ぐ**。破棄したウィンドウの UI ターゲットも
+  // しばらく `/json/list` に残るので、`view=toolbar` の先頭を拾うと
+  // 死んだウィンドウの View に繋がって IPC が unknown_sender で弾かれる。
+  const windowId = (await state()).windowId
+  const toolbar = await connectUi(CDP, `toolbar&window=${windowId}`)
+  const key = await ui.ev(`window.nemo.createTab(${JSON.stringify(`${PAGES}/index.html?probe=toolbar`)})`)
+  const page = await connectTo(CDP, 'probe=toolbar')
+  const size = async (session) => JSON.parse(await session.ev('JSON.stringify([innerWidth, innerHeight])'))
+  const [sideW, sideH] = await size(ui)
+  const [barW, barH] = await size(toolbar)
+  const [pageW, pageH] = await size(page)
+
+  check('サイドバーの幅は 260px', sideW === 260, `${sideW}px`)
+  check('ツールバーの高さは 40px', barH === 40, `${barH}px`)
+  check('ツールバーはサイドバーの右を埋める', barW > 0 && barW === pageW, `bar=${barW} page=${pageW}`)
+  check(
+    'ページはツールバーぶん下がる（サイドバーとの高さの差が 40px）',
+    sideH - pageH === 40,
+    `sidebar=${sideH} page=${pageH}`
+  )
+
+  const addr = await toolbar.ev(
+    "(() => { const el = document.querySelector('.toolbar .addr .u'); return el ? el.textContent : '' })()"
+  )
+  check('アドレスバーが現在のページを出す', addr.includes(new URL(PAGES).host), addr)
+
+  page.close()
+  await ui.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
+  toolbar.close()
 }
 
 /* ------------------------------------------------------------------ *

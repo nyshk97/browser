@@ -150,7 +150,10 @@ export function PinnedTree({
         }
       }
 
-      /** ダブルクリックで編集に入る。**待たせておいた単クリックは捨てる**。 */
+      /**
+       * ダブルクリックで編集に入る。**待たせておいた単クリックは捨てる**。
+       * **フォルダには付けない**（開閉と取り合いになるので、リネームは右クリックだけ）。
+       */
       const onDoubleClick = (event: React.MouseEvent): void => {
         event.preventDefault()
         event.stopPropagation()
@@ -169,7 +172,6 @@ export function PinnedTree({
                 if (editing) return
                 void window.nemo.toggleFolder(node.id)
               }}
-              onDoubleClick={onDoubleClick}
               onContextMenu={(event) =>
                 openMenu(event, node.id, [
                   { label: '名前を変更', run: () => setEditingId(node.id) },

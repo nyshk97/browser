@@ -264,11 +264,15 @@ await sleep(2500)
   await sleep(2000)
   const after = await ui2.ev('window.nemo.getWindowState()')
   check(
-    'window.open がタブとして registry に入る',
-    after.tabs.length === before.tabs.length + 1,
+    'window.open が registry に入る（Peek として親タブの上に浮く）',
+    after.tabs.length === before.tabs.length + 1 &&
+      after.tabs.some((tab) => tab.peekParentKey !== null && tab.url.includes('site=popup-tab')),
     `${before.tabs.length} -> ${after.tabs.length}`
   )
 
+  // **サイズ指定つきの popup（OAuth・決済でよくある形）も Peek になる**。
+  // 以前は別ウィンドウにしていたが、「前面に出そうとする要求はすべて Peek」に変えた
+  // （DESIGN.md「Peek」）。ウィンドウは増えず、親タブの上に浮かぶ。
   const uiBefore = await uiWindowCount()
   await page.send('Runtime.evaluate', {
     expression: `window.open('/login.html?site=popup-window', '_blank', 'width=500,height=400')`,
@@ -276,11 +280,17 @@ await sleep(2500)
   })
   await sleep(2500)
   const uiAfter = await uiWindowCount()
+  const afterState = await ui2.ev('window.nemo.getWindowState()')
+  const peeks = afterState.tabs.filter((tab) => tab.peekParentKey !== null)
   check(
-    'サイズ指定の window.open が新規ウィンドウになる',
-    uiAfter === uiBefore + 1,
-    `${uiBefore} -> ${uiAfter}`
+    'サイズ指定の window.open が Peek になる（ウィンドウは増えない）',
+    uiAfter === uiBefore && peeks.length === 1 && peeks[0].url.includes('site=popup-window'),
+    `windows ${uiBefore} -> ${uiAfter} / peek=${peeks.map((tab) => tab.url).join(',')}`
   )
+
+  // 次の検査に Peek を持ち越さない（可視 View の数が変わる）
+  for (const peek of peeks) await ui2.ev(`window.nemo.closeTab('${peek.key}')`)
+  await sleep(800)
 }
 
 // 9. 拡張が作るタブ / ウィンドウ（Phase 0 の中核）
@@ -313,11 +323,15 @@ await sleep(2500)
     'active: false のタブは registry に居るがアクティブではない',
     Boolean(tabByContentsId(state1, bg?.id)) && activeContentsId(state1) !== bg?.id
   )
-  // 実際に前面に描画されていないこと（View の可視性）を UI 側から見る
+  // 実際に前面に描画されていないこと（View の可視性）を UI 側から見る。
+  // **Peek が出ていると可視 View は2つになる**（選択中の通常タブ＋その Peek）ので、
+  // 「アクティブタブが含まれ、Peek でないものはそれだけ」で見る。
   const visible = await ui2.ev('window.nemo.getVisibleTabKeys()')
+  const peekKeys = new Set(state1.tabs.filter((tab) => tab.peekParentKey !== null).map((tab) => tab.key))
+  const visibleNormal = Array.isArray(visible) ? visible.filter((key) => !peekKeys.has(key)) : []
   check(
     'バックグラウンドタブの View が表示されていない',
-    Array.isArray(visible) && visible.length === 1 && visible[0] === state1.activeTabKey,
+    visibleNormal.length === 1 && visibleNormal[0] === state1.activeTabKey,
     `visible=${JSON.stringify(visible)} active=${state1.activeTabKey}`
   )
 

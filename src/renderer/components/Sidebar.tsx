@@ -61,9 +61,15 @@ export function Sidebar(): React.JSX.Element {
   /**
    * 一時タブ。**専用枠（ピン留め / Favorites）に属するタブはここに出さない**
    * （出すと同じタブがサイドバーに2回並ぶ）。
+   *
+   * **Peek も出さない**。Peek は親タブの上に浮いているだけで、
+   * 一覧では親タブが1本出ているように見せる。
    */
   const ephemeral: TabState[] = useMemo(
-    () => (state?.tabs ?? []).filter((tab) => tab.pinnedId === null && tab.favoriteId === null),
+    () =>
+      (state?.tabs ?? []).filter(
+        (tab) => tab.pinnedId === null && tab.favoriteId === null && tab.peekParentKey === null
+      ),
     [state]
   )
 

@@ -19,7 +19,8 @@ import {
   isTransferring,
   removeTab,
   removeWindow,
-  selectTab
+  selectTab,
+  windowForNewTab
 } from './registry.js'
 
 export interface LockedExtension {
@@ -335,10 +336,13 @@ export function createExtensions(session: Electron.Session): ElectronChromeExten
 
     async createTab(details) {
       // details.windowId は chrome 側の windowId = BaseWindow.id
-      const win =
+      const requestedWindow =
         (typeof details.windowId === 'number' ? findWindowByBaseWindowId(details.windowId) : null) ??
         focusedOrFirstWindow()
-      if (!win) throw new Error('no window available')
+      if (!requestedWindow) throw new Error('no window available')
+      // 小窓がフォーカス中だと `focusedOrFirstWindow()` は小窓を返す。
+      // 小窓はタブを増やせないので通常ウィンドウへ回す（拡張から見ると普通に成功する）。
+      const win = windowForNewTab(requestedWindow)
 
       // 拡張から渡された URL もナビゲーション検証を必ず通す。
       // 拡張は自分のページ（chrome-extension://<ロード済み ID>/）だけ追加で開ける。

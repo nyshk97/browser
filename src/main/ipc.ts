@@ -12,6 +12,7 @@ import {
   openPinned,
   pinTabInto,
   removeFavoriteEverywhere,
+  promoteForegroundView,
   removeTab,
   renameTab,
   selectTab,
@@ -199,11 +200,23 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('nemo:move-tab-to-new-window', (event, key: unknown) => {
     const { win, tab } = requireTab(event, key)
     // 1枚しか無いタブを別ウィンドウへ動かしても意味がないので何もしない
-    if (win.tabs.length <= 1) return
+    if (win.normalTabs.length <= 1) return
     // 移動先も同じ性質にする。通常ウィンドウを作ると partition が違って
     // registry が移動を拒否し、**空のウィンドウだけが増える**
     const target = createWindow(undefined, { isPrivate: win.isPrivate })
     target.whenUiReady(() => moveTabToWindow(tab, target))
+  })
+
+  /* ---- Peek / 小窓 ---- */
+  // ⌘O と同じ経路に乗せる（展開ボタンとキーで挙動が分かれないようにする）
+  ipcMain.handle('nemo:promote-foreground-view', (event) => {
+    promoteForegroundView(requireWindow(event))
+  })
+
+  ipcMain.handle('nemo:close-peek', (event) => {
+    const win = requireWindow(event)
+    const peek = win.getActiveTab()?.peek
+    if (peek) removeTab(win, peek.key)
   })
 
   ipcMain.handle('nemo:navigate', async (event, key: unknown, input: unknown) => {

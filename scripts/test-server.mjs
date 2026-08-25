@@ -26,6 +26,13 @@ const DOWNLOAD_PATH = '/__nemo_download__'
 const CACHE_ASSET_PATH = '/__nemo_cached_asset__'
 const CACHE_COUNT_PATH = '/__nemo_cache_count__'
 let cachedAssetHits = 0
+/**
+ * Peek の検証用。**POST の body をそのままページに書き戻す**。
+ *
+ * `<form method="POST" target="_blank">` が Peek 側に届いているかを見るためのもの。
+ * popup を「deny して URL だけ作り直す」実装だと body が落ちるので、ここが空になる。
+ */
+const ECHO_PATH = '/__nemo_echo__'
 
 const types = {
   '.html': 'text/html; charset=utf-8',
@@ -63,6 +70,20 @@ const server = http.createServer((req, res) => {
   if (url.pathname === CACHE_COUNT_PATH) {
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
     res.end(JSON.stringify({ hits: cachedAssetHits }))
+    return
+  }
+
+  if (url.pathname === ECHO_PATH) {
+    const chunks = []
+    req.on('data', (chunk) => chunks.push(chunk))
+    req.on('end', () => {
+      const body = Buffer.concat(chunks).toString('utf8')
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+      res.end(
+        `<!doctype html><meta charset="utf-8"><title>echo</title>` +
+          `<h1>echo</h1><pre id="method">${req.method}</pre><pre id="body">${body.replace(/[<&]/g, (c) => (c === '<' ? '&lt;' : '&amp;'))}</pre>`
+      )
+    })
     return
   }
 

@@ -15,7 +15,8 @@ import {
   createTab,
   createWindow,
   findWindowIdForPageContents,
-  focusedOrFirstWindow,
+  markQuitting,
+  openMiniWindow,
   selectTab,
   setExtensions,
   startBackgroundWork,
@@ -25,7 +26,7 @@ import {
 import { installApplicationMenu, watchKeybindingChanges } from './menu.js'
 import { installTabSwitcher } from './tab-switcher.js'
 import { installRuntimeMarker } from './runtime-marker.js'
-import { flushOpenUrls, handleSecondInstance, installOpenUrlHandler } from './open-url.js'
+import { flushOpenUrls, handleSecondInstance, hasPendingOpenUrls, installOpenUrlHandler } from './open-url.js'
 import { installDownloadHandler } from './downloads.js'
 import { closeLogFile, log, logError, openLogFile } from './log.js'
 import { closeSettings, getSettings, initSettings, updateSettings } from './store/settings.js'
@@ -152,15 +153,26 @@ app
     }
 
     // セッション復元（正常終了後もクラッシュ後も同じ経路で戻す）
+    //
+    // **外部 URL で叩き起こされたかを先に見る**（計画 R6）。
+    // 通常ウィンドウを作り終えてから外部 URL を流すと、その時点で
+    // 「未起動から Slack のリンクを踏んだら Nemo が画面ごと前面に出る」になる。
+    // pending があるなら通常ウィンドウは**背面で**復元し、小窓だけを出す。
+    const wokenByUrl = hasPendingOpenUrls()
     const shouldRestore = getSettings().restoreSession && restored.windows.length > 0
     const startupWindows: ReturnType<typeof createWindow>[] = []
     if (shouldRestore) {
       log('session.restoring', {
         windows: restored.windows.length,
-        cleanExit: restored.cleanExit
+        cleanExit: restored.cleanExit,
+        hidden: wokenByUrl
       })
       for (const saved of restored.windows) {
-        const win = createWindow(undefined, { bounds: saved.bounds, noInitialTab: true })
+        const win = createWindow(undefined, {
+          bounds: saved.bounds,
+          noInitialTab: true,
+          hidden: wokenByUrl
+        })
         startupWindows.push(win)
         win.whenUiReady(() => {
           saved.tabs.forEach((tab) => {
@@ -183,8 +195,12 @@ app
           win.layout()
         })
       }
-    } else {
+    } else if (!wokenByUrl) {
       startupWindows.push(createWindow())
+    } else {
+      // 復元するセッションが無いなら、空の通常ウィンドウを前に出さない。
+      // 小窓だけを出して、通常ウィンドウは必要になったときに作る。
+      log('session.skipped_for_open_url', {})
     }
 
     // 起動時のタブが揃ってから ready にする。
@@ -193,15 +209,14 @@ app
 
     // 溜まっていた外部 URL をここで流す。
     // ウィンドウが揃う前に開こうとすると createTab が拒否されて URL が消える。
+    // 外部アプリからの URL は**必ず小窓**で開く（Nemo が前面にいても同じ）。
+    //
+    // **`app.focus({ steal: true })` は撃たない**。Phase 0 の実測で、撃つと
+    // メインウィンドウの Space へ画面ごと切り替わることが分かっている
+    // （＝「ちょっとだけ確認したい」が毎回作業の中断になる）。
+    // 小窓は NSPanel なので、アプリを前面に出さずにキーフォーカスだけを受け取れる。
     const openExternalUrl = (url: string): void => {
-      const win = focusedOrFirstWindow()
-      if (win) {
-        createTab(win, url)
-        win.baseWindow.focus()
-      } else {
-        createWindow(url)
-      }
-      app.focus({ steal: true })
+      openMiniWindow(url)
     }
     if (startupWindows.length > 0) {
       startupWindows[0].whenUiSettled(() => flushOpenUrls(openExternalUrl))
@@ -235,6 +250,9 @@ app.on('activate', () => {
 })
 
 app.on('before-quit', () => {
+  // **終了で閉じたぶんは ⌘⇧T に積まない**。積むと次の起動で
+  // 「閉じたタブ」の先頭が前回終了時の小窓になる。
+  markQuitting()
   // 正常終了。ここで書き切っておくと、次の起動が確実に最新のタブから始まる。
   markCleanExit(collectSession())
   stopBackgroundWork()

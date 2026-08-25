@@ -43,7 +43,8 @@ export function suggest(win: NemoWindow, rawQuery: string): Suggestion[] {
   const results: Suggestion[] = []
 
   if (query) {
-    for (const tab of win.tabs.slice(0, 200)) {
+    // Peek はコマンドバーの「開いているタブ」に出さない（一覧に無いものへ飛ばさない）
+    for (const tab of win.normalTabs.slice(0, 200)) {
       // 専用タブの名前は**定義側が正**。タブの `customTitle` を直接見ると、
       // リネーム後も古い名前で引っかかり、新しい名前では候補に出ない。
       const label = tabDisplayName(tab)

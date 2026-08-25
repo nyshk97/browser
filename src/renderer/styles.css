@@ -50,8 +50,14 @@ body[data-view='sidebar'] {
 }
 
 /* オーバーレイ側は透過。main が View ごと出し入れする */
-body[data-view='overlay'] {
+body[data-view='overlay'],
+body[data-view='peek'] {
   background: transparent;
+}
+
+/* 小窓の上部バー。View 自体がバーの高さぶんしかない */
+body[data-view='mini'] {
+  background: var(--nemo-sidebar);
 }
 
 button {
@@ -1258,4 +1264,138 @@ input {
 
 .private-note b {
   font-size: 12px;
+}
+
+/* ------------------------------------------------------------------ *
+ * Peek（ウィンドウ内ポップアップ）
+ * ------------------------------------------------------------------ */
+
+/*
+ * この View は**ページ領域いっぱい**に敷かれ、Peek 本体の View はこの上に乗る。
+ * つまりここが描くのは「暗幕」と「Peek の外側に置くボタン」だけ。
+ */
+.peek-back {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  /*
+   * 下のページをぼかす。**別の WebContentsView の内容はぼかせない**
+   * （合成が別レイヤーなので backdrop-filter の対象にならない）ため、
+   * 効かない環境では暗幕の濃さだけが効く。効くかどうかで見た目が壊れないよう、
+   * 暗幕単体でも読めるコントラストにしてある。
+   */
+  backdrop-filter: blur(3px);
+  animation: peek-fade 0.16s ease;
+}
+
+@keyframes peek-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Peek の外側・ページ領域の右上。main 側が上下に 42px の余白を残している */
+.peek-tools {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  display: flex;
+  gap: 6px;
+}
+
+.peek-tools button {
+  height: 26px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(28, 28, 34, 0.72);
+  color: var(--nemo-ink);
+  font-size: 11.5px;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(6px);
+  transition: background 0.12s;
+}
+
+.peek-tools button:hover {
+  background: rgba(58, 58, 70, 0.92);
+}
+
+.peek-tools .peek-close {
+  width: 26px;
+  padding: 0;
+  justify-content: center;
+  font-size: 13px;
+}
+
+/* ------------------------------------------------------------------ *
+ * 小窓（Little Nemo）
+ * ------------------------------------------------------------------ */
+
+.mini-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+  padding: 0 8px 0 0;
+  border-bottom: 1px solid var(--nemo-border);
+}
+
+/* 信号機ボタンぶんの掴みしろ。ここを掴んで小窓を動かす */
+.mini-drag {
+  width: 72px;
+  height: 100%;
+  flex: none;
+  -webkit-app-region: drag;
+}
+
+.mini-bar .icon.nav {
+  width: 24px;
+  height: 24px;
+  flex: none;
+}
+
+/* URL は**表示だけ**（アドレスバーではない）。押すとコピーする */
+.mini-url {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  margin: 0 4px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--nemo-radius);
+  background: var(--nemo-surface);
+  color: var(--nemo-ink-dim);
+  font-size: 11.5px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: copy;
+}
+
+.mini-url:hover {
+  background: var(--nemo-surface-hi);
+  color: var(--nemo-ink);
+}
+
+.mini-open {
+  flex: none;
+  height: 24px;
+  padding: 0 9px;
+  border: none;
+  border-radius: var(--nemo-radius);
+  background: var(--nemo-surface);
+  color: var(--nemo-ink);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.mini-open:hover {
+  background: var(--nemo-accent);
+  color: #fff;
 }

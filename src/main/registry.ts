@@ -1,4 +1,14 @@
-import { BaseWindow, WebContentsView, app, dialog, session, webFrameMain, type WebContents } from 'electron'
+import {
+  BaseWindow,
+  WebContentsView,
+  app,
+  dialog,
+  screen,
+  session,
+  webContents as webContentsModule,
+  webFrameMain,
+  type WebContents
+} from 'electron'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -73,10 +83,56 @@ import type {
 
 /** サイドバーの幅。 */
 const SIDEBAR_WIDTH = 260
+/**
+ * Peek（ウィンドウ内ポップアップ）の寸法。ページ領域に対する割合で固定する。
+ * DESIGN.md「Peek」と一致させる。
+ */
+const PEEK_RATIO = 0.91
+/** Peek の角丸（`WebContentsView.setBorderRadius`）。 */
+const PEEK_RADIUS = 16
+/**
+ * Peek の外側に ✕ / ⌘O を置くための帯。
+ * **上下の余白をこれ以上に保つ**。割合だけで決めると小さいウィンドウでボタンが
+ * Peek の下に潜り込み、押せなくなる（Peek は暗幕より前面にいる）。
+ */
+const PEEK_TOOL_BAND = 42
+/** 小窓の上部バーの高さ（DESIGN.md「小窓」と一致させる）。 */
+const MINI_BAR_HEIGHT = 38
+
+/**
+ * ページ側 WebContents の設定。
+ *
+ * **popup（`window.open` / `target=_blank`）の子にも同じものを明示的に渡す**。
+ * `setWindowOpenHandler` の `options.webPreferences` は
+ * `window.open` の feature string 由来＝**ページが制御できる値**で、
+ * Electron が「embedder より緩くできない」と保証しているのは
+ * `contextIsolation` / `javascript` / `nodeIntegration` / `nodeIntegrationInWorker` /
+ * `sandbox` / `nodeIntegrationInSubFrames` / `enableWebSQL` の7つだけ
+ * （`webviewTag` / `experimentalFeatures` / `allowRunningInsecureContent` は入っていない）。
+ * spread して個別に潰すのは「潰し忘れが素通りする」ブラックリストになるので、
+ * **許可を列挙するこの定数を毎回そのまま渡す**（`security.ts` の方針と揃える）。
+ * Electron の doc に「`options` を使え」とあるのに使っていないのはこのため。
+ */
+const PAGE_WEB_PREFERENCES = {
+  sandbox: true,
+  contextIsolation: true,
+  nodeIntegration: false,
+  webSecurity: true,
+  // ページ側 preload には特権 API を一切載せない（そもそも指定しない）
+  safeDialogs: true
+} as const
 /** サイドバーを隠しているときに残す掴みしろ（macOS の信号機ボタンぶん）。 */
 const SIDEBAR_HIDDEN_WIDTH = 0
 /** 信号機ボタンと重ならないようにする上端の余白。 */
 const TRAFFIC_LIGHT_INSET = { x: 14, y: 18 }
+/** 小窓の信号機（バーが 38px なので通常より上に寄せる）。 */
+const MINI_TRAFFIC_LIGHT_INSET = { x: 12, y: 13 }
+/** 小窓の既定の寸法。**記憶しない**（常に同じ場所・同じ大きさで出す）。 */
+const MINI_SIZE = { width: 460, height: 560 }
+/** 2枚目以降のずらし幅。 */
+const MINI_CASCADE_STEP = 30
+/** 小窓の上限。**ソフト上限**で、opener チェーンを守っている間だけ超過を許す（計画 R10）。 */
+const MINI_WINDOW_CAP = 4
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
 const uiPreloadPath = path.join(moduleDir, '..', 'preload', 'ui.cjs')
@@ -313,6 +369,23 @@ function overlayBounds(
   }
 }
 
+/**
+ * Peek の矩形。ページ領域の中央に `PEEK_RATIO` で置く。
+ *
+ * **上下は `PEEK_TOOL_BAND` ぶんの余白を必ず残す**。✕ / ⌘O は Peek の外側
+ * （暗幕の上）に置くので、余白が足りないと Peek の下に隠れて押せなくなる。
+ */
+function peekBounds(page: Electron.Rectangle): Electron.Rectangle {
+  const width = Math.max(Math.round(page.width * PEEK_RATIO), 1)
+  const height = Math.max(Math.round(Math.min(page.height * PEEK_RATIO, page.height - PEEK_TOOL_BAND * 2)), 1)
+  return {
+    x: page.x + Math.round((page.width - width) / 2),
+    y: page.y + Math.round((page.height - height) / 2),
+    width,
+    height
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * タブ
  * ------------------------------------------------------------------ */
@@ -331,6 +404,13 @@ export class NemoTab {
   customTitle: string | null = null
 
   view: WebContentsView | null = null
+  /**
+   * このタブの上に浮いている Peek（ウィンドウ内ポップアップ）。1タブにつき1枚まで。
+   * **Peek 自身も `NemoTab` で `win.tabs` に入る**（拡張のタブモデルに載せるため）。
+   */
+  peek: NemoTab | null = null
+  /** 自分が Peek なら、その親タブ。通常タブなら `null`。 */
+  peekOf: NemoTab | null = null
   url: string
   title: string
   faviconUrl: string | null = null
@@ -360,22 +440,31 @@ export class NemoTab {
     return this.view === null
   }
 
-  /** WebContents を作って表示できる状態にする。 */
-  materialize(): WebContentsView {
+  /**
+   * WebContents を作って表示できる状態にする。
+   *
+   * `adopt` を渡すと **Electron が作った子の WebContents をそのまま抱える**。
+   * `setWindowOpenHandler` の `createWindow` コールバックから使う経路で、
+   * ここで自分から `loadURL` してはいけない（読み込みは Electron が
+   * 「子の browsing context」として行う。自分で読み直すと POST body・
+   * `window.opener`・referrer が全部落ちる。計画 R1）。
+   */
+  materialize(options: { adopt?: WebContents } = {}): WebContentsView {
     if (this.view) return this.view
 
-    const view = new WebContentsView({
-      webPreferences: {
-        // シークレットウィンドウのタブは、そのウィンドウ専用のメモリ内セッションに置く
-        session: session.fromPartition(this.window.partition),
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-        webSecurity: true,
-        // ページ側 preload には特権 API を一切載せない（そもそも指定しない）
-        safeDialogs: true
-      }
-    })
+    const view = options.adopt
+      ? // Electron が用意した子を**採用する**。`createWindow` は
+        // 「渡された WebContents に繋がったウィンドウを作る」契約で、
+        // 自前で作った別の WebContents を返すと
+        // `Invalid webContents. Created window should be connected to ...` で弾かれる。
+        new WebContentsView({ webContents: options.adopt })
+      : new WebContentsView({
+          webPreferences: {
+            // シークレットウィンドウのタブは、そのウィンドウ専用のメモリ内セッションに置く
+            session: session.fromPartition(this.window.partition),
+            ...PAGE_WEB_PREFERENCES
+          }
+        })
     this.view = view
     this.crashed = false
 
@@ -385,7 +474,7 @@ export class NemoTab {
       (contents) => findWindowIdForPageContents(contents),
       this.window.isPrivate ? this.window.partition : null
     )
-    attachTabEvents(this, wc)
+    attachTabEvents(this, wc, view)
 
     // ここに来る時点でウィンドウは生きている前提だが、
     // 落ちると「エラーダイアログが出てアプリごと止まる」なので最後にもう一度見る
@@ -398,12 +487,19 @@ export class NemoTab {
     this.window.baseWindow.contentView.addChildView(view)
     view.setVisible(false)
 
-    const target = this.pendingUrl ?? this.url
-    this.pendingUrl = null
-    const resolved =
-      resolveNavigationTarget(target, { allowExtensionPages: isLoadedExtensionUrl(target) }, 'materialize') ??
-      BLANK_URL
-    void wc.loadURL(resolved)
+    if (!options.adopt) {
+      const target = this.pendingUrl ?? this.url
+      this.pendingUrl = null
+      const resolved =
+        resolveNavigationTarget(
+          target,
+          { allowExtensionPages: isLoadedExtensionUrl(target) },
+          'materialize'
+        ) ?? BLANK_URL
+      void wc.loadURL(resolved)
+    } else {
+      this.pendingUrl = null
+    }
     // シークレットウィンドウのタブは拡張のタブモデルに載せない
     // （拡張がロードされていないセッションなので、載せても対応する tab が作れない）
     if (!this.window.isPrivate) extensions?.addTab(wc, this.window.baseWindow)
@@ -432,6 +528,7 @@ export class NemoTab {
     return {
       key: this.key,
       windowId: this.window.id,
+      peekParentKey: this.peekOf?.key ?? null,
       webContentsId: wc ? wc.id : null,
       chromeWindowId: this.window.baseWindow.isDestroyed() ? -1 : this.window.baseWindow.id,
       pinnedId: this.pinnedId,
@@ -461,7 +558,7 @@ function displayTitle(title: string, url: string): string {
   return url
 }
 
-function attachTabEvents(tab: NemoTab, wc: WebContents): void {
+function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): void {
   const win = () => tab.window
   const notify = (): void => win().pushState()
 
@@ -550,11 +647,51 @@ function attachTabEvents(tab: NemoTab, wc: WebContents): void {
   })
   wc.on('unresponsive', () => log('tab.unresponsive', { key: tab.key }))
 
+  // Peek が出ている間の Esc は Peek を閉じる。
+  //
+  // フォーカスは Peek のページ側にあることが多いので、**UI View の keydown では拾えない**。
+  // ここで拾うのが唯一の経路になる。タブスイッチャー等のオーバーレイが出ている間は
+  // そちらの Esc（取消）が優先なので手を出さない。
+  wc.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || input.key !== 'Escape') return
+    const current = win()
+    if (current.isDestroyed || current.overlay !== null) return
+    const peek = tab.peekOf ? tab : tab.peek
+    if (!peek) return
+    event.preventDefault()
+    removeTab(current, peek.key)
+  })
+
   attachSwipeNavigation(tab, wc)
 
+  // ページが自分で閉じた（`window.close()`）ときの後始末。
+  //
+  // **sleep と removeTab を巻き込まない**。どちらも `wc.close()` を通るが、
+  // その時点で `tab.view` は既に差し替わっている（sleep は null、removeTab も null）。
+  // 「View がまだこの WebContents を指している」を条件にすると自分から閉じた場合だけ通る。
+  wc.on('destroyed', () => {
+    const current = win()
+    if (current.isDestroyed) return
+    if (!current.tabs.includes(tab)) return
+    // **判定は View の同一性だけで行う**。`view.webContents` に触ると
+    // 破棄済みで `Object has been destroyed` を投げ、main の未捕捉例外になる
+    // （しかも投げた時点で以降の後始末が丸ごと飛ぶので、Peek が閉じ残る）。
+    // sleep は `tab.view = null`、removeTab も `tab.view = null`、
+    // 起こし直しは別の View になるので、この比較だけで自分から閉じた場合に絞れる。
+    if (tab.view !== view) return
+    log('tab.self_closed', { key: tab.key, windowId: current.id, peek: tab.peekOf !== null })
+    removeTab(current, tab.key)
+  })
+
   // popup（window.open / target=_blank / ⌘クリック）を Nemo のタブモデルに乗せる。
-  // allow を返すと Electron が BaseWindow 外の BrowserWindow を作ってしまうため、
-  // deny した上で自前で作る。
+  //
+  // **`deny` して URL だけ作り直す形はもう使わない**（計画 R1）。それをやると
+  // 新しい browsing context に付随するもの（`<form target=_blank>` の POST body・
+  // `window.opener` と `postMessage`・referrer・「開いた子だけが `window.close()` できる」
+  // 関係）が全部落ちる。OAuth の戻りが閉じない・親に結果が返らない、が実害。
+  //
+  // 代わりに `action: 'allow'` + `createWindow` を返し、**自前の WebContents を
+  // 子として使わせる**。`new BrowserWindow` は作られない。
   wc.setWindowOpenHandler(({ url: popupUrl, disposition }) => {
     const popupTarget = resolveNavigationTarget(
       popupUrl,
@@ -566,21 +703,97 @@ function attachTabEvents(tab: NemoTab, wc: WebContents): void {
     // ここは Electron のハンドラの中なので、投げると main プロセスまで届く。
     // 開き元のウィンドウが閉じかけているときに createTab が拒否することがあるので握る。
     try {
-      if (disposition === 'new-window') {
-        // シークレットのページから開いたウィンドウが通常セッションになると、
-        // そこだけ履歴も cookie も残る。開き元の性質を引き継ぐ。
-        const newWin = createWindow(popupTarget, { isPrivate: win().isPrivate })
-        log('popup.window_created', { windowId: newWin.id, opener: tab.key })
-      } else {
-        const background = disposition === 'background-tab'
-        const newTab = createTab(win(), popupTarget, { background })
-        log('popup.tab_created', { key: newTab.key, opener: tab.key, background })
+      // ⌘クリック（背面タブ）だけは今までどおり。
+      // 検索結果から何本も背面に溜める操作を Peek で殺さない。
+      if (disposition === 'background-tab') {
+        const newTab = createTab(win(), popupTarget, { background: true })
+        log('popup.tab_created', { key: newTab.key, opener: tab.key, background: true })
+        return { action: 'deny' }
+      }
+
+      // 受け皿は**ここで（同期に）決める**。`createWindow` の中で決めると、
+      // そこで投げたときに `setWindowOpenHandler` の try/catch では受けられない。
+      const host = preparePopupHost(tab)
+      if (!host) return { action: 'deny' }
+      // **`outlivesOpener: true` は必ず付ける**（計画 R11）。
+      // Electron は既定で「opener が閉じたら child も閉じる」ので、
+      // これが無いと**昇格して通常タブになった後でも、元の親タブを閉じると道連れで消える**。
+      // 寿命は Nemo 側（`removeTab` / `destroy`）が全部持つ。
+      return {
+        action: 'allow',
+        outlivesOpener: true,
+        // 子の webPreferences は**許可の列挙をそのまま渡す**（`PAGE_WEB_PREFERENCES` の説明を見る）
+        overrideBrowserWindowOptions: { webPreferences: { ...PAGE_WEB_PREFERENCES } },
+        // `options.webContents` は Electron が用意した子。**型定義には載っていない**が
+        // 実行時には必ず入っている（この仕組みの前提なので、無ければ例外にして気づく）。
+        createWindow: (options) =>
+          attachPopup(host, popupTarget, (options as { webContents?: WebContents }).webContents)
       }
     } catch (error) {
       logError('popup.create_failed', error, { opener: tab.key })
+      return { action: 'deny' }
     }
-    return { action: 'deny' }
   })
+}
+
+/**
+ * 前面に出そうとする popup 要求の受け皿。
+ *
+ * | 開き元 | 受け皿 |
+ * |---|---|
+ * | 通常タブ | そのタブの Peek（先客がいれば閉じてから） |
+ * | Peek | **その Peek を昇格させて通常タブにし**、新しい子を昇格後タブの Peek にする |
+ * | 小窓 | **もう1枚の小窓**（カスケード） |
+ *
+ * Peek と小窓で「古いほうを閉じて器を使い回す」をやってはいけない（計画 R8）。
+ * 古い WebContents こそが新しい子の `window.opener` なので、閉じると
+ * `window.opener.closed === true` になり **OAuth の結果を受け取れない**。
+ * どちらも「古いほうを生かしたまま器を1つ増やす」形にする。
+ */
+type PopupHost = { kind: 'peek'; parent: NemoTab } | { kind: 'mini'; win: NemoWindow }
+
+function preparePopupHost(opener: NemoTab): PopupHost | null {
+  const win = opener.window
+  if (win.isDestroyed || win.baseWindow.isDestroyed()) return null
+
+  // 小窓の中から: もう1枚の小窓を開く（中身を差し替えると opener が死ぬ）
+  if (!canHostAdditionalTabs(win)) {
+    return { kind: 'mini', win: createWindow(undefined, { kind: 'mini', noInitialTab: true }) }
+  }
+
+  // Peek の中から: その Peek を先に昇格させて、新しい子を昇格後タブの Peek にする
+  let parent = opener
+  if (opener.peekOf) {
+    promotePeek(win, opener)
+    parent = opener
+  }
+
+  // 通常タブから: 先客の Peek は閉じる（1タブにつき1枚）
+  if (parent.peek) removeTab(win, parent.peek.key)
+
+  return { kind: 'peek', parent }
+}
+
+/**
+ * Electron が用意した子の WebContents を受け皿に収める。
+ *
+ * **必ず渡された `guest` を返す**。`createWindow` は「渡された WebContents に
+ * 繋がったウィンドウを作る」契約で、別のものを返すと Electron が
+ * `Invalid webContents. Created window should be connected to webContents passed with options object.`
+ * で弾く（弾かれても popup 自体は開くので、ログを見ないと気づけない）。
+ */
+function attachPopup(host: PopupHost, url: string, guest: WebContents | undefined): WebContents {
+  if (!guest) throw new Error('window open handler did not provide a webContents')
+  try {
+    if (host.kind === 'mini') {
+      adoptMiniTab(host.win, url, guest)
+    } else {
+      openPeek(host.parent, url, guest)
+    }
+  } catch (error) {
+    logError('popup.attach_failed', error, { kind: host.kind })
+  }
+  return guest
 }
 
 /**
@@ -656,7 +869,16 @@ function attachSwipeNavigation(tab: NemoTab, wc: WebContents): void {
  * 現実の経路として一番ありうるのは「リンクやファイルをサイドバーに
  * ドラッグ & ドロップする」で、これは普通にナビゲーションを起こす。
  */
-function lockUiNavigation(contents: WebContents, view: 'sidebar' | 'overlay', uiUrl: string): void {
+/**
+ * ブラウザ UI の View 種別。
+ * - `sidebar` … 常時表示のサイドバー
+ * - `overlay` … コマンドバー等（必要なときだけ）
+ * - `peek` … Peek の暗幕と ✕ / ⌘O ボタン（透明）
+ * - `mini` … 小窓の上部バー
+ */
+export type UiViewKind = 'sidebar' | 'overlay' | 'peek' | 'mini'
+
+function lockUiNavigation(contents: WebContents, view: UiViewKind, uiUrl: string): void {
   const guard = (phase: string, url: string, preventDefault: () => void): void => {
     if (isUiUrl(url)) return
     preventDefault()
@@ -710,10 +932,21 @@ export function setOverlayChangeListener(fn: (win: NemoWindow, kind: OverlayKind
   overlayChangeListener = fn
 }
 
+/**
+ * ウィンドウの種別。
+ *
+ * - `normal` … サイドバーを持つ通常のブラウザウィンドウ
+ * - `mini` … 小窓（Little Nemo）。**タブは常に1つだけ**で、サイドバーを持たない。
+ *   外部アプリから踏んだ URL を「メインウィンドウを前面に出さずに」出すための器
+ */
+export type WindowKind = 'normal' | 'mini'
+
 export class NemoWindow {
   static nextId = 1
 
   readonly id: number
+  /** ウィンドウの種別（通常 / 小窓）。 */
+  readonly kind: WindowKind
   /** シークレットウィンドウか（拡張なし・メモリ内セッション・履歴に残さない）。 */
   readonly isPrivate: boolean
   /** このウィンドウのタブが使うセッション partition。 */
@@ -723,6 +956,11 @@ export class NemoWindow {
   readonly chromeView: WebContentsView
   /** コマンドバー・検索バー・ダイアログ用（必要なときだけ表示）。 */
   readonly overlayView: WebContentsView
+  /**
+   * Peek の暗幕と ✕ / ⌘O ボタン（透明 View）。**Peek を初めて出すときに作る**。
+   * Peek を一度も使わないウィンドウで WebContents を1つ増やさないため。
+   */
+  private peekChromeViewRef: WebContentsView | null = null
   readonly tabs: NemoTab[] = []
   activeTabKey: string | null = null
   sidebarVisible: boolean
@@ -732,29 +970,65 @@ export class NemoWindow {
   private pendingAfterReady: (() => void)[] = []
   private pendingAfterSettled: (() => void)[] = []
 
-  constructor(bounds?: SavedWindow['bounds'], isPrivate = false) {
+  constructor(
+    bounds?: SavedWindow['bounds'],
+    isPrivate = false,
+    kind: WindowKind = 'normal',
+    hidden = false
+  ) {
     this.id = NemoWindow.nextId++
+    this.kind = kind
     this.isPrivate = isPrivate
     this.partition = isPrivate ? ensurePrivateSession() : PAGE_PARTITION
     this.sidebarVisible = getSettings().sidebarVisible
 
-    this.baseWindow = new BaseWindow({
-      width: bounds?.width ?? 1280,
-      height: bounds?.height ?? 860,
-      ...(bounds ? { x: bounds.x, y: bounds.y } : {}),
-      minWidth: 640,
-      minHeight: 480,
-      title: isPrivate ? 'Nemo（シークレット）' : 'Nemo',
-      backgroundColor: isPrivate ? '#1b1524' : '#16161a',
-      titleBarStyle: 'hiddenInset',
-      trafficLightPosition: TRAFFIC_LIGHT_INSET
-    })
+    this.baseWindow =
+      kind === 'mini'
+        ? new BaseWindow({
+            ...miniWindowBounds(),
+            minWidth: 320,
+            minHeight: 240,
+            show: false,
+            title: 'Nemo',
+            backgroundColor: '#16161a',
+            titleBarStyle: 'hiddenInset',
+            trafficLightPosition: MINI_TRAFFIC_LIGHT_INSET,
+            // **NSPanel にするのが肝**（Phase 0 の実測）。
+            // 通常ウィンドウだと、キーフォーカスを渡すのに `app.focus({ steal: true })` が要り、
+            // それを撃つと**メインウィンドウの Space へ画面ごと切り替わる**。
+            // panel（nonactivating panel）なら「アプリを前面に出さずにキーを受け取る」が成立し、
+            // フルスクリーンの Space の上にも出る。メニューのアクセラレータも届く。
+            //
+            // `setVisibleOnAllWorkspaces` は**呼ばない**。呼ぶと process type が変換されて
+            // **Dock アイコンが消える**うえ、panel には不要（全 Space 追従は panel の性質として付いてくる）。
+            type: 'panel'
+          })
+        : new BaseWindow({
+            width: bounds?.width ?? 1280,
+            height: bounds?.height ?? 860,
+            ...(bounds ? { x: bounds.x, y: bounds.y } : {}),
+            // 外部 URL で叩き起こされたときは**背面で**復元する。
+            // `show: false` で作って後から `showInactive()` する
+            // （最初から見せると、その時点で Space が切り替わる）。
+            show: !hidden,
+            minWidth: 640,
+            minHeight: 480,
+            title: isPrivate ? 'Nemo（シークレット）' : 'Nemo',
+            backgroundColor: isPrivate ? '#1b1524' : '#16161a',
+            titleBarStyle: 'hiddenInset',
+            trafficLightPosition: TRAFFIC_LIGHT_INSET
+          })
 
-    this.chromeView = this.createUiView('sidebar')
+    // 小窓はサイドバーの代わりに上部バーを持つ（同じ `chromeView` の枠を使う）
+    this.chromeView = this.createUiView(kind === 'mini' ? 'mini' : 'sidebar')
     this.overlayView = this.createUiView('overlay')
     this.baseWindow.contentView.addChildView(this.chromeView)
     this.baseWindow.contentView.addChildView(this.overlayView)
     this.overlayView.setVisible(false)
+
+    // 通常ウィンドウの MRU を記録する（小窓の昇格先を決めるのに使う）。
+    // **小窓は記録しない**。記録すると小窓から小窓へ昇格しようとする。
+    this.baseWindow.on('focus', () => rememberNormalWindowFocus(this))
 
     this.baseWindow.on('resize', () => this.layout())
     this.baseWindow.on('enter-full-screen', () => {
@@ -765,10 +1039,19 @@ export class NemoWindow {
       this.layout()
       this.pushState()
     })
-    this.baseWindow.on('close', () => this.destroy())
+    // **閉じる経路をここ1本に絞る**（計画 R5）。⌘⇧W・macOS の赤いボタン・
+    // `removeWindow()`・`window.close()` のどれもここを通る。
+    // 終了 API を用意しただけでは、ネイティブの閉じるボタンが素通りして
+    // 小窓の中身が ⌘⇧T にもアーカイブにも残らない。
+    this.baseWindow.on('close', () => {
+      captureClosingWindow(this, 'user')
+      this.destroy()
+    })
   }
 
-  private createUiView(view: 'sidebar' | 'overlay'): WebContentsView {
+  private createUiView(view: UiViewKind): WebContentsView {
+    // オーバーレイと Peek の暗幕は下のページを透かす必要がある
+    const transparent = view === 'overlay' || view === 'peek'
     const contentsView = new WebContentsView({
       webPreferences: {
         // UI はページと別セッションに置く（拡張の content script を UI に入れない）
@@ -777,10 +1060,10 @@ export class NemoWindow {
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
-        transparent: view === 'overlay'
+        transparent
       }
     })
-    if (view === 'overlay') contentsView.setBackgroundColor('#00000000')
+    if (transparent) contentsView.setBackgroundColor('#00000000')
 
     const uiUrl = `${UI_INDEX_URL}?view=${view}&window=${this.id}${this.isPrivate ? '&private=1' : ''}`
     lockUiNavigation(contentsView.webContents, view, uiUrl)
@@ -790,14 +1073,15 @@ export class NemoWindow {
     // `once` ではなく `on`。dev の HMR や、何らかの理由で読み直したときにも
     // 状態を送り直さないと、UI が空のまま復帰しない。
     contentsView.webContents.on('did-finish-load', () => {
-      if (view === 'sidebar') {
+      if (view === 'sidebar' || view === 'mini') {
+        // 小窓はサイドバーを持たないので、上部バーの読み込み完了を「UI が揃った」とみなす
         this.uiReady = true
         const queued = this.pendingAfterReady
         this.pendingAfterReady = []
         // 破棄済みなら実行しない（ロード完了と close が競合する）
         if (!this.destroyed) for (const fn of queued) fn()
         this.settle()
-      } else {
+      } else if (view === 'overlay') {
         // オーバーレイは購読しかしないので、読み込み直後に**今の状態を送り直す**。
         // ここが無いと、起動直後に出た権限・認証ダイアログが
         // 「購読前に送られて誰も受け取らない」状態になり、
@@ -852,6 +1136,33 @@ export class NemoWindow {
     return this.overlayView.webContents
   }
 
+  /** Peek 用の UI View（無ければ作る）。 */
+  ensurePeekChrome(): WebContentsView {
+    if (this.peekChromeViewRef && !this.peekChromeViewRef.webContents.isDestroyed()) {
+      return this.peekChromeViewRef
+    }
+    const view = this.createUiView('peek')
+    this.peekChromeViewRef = view
+    this.baseWindow.contentView.addChildView(view)
+    view.setVisible(false)
+    return view
+  }
+
+  /** 既に作ってあれば Peek 用の UI View。無ければ null（作らない）。 */
+  get peekChromeView(): WebContentsView | null {
+    if (!this.peekChromeViewRef) return null
+    if (this.peekChromeViewRef.webContents.isDestroyed()) return null
+    return this.peekChromeViewRef
+  }
+
+  /** この UI View 群（IPC の宛先・送信元検証に使う）。 */
+  private get uiContents(): WebContents[] {
+    const list = [this.chromeWebContents, this.overlayWebContents]
+    const peek = this.peekChromeView
+    if (peek) list.push(peek.webContents)
+    return list.filter((contents) => !contents.isDestroyed())
+  }
+
   /**
    * このウィンドウが見てよいダウンロードの scope。
    * 常用は `null`、シークレットは自分の partition。
@@ -867,6 +1178,13 @@ export class NemoWindow {
   layout(): void {
     if (this.destroyed || this.baseWindow.isDestroyed()) return
     const { width, height } = this.baseWindow.getContentBounds()
+
+    // 小窓はサイドバーの代わりに上部バーを敷く（ページはその下）
+    if (this.kind === 'mini') {
+      this.layoutMini(width, height)
+      return
+    }
+
     const sidebar = this.sidebarWidth
 
     this.chromeView.setBounds({ x: 0, y: 0, width: sidebar, height })
@@ -881,7 +1199,32 @@ export class NemoWindow {
       width: Math.max(width - sidebar, 0),
       height: Math.max(height, 0)
     }
-    for (const tab of this.tabs) tab.view?.setBounds(pageBounds)
+    const peekArea = peekBounds(pageBounds)
+    for (const tab of this.tabs) {
+      // Peek はページ領域の中央に小さく置く（ページはページ領域いっぱい）
+      tab.view?.setBounds(tab.peekOf ? peekArea : pageBounds)
+    }
+
+    // z 順は毎回作り直す。**タブを作ると子 View の順序が変わる**ので、
+    // 「一度並べれば済む」ようには書けない。
+    // 下から: ページ → Peek の暗幕 → Peek 本体 → オーバーレイ。
+    const activePeek = this.getActiveTab()?.peek ?? null
+    const peekChrome = this.peekChromeView
+    if (activePeek) {
+      const chrome = this.ensurePeekChrome()
+      chrome.setBounds(pageBounds)
+      chrome.setVisible(true)
+      this.baseWindow.contentView.removeChildView(chrome)
+      this.baseWindow.contentView.addChildView(chrome)
+      const view = activePeek.view
+      if (view) {
+        view.setBorderRadius(PEEK_RADIUS)
+        this.baseWindow.contentView.removeChildView(view)
+        this.baseWindow.contentView.addChildView(view)
+      }
+    } else if (peekChrome) {
+      peekChrome.setVisible(false)
+    }
 
     if (this.overlay) {
       this.overlayView.setBounds(overlayBounds(this.overlay, { width, height }, sidebar))
@@ -894,7 +1237,37 @@ export class NemoWindow {
     }
   }
 
+  /** 小窓のレイアウト。上部バー + ページ。サイドバーもオーバーレイも出さない。 */
+  private layoutMini(width: number, height: number): void {
+    this.chromeView.setBounds({ x: 0, y: 0, width, height: MINI_BAR_HEIGHT })
+    this.chromeView.setVisible(true)
+    this.baseWindow.contentView.removeChildView(this.chromeView)
+    this.baseWindow.contentView.addChildView(this.chromeView)
+
+    const pageBounds = {
+      x: 0,
+      y: MINI_BAR_HEIGHT,
+      width: Math.max(width, 0),
+      height: Math.max(height - MINI_BAR_HEIGHT, 0)
+    }
+    for (const tab of this.tabs) tab.view?.setBounds(pageBounds)
+
+    // **オーバーレイは小窓でも出す**。コマンドバーは開けないが、
+    // 権限・認証・証明書のダイアログはページ側から出る。
+    // ここを塞ぐと callback が永久に解決せず、小窓のページが黙って止まる。
+    if (this.overlay) {
+      this.overlayView.setBounds(overlayBounds(this.overlay, { width, height }, 0))
+      this.overlayView.setVisible(true)
+      this.baseWindow.contentView.removeChildView(this.overlayView)
+      this.baseWindow.contentView.addChildView(this.overlayView)
+    } else {
+      this.overlayView.setVisible(false)
+    }
+  }
+
   setOverlay(kind: OverlayKind): void {
+    // 小窓が出せるのはダイアログだけ（コマンドバー・ライブラリ・設定は持たない）
+    if (this.kind === 'mini' && kind !== null && kind !== 'prompt') return
     if (this.overlay === kind) return
     this.overlay = kind
     this.layout()
@@ -906,12 +1279,45 @@ export class NemoWindow {
   }
 
   setSidebarVisible(visible: boolean): void {
+    // 小窓はサイドバーを持たない
+    if (this.kind === 'mini') return
     this.sidebarVisible = visible
     this.layout()
     this.pushState()
   }
 
-  /** 実際に表示されている View のタブ key。activeTabKey とズレていたらバグ。 */
+  /**
+   * 一覧・選択の対象になるタブ（= Peek でないタブ）。
+   *
+   * **「一覧に出す」「次に選ぶ」系だけをここに向ける**。
+   * 監視系（`layout()` / `destroy()` / `findTab()` / タブスイッチャーの入力フック）は
+   * **`tabs`（全タブ）のまま**にする。実在する View 全部を相手にする必要があるので、
+   * ここに絞ると Peek の View が置き去りになったり、Peek にフォーカスがあるときの
+   * キー入力を取りこぼしたりする。
+   */
+  get normalTabs(): NemoTab[] {
+    return this.tabs.filter((tab) => tab.peekOf === null)
+  }
+
+  /**
+   * 実際に表示する View のタブ key。
+   *
+   * **「選択中の通常タブ」と「あればその Peek」の2つ**になりうる。
+   * `activeTabKey` ただ1つではない（Peek はページの上に重ねて出す）。
+   */
+  get visibleTabKeys(): Set<string> {
+    const keys = new Set<string>()
+    const active = this.getActiveTab()
+    if (!active) return keys
+    keys.add(active.key)
+    if (active.peek) keys.add(active.peek.key)
+    return keys
+  }
+
+  /**
+   * 実際に表示されている View のタブ key。
+   * 正常なら「選択中の通常タブ」と、あれば「その Peek」の最大2つ。
+   */
   getVisibleTabKeys(): string[] {
     return this.tabs.filter((tab) => tab.view?.getVisible()).map((tab) => tab.key)
   }
@@ -934,16 +1340,15 @@ export class NemoWindow {
       sidebarVisible: this.sidebarVisible,
       fullScreen: this.baseWindow.isDestroyed() ? false : this.baseWindow.isFullScreen(),
       find: active?.find ?? null,
-      isPrivate: this.isPrivate
+      isPrivate: this.isPrivate,
+      kind: this.kind
     }
   }
 
   pushState(): void {
     if (this.destroyed) return
     const state = this.toState()
-    for (const contents of [this.chromeWebContents, this.overlayWebContents]) {
-      if (!contents.isDestroyed()) contents.send('nemo:window-state', state)
-    }
+    for (const contents of this.uiContents) contents.send('nemo:window-state', state)
     scheduleSessionSave()
   }
 
@@ -956,9 +1361,7 @@ export class NemoWindow {
       version: app.getVersion(),
       update: getUpdateState()
     }
-    for (const contents of [this.chromeWebContents, this.overlayWebContents]) {
-      if (!contents.isDestroyed()) contents.send('nemo:shared-state', shared)
-    }
+    for (const contents of this.uiContents) contents.send('nemo:shared-state', shared)
   }
 
   pushPrompt(prompt: Prompt | null): void {
@@ -971,13 +1374,13 @@ export class NemoWindow {
     else if (this.overlay === 'prompt') this.setOverlay(null)
   }
 
-  /** UI の WebContents か（IPC の送信元検証に使う）。 */
+  /**
+   * UI の WebContents か（IPC の送信元検証に使う）。
+   * **Peek 用の View もここに含める**。忘れると ✕ / ⌘O ボタンの IPC が拒否される。
+   */
   ownsUiContents(contents: WebContents): boolean {
     if (this.destroyed) return false
-    return (
-      (!this.chromeWebContents.isDestroyed() && this.chromeWebContents.id === contents.id) ||
-      (!this.overlayWebContents.isDestroyed() && this.overlayWebContents.id === contents.id)
-    )
+    return this.uiContents.some((owned) => owned.id === contents.id)
   }
 
   /**
@@ -990,7 +1393,8 @@ export class NemoWindow {
    */
   toSaved(): SavedWindow {
     const bounds = this.baseWindow.isDestroyed() ? null : this.baseWindow.getBounds()
-    const saved = this.tabs.filter(
+    // Peek は保存しない（再起動では復元しない仕様）
+    const saved = this.normalTabs.filter(
       (tab) => /^https?:\/\//.test(tab.url) && tab.pinnedId === null && tab.favoriteId === null
     )
     // lastActiveAt も保存する。落とすと自動アーカイブの寿命が再起動でリセットされる
@@ -1037,12 +1441,18 @@ export class NemoWindow {
     this.tabs.length = 0
     this.activeTabKey = null
 
-    for (const view of [this.chromeView, this.overlayView]) {
+    for (const view of [this.chromeView, this.overlayView, this.peekChromeViewRef]) {
+      if (!view) continue
       this.baseWindow.contentView.removeChildView(view)
       if (!view.webContents.isDestroyed()) view.webContents.close()
     }
+    this.peekChromeViewRef = null
 
     windowsById.delete(this.id)
+    // 覚えている「chrome から見た active」を捨てる。
+    // WebContents の id は再利用されるので、残すと別ウィンドウの同期を握り潰しうる。
+    lastForegroundContentsId.delete(this.id)
+    normalWindowMru = normalWindowMru.filter((id) => id !== this.id)
     // 最後のシークレットウィンドウが閉じたら中身を消す（UI で約束している挙動）
     if (this.isPrivate) endPrivateSessionIfUnused()
     scheduleSessionSave()
@@ -1114,6 +1524,64 @@ export function focusedOrFirstWindow(): NemoWindow | null {
   return null
 }
 
+/**
+ * 直近にフォーカスした**通常ウィンドウ**の ID（新しい順）。
+ *
+ * `focusedOrFirstWindow()` は使えない。小窓にフォーカスがあるときは小窓を返すので、
+ * 「小窓の中身をどこへ昇格させるか」の答えにならない。
+ */
+let normalWindowMru: number[] = []
+
+function rememberNormalWindowFocus(win: NemoWindow): void {
+  if (win.kind !== 'normal') return
+  normalWindowMru = [win.id, ...normalWindowMru.filter((id) => id !== win.id)]
+}
+
+/**
+ * 小窓の中身を移す先の通常ウィンドウ。**3段で解決する**。
+ *
+ * 1. 同じ partition の MRU 先頭
+ * 2. 同じ partition の既存の通常ウィンドウ（MRU に入っていないものも含む）
+ * 3. 無ければ null（呼び出し側が新規に作る）
+ *
+ * 2 が要る理由が2つある:
+ * - 直近がシークレットウィンドウだと partition 違いで `moveTabToWindow` が拒否される
+ * - **コールドスタートで `show: false` 復元した通常ウィンドウは `focus` が来ないので
+ *   MRU に入らない**。1 だけだと「背面に復元済みのウィンドウがあるのにもう1枚増える」
+ */
+export function mostRecentNormalWindow(partition: string): NemoWindow | null {
+  for (const id of normalWindowMru) {
+    const win = windowsById.get(id)
+    if (win && !win.isDestroyed && win.kind === 'normal' && win.partition === partition) return win
+  }
+  for (const win of windowsById.values()) {
+    if (!win.isDestroyed && win.kind === 'normal' && win.partition === partition) return win
+  }
+  return null
+}
+
+/**
+ * そのウィンドウがタブをもう1枚持てるか。
+ *
+ * **小窓は常に1タブ**。「メニューを塞ぐ」だけでは
+ * `chrome.tabs.create` / ⌘⇧T / IPC / ページ内の `target=_blank` から増えてしまうので、
+ * 全経路をこの述語1つに寄せる。
+ */
+export function canHostAdditionalTabs(win: NemoWindow): boolean {
+  return win.kind === 'normal'
+}
+
+/**
+ * 新しいタブを置くべきウィンドウ。
+ * 小窓は自分では持てないので、通常ウィンドウの MRU 先頭へ回す（無ければ作る）。
+ */
+export function windowForNewTab(win: NemoWindow): NemoWindow {
+  if (canHostAdditionalTabs(win)) return win
+  const target = mostRecentNormalWindow(win.partition)
+  if (target) return target
+  return createWindow(undefined, { isPrivate: win.isPrivate, noInitialTab: true })
+}
+
 /* ------------------------------------------------------------------ *
  * タブ操作
  * ------------------------------------------------------------------ */
@@ -1156,6 +1624,12 @@ export function createTab(win: NemoWindow, url: string = BLANK_URL, options: Cre
   if (win.isDestroyed || win.baseWindow.isDestroyed()) {
     log('tab.create_rejected', { windowId: win.id, reason: 'window_destroyed' })
     throw new Error('window has been destroyed')
+  }
+  // 小窓は常に1タブ。**呼び出し口ごとに塞ぐのではなく、ここで最後に必ず弾く**
+  // （メニュー・IPC・拡張・ページ内 popup と入口が多く、どれかで必ず漏れる）。
+  if (!canHostAdditionalTabs(win) && win.tabs.length > 0) {
+    log('tab.create_rejected', { windowId: win.id, reason: 'window_cannot_host' })
+    throw new Error('window cannot host additional tabs')
   }
 
   const previousActiveKey = win.activeTabKey
@@ -1209,9 +1683,61 @@ export function createTab(win: NemoWindow, url: string = BLANK_URL, options: Cre
   return tab
 }
 
+/**
+ * 拡張から見た「今いるページ」を最後に同期した WebContents id（ウィンドウ ID ごと）。
+ *
+ * **同じ id なら撃ち返さない**。これが無いと
+ * `syncForegroundTab → extensions.selectTab → extensions.ts の callback → selectTab → …`
+ * が無限に回る（`selectTab` 側の再入ガードは `activeTabKey` しか見ていないので、
+ * Peek を active にする経路ではすり抜ける）。
+ */
+const lastForegroundContentsId = new Map<number, number>()
+/** 読み替えの途中で再入しても止める。 */
+let syncingExtensionSelection = false
+
+/**
+ * 拡張（chrome.tabs）から見た active タブを計算し直して反映する。
+ *
+ * **Nemo のサイドバーで選択されているタブ**（`activeTabKey`）と
+ * **chrome から見た active タブ**は意図的に別物にする。Peek が出ているなら
+ * 「今いるページ」は Peek なので、Bitwarden の自動入力はそちらに効いてほしい。
+ *
+ * 「開いた瞬間に1回撃つ」では足りない。別タブへ行って戻る・拡張から `selectTab` が
+ * 呼び返される、といった経路で静かにズレるので、**毎回ここで再計算する**。
+ */
+export function syncForegroundTab(win: NemoWindow): void {
+  if (win.isDestroyed || win.isPrivate) return
+  if (syncingExtensionSelection) return
+  const active = win.getActiveTab()
+  const foreground = active?.peek ?? active
+  const wc = foreground?.webContents
+  if (!wc) return
+  if (lastForegroundContentsId.get(win.id) === wc.id) return
+  lastForegroundContentsId.set(win.id, wc.id)
+  syncingExtensionSelection = true
+  try {
+    extensions?.selectTab(wc)
+  } finally {
+    syncingExtensionSelection = false
+  }
+  // 拡張を積まずに「chrome から見た active」を外から確かめられるようにする。
+  // 自走検証はこのログを読む（拡張の有無に依存しない判定にするため）。
+  log('tab.foreground', {
+    windowId: win.id,
+    key: foreground.key,
+    peek: foreground.peekOf !== null,
+    webContentsId: wc.id
+  })
+}
+
 export function selectTab(win: NemoWindow, key: string): void {
-  const tab = win.findTab(key)
+  let tab = win.findTab(key)
   if (!tab) return
+
+  // **Peek の key が渡されたら親を選んだものとして扱う**。
+  // `activeTabKey` に Peek が入ると、サイドバーの一覧・⌘1〜9・セッションの
+  // activeIndex が全部おかしくなる。拡張からの呼び返しがここに来る。
+  if (tab.peekOf) tab = tab.peekOf
 
   // sleep していたら起こす
   if (tab.asleep) {
@@ -1220,21 +1746,113 @@ export function selectTab(win: NemoWindow, key: string): void {
     log('tab.woke', { key: tab.key, windowId: win.id })
   }
 
-  const already = win.activeTabKey === key
-  for (const other of win.tabs) other.view?.setVisible(other.key === key)
+  const already = win.activeTabKey === tab.key
+  win.activeTabKey = tab.key
+  // 表示するのは「選択した通常タブ」と、あれば「その Peek」の2つ。
+  const visible = win.visibleTabKeys
+  for (const other of win.tabs) other.view?.setVisible(visible.has(other.key))
   tab.lastActiveAt = Date.now()
   tab.unread = false
 
-  if (already) return
+  if (already) {
+    // 既に選択済みでも、Peek の出入りで前面のページが変わっていることがある
+    syncForegroundTab(win)
+    return
+  }
 
-  win.activeTabKey = key
   win.layout()
-  const wc = tab.webContents
-  // electron-chrome-extensions 側からも selectTab が飛んでくるため、
-  // 既にアクティブなら通知を撃ち返さない（撃ち返すと相互再入で止まらなくなる）。
-  if (wc && !win.isPrivate) extensions?.selectTab(wc)
-  log('tab.select', { key, windowId: win.id })
+  syncForegroundTab(win)
+  log('tab.select', { key: tab.key, windowId: win.id })
   win.pushState()
+}
+
+/* ------------------------------------------------------------------ *
+ * Peek（ウィンドウ内ポップアップ）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 親タブの上に Peek を作る。
+ *
+ * **`loadURL` は呼ばない**。`setWindowOpenHandler` の `createWindow` から
+ * 同期で使われ、読み込みは Electron が「子の browsing context」として行う（計画 R1）。
+ */
+function openPeek(parent: NemoTab, url: string, adopt: WebContents): NemoTab | null {
+  const win = parent.window
+  if (win.isDestroyed || win.baseWindow.isDestroyed()) return null
+
+  const peek = new NemoTab(win, url)
+  peek.peekOf = parent
+  parent.peek = peek
+  win.tabs.push(peek)
+  peek.materialize({ adopt })
+
+  // 親が選択中なら Peek もそのまま見せる。選択中でなければ隠れたまま
+  // （タブを切り替えて戻ってきたときに出る）。
+  if (win.activeTabKey === parent.key) selectTab(win, parent.key)
+  win.layout()
+  syncForegroundTab(win)
+  win.pushState()
+  log('peek.open', { key: peek.key, parent: parent.key, windowId: win.id, target: redactUrl(url) })
+  return peek
+}
+
+/**
+ * Peek を通常タブへ昇格させる（⌘O / 展開ボタン / 入れ子 popup の受け皿づくり）。
+ *
+ * **ページは読み直さない**（WebContents をそのまま使う）。
+ * 昇格後は**タブ配列の末尾**へ移す。Peek を開いた後に背面タブが増えていることがあり、
+ * 親の隣に置くと「末尾に来る」という仕様と食い違う。
+ */
+export function promotePeek(win: NemoWindow, peek: NemoTab): void {
+  const parent = peek.peekOf
+  if (!parent) return
+  parent.peek = null
+  peek.peekOf = null
+
+  const index = win.tabs.indexOf(peek)
+  if (index !== -1) {
+    win.tabs.splice(index, 1)
+    win.tabs.push(peek)
+  }
+  win.layout()
+  selectTab(win, peek.key)
+  log('peek.promote', { key: peek.key, parent: parent.key, windowId: win.id })
+}
+
+/**
+ * ⌘O。「今前面に出ている一時的なビュー」を腰を据えて読む場所へ移す。
+ *
+ * - Peek → **同じウィンドウ**の一時タブ（末尾）にしてアクティブに
+ * - 小窓 → **直近に使っていた通常ウィンドウ**の一時タブ（末尾）へ移し、小窓は閉じる
+ *
+ * どちらもページは読み直さない（WebContents をそのまま運ぶ）。
+ */
+export function promoteForegroundView(win: NemoWindow): void {
+  if (win.isDestroyed) return
+
+  if (win.kind === 'mini') {
+    const tab = win.tabs[0]
+    if (!tab) return
+    // 外部 URL の小窓は常に通常セッションなので、同じ partition の通常ウィンドウへ移せる
+    const target = mostRecentNormalWindow(win.partition) ?? createWindow(undefined, { noInitialTab: true })
+    const moved = moveTabToWindow(tab, target)
+    // **移せたときだけ**小窓を閉じる。失敗したまま閉じるとページごと消える。
+    if (!moved) {
+      log('mini.promote_rejected', { windowId: win.id, target: target.id })
+      return
+    }
+    // ここでは Space が切り替わってよい（「腰を据えて読む」と言っている操作なので）
+    target.baseWindow.show()
+    target.baseWindow.focus()
+    app.focus({ steal: true })
+    // 中身は移した後なので、閉じても ⌘⇧T には積まない
+    removeWindow(win)
+    log('mini.promoted', { from: win.id, to: target.id })
+    return
+  }
+
+  const peek = win.getActiveTab()?.peek
+  if (peek) promotePeek(win, peek)
 }
 
 /**
@@ -1252,33 +1870,64 @@ const closedTabs: {
 }[] = []
 const CLOSED_TAB_LIMIT = 25
 
+/**
+ * 閉じたタブを ⌘⇧T のスタックとアーカイブに積む。
+ *
+ * **`removeTab` を通らない経路（小窓ごと閉じる）からも呼ぶ**ので関数に切り出してある。
+ * ここを通さないと「小窓の ✕ で閉じた URL がどこにも残らない」になる。
+ */
+function rememberClosedTab(win: NemoWindow, tab: NemoTab, archiveReason: ArchiveReason): void {
+  // シークレットのタブは ⌘⇧T の対象にしない（閉じたら跡形もなく消えるのが約束）
+  if (!/^https?:\/\//.test(tab.url) || win.isPrivate) return
+  closedTabs.push({
+    url: tab.url,
+    title: tab.title,
+    // Peek / 小窓は**普通のタブとして**戻す（枠には紐づけない）
+    pinnedId: tab.pinnedId,
+    favoriteId: tab.favoriteId,
+    // 専用タブの名前は**定義から実効値を読む**。タブ側のフィールドだけ見ると、
+    // 定義を消した後に ⌘⇧T で戻したとき名前が失われる。
+    customTitle: effectiveCustomTitle(tab)
+  })
+  if (closedTabs.length > CLOSED_TAB_LIMIT) closedTabs.shift()
+  // 一時タブを閉じたらアーカイブに残す（Arc と同じで、閉じても掘り返せる）。
+  // Favorite のタブもピン留めと同じ扱いで、アーカイブには載せない。
+  if (tab.pinnedId === null && tab.favoriteId === null) {
+    archiveTab(tab.url, tab.title, archiveReason)
+  }
+}
+
 export function removeTab(
   win: NemoWindow,
   key: string,
   options: { archiveReason?: ArchiveReason } = {}
 ): void {
+  // タブを1つしか持てない器（小窓）では「タブを閉じる」＝「ウィンドウを閉じる」。
+  // ここで読み替えないと**空の小窓が残る**（⌘W で中身だけ消えた抜け殻になる）。
+  if (!canHostAdditionalTabs(win) && win.findTab(key) !== null) {
+    closeTemporaryWindow(win, 'user')
+    return
+  }
+
   const index = win.tabs.findIndex((tab) => tab.key === key)
   if (index === -1) return
   const [tab] = win.tabs.splice(index, 1)
 
-  // シークレットのタブは ⌘⇧T の対象にしない（閉じたら跡形もなく消えるのが約束）
-  if (/^https?:\/\//.test(tab.url) && !win.isPrivate) {
-    closedTabs.push({
-      url: tab.url,
-      title: tab.title,
-      pinnedId: tab.pinnedId,
-      favoriteId: tab.favoriteId,
-      // 専用タブの名前は**定義から実効値を読む**。タブ側のフィールドだけ見ると、
-      // 定義を消した後に ⌘⇧T で戻したとき名前が失われる。
-      customTitle: effectiveCustomTitle(tab)
-    })
-    if (closedTabs.length > CLOSED_TAB_LIMIT) closedTabs.shift()
-    // 一時タブを閉じたらアーカイブに残す（Arc と同じで、閉じても掘り返せる）。
-    // Favorite のタブもピン留めと同じ扱いで、アーカイブには載せない。
-    if (tab.pinnedId === null && tab.favoriteId === null) {
-      archiveTab(tab.url, tab.title, options.archiveReason ?? 'closed')
-    }
+  // Peek の親子を解く。**ここ1か所でやる**（呼び出し口ごとに書くと必ずどれかで漏れ、
+  // `peekOf.window` と実際の所属が食い違ったまま残る）。
+  if (tab.peekOf) {
+    tab.peekOf.peek = null
+    tab.peekOf = null
   }
+  // 親タブを閉じるなら、その上に浮いている Peek も閉じる
+  if (tab.peek) {
+    const peek = tab.peek
+    tab.peek = null
+    peek.peekOf = null
+    removeTab(win, peek.key, options)
+  }
+
+  rememberClosedTab(win, tab, options.archiveReason ?? 'closed')
 
   const wc = tab.webContents
   if (tab.view) win.baseWindow.contentView.removeChildView(tab.view)
@@ -1290,13 +1939,16 @@ export function removeTab(
   log('tab.remove', { key, windowId: win.id })
 
   if (win.activeTabKey === key) {
-    const next = win.tabs[Math.min(index, win.tabs.length - 1)]
+    // **通常タブから選ぶ**。全タブから選ぶと「別の親の Peek」を選びかねない
+    const candidates = win.normalTabs
+    const next = candidates[Math.min(index, candidates.length - 1)]
     win.activeTabKey = null
     if (next) {
       selectTab(win, next.key)
       return
     }
   }
+  syncForegroundTab(win)
   win.pushState()
 }
 
@@ -1326,9 +1978,11 @@ export function tabDisplayName(tab: NemoTab): string {
  * - **定義が既に消えている**（閉じた後に解除した）→ 所属を外して一時タブとして戻す。
  *   消えた ID のまま戻すと、どの層にも出ない不可視タブになる
  */
-export function reopenClosedTab(win: NemoWindow): void {
+export function reopenClosedTab(target: NemoWindow): void {
   const entry = closedTabs.pop()
   if (!entry) return
+  // 小窓では ⌘⇧T を受けても自分にタブを足せない。通常ウィンドウへ回す。
+  const win = windowForNewTab(target)
 
   // 判定は純粋関数に寄せてある。この経路はメニューのアクセラレータからしか叩けず
   // CDP から合成できないので、**規則そのもの**を `scripts/tab-ownership.test.mjs` で確かめる。
@@ -1354,16 +2008,56 @@ export function reopenClosedTab(win: NemoWindow): void {
 /**
  * タブの所有権を別ウィンドウへ移す。
  * WebContents は作り直さない（ログイン状態やスクロール位置を保つ）。
+ *
+ * **Peek を持つタブは Peek も一緒に運ぶ**（R9）。ここで完結させるのが肝で、
+ * 呼び出し側に「Peek も忘れずに」と書かせると、呼び出し口が複数あるので必ず漏れる。
+ * 漏れると `peekOf.window` と実際の所属が食い違い、View と拡張の window 対応が分裂する。
+ *
+ * @returns 移せたか。**partition 違いで拒否したことを呼び出し側が知る必要がある**
+ *   （小窓の昇格は、移せたときだけ小窓を閉じないとページごと消える）。
  */
-export function moveTabToWindow(tab: NemoTab, target: NemoWindow): void {
+export function moveTabToWindow(tab: NemoTab, target: NemoWindow): boolean {
   const source = tab.window
-  if (source === target) return
+  if (source === target) return false
   // シークレットと通常はセッションが違う。View を作り直さずに移すと、
   // 移した先で「シークレットのはずのタブが通常セッションのまま」になる。
+  //
+  // **検査は先に1回だけ**やる。親を移した後に Peek で弾かれると分裂する。
   if (source.partition !== target.partition) {
     log('tab.move_rejected', { key: tab.key, reason: 'different_session' })
-    return
+    return false
   }
+  if (source.tabs.indexOf(tab) === -1) return false
+  // 移す先がタブを増やせない器（小窓）なら受け付けない
+  if (!canHostAdditionalTabs(target) && target.tabs.length > 0) {
+    log('tab.move_rejected', { key: tab.key, reason: 'target_cannot_host' })
+    return false
+  }
+
+  const index = source.tabs.indexOf(tab)
+  const moving = tab.peek ? [tab, tab.peek] : [tab]
+  for (const item of moving) transferOne(item, source, target)
+
+  if (source.activeTabKey === tab.key) {
+    source.activeTabKey = null
+    // **通常タブから選ぶ**（別の親の Peek を選ばない）
+    const candidates = source.normalTabs
+    const next = candidates[Math.min(index, candidates.length - 1)]
+    if (next) selectTab(source, next.key)
+  }
+  source.layout()
+  syncForegroundTab(source)
+  source.pushState()
+
+  selectTab(target, tab.key)
+  target.layout()
+  syncForegroundTab(target)
+  log('tab.moved', { key: tab.key, from: source.id, to: target.id, withPeek: tab.peek !== null })
+  return true
+}
+
+/** `moveTabToWindow` の1タブぶん。partition の検査は呼び出し側で済ませてある。 */
+function transferOne(tab: NemoTab, source: NemoWindow, target: NemoWindow): void {
   const index = source.tabs.indexOf(tab)
   if (index === -1) return
   source.tabs.splice(index, 1)
@@ -1393,18 +2087,6 @@ export function moveTabToWindow(tab: NemoTab, target: NemoWindow): void {
       }
     }
   }
-
-  if (source.activeTabKey === tab.key) {
-    source.activeTabKey = null
-    const next = source.tabs[Math.min(index, source.tabs.length - 1)]
-    if (next) selectTab(source, next.key)
-  }
-  source.layout()
-  source.pushState()
-
-  selectTab(target, tab.key)
-  target.layout()
-  log('tab.moved', { key: tab.key, from: source.id, to: target.id })
 }
 
 /* ------------------------------------------------------------------ *
@@ -1417,24 +2099,218 @@ export interface CreateWindowOptions {
   noInitialTab?: boolean
   /** シークレットウィンドウとして作る（拡張なし・メモリ内セッション）。 */
   isPrivate?: boolean
+  /** 種別。`mini` は小窓（サイドバー無し・タブ1つ・NSPanel）。 */
+  kind?: WindowKind
+  /** 表示せずに作る（コールドスタートで通常ウィンドウを背面に復元するとき）。 */
+  hidden?: boolean
 }
 
 export function createWindow(initialUrl?: string, options: CreateWindowOptions = {}): NemoWindow {
-  const win = new NemoWindow(options.bounds, options.isPrivate === true)
+  const win = new NemoWindow(
+    options.bounds,
+    options.isPrivate === true,
+    options.kind ?? 'normal',
+    options.hidden === true
+  )
   windowsById.set(win.id, win)
-  log('window.create', { windowId: win.id, private: win.isPrivate })
+  log('window.create', {
+    windowId: win.id,
+    private: win.isPrivate,
+    kind: win.kind,
+    hidden: options.hidden === true
+  })
 
   win.whenUiReady(() => {
     if (!options.noInitialTab && win.tabs.length === 0) createTab(win, initialUrl ?? BLANK_URL)
     win.layout()
+    // 背面で復元したぶんはここで出す。**`show()` ではなく `showInactive()`**
+    // （`show()` は前面に出てフォーカスと Space を奪う）。
+    if (options.hidden === true && win.kind === 'normal' && !win.baseWindow.isDestroyed()) {
+      win.baseWindow.showInactive()
+    }
   })
 
   return win
 }
 
 export function removeWindow(win: NemoWindow): void {
+  // `destroy()` → `baseWindow.close()` の順なので、`close` ハンドラから
+  // 終了処理が撃ち返される。`captureClosingWindow` の再入ガードが受け止める。
+  captureClosingWindow(win, 'user')
   win.destroy()
   if (!win.baseWindow.isDestroyed()) win.baseWindow.close()
+}
+
+/**
+ * ユーザー操作で一時的なウィンドウ（小窓）を閉じる。
+ *
+ * 理由を持たせるのは、**アプリ終了時には ⌘⇧T に積まない**ため。
+ * 終了時に積むと、次の起動で「閉じたタブ」の先頭が前回終了時の小窓になる。
+ */
+export function closeTemporaryWindow(win: NemoWindow, reason: 'user' | 'replaced'): void {
+  captureClosingWindow(win, reason)
+  removeWindow(win)
+}
+
+/** アプリ終了中か（終了で閉じたぶんは ⌘⇧T に積まない）。 */
+let quitting = false
+
+export function markQuitting(): void {
+  quitting = true
+}
+
+/** 既に積んだウィンドウ（`removeWindow` → `close` の撃ち返しで二重に積まない）。 */
+const capturedWindows = new Set<number>()
+
+/**
+ * 閉じようとしているウィンドウの中身を `closedTabs` に積む。
+ *
+ * 対象は**小窓だけ**。通常ウィンドウは `removeTab` を通らずに閉じても
+ * セッション復元で戻るが、小窓は復元しないのでここで拾わないと消えてなくなる。
+ */
+function captureClosingWindow(win: NemoWindow, reason: 'user' | 'replaced'): void {
+  if (win.kind !== 'mini') return
+  if (quitting) return
+  if (capturedWindows.has(win.id)) return
+  capturedWindows.add(win.id)
+  for (const tab of win.tabs) rememberClosedTab(win, tab, 'closed')
+  log('mini.closed', { windowId: win.id, reason, remaining: miniWindows().length - 1 })
+  // 上限を超えたまま残っていたぶんをここで詰める（超過を放置しない）
+  setImmediate(() => trimMiniWindows())
+}
+
+/* ------------------------------------------------------------------ *
+ * 小窓（Little Nemo）
+ * ------------------------------------------------------------------ */
+
+/** 今ある小窓（作った順）。 */
+function miniWindows(): NemoWindow[] {
+  return [...windowsById.values()].filter((win) => !win.isDestroyed && win.kind === 'mini')
+}
+
+/** 小窓の位置。常に同じ場所に出し、既にある枚数ぶんだけカスケードする。 */
+function miniWindowBounds(): { x: number; y: number; width: number; height: number } {
+  const step = miniWindows().length * MINI_CASCADE_STEP
+  const display = screen.getPrimaryDisplay().workArea
+  const x = Math.round(display.x + display.width - MINI_SIZE.width - 64) + step
+  const y = Math.round(display.y + 72) + step
+  return { x, y, ...MINI_SIZE }
+}
+
+/**
+ * その WebContents を `window.opener` にしている生きた小窓があるか。
+ *
+ * **自前のマップは持たない**。`webContents.opener`（`WebFrameMain`）と
+ * `WebContents.fromFrame()` で Electron に聞けば分かるし、破棄時の解除漏れが
+ * 構造的に起きない。opener が死んでいれば `fromFrame` が undefined を返すので、
+ * 「もう守る相手がいない」の判定としても正しい。
+ */
+function isOpenerOfLiveMini(candidate: NemoWindow): boolean {
+  const target = candidate.tabs[0]?.webContents
+  if (!target) return false
+  for (const win of miniWindows()) {
+    if (win === candidate) continue
+    const wc = win.tabs[0]?.webContents
+    if (!wc) continue
+    let openerContents: WebContents | undefined
+    try {
+      const frame = wc.opener
+      openerContents = frame ? webContentsModule.fromFrame(frame) : undefined
+    } catch {
+      // opener のフレームが既に壊れている＝守る相手がいない
+      openerContents = undefined
+    }
+    if (openerContents?.id === target.id) return true
+  }
+  return false
+}
+
+/**
+ * 小窓を上限まで減らす。
+ *
+ * **生きた小窓の opener になっているものは飛ばす**（計画 R8）。
+ * 閉じると子の `window.opener` が死に、`postMessage` で OAuth の結果を受け取れなくなる。
+ * 閉じられる候補が無ければ**上限を超えたまま開く**（計画 R10）。
+ * 超過は放置せず、子が閉じたときにもう一度ここを通して詰める。
+ */
+function trimMiniWindows(): void {
+  let windows = miniWindows()
+  while (windows.length > MINI_WINDOW_CAP) {
+    const victim = windows.find((win) => !isOpenerOfLiveMini(win))
+    if (!victim) {
+      log('mini.cap_exceeded', { count: windows.length, cap: MINI_WINDOW_CAP })
+      return
+    }
+    closeTemporaryWindow(victim, 'replaced')
+    windows = miniWindows()
+  }
+}
+
+/**
+ * 小窓を1枚開く（外部アプリから URL を踏んだとき）。
+ */
+export function openMiniWindow(url: string): NemoTab | null {
+  const win = createWindow(undefined, { kind: 'mini', noInitialTab: true })
+  return fillMiniWindow(win, url, undefined)
+}
+
+/**
+ * 既に用意した小窓に、Electron が作った子の WebContents を収める（入れ子 popup）。
+ */
+function adoptMiniTab(win: NemoWindow, url: string, guest: WebContents): NemoTab | null {
+  return fillMiniWindow(win, url, guest)
+}
+
+/**
+ * 小窓に中身を入れて画面に出す。
+ *
+ * **UI（上部バー）の準備は待たない**。`createWindow` の初期タブは `whenUiReady` 越しなので、
+ * `setWindowOpenHandler` の `createWindow` コールバックから同期で使えない。
+ */
+function fillMiniWindow(win: NemoWindow, url: string, adopt: WebContents | undefined): NemoTab | null {
+  let tab: NemoTab
+  try {
+    tab = new NemoTab(win, url)
+    win.tabs.push(tab)
+    tab.materialize(adopt ? { adopt } : {})
+  } catch (error) {
+    logError('mini.create_failed', error, { windowId: win.id })
+    removeWindow(win)
+    return null
+  }
+  win.activeTabKey = tab.key
+  tab.view?.setVisible(true)
+  win.layout()
+  win.whenUiReady(() => {
+    win.layout()
+    win.pushState()
+  })
+
+  presentMiniWindow(win)
+  trimMiniWindows()
+  log('mini.open', {
+    windowId: win.id,
+    adopted: adopt !== undefined,
+    target: redactUrl(url),
+    count: miniWindows().length
+  })
+  return tab
+}
+
+/**
+ * 小窓を画面に出してキーフォーカスを渡す。
+ *
+ * **`app.focus({ steal: true })` は絶対に撃たない**（Phase 0 の実測）。
+ * 撃つとメインウィンドウの Space へ画面ごと切り替わり、この機能の意味が消える。
+ * NSPanel なら `showInactive()` → `focus()` でアプリを前面に出さずにキーが来る。
+ */
+function presentMiniWindow(win: NemoWindow): void {
+  if (win.isDestroyed || win.baseWindow.isDestroyed()) return
+  win.baseWindow.showInactive()
+  win.baseWindow.focus()
+  // ウィンドウが key になっても、中の WebContents に入れないと
+  // `document.hasFocus()` が false のままでスクロールもキーも効かない。
+  win.tabs[0]?.webContents?.focus()
 }
 
 /* ------------------------------------------------------------------ *
@@ -1593,7 +2469,7 @@ export function pinTabInto(tab: NemoTab, parentId: string | null, index: number)
 export function openPinned(win: NemoWindow, pinnedId: string): void {
   const node = findPinned(pinnedId)
   if (!node || node.kind !== 'link') return
-  const existing = win.tabs.find((tab) => tab.pinnedId === pinnedId)
+  const existing = win.normalTabs.find((tab) => tab.pinnedId === pinnedId)
   if (existing) {
     selectTab(win, existing.key)
     return
@@ -1605,7 +2481,7 @@ export function openPinned(win: NemoWindow, pinnedId: string): void {
 export function openFavorite(win: NemoWindow, favoriteId: string): void {
   const item = findFavorite(favoriteId)
   if (!item) return
-  const existing = win.tabs.find((tab) => tab.favoriteId === favoriteId)
+  const existing = win.normalTabs.find((tab) => tab.favoriteId === favoriteId)
   if (existing) {
     selectTab(win, existing.key)
     return
@@ -1684,8 +2560,10 @@ function sweepSleep(): void {
   for (const win of windowsById.values()) {
     if (win.isDestroyed) continue
     let slept = false
-    for (const tab of win.tabs) {
+    for (const tab of win.normalTabs) {
       if (tab.key === win.activeTabKey) continue
+      // **Peek を持つ親タブは寝かせない**（親を捨てると Peek の置き場所が無くなる）
+      if (tab.peek) continue
       if (tab.asleep) continue
       if (tab.lastActiveAt > threshold) continue
       // 音が出ているタブは寝かせない
@@ -1716,10 +2594,12 @@ function sweepArchive(): void {
   let archived = 0
   for (const win of [...windowsById.values()]) {
     if (win.isDestroyed || win.isPrivate) continue
-    for (const tab of [...win.tabs]) {
+    for (const tab of [...win.normalTabs]) {
       // ピン留め / Favorites の専用タブは触らない（Arc と同じ）
       if (tab.pinnedId !== null || tab.favoriteId !== null) continue
       if (tab.key === win.activeTabKey) continue
+      // Peek を持つ親タブは触らない（見ている最中の Peek ごと消えるのは事故）
+      if (tab.peek) continue
       if (tab.lastActiveAt > threshold) continue
       if (tab.webContents?.isCurrentlyAudible()) continue
       if (!/^https?:\/\//.test(tab.url)) {
@@ -1755,8 +2635,9 @@ function scheduleSessionSave(): void {
 
 export function collectSession(): SavedWindow[] {
   // シークレットウィンドウはディスクに残さない（復元もしない）
+  // 小窓は復元しない（`toSaved()` を空にするだけでは「空の通常ウィンドウ」として復元される）
   return [...windowsById.values()]
-    .filter((win) => !win.isDestroyed && !win.isPrivate)
+    .filter((win) => !win.isDestroyed && !win.isPrivate && win.kind === 'normal')
     .map((win) => win.toSaved())
 }
 

@@ -46,6 +46,16 @@ function accept(url: string, source: string): void {
 }
 
 /**
+ * 起動時に「外から URL を渡されて叩き起こされたか」。
+ *
+ * **通常ウィンドウを作り始める前に見る**。`flushOpenUrls` の時点では
+ * もう通常ウィンドウを前面に出してしまっていて手遅れになる。
+ */
+export function hasPendingOpenUrls(): boolean {
+  return pending.length > 0
+}
+
+/**
  * `app.ready` より**前**に呼ぶ。ここで購読しないと起動時の URL を取りこぼす。
  */
 export function installOpenUrlHandler(): void {

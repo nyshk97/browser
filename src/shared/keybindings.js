@@ -82,6 +82,12 @@ export const COMMANDS = [
     menu: 'tab',
     needsTab: true
   },
+  {
+    id: 'promote-peek',
+    label: 'メインウィンドウで開く',
+    accelerator: 'CmdOrCtrl+O',
+    menu: 'tab'
+  },
 
   // Window
   { id: 'show-downloads', label: 'ダウンロード', accelerator: 'CmdOrCtrl+Shift+J', menu: 'window' },

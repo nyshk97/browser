@@ -62,7 +62,8 @@ export function installTabSwitcher(): void {
  */
 function mruTabs(win: NemoWindow): NemoTab[] {
   const active = win.getActiveTab()
-  const rest = win.tabs.filter((tab) => tab !== active).sort((a, b) => b.lastActiveAt - a.lastActiveAt)
+  // Peek は帯に並べない（サイドバーの一覧に出ないものへは飛ばさない）
+  const rest = win.normalTabs.filter((tab) => tab !== active).sort((a, b) => b.lastActiveAt - a.lastActiveAt)
   return (active ? [active, ...rest] : rest).slice(0, MRU_LIMIT)
 }
 
@@ -136,6 +137,9 @@ function armTimer(win: NemoWindow, session: SwitchSession): void {
  */
 function attachInput(win: NemoWindow, session: SwitchSession): void {
   const targets: WebContents[] = [win.overlayWebContents, win.chromeWebContents]
+  // **ここは `normalTabs` に絞らない**。全 WebContents への入力監視なので、
+  // Peek にフォーカスがあるときの keyUp / Esc も拾う必要がある。
+  // 絞ると「Peek を見ている最中に ⌃M を離しても確定しない」で壊れる。
   for (const tab of win.tabs) {
     const wc = tab.webContents
     if (wc) targets.push(wc)

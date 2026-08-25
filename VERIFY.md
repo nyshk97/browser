@@ -31,6 +31,7 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 |---|---|
 | ナビゲーション判定・設定スキーマ・キーバインド・ログ | `mise run check` |
 | **タブスイッチャー（⌃M）**・MRU の並び・オーバーレイの割り込み | `mise run verify:switcher` |
+| **Peek（ウィンドウ内ポップアップ）・小窓（Little Nemo）**・popup の受け皿・⌘O の昇格 | `mise run verify`（`verify-peek.mjs` が含まれる）+ 下の「Peek と小窓（実機）」 |
 | タブ / ウィンドウ・サイドバー・コマンドバー・ダウンロード・権限 | `mise run verify` |
 | 拡張まわり・Electron のバージョン | `mise run verify:ext`（+ 実機で Bitwarden） |
 | パッケージング・ネイティブ依存・fuses | `mise run package` → `mise run verify:packaged` |
@@ -52,7 +53,7 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 - ページ側に `require` / `process` / `window.nemo` が漏れていないこと
 - 拡張の content script がトップフレームと iframe に入ること
 - **ブラウザ UI には content script が入らないこと**（セッション分離が効いていること）
-- `window.open` が Nemo のタブ / ウィンドウになること
+- `window.open` が Nemo のタブ / Peek になること（**サイズ指定つきの popup も Peek**。ウィンドウは増えない）
 - **`chrome.tabs.create` / `chrome.windows.create` が Nemo のモデルに乗ること**
   （`active: false` でアクティブタブが変わらないこと・View が表示されないこと・`windowId` の対応・`remove` での後始末）
 - 拡張から渡された URL がナビゲーション検証を通ること（`file:` は拒否 / 自分の拡張ページは許可）
@@ -106,6 +107,28 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 - サイドバーの並び（一時タブに見出しを出さず、「新しいタブ」行がその先頭にあること）
 - **main プロセスの例外が診断ログに1件も無いこと**
 
+
+`mise run verify` が見ている Peek / 小窓の項目（`scripts/verify-peek.mjs`）:
+
+- **`<form method="POST" target="_blank">` の body が Peek 側に届く**こと
+  （popup を「deny して URL だけ作り直す」実装に戻ると空になる）
+- **`window.opener.postMessage` が親に届く**こと・**`window.close()` で Peek が閉じる**こと
+- Peek が**サイドバーの一覧に出ない**こと・`getVisibleTabKeys()` が親と Peek の2つを返すこと
+- **拡張から見た active が Peek を指す**こと（`tab.foreground` のログで見る）。
+  別タブへ行って**戻ったあとも**指すこと（1回撃つだけの実装だとここで落ちる）。
+  切り替えを繰り返しても同期が有限回で収まること（無限再入していない）
+- **⌘O の昇格でページを読み直さない**こと（WebContents の id が変わらない）・
+  昇格したタブが**配列の末尾**に来ること
+- **昇格したタブは元の親タブを閉じても残る**こと（`outlivesOpener`）。
+  昇格していない Peek は親と一緒に閉じ、**WebContents が残らない**こと
+- **Peek の中の popup**で Peek が通常タブへ昇格し、孫が昇格後タブの Peek になること
+  （古いほうを閉じると `window.opener` が死んで OAuth の戻りを受け取れない）
+- **Peek を持つ親タブを別ウィンドウへ移すと Peek も付いてくる**こと
+- Peek を持つ親タブが `tabSleepMinutes` を過ぎても寝ないこと
+- 小窓: 外部 URL（**2つ目のインスタンスの argv**＝実際に踏む経路）で1枚できること /
+  原則4枚で最古が閉じること / **セッションに保存されない**こと /
+  ⌘W でウィンドウごと閉じて空の小窓が残らないこと / ⌘O で通常ウィンドウのタブになり
+  **読み直さない**こと
 
 `mise run verify` が見ているピン留め / Favorites の項目（`scripts/verify-pins.mjs`）:
 
@@ -662,3 +685,39 @@ mise run ext:outdated     # 新しい版が出ているかだけ見る。**何�
 
 5. **一時タブの自動アーカイブ**を実運用の設定（24 時間）で確認するのは現実的でないので、
    設定画面で 1 時間などに落として翌日見る。**ピン留めしたタブが消えていないこと**を必ず見る
+
+## Peek と小窓（実機で人が見る分）
+
+自走検証（`verify-peek.mjs`）が機械で見るのは
+「popup の受け皿・opener と POST の維持・昇格・上限・セッション除外」まで。
+**Space とフォーカスは原理的に見られない**ので、ここは人が見る。
+
+1. **ターミナルをフルスクリーンにして、出力された URL をクリックする**
+   - **Space が切り替わらない**こと（ターミナルが見えたまま）
+   - 小窓がターミナルの上に出ること
+   - 小窓に**キーボードフォーカスが来ている**こと（そのままスクロールできる・⌘W が効く）
+   - **Nemo のメインウィンドウが前面に出てこない**こと
+2. 小窓を出したまま**別の Space へ移る**と、小窓が付いてくること
+   （NSPanel なので全 Space 追従になる。「出した Space に固定」はできない —— Phase 0 で実測）
+3. 続けてもう1本 URL を踏み、2枚目が少しずれて出ること。5本目で最古が閉じること
+4. 小窓で ⌘O を押し、メインウィンドウが前面に出て（**ここでは Space が切り替わってよい**）
+   タブになること
+5. **Nemo を終了した状態から URL を踏み、小窓だけが出ること**（メインは背面で復元）。
+   ログに `session.restoring ... "hidden":true` と `mini.open` が並ぶ
+6. **Dock アイコンが消えたりちらついたりしない**こと
+   （`setVisibleOnAllWorkspaces` を使うと process type の変換で消える。使っていないことの確認）
+7. **実 Vault の Bitwarden**（`mise run dev:nodebug`）で、**Peek のログイン画面**と小窓で
+   自動入力が効くこと（＝拡張から見た active が Peek を指せていること）
+8. 実際の **OAuth ポップアップ**（`window.open` にサイズ指定があるもの）が Peek で開き、
+   認証後に `window.close()` で閉じて親に結果が返ること
+9. **⌘クリック（背面タブ）が Peek にならない**こと。合成キーでは撃てないので実機で見る
+
+技術スパイク（`scripts/spike-mini-window.mjs`）を使うと、Nemo 本体に触らずに
+Space とフォーカスだけを測り直せる。**別プロセスでフルスクリーンの「おとり」を立てて
+各段階を `screencapture` で撮る**ので、Space が動いたかを目視でなく画像で判定できる。
+
+```bash
+node scripts/spike-mini-window.mjs --role decoy &        # おとりのフルスクリーン
+node scripts/spike-mini-window.mjs --mode focus-only --panel --no-all-workspaces \
+  --probe-accelerator --probe-other-space --shots /tmp/shots --report /tmp/spike.json
+```

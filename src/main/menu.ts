@@ -3,6 +3,7 @@ import { COMMANDS, SELECT_TAB_ACCELERATORS, resolveKeybindings } from '../shared
 import { getSettings, onSettingsChanged } from './store/settings.js'
 import { log } from './log.js'
 import {
+  canHostAdditionalTabs,
   createTab,
   createWindow,
   focusedOrFirstWindow,
@@ -14,6 +15,7 @@ import {
   selectTab,
   togglePin,
   addFavoriteFromTab,
+  promoteForegroundView,
   type NemoWindow
 } from './registry.js'
 import { checkForUpdatesManually } from './updater.js'
@@ -41,6 +43,28 @@ const UI_COMMANDS = new Set([
   'show-settings'
 ])
 
+/**
+ * 小窓では通さないコマンド。
+ *
+ * 「タブが増える」「サイドバー前提」のものを落とす。
+ * 逆に 戻る / 進む / リロード / 拡大縮小 / ⌘W / ⌘⇧W / ⌘O / ⌘⇧T は通す
+ * （⌘⇧T は `windowForNewTab` が通常ウィンドウへ回す）。
+ */
+const MINI_BLOCKED_COMMANDS = new Set([
+  'command-bar',
+  'focus-address',
+  'toggle-sidebar',
+  'move-tab-to-new-window',
+  'pin-tab',
+  'add-favorite',
+  'switch-tab',
+  'next-tab',
+  'previous-tab',
+  'show-library',
+  'show-settings',
+  'show-downloads'
+])
+
 function sendToUi(win: NemoWindow, command: string): void {
   for (const contents of [win.chromeWebContents, win.overlayWebContents]) {
     if (!contents.isDestroyed()) contents.send('nemo:command', command)
@@ -53,6 +77,13 @@ function runCommand(command: string): void {
     // ウィンドウが1つも無いときでも新規ウィンドウだけは作れるようにする
     if (command === 'new-window' || command === 'command-bar') createWindow()
     if (command === 'new-private-window') void openPrivateWindow()
+    return
+  }
+
+  // 小窓（Little Nemo）はタブを1つしか持たず、サイドバーもコマンドバーも無い。
+  // **経路ごとに `if` を書くのではなく、ここでまとめて弾く**（塞ぎ漏れを作らない）。
+  if (!canHostAdditionalTabs(win) && MINI_BLOCKED_COMMANDS.has(command)) {
+    log('command.ignored_in_mini', { command, windowId: win.id })
     return
   }
 
@@ -84,7 +115,10 @@ function runCommand(command: string): void {
       void openPrivateWindow()
       return
     case 'close-tab':
-      if (tab) removeTab(win, tab.key)
+      // **Peek が出ている間は Peek を閉じる**（Esc / ✕ と同じ）。
+      // ここを親タブに向けると、覗いていただけのつもりが元のページごと消える。
+      if (tab?.peek) removeTab(win, tab.peek.key)
+      else if (tab) removeTab(win, tab.key)
       else removeWindow(win)
       return
     case 'close-window':
@@ -143,15 +177,21 @@ function runCommand(command: string): void {
       return
     case 'next-tab':
     case 'previous-tab': {
-      if (win.tabs.length === 0) return
-      const index = win.tabs.findIndex((item) => item.key === win.activeTabKey)
+      // Peek は「次のタブ」の行き先にしない（一覧に出ていないものへは飛ばさない）
+      const list = win.normalTabs
+      if (list.length === 0) return
+      const index = list.findIndex((item) => item.key === win.activeTabKey)
       const delta = command === 'next-tab' ? 1 : -1
-      const next = win.tabs[(index + delta + win.tabs.length) % win.tabs.length]
+      const next = list[(index + delta + list.length) % list.length]
       selectTab(win, next.key)
       return
     }
+    case 'promote-peek':
+      // Peek → 同じウィンドウの通常タブ / 小窓 → 直近の通常ウィンドウのタブ
+      promoteForegroundView(win)
+      return
     case 'move-tab-to-new-window': {
-      if (!tab || win.tabs.length <= 1) return
+      if (!tab || win.normalTabs.length <= 1) return
       // 移動先も同じ性質にする（シークレットのタブは通常ウィンドウへは移せない）
       const target = createWindow(undefined, { isPrivate: win.isPrivate })
       target.whenUiReady(() => moveTabToWindow(tab, target))
@@ -273,8 +313,12 @@ export function installApplicationMenu(): void {
 function selectTabByIndex(index: number): void {
   const win = focusedOrFirstWindow()
   if (!win) return
+  // 小窓はタブ1つなので番号で選ぶ意味がない
+  if (!canHostAdditionalTabs(win)) return
+  // ⌘1〜9 はサイドバーの並びに対応させる（Peek は一覧に出ていないので数えない）
+  const list = win.normalTabs
   // 9 は「最後のタブ」（Chrome / Arc と同じ）
-  const tab = index === 9 ? win.tabs[win.tabs.length - 1] : win.tabs[index - 1]
+  const tab = index === 9 ? list[list.length - 1] : list[index - 1]
   if (tab) selectTab(win, tab.key)
 }
 

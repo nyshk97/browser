@@ -58,6 +58,9 @@ const api: NemoUiApi = {
     ipcRenderer.invoke('nemo:move-pinned', id, parentId, index) as Promise<void>,
   moveFavorite: (id, index) => ipcRenderer.invoke('nemo:move-favorite', id, index) as Promise<void>,
 
+  promoteForegroundView: () => ipcRenderer.invoke('nemo:promote-foreground-view') as Promise<void>,
+  closePeek: () => ipcRenderer.invoke('nemo:close-peek') as Promise<void>,
+
   createWindow: () => ipcRenderer.invoke('nemo:create-window') as Promise<void>,
   createPrivateWindow: () => ipcRenderer.invoke('nemo:create-private-window') as Promise<void>,
   setSidebarVisible: (visible) => ipcRenderer.invoke('nemo:set-sidebar-visible', visible) as Promise<void>,

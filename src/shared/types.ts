@@ -65,6 +65,11 @@ export interface TabState {
   key: string
   windowId: number
   /**
+   * 自分が Peek（ウィンドウ内ポップアップ）なら、その親タブの key。通常タブなら null。
+   * **サイドバーの一覧には出さない**（親タブが1本出ているだけに見せる）。
+   */
+  peekParentKey: string | null
+  /**
    * 対応する WebContents の id（= `chrome.tabs` の tabId）。
    * sleep 中は null。**Nemo のタブ ID は `key` の方**で、これは拡張との対応を見るためだけに出す。
    */
@@ -94,7 +99,10 @@ export interface TabState {
   asleep: boolean
   /** 直近でアクティブだった時刻（自動アーカイブの判定に使う）。 */
   lastActiveAt: number
-  /** View が実際に表示されているか。activeTabKey と食い違っていたらバグ。 */
+  /**
+   * View が実際に表示されているか。
+   * 正常なら「選択中の通常タブ」と、あれば「その Peek」の2つだけが true になる。
+   */
   visible: boolean
   /** renderer がクラッシュした状態か。 */
   crashed: boolean
@@ -118,6 +126,11 @@ export interface WindowState {
    * （＝ Bitwarden の自動入力が使えない）。UI にその旨を出すために持つ。
    */
   isPrivate: boolean
+  /**
+   * ウィンドウの種別。
+   * `mini` は小窓（Little Nemo）。サイドバーを持たず、タブは常に1つ。
+   */
+  kind: 'normal' | 'mini'
 }
 
 export interface FindState {
@@ -374,7 +387,10 @@ export interface NemoUiApi {
   getSharedState(): Promise<SharedState>
   getSettings(): Promise<NemoSettings>
   getExtensions(): Promise<LoadedExtensionInfo[]>
-  /** 実際に表示されている View のタブ key（正常なら activeTabKey ただ1つ）。 */
+  /**
+   * 実際に表示されている View のタブ key。
+   * 正常なら「選択中の通常タブ」と、あれば「その Peek」の最大2つ。
+   */
   getVisibleTabKeys(): Promise<string[]>
 
   /* タブ */
@@ -413,6 +429,15 @@ export interface NemoUiApi {
   /** ドラッグ & ドロップの結果を反映する。 */
   movePinned(id: string, parentId: string | null, index: number): Promise<void>
   moveFavorite(id: string, index: number): Promise<void>
+
+  /* Peek / 小窓 */
+  /**
+   * ⌘O と同じ。Peek なら同じウィンドウのタブへ、小窓なら直近の通常ウィンドウのタブへ。
+   * **どちらもページは読み直さない**。
+   */
+  promoteForegroundView(): Promise<void>
+  /** 選択中のタブに浮いている Peek を閉じる（✕）。 */
+  closePeek(): Promise<void>
 
   /* ウィンドウ */
   createWindow(): Promise<void>

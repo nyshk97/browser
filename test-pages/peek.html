@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>Peek / 小窓 — テスト</title>
+    <style>
+      body {
+        font: 15px/1.6 -apple-system, sans-serif;
+        margin: 40px;
+        max-width: 720px;
+      }
+      button,
+      input[type='submit'] {
+        font: inherit;
+        display: block;
+        margin: 8px 0;
+      }
+      #from-child {
+        font-family: ui-monospace, Menlo, monospace;
+        background: #eee;
+        padding: 6px 10px;
+        border-radius: 4px;
+        min-height: 1.6em;
+      }
+      hr {
+        margin: 28px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Peek / 小窓の検証</h1>
+
+    <h2>1. 新しい browsing context に付随するもの（計画 R1）</h2>
+
+    <p>
+      <b>POST body が届くか</b> —
+      popup を「deny して URL だけ作り直す」実装だと body が落ちて、開いた先の
+      <code>#body</code> が空になる。
+    </p>
+    <form id="post-form" method="POST" action="/__nemo_echo__" target="_blank">
+      <input type="hidden" name="nemo" value="peek-post-body" />
+      <input type="submit" value="POST を target=_blank で投げる" />
+    </form>
+
+    <p><b>window.opener が生きているか</b> — 子から <code>postMessage</code> を撃ち返させる。</p>
+    <button id="open-child">子（postMessage を返す）を開く</button>
+    <div id="from-child">（子からの受信待ち）</div>
+
+    <p><b>window.close() で閉じるか</b> — スクリプトが開いた子だけが自分を閉じられる。</p>
+    <button id="open-selfclose">1.5 秒後に自分を閉じる子を開く</button>
+
+    <hr />
+
+    <h2>2. 素の popup / 背面タブ</h2>
+    <button id="open-blank">window.open（Peek になるはず）</button>
+    <button id="open-sized">window.open（サイズ指定つき = OAuth 風）</button>
+    <p><a href="/login.html?site=peek-blank" target="_blank">target=_blank のリンク</a></p>
+
+    <script>
+      /**
+       * 子ページ。パラメータで振る舞いを変える。
+       * `data:` は Nemo が弾くので、同じページを `?role=child` で使い回す。
+       */
+      const params = new URLSearchParams(location.search)
+      const role = params.get('role')
+
+      if (role === 'postback') {
+        document.body.innerHTML = '<h1>子: postMessage を返す</h1>'
+        // 開いた瞬間と、少し置いてからの2回撃つ（親の購読が間に合わない場合に備える）
+        const send = () => {
+          try {
+            window.opener?.postMessage('nemo-peek-child-hello', '*')
+          } catch (error) {
+            document.body.innerHTML += `<pre>${String(error)}</pre>`
+          }
+        }
+        send()
+        setTimeout(send, 300)
+        setTimeout(send, 1000)
+      } else if (role === 'selfclose') {
+        document.body.innerHTML = '<h1>子: 1.5 秒後に window.close()</h1>'
+        setTimeout(() => window.close(), 1500)
+      } else if (role === 'nested') {
+        document.body.innerHTML =
+          '<h1>子: さらに孫 popup を開く</h1><button id="go">孫を開く</button>'
+        const open = () => window.open('/peek.html?role=postback', '_blank')
+        document.querySelector('#go').addEventListener('click', open)
+        // 自走検証から叩けるように window に出しておく
+        window.__openGrandChild = open
+      } else {
+        document.querySelector('#open-child').addEventListener('click', () => {
+          window.open('/peek.html?role=postback', '_blank')
+        })
+        document.querySelector('#open-selfclose').addEventListener('click', () => {
+          window.open('/peek.html?role=selfclose', '_blank')
+        })
+        document.querySelector('#open-blank').addEventListener('click', () => {
+          window.open('/login.html?site=peek-open', '_blank')
+        })
+        document.querySelector('#open-sized').addEventListener('click', () => {
+          window.open('/login.html?site=peek-oauth', '_blank', 'width=500,height=600')
+        })
+
+        // 子からの postMessage を記録する。**自走検証はここを読む**
+        window.__fromChild = []
+        addEventListener('message', (event) => {
+          window.__fromChild.push(String(event.data))
+          document.querySelector('#from-child').textContent = window.__fromChild.join(' / ')
+        })
+      }
+    </script>
+  </body>
+</html>

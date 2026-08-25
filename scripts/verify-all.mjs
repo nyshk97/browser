@@ -4,7 +4,8 @@
  *
  *   ユニットテスト → ビルド → 拡張の照合 → ページサーバ → アプリ起動 →
  *   verify-spike → verify-phase1 → verify-phase2 → verify-pins → verify-switcher →
- *   再起動をまたぐ永続性 → 旧版セッションからの移行 → 履歴 DB の列追加 → 後片付け
+ *   verify-peek → 再起動をまたぐ永続性 → 旧版セッションからの移行 →
+ *   履歴 DB の列追加 → 後片付け
  *
  * 終了コードがそのまま合否になるので CI にも載せられる。
  *
@@ -111,7 +112,15 @@ async function startApp() {
 /** 検証スクリプトには採番したエンドポイントを必ず明示的に渡す。 */
 const runVerify = (script, args = []) =>
   runToCompletion(process.execPath, [script, ...args], {
-    env: { ...process.env, NEMO_CDP: cdp, NEMO_TEST_PAGES: pages }
+    // **userData も渡す**。診断ログ・session.json を読む検証（Peek / 小窓）が
+    // 「どのプロファイルを見ればよいか」を知る手段がこれしか無い。
+    env: {
+      ...process.env,
+      NEMO_CDP: cdp,
+      NEMO_TEST_PAGES: pages,
+      NEMO_USER_DATA_DIR: userDataDir,
+      NEMO_DOWNLOAD_DIR: downloadDir
+    }
   })
 
 const spike = (args) => runVerify('scripts/verify-spike.mjs', args)
@@ -119,6 +128,7 @@ const phase1 = (args) => runVerify('scripts/verify-phase1.mjs', args)
 const phase2 = (args) => runVerify('scripts/verify-phase2.mjs', args)
 const pins = (args) => runVerify('scripts/verify-pins.mjs', args)
 const switcher = (args) => runVerify('scripts/verify-switcher.mjs', args)
+const peek = (args) => runVerify('scripts/verify-peek.mjs', args)
 
 let exitCode = 0
 try {
@@ -165,6 +175,10 @@ try {
   console.log('\n=== 自走検証（タブスイッチャー ⌃M）')
   const switcherCode = await switcher([])
   if (switcherCode !== 0) exitCode = switcherCode
+
+  console.log('\n=== 自走検証（Peek と小窓）')
+  const peekCode = await peek([])
+  if (peekCode !== 0) exitCode = peekCode
 
   console.log('\n=== 再起動をまたぐ永続性')
   await spike(['--storage-write'])

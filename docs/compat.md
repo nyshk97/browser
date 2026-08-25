@@ -112,6 +112,67 @@ macOS が起動時に **SIGKILL する（出力も残らない）**。
 `setPermissionRequestHandler` まで来ない（Chromium 側で保留される）。
 自走検証で権限ダイアログを試すときは、対象タブを必ずアクティブにする。
 
+## 拡張のインライン UI（`web_accessible_resources` の iframe）
+
+Bitwarden のインラインオートフィル候補（入力欄の下に出るログイン候補）は、
+content script がページに **`chrome-extension://` の iframe を挿す**ことで出来ている
+（`overlay/menu-button.html` / `overlay/menu-list.html`）。
+拡張のインライン UI はだいたいこの形なので、ここが通らないと何も出ない。
+
+### ページ側の `will-frame-navigate` / `will-redirect` で切ってはいけない
+
+Nemo はページ側 WebContents で `chrome-extension:` へのナビゲーションを拒否しているが、
+**サブフレームまで拒否すると拡張のインライン UI が出せなくなる**。
+サブフレームに限ってホストを照合せずに通す（`shared/navigation-policy.js` の `subframe`）。
+
+緩めてよい根拠は **`web_accessible_resources` に無いページは Chromium 自身が
+`net::ERR_BLOCKED_BY_CLIENT` で拒否する**こと（実測）。`verify:ext` が
+「公開したページは iframe の中で走る」「公開していないページは Chromium に拒否される」の
+両方を固定しているので、この前提が崩れたら CI で落ちる。
+
+### `use_dynamic_url: true` は**リダイレクトを1回挟む**
+
+`use_dynamic_url: true` の resource は `chrome.runtime.getURL()` が
+**拡張 ID ではなくセッションごとの UUID** を返す（Bitwarden はこれを使っている）。
+
+```
+chrome.runtime.getURL('overlay/menu-button.html')
+→ chrome-extension://f151be5b-c075-47f1-b21e-953bd2cf8b06/overlay/menu-button.html
+```
+
+この UUID の URL へのリクエストは、Chromium が**静的 ID の URL へリダイレクト**して解決する。
+そのため **`will-frame-navigate` だけ通しても足りない**。`will-redirect` を素通しで
+拒否していると、iframe が `net::ERR_ABORTED` で落ちる
+（「フレームのナビゲーションは通ったのにリダイレクトで切られる」という分かりにくい壊れ方をする）。
+
+`will-redirect` は `will-frame-navigate` と同じく**イベント本体から `event.url` /
+`event.isMainFrame` を読む**。位置引数の `(event, url, isInPlace, isMainFrame, ...)` でも
+同じ値が取れるが、型定義で `@deprecated` になっているので使わない。
+
+なお UUID からロード済み拡張 ID を引く手段は Electron 側に無いので、
+**ホストでの allowlist はそもそも成立しない**。
+
+## 拡張の service worker は 45〜50 秒で idle 停止する
+
+実測（Electron 41.10.6 + Bitwarden 2026.8.0）:
+
+- `running` から `stopping` まで **ちょうど 50 秒**。Chrome の MV3（30 秒）より少し長い
+- 停止後も、タブ切り替えやページ遷移で**起き直す**（`electron-chrome-extensions` の
+  `sendEvent` が `startWorkerForScope` で起こしてからイベントを送るため）
+- **`startWorkerForScope` を running 中に呼んでも idle タイマーはリセットされない**。
+  20 秒おきに叩いても 50 秒で落ちる（起こし続けたいなら
+  `running-status-changed` の `stopped` を見て起こし直すしかない）
+- `chrome.storage.session` は **SW の再起動をまたいで残る**（vault のアンロック状態は保たれる）
+
+拡張アイコンの popup を開いたときの数秒のローディングは、この停止から復帰して
+拡張が初期化をやり直しているぶん。
+
+## `webNavigation.onCommitted` の `transitionType` は空文字
+
+`electron-chrome-extensions` は `transitionType` を埋めない。
+`details.transitionType === 'reload'` でリロードを見分ける実装（Bitwarden のバッジ更新の
+経路のひとつ）は**永久に一致しない**。
+
 ## 更新のたびに要る作業
 
 - 両拡張ライブラリの preload script が成果物に含まれることを検査する → `mise run package` が自動で見る

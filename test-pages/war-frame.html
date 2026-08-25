@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>拡張の web_accessible_resources — テスト</title>
+    <style>
+      body { font: 15px/1.6 -apple-system, sans-serif; margin: 40px; }
+      iframe { border: 1px solid #ccc; height: 60px; width: 320px; display: block; margin: 8px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>拡張ページを iframe で読めるか</h1>
+    <p>
+      content script が、拡張の <code>web_accessible_resources</code> に載せたページ（公開）と
+      載せていないページ（非公開）を iframe で挿す。結果は
+      <code>&lt;html&gt;</code> の <code>data-nemo-ci-war*</code> 属性に出る。
+    </p>
+    <p><strong>このページでしか挿さない</strong>（他のテストページの iframe 検査を巻き添えにしないため）。</p>
+  </body>
+</html>

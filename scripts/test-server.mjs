@@ -33,6 +33,14 @@ let cachedAssetHits = 0
  * popup を「deny して URL だけ作り直す」実装だと body が落ちるので、ここが空になる。
  */
 const ECHO_PATH = '/__nemo_echo__'
+/**
+ * ナビゲーション判定の検証用。**サーバ側 302** で `?to=` の URL へ飛ばす。
+ *
+ * `location.href = ...` だと `will-frame-navigate` しか踏まないので、
+ * `will-redirect` のトップフレーム側（拡張ページへリダイレクトさせる経路）を
+ * 塞げているかを確かめられない。
+ */
+const REDIRECT_PATH = '/__nemo_redirect__'
 
 const types = {
   '.html': 'text/html; charset=utf-8',
@@ -70,6 +78,18 @@ const server = http.createServer((req, res) => {
   if (url.pathname === CACHE_COUNT_PATH) {
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
     res.end(JSON.stringify({ hits: cachedAssetHits }))
+    return
+  }
+
+  if (url.pathname === REDIRECT_PATH) {
+    const to = url.searchParams.get('to')
+    if (!to) {
+      res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+      res.end('to= がない')
+      return
+    }
+    res.writeHead(302, { location: to, 'cache-control': 'no-store' })
+    res.end()
     return
   }
 

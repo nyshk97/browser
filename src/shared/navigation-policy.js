@@ -38,6 +38,10 @@ export const UI_SCHEME_URL_PREFIX = 'nemo://ui/'
  *   `chrome-extension://<extensionIds に含まれる ID>/` を許可する。
  *   拡張自身がタブを作る経路でのみ true にする。
  *   コマンドバーや Web ページからのナビゲーションでは絶対に true にしない。
+ * @property {boolean} [subframe]
+ *   ページ内のサブフレーム（iframe）へのナビゲーションである。
+ *   このときだけ `chrome-extension:` を**ホストを問わず**許可する（下記参照）。
+ *   トップレベル遷移では絶対に true にしない。
  * @property {ReadonlySet<string>} [extensionIds] ロード済み拡張の ID。
  */
 
@@ -74,8 +78,29 @@ export function isNavigableUrl(url, policy = {}) {
 
   if (PAGE_SCHEMES.has(parsed.protocol)) return true
 
-  if (policy.allowExtensionPages && parsed.protocol === 'chrome-extension:') {
-    return policy.extensionIds ? policy.extensionIds.has(parsed.hostname) : false
+  if (parsed.protocol === 'chrome-extension:') {
+    /*
+     * サブフレームは**ホストを照合せずに**通す。
+     *
+     * 拡張が `web_accessible_resources` で公開したページは、ページ内に iframe として
+     * 挿し込まれる（Bitwarden のインラインオートフィル候補がこの形）。
+     * `use_dynamic_url: true` の resource は**ホストが拡張 ID ではなくセッションごとの
+     * UUID になる**ため、`extensionIds` との照合が構造上できない。
+     *
+     * ホストを見ずに通してよい根拠:
+     * - どの resource を iframe にできるかは **Chromium が `web_accessible_resources` で
+     *   強制する**。公開されていないページはここを通しても拒否される
+     *   （`verify:ext` の「公開していない拡張ページは iframe で読めない」が固定している）
+     * - Nemo は lock された artifact しかロードしない（allowlist）ので、
+     *   見知らぬ拡張が入ってくる余地がない
+     *
+     * 拡張が 1 つもロードされていなければ通さない（起動直後の取りこぼし対策）。
+     */
+    if (policy.subframe) return (policy.extensionIds?.size ?? 0) > 0
+    if (policy.allowExtensionPages) {
+      return policy.extensionIds ? policy.extensionIds.has(parsed.hostname) : false
+    }
+    return false
   }
 
   return false

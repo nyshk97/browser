@@ -78,6 +78,43 @@ test('拡張がロードされていなければ chrome-extension: は一切通�
   )
 })
 
+test('サブフレームは chrome-extension: をホストを問わず許可する（web_accessible_resources）', () => {
+  // use_dynamic_url: true の resource はホストが拡張 ID ではなく UUID になるので、
+  // ID との照合ができない。サブフレームに限ってホストを見ずに通す。
+  const dynamic = 'chrome-extension://0b7c6bfb-c70e-456f-983f-46249db7a010/overlay/menu.html'
+  assert.equal(isNavigableUrl(dynamic, { subframe: true, extensionIds: LOADED }), true)
+  assert.equal(
+    isNavigableUrl(`chrome-extension://${OTHER}/x.html`, { subframe: true, extensionIds: LOADED }),
+    true
+  )
+
+  // トップレベル遷移では今までどおり拒否する（ここが緩むと Web ページから拡張ページへ飛べる）
+  assert.equal(isNavigableUrl(dynamic, { extensionIds: LOADED }), false)
+  assert.equal(isNavigableUrl(dynamic, { subframe: false, extensionIds: LOADED }), false)
+
+  // 拡張が 1 つもロードされていなければサブフレームでも通さない
+  assert.equal(isNavigableUrl(dynamic, { subframe: true, extensionIds: new Set() }), false)
+  assert.equal(isNavigableUrl(dynamic, { subframe: true }), false)
+})
+
+test('サブフレームでも chrome-extension: 以外の許可外 scheme は拒否する', () => {
+  // 「iframe なら通す」が他の scheme に波及していないこと
+  for (const url of [
+    'file:///etc/passwd',
+    'javascript:alert(1)',
+    'data:text/html,<h1>x</h1>',
+    'devtools://devtools/bundled/devtools_app.html',
+    'chrome://settings',
+    'nemo://ui/index.html'
+  ]) {
+    assert.equal(
+      isNavigableUrl(url, { subframe: true, extensionIds: LOADED }),
+      false,
+      `${url} がサブフレームで許可されている`
+    )
+  }
+})
+
 test('isLoadedExtensionUrl はロード済み拡張のページだけ true', () => {
   assert.equal(isLoadedExtensionUrl(`chrome-extension://${[...LOADED][0]}/a.html`, LOADED), true)
   assert.equal(isLoadedExtensionUrl(`chrome-extension://${OTHER}/a.html`, LOADED), false)

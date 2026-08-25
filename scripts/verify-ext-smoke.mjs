@@ -23,6 +23,7 @@ import {
   getFreePort,
   isChildAlive,
   projectRoot,
+  readLogLines,
   stopChildren,
   waitForHttp
 } from './lib/harness.mjs'
@@ -153,7 +154,9 @@ try {
     .ev(
       `(() => {
     const top = document.documentElement.getAttribute('data-nemo-ci')
-    const frames = [...document.querySelectorAll('iframe')].map((f) => {
+    // **同一オリジンの iframe だけを見る**。ページに挿さる iframe が増えたときに
+    // 巻き添えで落ちないよう、このページが置いている /login.html の iframe に絞る。
+    const frames = [...document.querySelectorAll('iframe[src^="/login.html"]')].map((f) => {
       try { return f.contentDocument.documentElement.getAttribute('data-nemo-ci') } catch { return 'cross-origin' }
     })
     return JSON.stringify({ top, frames, ping: document.documentElement.getAttribute('data-nemo-ci-ping') })
@@ -167,6 +170,121 @@ try {
     JSON.stringify(marks.frames)
   )
   check('content script から service worker へメッセージが通る', marks.ping === 'true', String(marks.ping))
+
+  /* ---- 3b. 拡張ページを iframe で読めるか（web_accessible_resources） ---- */
+  // Bitwarden のインラインオートフィル候補は、この経路で挿す iframe で出来ている。
+  // ページ側 WebContents の will-frame-navigate が chrome-extension: を一律拒否していると
+  // 候補が出せない。**公開したものは読め、公開していないものは読めない**の両方を固定する。
+  {
+    await ui.ev(`window.nemo.createTab('${pages}/war-frame.html').then((k) => k)`)
+    await sleep(2500)
+    const warPage = await connectTo(cdp, '/war-frame.html')
+    // 非公開側が「Chromium に拒否された」ことまで見たいので、
+    // ネットワークのイベントを拾える状態にしてから読み込み直す。
+    await warPage.send('Page.enable')
+    await warPage.send('Network.enable')
+    await warPage.send('Page.reload')
+    await sleep(1500)
+    // content script 側の待ちは 5 秒。timeout が確定するまで待ってから読む。
+    const war = await (async () => {
+      const deadline = Date.now() + 15000
+      for (;;) {
+        const state = await warPage
+          .ev(
+            `JSON.stringify({
+          open: document.documentElement.getAttribute('data-nemo-ci-war'),
+          hidden: document.documentElement.getAttribute('data-nemo-ci-war-private'),
+          host: document.documentElement.getAttribute('data-nemo-ci-war-host')
+        })`
+          )
+          .then(JSON.parse)
+        const settled = (v) => v === 'ok' || v === 'timeout'
+        if ((settled(state.open) && settled(state.hidden)) || Date.now() > deadline) return state
+        await sleep(500)
+      }
+    })()
+
+    check(
+      '公開した拡張ページが iframe の中で走る（web_accessible_resources）',
+      war.open === 'ok',
+      JSON.stringify(war)
+    )
+    check(
+      '公開していない拡張ページは iframe で読めない',
+      war.hidden === 'timeout',
+      `data-nemo-ci-war-private=${war.hidden}`
+    )
+    // 「読めない」を timeout だけで判定すると、拡張が壊れて何も挿さらなくても PASS する。
+    // **Chromium が拒否した**ことをネットワーク層の理由まで見て確定させる。
+    //
+    // 非公開側は `requestWillBeSent` が飛ばないまま落ちるので requestId から URL を引けない。
+    // このページが挿す iframe は 2 つだけなので、**公開側が ok であること**（上の check）と
+    // 合わせれば、残る `ERR_BLOCKED_BY_CLIENT` は非公開側のものと判断できる。
+    const blockedByClient = warPage.events.filter(
+      (event) =>
+        event.method === 'Network.loadingFailed' && event.params.errorText === 'net::ERR_BLOCKED_BY_CLIENT'
+    )
+    check(
+      '公開していない拡張ページは Chromium に拒否される（ERR_BLOCKED_BY_CLIENT）',
+      war.open === 'ok' && blockedByClient.length > 0,
+      `open=${war.open} / ERR_BLOCKED_BY_CLIENT ${blockedByClient.length} 件`
+    )
+    // ここが拡張 ID と同じなら use_dynamic_url を踏んでいない＝
+    // ホストで allowlist する実装に戻っても検知できない状態になっている。
+    check(
+      'iframe のホストが拡張 ID と異なる（use_dynamic_url）',
+      Boolean(war.host) && war.host !== expected.id,
+      `host=${war.host} / id=${expected.id}`
+    )
+
+    // トップレベル遷移は拒否したまま（サブフレームだけ通す、が効いているか）。
+    const target = `chrome-extension://${expected.id}/popup.html`
+    await warPage.ev(`(() => { window.location.href = ${JSON.stringify(target)}; return 'ok' })()`)
+    await sleep(2000)
+    const landed = await warPage.ev('window.location.href')
+    check(
+      'ページから拡張ページへのトップレベル遷移は拒否される',
+      typeof landed === 'string' && !landed.startsWith('chrome-extension:'),
+      String(landed)
+    )
+    /** 診断ログから navigation.blocked を phase / isMainFrame で数える。 */
+    const blockedCount = (phase) =>
+      readLogLines(userDataDir).filter((line) => {
+        try {
+          const entry = JSON.parse(line)
+          return entry.event === 'navigation.blocked' && entry.phase === phase && entry.isMainFrame === true
+        } catch {
+          return false
+        }
+      }).length
+
+    // will-frame-navigate は will-navigate より先に発火する。ここで止めていることまで見ないと、
+    // 全フレームをサブフレーム扱いする配線ミスをしても後段の will-navigate が拒否して PASS してしまう。
+    check(
+      'メインフレームの拡張ページ遷移が will-frame-navigate で止まっている',
+      blockedCount('will-frame-navigate') > 0,
+      `該当ログ ${blockedCount('will-frame-navigate')} 件`
+    )
+
+    // **サーバ側 302 で拡張ページへ飛ばす経路**も塞げているか。
+    // `location.href` の遷移は will-frame-navigate しか踏まないので、
+    // will-redirect のトップフレーム側はこの経路でしか検証できない
+    // （ここが緩むと、リダイレクト1つで Web ページから拡張ページへ入れてしまう）。
+    const redirectTo = `${pages}${'/__nemo_redirect__'}?to=${encodeURIComponent(target)}`
+    await warPage.ev(`(() => { window.location.href = ${JSON.stringify(redirectTo)}; return 'ok' })()`)
+    await sleep(2500)
+    const landedAfterRedirect = await warPage.ev('window.location.href')
+    check(
+      '302 で拡張ページへリダイレクトさせても遷移しない',
+      typeof landedAfterRedirect === 'string' && !landedAfterRedirect.startsWith('chrome-extension:'),
+      String(landedAfterRedirect)
+    )
+    check(
+      'メインフレームの拡張ページへのリダイレクトが will-redirect で止まっている',
+      blockedCount('will-redirect') > 0,
+      `該当ログ ${blockedCount('will-redirect')} 件`
+    )
+  }
 
   /* ---- 4. chrome.tabs / chrome.windows ---- */
   {

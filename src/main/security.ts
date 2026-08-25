@@ -60,6 +60,13 @@ export interface NavigationPolicy {
    * コマンドバーや Web ページからのナビゲーションでは絶対に true にしない。
    */
   allowExtensionPages?: boolean
+  /**
+   * ページ内のサブフレーム（iframe）へのナビゲーションである。
+   * このときだけ `chrome-extension:` を**ホストを問わず**許可する
+   * （`web_accessible_resources` の iframe。判断の根拠は `shared/navigation-policy.js` に書いた）。
+   * トップレベル遷移では絶対に true にしない。
+   */
+  subframe?: boolean
 }
 
 /**
@@ -375,10 +382,26 @@ export function applyWebContentsSecurityDefaults(
     allowExtensionPages: isLoadedExtensionUrl(contents.getURL())
   })
 
-  const guard = (phase: string, url: string, preventDefault: () => void): void => {
-    if (isNavigableUrl(url, policyForCurrentPage())) return
+  /**
+   * `isMainFrame` は判定とログの両方に使う。
+   *
+   * **サブフレームのときだけ** `chrome-extension:` を通す（`web_accessible_resources` の
+   * iframe。拡張のインライン UI がこの形で挿さる）。トップレベル遷移は今までどおり塞ぐ。
+   *
+   * ログにも残す。`will-frame-navigate` は `will-navigate` より**先に**発火するので、
+   * フレームの区別を誤ってもトップレベル遷移は後段で止まってしまい、
+   * 「拒否された」だけを見る検査では配線ミスに気づけない。
+   * どの段でどのフレームを止めたかを残して、検証から見えるようにする。
+   */
+  const guard = (phase: string, url: string, preventDefault: () => void, isMainFrame?: boolean): void => {
+    const policy: NavigationPolicy = { ...policyForCurrentPage(), subframe: isMainFrame === false }
+    if (isNavigableUrl(url, policy)) return
     preventDefault()
-    log('navigation.blocked', { phase, target: redactUrl(url) })
+    log('navigation.blocked', {
+      phase,
+      target: redactUrl(url),
+      ...(isMainFrame === undefined ? {} : { isMainFrame })
+    })
     // http(s) 以外は「外部アプリで開くか」を聞く経路に回す（既定は開かない）
     void maybeOpenExternal(url, resolveWindowId(contents), permissionScope)
   }
@@ -387,13 +410,21 @@ export function applyWebContentsSecurityDefaults(
     guard('will-navigate', url, () => event.preventDefault())
   })
 
-  // リダイレクト後の scheme も検査する（初回だけ見て通さない）
-  contents.on('will-redirect', (event, url) => {
-    guard('will-redirect', url, () => event.preventDefault())
+  // リダイレクト後の scheme も検査する（初回だけ見て通さない）。
+  //
+  // **サブフレームかどうかをここでも見る**。`use_dynamic_url: true` の
+  // `web_accessible_resources` はリダイレクトを1回挟むので、
+  // ここで isMainFrame を落とすと「will-frame-navigate は通ったのに
+  // will-redirect で切られる」（拡張の iframe が ERR_ABORTED になる）。
+  //
+  // 位置引数の `(event, url, isInPlace, isMainFrame)` は Electron 側で deprecated。
+  // イベント本体から読む。
+  contents.on('will-redirect', (event) => {
+    guard('will-redirect', event.url, () => event.preventDefault(), event.isMainFrame)
   })
 
   contents.on('will-frame-navigate', (event) => {
-    guard('will-frame-navigate', event.url, () => event.preventDefault())
+    guard('will-frame-navigate', event.url, () => event.preventDefault(), event.isMainFrame)
   })
 
   contents.on('will-attach-webview', (event) => {

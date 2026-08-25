@@ -76,6 +76,27 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 - **`chrome.tabs.create` / `chrome.windows.create` が Nemo のモデルに乗ること**
   （`active: false` でアクティブタブが変わらないこと・View が表示されないこと・`windowId` の対応・`remove` での後始末）
 - 拡張から渡された URL がナビゲーション検証を通ること（`file:` は拒否 / 自分の拡張ページは許可）
+- **拡張のインライン UI（`web_accessible_resources` の iframe）がページ内で動くこと**
+  （`verify:ext`）。Bitwarden のオートフィル候補がこの経路。次の 5 つを**組で**見る:
+  - 公開したページが iframe の中で走る（`load` ではなく **nonce の postMessage** で判定する。
+    `load` はエラードキュメントでも発火するので証明にならない）
+  - **公開していないページは Chromium に拒否される**（`net::ERR_BLOCKED_BY_CLIENT`）。
+    サブフレームをホスト照合なしで通す判断は**この Chromium の強制に依存している**ので、
+    ここが緩んだら検知できないと困る
+  - iframe のホストが拡張 ID と**異なる**こと（`use_dynamic_url` の経路を踏んでいる証明。
+    ホストで allowlist する実装に戻ると成立しなくなる）
+  - トップレベル遷移（`location.href`）は拒否され、
+    **`will-frame-navigate` の `isMainFrame: true` で**止まること
+    （`will-frame-navigate` は `will-navigate` より先に発火するので、
+    フレームの区別を誤っても後段で止まって PASS してしまう）
+  - **サーバ側 302 で拡張ページへ飛ばす経路**（`/__nemo_redirect__?to=`）も拒否され、
+    **`will-redirect` の `isMainFrame: true` で**止まること。
+    `location.href` の遷移は `will-frame-navigate` しか踏まないので、
+    `will-redirect` のトップフレーム側はこの経路でしか検証できない。
+    **判定は遷移結果の URL ではなく診断ログで行う**——
+    Nemo のガードが緩んでも Chromium が拒否してページは `chrome-error://chromewebdata/` に
+    落ちるので、URL だけ見ると「遷移していない」と読めて素通りする
+    （バグ版を入れて実測した。ログを見る検査だけが FAIL した）
 - 拡張の service worker が動いていること・再起動要求が通ること
 - 使えない `chrome.*` API の列挙（現状 `declarativeNetRequest` と `sidePanel.setOptions`）
 - **拡張アイコンの popup がツールバーのアイコンの真下に出ること**（`verify:ext`）。

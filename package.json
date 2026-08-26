@@ -1,6 +1,6 @@
 {
   "name": "nemo",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "packageManager": "pnpm@10.33.0",
   "description": "Nemo — a self-hosted Arc alternative browser",
   "license": "GPL-3.0-only",

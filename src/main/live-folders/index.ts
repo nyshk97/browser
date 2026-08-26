@@ -34,6 +34,14 @@ const BACKOFF_MIN_MS = 60_000
 const BACKOFF_MAX_MS = 15 * 60_000
 /** `auth` 失敗は資格情報を直すまで投げても無駄。 */
 const AUTH_RETRY_MS = 15 * 60_000
+/**
+ * `gh auth token` の呼び出し自体に失敗したときの再試行。
+ *
+ * **「本当に未設定」と同じ 60 秒待ちにしない。** 起動直後の初回 exec は遅く、
+ * タイムアウトすると**起動して 60 秒間ずっと `Connect GitHub`（＝未設定）に見える**
+ * （実際に踏んだ。ログでは startup の要求が取得も失敗もせず消えていた）。
+ */
+const TOKEN_RETRY_MS = 5_000
 
 /**
  * 取得の要求元。
@@ -309,9 +317,12 @@ async function run(kind: RequestKind, myGeneration: number, reason: string): Pro
     cacheVerified = true
 
     if (!resolved.token) {
-      // 未設定は失敗ではない（UI は `Connect GitHub` の1行だけを出す）
+      // 未設定は失敗ではない（UI は `Connect GitHub` の1行だけを出す）。
+      // ただし**「解決に失敗した」だけは短く retry する**（未設定と同じ扱いにしない）。
       failure = null
-      nextAutomaticAttemptAt = Date.now() + POLL_INTERVAL_MS
+      const wait = resolved.reason === 'gh-failed' ? TOKEN_RETRY_MS : POLL_INTERVAL_MS
+      nextAutomaticAttemptAt = Date.now() + wait
+      log('live_folder.no_token', { reason: resolved.reason, retryInMs: wait })
       return
     }
 

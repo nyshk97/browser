@@ -32,9 +32,31 @@ export interface ResolvedToken {
    * メモリ上の連番は再起動で振り直されて正しいキャッシュまで弾く。
    */
   credentialKey: string | null
+  /**
+   * `source: 'none'` になった理由。
+   *
+   * **「本当に未設定」と「解決に失敗した」を分ける。**
+   * 一緒くたにすると、`gh` の呼び出しがたまたま失敗しただけで
+   * 60 秒間 `Connect GitHub`（＝未設定）を出し続けることになる
+   * （**起動直後の初回 exec は遅く、実際に踏んだ**）。
+   */
+  reason: 'ok' | 'not-configured' | 'gh-failed'
 }
 
-const NONE: ResolvedToken = { source: 'none', token: null, credentialKey: null }
+const NONE: ResolvedToken = {
+  source: 'none',
+  token: null,
+  credentialKey: null,
+  reason: 'not-configured'
+}
+
+/** `gh` の呼び出しそのものに失敗した（＝すぐ retry する価値がある）。 */
+const GH_FAILED: ResolvedToken = {
+  source: 'none',
+  token: null,
+  credentialKey: null,
+  reason: 'gh-failed'
+}
 
 export function fingerprint(token: string): string {
   return createHash('sha256').update(token).digest('hex').slice(0, 16)
@@ -113,7 +135,14 @@ export function tokenStorageAvailable(useTestAuth: boolean): boolean {
 }
 
 /** `gh auth token` の待ち時間。 */
-const GH_TIMEOUT_MS = 3_000
+/**
+ * `gh auth token` の待ち時間。
+ *
+ * **3 秒では短すぎた。** 起動直後の1回目は初回 exec のぶんだけ遅く（Gatekeeper の評価など）、
+ * タイムアウトして「未設定」に落ちる。ターミナルからの実測は 20〜30ms なので、
+ * ここを伸ばしても通常は待たない。
+ */
+const GH_TIMEOUT_MS = 10_000
 
 /**
  * `gh auth token --hostname github.com` を叩く。
@@ -123,21 +152,31 @@ const GH_TIMEOUT_MS = 3_000
  *
  * gh が無い / 未ログインは**失敗ではなく null**（PAT も gh も無いのは正常な状態）。
  */
-function readGhToken(): Promise<string | null> {
+function readGhToken(): Promise<{ token: string | null; failed: boolean }> {
   const ghPath = resolveGhPath()
-  if (!ghPath) return Promise.resolve(null)
+  if (!ghPath) {
+    log('live_folder.gh', { found: false })
+    return Promise.resolve({ token: null, failed: false })
+  }
+  const startedAt = Date.now()
   return new Promise((resolve) => {
     execFile(
       ghPath,
       ['auth', 'token', '--hostname', 'github.com'],
       { timeout: GH_TIMEOUT_MS, encoding: 'utf8' },
       (error, stdout) => {
+        const elapsedMs = Date.now() - startedAt
         if (error) {
-          resolve(null)
+          // **タイムアウト（`killed`）と「未ログイン」（非ゼロ終了）を分ける。**
+          // 前者はこちら側の都合なのですぐ retry してよく、後者は待っても直らない。
+          const timedOut = (error as { killed?: boolean }).killed === true
+          log('live_folder.gh', { found: true, ok: false, timedOut, elapsedMs })
+          resolve({ token: null, failed: timedOut })
           return
         }
         const token = stdout.trim()
-        resolve(token.length > 0 ? token : null)
+        log('live_folder.gh', { found: true, ok: token.length > 0, elapsedMs })
+        resolve({ token: token.length > 0 ? token : null, failed: false })
       }
     )
   })
@@ -156,17 +195,23 @@ export async function resolveToken(useTestAuth: boolean): Promise<ResolvedToken>
     if (mode === 'stored-only') {
       // **実ストア（Keychain）は読まない。** 差し替え中の置き場だけを見る
       if (!testStoredToken) return NONE
-      return { source: 'pat', token: testStoredToken, credentialKey: fingerprint(testStoredToken) }
+      return {
+        source: 'pat',
+        token: testStoredToken,
+        credentialKey: fingerprint(testStoredToken),
+        reason: 'ok'
+      }
     }
-    return { source: 'pat', token: DUMMY_TOKEN, credentialKey: fingerprint(DUMMY_TOKEN) }
+    return { source: 'pat', token: DUMMY_TOKEN, credentialKey: fingerprint(DUMMY_TOKEN), reason: 'ok' }
   }
 
   // **明示的に設定した PAT が必ず勝つ**
   const stored = readStoredToken()
-  if (stored) return { source: 'pat', token: stored, credentialKey: fingerprint(stored) }
+  if (stored) return { source: 'pat', token: stored, credentialKey: fingerprint(stored), reason: 'ok' }
 
   const gh = await readGhToken()
-  if (gh) return { source: 'gh', token: gh, credentialKey: fingerprint(gh) }
-
-  return NONE
+  if (gh.token) {
+    return { source: 'gh', token: gh.token, credentialKey: fingerprint(gh.token), reason: 'ok' }
+  }
+  return gh.failed ? GH_FAILED : NONE
 }

@@ -1,4 +1,4 @@
-import { app, clipboard, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron'
+import { clipboard, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { PAGE_PARTITION, userDataPath } from './paths.js'
 import { restartServiceWorkers } from './extensions.js'
 import { log } from './log.js'
@@ -29,23 +29,24 @@ import { answerPrompt, currentPrompt } from './prompts.js'
 import { advanceSwitcher, cancelSwitcher, currentSwitcherState, pickSwitcherTab } from './tab-switcher.js'
 import { suggest } from './suggest.js'
 import { getSettings, updateSettings } from './store/settings.js'
-import {
-  createFolder,
-  getFavorites,
-  getPinned,
-  moveFavorite,
-  movePinned,
-  renameNode,
-  toggleFolder
-} from './store/pins.js'
-import { cancelDownload, clearDownloads, listDownloads, revealDownload } from './downloads.js'
+import { createFolder, moveFavorite, movePinned, renameNode, toggleFolder } from './store/pins.js'
+import { cancelDownload, clearDownloads, revealDownload } from './downloads.js'
 import { clearHistory, queryHistory, removeHistory } from './store/history.js'
 import { clearArchive, queryArchive, removeArchived } from './store/archive.js'
 import { getDefaultBrowserStatus, requestDefaultBrowser } from './default-browser.js'
 import { getAppStatus } from './app-status.js'
 import { isCallWindowContents } from './call-window.js'
 import { focusCallTarget, getCallState, toggleCallDevice } from './call-coordinator.js'
-import { checkForUpdatesManually, getUpdateState, promptRestart } from './updater.js'
+import { checkForUpdatesManually, promptRestart } from './updater.js'
+import {
+  isLiveFolderUrl,
+  liveFolderCredentialsChanged,
+  liveFolderKeyOf,
+  liveFolderSettingChanged,
+  refreshLiveFolderNow
+} from './live-folders/index.js'
+import { clearToken, hasToken, resolveToken, saveToken, tokenStorageAvailable } from './live-folders/token.js'
+import { isGithubTestEndpoint } from './live-folders/github-pr.js'
 import { windowsById } from './registry.js'
 import type {
   AppStatus,
@@ -172,17 +173,6 @@ function resolveInput(input: unknown): string {
   return decision.url
 }
 
-/** 共有データ。**ダウンロードだけは呼び出し元ウィンドウの scope で絞る**。 */
-function sharedState(win: NemoWindow): SharedState {
-  return {
-    favorites: getFavorites(),
-    pinned: getPinned(),
-    downloads: listDownloads(win.downloadScope),
-    version: app.getVersion(),
-    update: getUpdateState()
-  }
-}
-
 export function registerIpcHandlers(): void {
   /* ---- 状態 ---- */
   // 起動時のタブは UI のロード完了後に作られるので、
@@ -193,7 +183,8 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('nemo:get-window-state', (event): WindowState => requireWindow(event).toState())
-  ipcMain.handle('nemo:get-shared-state', (event): SharedState => sharedState(requireWindow(event)))
+  // **組み立ては `NemoWindow.sharedState()` の1か所だけ**（push 側と食い違わせない）
+  ipcMain.handle('nemo:get-shared-state', (event): SharedState => requireWindow(event).sharedState())
   ipcMain.handle('nemo:get-settings', (event) => {
     requireWindow(event)
     return getSettings()
@@ -541,7 +532,13 @@ export function registerIpcHandlers(): void {
   /* ---- 設定 ---- */
   ipcMain.handle('nemo:update-settings', (event, patch: unknown) => {
     requireWindow(event)
-    return updateSettings(requireRecord(patch, 'patch'))
+    const before = getSettings().liveFolderEnabled
+    const next = updateSettings(requireRecord(patch, 'patch'))
+    // **設定の変更も即時に反映する。** push の契機が `onLiveFolderChanged` だけだと、
+    // トグルを戻しても最大 60 秒何も起きず、壊れているように見える。
+    // false にしたら push だけ、true に戻したら push + 即時に1回取得。
+    if (before !== next.liveFolderEnabled) liveFolderSettingChanged(next.liveFolderEnabled)
+    return next
   })
 
   /* ---- 拡張 ---- */
@@ -563,6 +560,62 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('nemo:open-log-folder', (event) => {
     requireWindow(event)
     void shell.openPath(userDataPath('logs'))
+  })
+
+  /* ---- Live Folder（GitHub の PR） ---- */
+  ipcMain.handle('nemo:live-folder-refresh', (event) => {
+    requireWindow(event)
+    refreshLiveFolderNow()
+  })
+
+  // **renderer から渡された URL をそのまま開かない。**
+  // いま Live Folder に載っている項目と一致するものだけ開く
+  // （renderer の入力を信じて任意 URL を開く口にしない）。
+  ipcMain.handle('nemo:live-folder-open', (event, url: unknown) => {
+    const win = requireWindow(event)
+    const target = requireString(url, 'url')
+    if (!isLiveFolderUrl(target)) {
+      log('live_folder.open_rejected', { reason: 'not_listed' })
+      return
+    }
+    // URL 一致のタブがあればそれをアクティブ化、無ければ開く。
+    // **照合は正準形どうしで行う**（renderer 側の一時タブの除外と同じ規則にする）。
+    // 文字列の完全一致にすると、通知から開いた
+    // `.../pull/12?notification_referrer_id=…` のタブが「今日のタブ」から隠れているのに
+    // 行を押すと**正準 URL の別タブがもう1枚作られる**。
+    const existing = win.normalTabs.find((tab) => liveFolderKeyOf(tab.url) === target)
+    if (existing) {
+      selectTab(win, existing.key)
+      return
+    }
+    createTab(win, target)
+  })
+
+  ipcMain.handle('nemo:github-token-save', (event, token: unknown) => {
+    requireWindow(event)
+    // 中身はログに出さない（長さも出さない）
+    const saved = saveToken(credential(token, 512), isGithubTestEndpoint())
+    if (saved) liveFolderCredentialsChanged('pat-saved')
+    return saved
+  })
+
+  ipcMain.handle('nemo:github-token-clear', (event) => {
+    requireWindow(event)
+    clearToken(isGithubTestEndpoint())
+    // 消したら gh へフォールバックして即時取得、無ければ `Connect GitHub` へ即時に切り替わる
+    liveFolderCredentialsChanged('pat-cleared')
+  })
+
+  // **トークンそのものを renderer へ返す IPC は作らない。**
+  ipcMain.handle('nemo:github-token-source', async (event) => {
+    requireWindow(event)
+    const useTest = isGithubTestEndpoint()
+    const resolved = await resolveToken(useTest)
+    return {
+      source: resolved.source,
+      hasStoredPat: hasToken(useTest),
+      encryptionAvailable: tokenStorageAvailable(useTest)
+    }
   })
 
   ipcMain.handle('nemo:check-for-updates', (event) => {

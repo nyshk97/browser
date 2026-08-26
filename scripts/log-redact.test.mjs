@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { redactUrl, sanitizeDetail } from '../src/shared/log-redact.js'
+import { maskTokens, redactUrl, sanitizeDetail } from '../src/shared/log-redact.js'
 
 /**
  * 計画 1-9 のルール（URL のパス以降・フォーム入力値・Vault 情報をログに出さない）を
@@ -44,4 +44,26 @@ test('入れ子でも効く', () => {
 test('深すぎる入れ子は打ち切る', () => {
   const deep = { a: { b: { c: { d: { e: 'x' } } } } }
   assert.equal(sanitizeDetail(deep).a.b.c.d, '[deep]')
+})
+
+/**
+ * GitHub のトークンは**キー名だけの秘匿では消えない**。
+ * エラーメッセージ（`note` のような無害な名前のキーや `Error.message`）に
+ * 埋まって出てくるので、文字列そのものを潰す必要がある。
+ */
+test('GitHub のトークンは素の文字列からも消える', () => {
+  const classic = `ghp_${'A'.repeat(36)}`
+  const fine = `github_pat_${'1'.repeat(22)}_${'b'.repeat(30)}`
+  assert.equal(sanitizeDetail({ note: `failed for ${classic}` }).note, 'failed for [token]')
+  assert.equal(sanitizeDetail({ note: `failed for ${fine}` }).note, 'failed for [token]')
+  assert.equal(maskTokens(`x ${classic} y ${fine} z`), 'x [token] y [token] z')
+})
+
+test('Error.message に埋まったトークンも消える', () => {
+  const fine = `github_pat_${'1'.repeat(22)}_${'b'.repeat(30)}`
+  assert.equal(sanitizeDetail({ err: new Error(`bad credentials ${fine}`) }).err, 'bad credentials [token]')
+})
+
+test('資格情報の fingerprint はログに出さない', () => {
+  assert.equal(sanitizeDetail({ credentialKey: '0123456789abcdef' }).credentialKey, '[redacted]')
 })

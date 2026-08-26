@@ -51,12 +51,13 @@ const KNOWN_TARGETS = [
   'switcher', // タブスイッチャー（⌃M）
   'peek', // Peek と小窓
   'call', // 会議の小窓（Meet の通話コントロール）
+  'live-folder', // Live Folder（GitHub の PR）
   'restart', // 再起動をまたぐ永続性（spike / phase1 / pins の write → read）
   'migration', // 旧版セッションからの移行
   'db' // 旧スキーマの履歴 DB からの移行
 ]
 /** アプリとページサーバを立てる必要があるもの（migration / db は自分で起動する）。 */
-const NEEDS_APP = ['spike', 'phase1', 'phase2', 'pins', 'switcher', 'peek', 'call', 'restart']
+const NEEDS_APP = ['spike', 'phase1', 'phase2', 'pins', 'switcher', 'peek', 'call', 'live-folder', 'restart']
 
 const onlyAt = process.argv.indexOf('--only')
 const only = new Set(
@@ -77,6 +78,12 @@ const needsApp = NEEDS_APP.some(want)
 
 const debugPort = String(await getFreePort())
 const pagesPort = String(await getFreePort())
+/**
+ * Live Folder の差し替え先。**GitHub には実際に繋がない。**
+ * ポートは毎回採番し、`verify-live-folder.mjs` が同じポートで待ち受ける。
+ */
+const githubPort = String(await getFreePort())
+const githubEndpoint = `http://127.0.0.1:${githubPort}/graphql`
 const cdp = `http://127.0.0.1:${debugPort}`
 const pages = `http://127.0.0.1:${pagesPort}`
 /**
@@ -147,7 +154,12 @@ async function startApp() {
       NEMO_USER_DATA_DIR: userDataDir,
       NEMO_DOWNLOAD_DIR: downloadDir,
       // **アプリ側へ渡すのがここ**。検証スクリプトにだけ渡しても届かない
-      NEMO_MEET_TEST_URL_PREFIX: meetPrefix
+      NEMO_MEET_TEST_URL_PREFIX: meetPrefix,
+      // Live Folder は起動直後に取得しに行くので、**フル検証の間は必ずローカルへ向ける**
+      // （向けないと自走検証が実 GitHub を叩く）。
+      // 認証は `stored-only`（PAT の保存 / 削除で「未設定 → 取得 → 未設定」を同一プロセスで踏める）
+      NEMO_GITHUB_TEST_ENDPOINT: githubEndpoint,
+      NEMO_GITHUB_TEST_AUTH: 'stored-only'
     }
   })
   await waitForHttp(`${cdp}/json/list`, {
@@ -172,7 +184,8 @@ const runVerify = (script, args = []) =>
       NEMO_TEST_PAGES: pages,
       NEMO_USER_DATA_DIR: userDataDir,
       NEMO_DOWNLOAD_DIR: downloadDir,
-      NEMO_MEET_TEST_URL_PREFIX: meetPrefix
+      NEMO_MEET_TEST_URL_PREFIX: meetPrefix,
+      NEMO_GITHUB_TEST_ENDPOINT: githubEndpoint
     }
   })
 
@@ -183,6 +196,7 @@ const pins = (args) => runVerify('scripts/verify-pins.mjs', args)
 const switcher = (args) => runVerify('scripts/verify-switcher.mjs', args)
 const peek = (args) => runVerify('scripts/verify-peek.mjs', args)
 const call = (args) => runVerify('scripts/verify-call.mjs', args)
+const liveFolder = (args) => runVerify('scripts/verify-live-folder.mjs', args)
 
 let exitCode = 0
 try {
@@ -258,6 +272,12 @@ try {
     if (callCode !== 0) exitCode = callCode
   }
 
+  if (want('live-folder')) {
+    console.log('\n=== 自走検証（Live Folder: GitHub の PR）')
+    const liveFolderCode = await liveFolder([])
+    if (liveFolderCode !== 0) exitCode = liveFolderCode
+  }
+
   if (want('restart')) {
     console.log('\n=== 再起動をまたぐ永続性')
     await spike(['--storage-write'])
@@ -273,6 +293,11 @@ try {
       const plantCode = await call(['--position-plant'])
       if (plantCode !== 0) exitCode = plantCode
     }
+    // 壊れたキャッシュも**アプリを止めてから**仕込む（終了時の close が上書きする）
+    if (want('live-folder')) {
+      const plantCode = await liveFolder(['--restart-write'])
+      if (plantCode !== 0) exitCode = plantCode
+    }
 
     await startPagesServer()
     await startApp()
@@ -282,6 +307,10 @@ try {
     if (sessionCode !== 0) exitCode = sessionCode
     const lazyReadCode = await pins(['--lazy-read'])
     if (lazyReadCode !== 0) exitCode = lazyReadCode
+    if (want('live-folder')) {
+      const liveReadCode = await liveFolder(['--restart-read'])
+      if (liveReadCode !== 0) exitCode = liveReadCode
+    }
     // **タブを作る検証はいちばん最後に置く**。会議の小窓を出すには会議タブが要るが、
     // その1枚が「復元直後のタブは sleep 状態」の検査に混ざって落とす（実際に踏んだ）。
     if (want('call')) {

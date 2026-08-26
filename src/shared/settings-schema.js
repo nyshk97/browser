@@ -18,7 +18,8 @@ export const DEFAULT_SETTINGS = {
   searchTemplate: 'https://www.google.com/search?q={q}',
   keybindings: {},
   restoreSession: true,
-  askDownloadLocation: false
+  askDownloadLocation: false,
+  liveFolderEnabled: true
 }
 
 /**
@@ -48,7 +49,13 @@ export function normalizeSettings(raw) {
     askDownloadLocation:
       typeof input['askDownloadLocation'] === 'boolean'
         ? input['askDownloadLocation']
-        : DEFAULT_SETTINGS.askDownloadLocation
+        : DEFAULT_SETTINGS.askDownloadLocation,
+    // **`SETTINGS_VERSION` は上げない**。キーの追加はここが既定値で埋めるので、
+    // 既存の `settings.json` をそのまま読める（版を上げると同期先の古い Nemo が拒否する）
+    liveFolderEnabled:
+      typeof input['liveFolderEnabled'] === 'boolean'
+        ? input['liveFolderEnabled']
+        : DEFAULT_SETTINGS.liveFolderEnabled
   }
 }
 

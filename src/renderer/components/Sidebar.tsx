@@ -4,6 +4,8 @@ import { PinnedTree } from './PinnedTree.js'
 import { TabRow, TAB_DRAG_TYPE, useDragEnd } from './TabRow.js'
 import { RenameInput, useDelayedClick } from './InlineRename.js'
 import { RowMenu, type RowMenuState } from './RowMenu.js'
+import { LiveFolder } from './LiveFolder.js'
+import { normalizePrUrl } from '../../shared/live-folder-schema.js'
 import type { FavoriteItem, LoadedExtensionInfo, TabState, UpdateState } from '../../shared/types.js'
 
 /**
@@ -49,19 +51,44 @@ export function Sidebar(): React.JSX.Element {
   )
 
   /**
+   * Live Folder に載っている PR の URL。
+   *
+   * PR がマージされて一覧から消えると、その URL は載らなくなり、
+   * **開いていたタブは自動的に「今日のタブ」に現れる**（降格処理を書かずに降格と同じ結果になる）。
+   */
+  const liveUrls = useMemo(
+    () => new Set((shared.liveFolder?.items ?? []).map((item) => item.url)),
+    [shared.liveFolder]
+  )
+
+  /**
    * 一時タブ。**専用枠（ピン留め / Favorites）に属するタブはここに出さない**
    * （出すと同じタブがサイドバーに2回並ぶ）。
    *
    * **Peek も出さない**。Peek は親タブの上に浮いているだけで、
    * 一覧では親タブが1本出ているように見せる。
+   *
+   * **Live Folder に載っている URL のタブも出さない**（同じ理由で二重に並ぶ）。
    */
   const ephemeral: TabState[] = useMemo(
     () =>
-      (state?.tabs ?? []).filter(
-        (tab) => tab.pinnedId === null && tab.favoriteId === null && tab.peekParentKey === null
-      ),
-    [state]
+      (state?.tabs ?? []).filter((tab) => {
+        if (tab.pinnedId !== null || tab.favoriteId !== null || tab.peekParentKey !== null) return false
+        const key = normalizePrUrl(tab.url)
+        return !(key !== null && liveUrls.has(key))
+      }),
+    [state, liveUrls]
   )
+
+  /** Live Folder の行を「開いている」表示にするための URL 集合。 */
+  const openLiveUrls = useMemo(() => {
+    const open = new Set<string>()
+    for (const tab of state?.tabs ?? []) {
+      const key = normalizePrUrl(tab.url)
+      if (key) open.add(key)
+    }
+    return open
+  }, [state])
 
   const isPrivate = state?.isPrivate === true
 
@@ -87,6 +114,18 @@ export function Sidebar(): React.JSX.Element {
       <div className="sep" />
 
       <div className="scroll">
+        {/*
+          Live Folder は DESIGN.md の3層に**4層目として割り込む**
+          （Favorites の直下・ピン留めの見出しより上）。
+          シークレットウィンドウと設定で無効のときは `liveFolder` が null で来る。
+        */}
+        {shared.liveFolder ? (
+          <>
+            <LiveFolder state={shared.liveFolder} openUrls={openLiveUrls} />
+            <div className="tabs-sep" />
+          </>
+        ) : null}
+
         <div className="label">
           <PinIcon />
           <button

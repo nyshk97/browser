@@ -31,7 +31,7 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 （`phase1` + `pins` の実測で 36 秒）。**最後に 1 回だけフルを通す**。
 
 指定できるのは `spike` / `phase1` / `phase2` / `pins` / `switcher` / `peek` / `call` /
-`restart` / `migration` / `db`。
+`live-folder` / `restart` / `migration` / `db`。
 
 - 知らない名前はエラーにする（typo で「何も回さずに PASS」にしない）
 - 回さなかったものは実行中と最後のサマリの両方に出る（フルで通ったと読み違えないため）
@@ -51,6 +51,7 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 | タブ / ウィンドウ・サイドバー・**ツールバー（アドレスバー）**・コマンドバー・ダウンロード・権限 | `mise run verify` |
 | **空状態（タブが 1 つも無いときの画面）** | `mise run verify:only phase1`（1-10。View 単位でスクショも撮れる） |
 | **会議の小窓（Meet の通話コントロール）**・`meet-adapter.ts`・sleep の除外 | `mise run verify:only call restart` + 下の「会議の小窓（実機）」 |
+| **Live Folder（GitHub の PR）**・取得のバックオフ・トークン | `mise run verify:only live-folder restart` + 下の「Live Folder（GitHub の PR）」 |
 | **拡張アイコンの popup の位置**（ツールバーの View オフセット） | `mise run verify:ext` |
 | 拡張まわり・Electron のバージョン | `mise run verify:ext`（+ 実機で Bitwarden） |
 | パッケージング・ネイティブ依存・fuses | `mise run package` → `mise run verify:packaged` |
@@ -668,6 +669,56 @@ mise run dev:popup
 5. **動画サイトの全画面**（ページからの全画面要求）
 6. **実 Vault の Bitwarden で自動入力が動くこと**（`mise run dev:nodebug` で起動する）
 7. **拡張を更新した後も実 Vault で自動入力が動くこと**
+
+## Live Folder（GitHub の PR）
+
+自走検証（`mise run verify:only live-folder restart`）が**大半を見る**。
+**GitHub には実際に繋がない** —— `NEMO_GITHUB_TEST_ENDPOINT` でローカルの HTTP サーバへ向け、
+返す中身を切り替えて挙動を確かめる（`scripts/verify-live-folder.mjs`）。
+
+自走検証が見るもの: 未設定 / `auth` / `rate-limit` / `transient` の出し分け・
+打ち切りの表示・未読の立ち方と落ち方・single-flight・
+`rate-limit` が手動を上書きできないこと・トークン変更の 1 回だけの例外・
+壊れたキャッシュからの起動・シークレットでの非表示。
+
+**認証は `NEMO_GITHUB_TEST_AUTH=stored-only` で回す**（PAT の保存 / 削除で
+「未設定 → 取得 → 未設定」を同一プロセスで踏める唯一の値）。
+差し替え中は**実ストア（`safeStorage`）に一切触らない** —— 触ると macOS の
+Keychain 許可ダイアログ（`SecurityAgent`）が出て**検証が永久に止まる**（実際に踏んだ）。
+
+### 人が見る分
+
+自走検証では原理的に見られないもの。
+
+1. **実アカウントで一覧が出るか**（設定 → GitHub の Pull Request で PAT を貼るか、
+   `gh auth login` 済みならそのまま。社内 PR のタイトルが読めること）
+2. **`github-token.json` に平文の PAT が無いこと**。
+   自走検証は実ストアに触らないので、ここだけは手で見る:
+
+   ```bash
+   # PAT を設定画面から貼ってから
+   cat "$HOME/Library/Application Support/Nemo-dev/github-token.json"
+   # → {"encrypted":"..."} だけ。貼った文字列が現れないこと
+   ```
+
+3. **PAT が `gh` より優先されること**（設定画面の表示が「設定した PAT を使っている」になる）
+4. **packaged 版を Finder から起動して、`gh` が見つかること**。
+   ターミナルから起動すると `PATH` を継承してしまうので、**必ず Finder（または `open -a`）から**:
+
+   ```bash
+   open -a "Nemo Dev"
+   # 設定 → GitHub の Pull Request が「gh auth token を使っている」になること
+   ```
+
+5. **PR をマージして 60 秒以内にサイドバーから消えるか**
+6. **誰かにレビュー依頼を出してもらい、勝手に増えるか**
+7. **サイドバーが縦に長くなりすぎないか**（ピン留めが押し出される感覚）
+8. **`rateLimit.cost` を実データで確かめる**（100 件並ぶアカウントでも 1〜2 で収まるか）:
+
+   ```bash
+   grep '"event":"live_folder.fetched"' "$HOME/Library/Application Support/Nemo-dev/logs/"*.jsonl | tail -3
+   # → "cost":1 / "remaining":4999 のように出る
+   ```
 
 ## 設定同期（Phase 2-1）
 

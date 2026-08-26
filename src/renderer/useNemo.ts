@@ -24,7 +24,8 @@ export function useSharedState(): SharedState {
     pinned: [],
     downloads: [],
     version: '',
-    update: { status: 'idle', version: null, percent: null, error: null }
+    update: { status: 'idle', version: null, percent: null, error: null },
+    liveFolder: null
   })
   useEffect(() => {
     void window.nemo.getSharedState().then(setState)

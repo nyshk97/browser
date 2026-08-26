@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { DefaultBrowserStatus, LoadedExtensionInfo, NemoSettings } from '../../shared/types.js'
+import type {
+  DefaultBrowserStatus,
+  GithubTokenStatus,
+  LoadedExtensionInfo,
+  NemoSettings
+} from '../../shared/types.js'
 
 /**
  * 設定画面（計画 2-4）。
@@ -86,6 +91,16 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                   onCommit={(value) => patch({ searchTemplate: value })}
                 />
               </Field>
+            </section>
+
+            <section>
+              <h3>GitHub の Pull Request（サイドバー）</h3>
+              <Toggle
+                label="サイドバーに Pull Request を出す"
+                checked={settings.liveFolderEnabled}
+                onChange={(checked) => patch({ liveFolderEnabled: checked })}
+              />
+              <GithubToken />
             </section>
 
             <section>
@@ -180,6 +195,98 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * GitHub の資格情報。
+ *
+ * **PAT は `settings.json` に置かない**（`SYNCED_FILES` に入っており git で他端末へ
+ * 同期される。`safeStorage` は端末鍵なので、同期先では復号できない暗号文が配られるだけ）。
+ * 専用ストア（`github-token.json`）に暗号化して置く。
+ *
+ * ここに**トークンの値は出ない**。出せるのは「いま何が使われているか」だけ。
+ */
+function GithubToken(): React.JSX.Element {
+  const [status, setStatus] = useState<GithubTokenStatus | null>(null)
+  const [draft, setDraft] = useState('')
+  const [message, setMessage] = useState<string | null>(null)
+
+  const reload = useCallback(() => {
+    void window.nemo.getGithubTokenStatus().then(setStatus)
+  }, [])
+  useEffect(reload, [reload])
+
+  const save = (): void => {
+    const token = draft.trim()
+    if (!token) return
+    void window.nemo.saveGithubToken(token).then((saved) => {
+      setDraft('')
+      setMessage(saved ? '保存した' : '保存できなかった（この端末では暗号化が使えない）')
+      reload()
+    })
+  }
+
+  const label =
+    status === null
+      ? '確認中…'
+      : status.source === 'pat'
+        ? '設定した PAT を使っている'
+        : status.source === 'gh'
+          ? 'gh auth token を使っている'
+          : '未設定（サイドバーには Connect GitHub と出る）'
+
+  return (
+    <>
+      <p className={status?.source === 'none' ? 'dim' : 'ok'}>{label}</p>
+      {status !== null && !status.encryptionAvailable ? (
+        <p className="warn">
+          この端末では暗号化ストレージが使えないので、貼っても PAT は保存されない（平文では置かない）。
+          <code>gh auth login</code> の方を使う。
+        </p>
+      ) : null}
+      <Field
+        label="Personal Access Token"
+        hint="貼ると端末鍵で暗号化して保存する。gh より優先される。値はここには出ない"
+      >
+        <span className="set-input wide">
+          <input
+            type="password"
+            value={draft}
+            spellCheck={false}
+            placeholder={status?.hasStoredPat ? '（保存済み）' : 'ghp_… / github_pat_…'}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') save()
+            }}
+          />
+        </span>
+      </Field>
+      <div className="set-row">
+        <button type="button" className="btn" disabled={draft.trim().length === 0} onClick={save}>
+          保存する
+        </button>
+        <div className="spacer" />
+        <button
+          type="button"
+          className="btn"
+          disabled={status?.hasStoredPat !== true}
+          onClick={() => {
+            void window.nemo.clearGithubToken().then(() => {
+              setMessage('消した（gh があればそちらに戻る）')
+              reload()
+            })
+          }}
+        >
+          保存した PAT を消す
+        </button>
+      </div>
+      {message ? <p className="dim">{message}</p> : null}
+      <p className="dim">
+        必要な scope は <code>repo</code> / <code>read:org</code>。 取得は 60 秒ごと +
+        ウィンドウをアクティブにしたときで、GraphQL を1リクエストだけ投げる。
+      </p>
+    </>
   )
 }
 

@@ -55,6 +55,13 @@ import {
 } from './downloads.js'
 import { forgetPermissionScope } from './store/permissions.js'
 import { getUpdateState, onUpdateChanged } from './updater.js'
+import {
+  getLiveFolderState,
+  initLiveFolders,
+  markLiveFolderRead,
+  onLiveFolderChanged,
+  stopLiveFolders
+} from './live-folders/index.js'
 import { resolveReopen, resolveTabOwnership } from '../shared/tab-ownership.js'
 import type {
   FindState,
@@ -1398,15 +1405,31 @@ export class NemoWindow {
     scheduleSessionSave()
   }
 
-  pushShared(): void {
-    if (this.destroyed) return
-    const shared: SharedState = {
+  /**
+   * サイドバーに渡す共有データ。
+   *
+   * **組み立てはここ1か所だけ**にする（以前は `ipc.ts` の `sharedState()` と
+   * この push 側の2箇所で別々に組み立てており、片方に足しても push に乗らなかった）。
+   *
+   * ダウンロードは呼び出し元ウィンドウの scope で絞り、
+   * **シークレットウィンドウには `liveFolder` を渡さない**
+   * （GitHub の Cookie が無いので、行を押しても private な PR はログイン画面になる。
+   * 出さないのではなく**データごと渡さない**）。
+   */
+  sharedState(): SharedState {
+    return {
       favorites: getFavorites(),
       pinned: getPinned(),
       downloads: listDownloads(this.downloadScope),
       version: app.getVersion(),
-      update: getUpdateState()
+      update: getUpdateState(),
+      liveFolder: this.isPrivate ? null : getLiveFolderState()
     }
+  }
+
+  pushShared(): void {
+    if (this.destroyed) return
+    const shared = this.sharedState()
     for (const contents of this.uiContents) contents.send('nemo:shared-state', shared)
   }
 
@@ -1808,6 +1831,9 @@ export function selectTab(win: NemoWindow, key: string): void {
   for (const other of win.tabs) other.view?.setVisible(visible.has(other.key))
   tab.lastActiveAt = Date.now()
   tab.unread = false
+  // **Live Folder の未読も同じ経路で落とす。** 行のクリックだけで消すと、
+  // コマンドバー・履歴・⌘数字・タブ切替から同じ URL を開いても未読が残る
+  markLiveFolderRead(tab.url)
 
   if (already) {
     // 既に選択済みでも、Peek の出入りで前面のページが変わっていることがある
@@ -2612,6 +2638,21 @@ export function startBackgroundWork(): void {
   onUpdateChanged(() => {
     for (const win of windowsById.values()) win.pushShared()
   })
+  // Live Folder（GitHub の PR）。**契機を足さないと、取得しても誰にも届かない**
+  onLiveFolderChanged(() => {
+    for (const win of windowsById.values()) win.pushShared()
+  })
+  // 未読の判定に「いま見られているタブ」が要るので、registry から借りる形で渡す
+  // （live-folders 側から registry を import すると循環する）
+  initLiveFolders({
+    activeUrls: () =>
+      [...windowsById.values()]
+        .filter((win) => !win.isDestroyed && !win.isPrivate && win.kind === 'normal')
+        .flatMap((win) => {
+          const active = win.getActiveTab()
+          return active ? [active.url] : []
+        })
+  })
 
   // ダイアログの表示先はウィンドウ
   setPromptNotifier((windowId, prompt) => {
@@ -2689,6 +2730,7 @@ function sweepArchive(): void {
 }
 
 export function stopBackgroundWork(): void {
+  stopLiveFolders()
   if (sleepTimer) clearInterval(sleepTimer)
   sleepTimer = null
   if (sessionSaveTimer) clearTimeout(sessionSaveTimer)

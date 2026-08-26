@@ -148,6 +148,12 @@ export interface SharedState {
   version: string
   /** アプリ内自動更新の状態。 */
   update: UpdateState
+  /**
+   * Live Folder（GitHub の PR）。
+   * **シークレットウィンドウには `null` を渡す**（データごと渡さない）。
+   * 設定で無効にしているときも `null`。
+   */
+  liveFolder: LiveFolderState | null
 }
 
 /**
@@ -163,6 +169,108 @@ export interface UpdateState {
   /** ダウンロードの進捗（%）。 */
   percent: number | null
   error: string | null
+}
+
+/* ------------------------------------------------------------------ *
+ * Live Folder（GitHub の Pull Request）
+ * ------------------------------------------------------------------ */
+
+/**
+ * PR の状態バッジ。**`isDraft` が最優先**（draft はレビューを受け付けないので、
+ * そこに古い approval のチェックを出すと「もう通っている」と誤読される）。
+ */
+export type LivePrState = 'approved' | 'changes-requested' | 'draft' | 'waiting'
+
+/** どちらの検索で見つかったか。両方に入る PR は `review` を優先する。 */
+export type LivePrBucket = 'review' | 'mine'
+
+export interface LivePullRequest {
+  /** `https://github.com/<owner>/<repo>/pull/<番号>`。**タブとの紐づけの自然キー**。 */
+  url: string
+  title: string
+  /** `owner/repo`。 */
+  repo: string
+  /** 著者の login。削除済みユーザーなら空文字。 */
+  author: string
+  state: LivePrState
+  bucket: LivePrBucket
+  /** ISO8601。並びはこれの降順。 */
+  updatedAt: string
+  /** 新しく現れた PR（**更新されただけでは立てない**）。 */
+  unread: boolean
+}
+
+/**
+ * その検索が 100 件で打ち切られたときの実測値。
+ *
+ * **描画行数（`rendered`）とは別の母集団**。`returned` は検索が返した件数、
+ * `total` は検索の総ヒット数（`issueCount`）で、重複除外前の数。
+ */
+export interface LiveFolderTruncation {
+  returned: number
+  total: number
+}
+
+/** 打ち切りは**検索単位**で起きる（両方が切られることもある）。 */
+export interface LiveFolderTruncations {
+  review: LiveFolderTruncation | null
+  mine: LiveFolderTruncation | null
+}
+
+/**
+ * 取得の失敗。**UI は `kind` だけを見る**（HTTP ステータスを再解釈しない）。
+ *
+ * - `auth` … 資格情報を直すまで直らない（401 / `viewer` が null / 権限不足）
+ * - `rate-limit` … `resetAt` まで待つ。**手動でも上書きできない**
+ * - `transient` … ネットワーク断・5xx・パース失敗。前回の内容を出したまま再試行する
+ */
+export interface LiveFolderFailure {
+  kind: 'auth' | 'rate-limit' | 'transient'
+  /** 制限が解ける時刻（epoch ms）。`rate-limit` 以外は null。 */
+  resetAt: number | null
+}
+
+/** サイドバーに出す Live Folder の状態（全ウィンドウ共有）。 */
+export interface LiveFolderState {
+  /** いま使っている資格情報の種別。**トークンそのものは載せない**。 */
+  source: 'pat' | 'gh' | 'none'
+  /** 表示する PR（`updatedAt` 降順。`bucket` でグループ分けする）。 */
+  items: LivePullRequest[]
+  truncation: LiveFolderTruncations
+  /** 最後に取得へ成功した時刻（epoch ms）。一度も成功していなければ null。 */
+  updatedAt: number | null
+  /** いま取得中か（状態行を `Refreshing…` にする）。 */
+  loading: boolean
+  failure: LiveFolderFailure | null
+  /** 接続しているアカウント（設定画面の表示用）。 */
+  login: string | null
+}
+
+/**
+ * 永続化するキャッシュ（`live-folders.json`）。
+ *
+ * **`credentialKey`（`sha256(token)` の先頭 16 文字）を必ず持つ。**
+ * これが無いと、別アカウントの PAT に貼り替えて取得が失敗したとき、
+ * 前のアカウントの PR が「前回の内容」として出続ける。
+ */
+export interface LiveFolderCache {
+  credentialKey: string | null
+  login: string | null
+  items: LivePullRequest[]
+  truncation: LiveFolderTruncations
+  updatedAt: number | null
+}
+
+/**
+ * 設定画面に出す資格情報の状況。**トークンそのものは載せない。**
+ */
+export interface GithubTokenStatus {
+  /** いま実際に使われているもの。 */
+  source: 'pat' | 'gh' | 'none'
+  /** 専用ストアに PAT が保存されているか。 */
+  hasStoredPat: boolean
+  /** 端末鍵が使えるか（false なら貼っても保存されない）。 */
+  encryptionAvailable: boolean
 }
 
 /* ------------------------------------------------------------------ *
@@ -350,6 +458,11 @@ export interface NemoSettings {
   restoreSession: boolean
   /** ダウンロード先を毎回聞く。 */
   askDownloadLocation: boolean
+  /**
+   * サイドバーに GitHub の PR（Live Folder）を出す。
+   * 右クリックの「このセクションを隠す」で false になり、**復帰は設定画面のトグル**。
+   */
+  liveFolderEnabled: boolean
 }
 
 /* ------------------------------------------------------------------ *
@@ -516,6 +629,20 @@ export interface NemoUiApi {
   restartServiceWorkers(): Promise<number>
   /** 診断ログのフォルダを Finder で開く。 */
   openLogFolder(): Promise<void>
+
+  /* Live Folder（GitHub の PR） */
+  /** いま取得する（`transient` / `auth` のバックオフは上書きできる。`rate-limit` は不可）。 */
+  liveFolderRefresh(): Promise<void>
+  /**
+   * 行を押す。URL 一致のタブがあればアクティブ化、無ければ開く。
+   * **main 側で「いま一覧に載っている URL か」を照合する**（任意 URL は開けない）。
+   */
+  liveFolderOpen(url: string): Promise<void>
+  /** PAT を専用ストアへ暗号化保存する。**保存できたかを返す**（端末鍵が無ければ false）。 */
+  saveGithubToken(token: string): Promise<boolean>
+  clearGithubToken(): Promise<void>
+  /** いま何が使われているか。**トークンの値は返さない**。 */
+  getGithubTokenStatus(): Promise<GithubTokenStatus>
 
   /* 更新 */
   checkForUpdates(): Promise<void>

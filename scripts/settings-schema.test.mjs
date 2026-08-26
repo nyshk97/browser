@@ -39,6 +39,16 @@ test('検索テンプレートは https と {q} を要求する', () => {
   )
 })
 
+test('liveFolderEnabled は壊れた値・欠けた値とも既定 true に落ちる', () => {
+  // キーの追加は `SETTINGS_VERSION` を上げずに normalize が埋める。
+  // 既存の settings.json（キー無し）をそのまま読めることが肝心
+  assert.equal(normalizeSettings({}).liveFolderEnabled, true)
+  assert.equal(normalizeSettings({ liveFolderEnabled: 'yes' }).liveFolderEnabled, true)
+  assert.equal(normalizeSettings({ liveFolderEnabled: null }).liveFolderEnabled, true)
+  // 明示的な false は残す（右クリックの「このセクションを隠す」）
+  assert.equal(normalizeSettings({ liveFolderEnabled: false }).liveFolderEnabled, false)
+})
+
 test('tabSleepMinutes は範囲に収める', () => {
   assert.equal(normalizeSettings({ tabSleepMinutes: -5 }).tabSleepMinutes, 0)
   assert.equal(normalizeSettings({ tabSleepMinutes: 99999 }).tabSleepMinutes, 24 * 60)

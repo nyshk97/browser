@@ -37,6 +37,8 @@ import { closePermissionStore, initPermissionStore } from './store/permissions.j
 import { closeSession, initSession, markCleanExit } from './store/session.js'
 import { closeCallWindowStore, initCallWindowStore } from './store/call-window.js'
 import { configureMeetTestUrlPrefix } from './meet-adapter.js'
+import { configureGithubTestEndpoint } from './live-folders/github-pr.js'
+import { configureTestAuth } from './live-folders/token.js'
 import { startCallCoordinator, stopCallCoordinator } from './call-coordinator.js'
 import { markReadyWhen, setExtensionCount } from './app-status.js'
 import { initUpdater, stopUpdater } from './updater.js'
@@ -143,6 +145,26 @@ app
     installApplicationMenu()
     watchKeybindingChanges()
     installTabSwitcher()
+    // GitHub の endpoint の差し替え口（Live Folder の自走検証用）。
+    // **ゲートは会議と同じ `!app.isPackaged`**。
+    //
+    // **差し替えが有効なあいだは、`token.ts` が実トークンを一切読まない**
+    // （PAT も `gh auth token` も参照しない）。これをやらないと
+    // 「環境変数1つで本物の PAT を任意のホストへ送れる」経路になる。
+    const githubTestEndpoint = process.env['NEMO_GITHUB_TEST_ENDPOINT']
+    if (githubTestEndpoint && !app.isPackaged) {
+      configureGithubTestEndpoint(githubTestEndpoint)
+      // 認証状態も注入できるようにする。差し替え中を常に「トークンあり」に固定すると、
+      // `Connect GitHub` に到達する経路が無くなる
+      configureTestAuth(process.env['NEMO_GITHUB_TEST_AUTH'] ?? 'dummy')
+      log('live_folder.test_endpoint', { endpoint: githubTestEndpoint })
+    } else if (githubTestEndpoint) {
+      console.error('[nemo] パッケージ版では NEMO_GITHUB_TEST_ENDPOINT を無視した')
+    }
+
+    // **差し替えの設定は `startBackgroundWork()` より前**。
+    // Live Folder は起動直後に1回取得しに行くので、後に置くと
+    // その1回だけ本物の api.github.com へ実トークンで飛ぶ。
     startBackgroundWork()
     initUpdater()
 

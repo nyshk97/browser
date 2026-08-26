@@ -5,6 +5,7 @@ import type {
   ArchivedTab,
   CallState,
   DefaultBrowserStatus,
+  GithubTokenStatus,
   HistoryEntry,
   LoadedExtensionInfo,
   NemoSettings,
@@ -99,6 +100,12 @@ const api: NemoUiApi = {
     ipcRenderer.invoke('nemo:open-extension-options', extensionId) as Promise<void>,
   restartServiceWorkers: () => ipcRenderer.invoke('nemo:restart-service-workers') as Promise<number>,
   openLogFolder: () => ipcRenderer.invoke('nemo:open-log-folder') as Promise<void>,
+  liveFolderRefresh: () => ipcRenderer.invoke('nemo:live-folder-refresh') as Promise<void>,
+  liveFolderOpen: (url) => ipcRenderer.invoke('nemo:live-folder-open', url) as Promise<void>,
+  saveGithubToken: (token) => ipcRenderer.invoke('nemo:github-token-save', token) as Promise<boolean>,
+  clearGithubToken: () => ipcRenderer.invoke('nemo:github-token-clear') as Promise<void>,
+  getGithubTokenStatus: () => ipcRenderer.invoke('nemo:github-token-source') as Promise<GithubTokenStatus>,
+
   checkForUpdates: () => ipcRenderer.invoke('nemo:check-for-updates') as Promise<void>,
   restartForUpdate: () => ipcRenderer.invoke('nemo:restart-for-update') as Promise<void>,
 

@@ -16,6 +16,12 @@ export interface RowMenuItem {
   run: () => void
   /** 破壊的な項目（色を変える）。 */
   danger?: boolean
+  /**
+   * 押せない項目。
+   * **「押せるのに何も起きない」を作らないため**に出し分けではなく disabled にする
+   * （`rate-limit` 中の「いま更新する」など。項目ごと消すと、末尾の状態行と挙動が食い違う）。
+   */
+  disabled?: boolean
 }
 
 export interface RowMenuState {
@@ -62,6 +68,7 @@ export function RowMenu({ state, onClose }: { state: RowMenuState; onClose: () =
           type="button"
           role="menuitem"
           className={item.danger ? 'danger' : undefined}
+          disabled={item.disabled === true}
           onClick={(event) => {
             event.stopPropagation()
             onClose()

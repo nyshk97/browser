@@ -8,11 +8,12 @@
     "types": [],
     "jsx": "react-jsx",
     "strict": true,
+    "allowJs": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "skipLibCheck": true,
     "isolatedModules": true,
     "noEmit": true
   },
-  "include": ["src/renderer/**/*", "src/shared/**/*"]
+  "include": ["src/renderer/**/*", "src/shared/types.ts", "src/shared/live-folder-schema.js"]
 }

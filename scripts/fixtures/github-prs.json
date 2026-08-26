@@ -1,0 +1,77 @@
+{
+  "_comment": "合成の fixture。実レスポンスの置換ではなく手で書いている（実レスポンスにはリポジトリ名・owner・PR の URL・author login が全部入っており、タイトルだけ差し替えても消し残る）。形さえ合っていればテストの目的は達せられる。",
+  "data": {
+    "viewer": { "login": "octo-dev" },
+    "reviewRequested": {
+      "issueCount": 3,
+      "nodes": [
+        {
+          "number": 41,
+          "title": "Extract the retry policy into one predicate",
+          "url": "https://github.com/acme/widgets/pull/41",
+          "isDraft": false,
+          "updatedAt": "2026-08-24T09:00:00Z",
+          "reviewDecision": "CHANGES_REQUESTED",
+          "author": { "login": "riverstone" },
+          "repository": { "nameWithOwner": "acme/widgets" }
+        },
+        {
+          "number": 12,
+          "title": "Cache the parsed manifest between launches",
+          "url": "https://github.com/acme/tools/pull/12",
+          "isDraft": false,
+          "updatedAt": "2026-08-25T11:30:00Z",
+          "reviewDecision": "APPROVED",
+          "author": { "login": "quill" },
+          "repository": { "nameWithOwner": "acme/tools" }
+        },
+        {
+          "number": 7,
+          "title": "Author was deleted, login must be null-safe",
+          "url": "https://github.com/acme/tools/pull/7",
+          "isDraft": false,
+          "updatedAt": "2026-08-20T08:00:00Z",
+          "reviewDecision": null,
+          "author": null,
+          "repository": { "nameWithOwner": "acme/tools" }
+        }
+      ]
+    },
+    "mine": {
+      "issueCount": 3,
+      "nodes": [
+        {
+          "number": 12,
+          "title": "Cache the parsed manifest between launches",
+          "url": "https://github.com/acme/tools/pull/12",
+          "isDraft": false,
+          "updatedAt": "2026-08-25T11:30:00Z",
+          "reviewDecision": "APPROVED",
+          "author": { "login": "octo-dev" },
+          "repository": { "nameWithOwner": "acme/tools" }
+        },
+        {
+          "number": 88,
+          "title": "Draft: rewrite the sync schema",
+          "url": "https://github.com/acme/widgets/pull/88",
+          "isDraft": true,
+          "updatedAt": "2026-08-26T01:15:00Z",
+          "reviewDecision": "APPROVED",
+          "author": { "login": "octo-dev" },
+          "repository": { "nameWithOwner": "acme/widgets" }
+        },
+        {
+          "number": 90,
+          "title": "Waiting for a first review",
+          "url": "https://github.com/acme/widgets/pull/90",
+          "isDraft": false,
+          "updatedAt": "2026-08-19T22:00:00Z",
+          "reviewDecision": "REVIEW_REQUIRED",
+          "author": { "login": "octo-dev" },
+          "repository": { "nameWithOwner": "acme/widgets" }
+        }
+      ]
+    },
+    "rateLimit": { "cost": 1, "remaining": 4999, "resetAt": "2026-08-26T10:00:00Z" }
+  }
+}

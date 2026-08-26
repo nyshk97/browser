@@ -18,6 +18,9 @@
   --nemo-folder: #64b5f6;
   /* 空状態のマーク。地に溶けかける濃さ（気配だけ残す） */
   --nemo-ghost: rgba(232, 232, 238, 0.14);
+  /* 状態バッジ（Live Folder）。GitHub の色に寄せる */
+  --nemo-ok: #3fb950;
+  --nemo-warn: #d29922;
 
   --nemo-row-h: 40px;
   --nemo-radius: 7px;
@@ -558,6 +561,238 @@ body[data-view='toolbar'] {
   fill: var(--nemo-folder);
 }
 
+/* ------------------------------------------------------------------ *
+ * Live Folder（GitHub の PR）
+ *
+ * DESIGN.md の3層に**4層目として割り込む**（Favorites の直下・ピン留めより上）。
+ * 親見出しは置かず、小見出し2つと区切り線で一塊として読ませる。
+ * ------------------------------------------------------------------ */
+
+/* 小見出し（`REVIEW REQUESTED` / `CREATED`）。既存の `.label` と同じ作法 */
+.lf-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--nemo-ink-dim);
+  padding: 10px 8px 3px;
+}
+
+.lf-sub .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* **右端は常に描画行数だけ**（打ち切りは末尾に別行で出す） */
+.lf-sub .count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* PR の行。24px の丸アイコン + 2行テキストなので `.row` より背が高い */
+.lf-row {
+  width: 100%;
+  height: auto;
+  padding: 5px 8px;
+  gap: 9px;
+  text-align: left;
+}
+
+/* 失敗して古い内容を出しているあいだは薄くする（最新だと誤読させない） */
+.lf-row.stale {
+  opacity: 0.55;
+}
+
+.lf-avatar {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+}
+
+.lf-disc {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--nemo-surface-hi);
+  display: grid;
+  place-items: center;
+  color: var(--nemo-ink);
+  flex: 0 0 auto;
+}
+
+.lf-disc svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+/* 状態バッジ。**縁は地の色で 2px 抜いて**アイコンから浮かせる */
+.lf-badge {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--nemo-sidebar);
+  background: var(--nemo-ok);
+}
+
+.lf-badge.warn {
+  background: var(--nemo-warn);
+}
+
+.lf-badge.draft {
+  background: var(--nemo-ink-dim);
+}
+
+.lf-badge svg {
+  width: 8px;
+  height: 8px;
+  fill: none;
+  stroke: #0e0e11;
+  stroke-width: 2.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* 鉛筆（draft）は**塗りで描く**（8px で線画にすると潰れて「禁止マーク」に見える） */
+.lf-badge.draft svg {
+  fill: #0e0e11;
+  stroke: none;
+  width: 7px;
+  height: 7px;
+}
+
+.lf-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.lf-title,
+.lf-sub-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lf-title {
+  font-size: 13px;
+}
+
+/* **2行目は文脈で変える**（レビュー依頼は著者名、自分の PR はリポジトリ名） */
+.lf-sub-line {
+  font-size: 11px;
+  color: var(--nemo-ink-dim);
+  margin-top: 1px;
+}
+
+/* `Connect GitHub` / `Reconnect GitHub` の1行 */
+.lf-cta {
+  width: 100%;
+  text-align: left;
+  color: var(--nemo-ink-dim);
+}
+
+.lf-cta:hover {
+  color: var(--nemo-ink);
+}
+
+.lf-cta.danger {
+  color: var(--nemo-danger);
+}
+
+.lf-empty {
+  color: var(--nemo-ink-dim);
+  font-size: 11.5px;
+  padding: 6px 10px 2px;
+  opacity: 0.7;
+}
+
+/*
+ * 末尾の状態行。
+ * **失敗しても一覧を空にしない方針なので、この行が無いと
+ * 古い一覧を最新だと誤読する。**
+ */
+.lf-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 1px;
+  font-size: 10px;
+  color: var(--nemo-ink-dim);
+}
+
+.lf-foot .when {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lf-foot .act {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: inherit;
+  flex: 0 0 auto;
+}
+
+.lf-foot .act:hover {
+  color: var(--nemo-ink);
+}
+
+.lf-foot.err {
+  color: var(--nemo-danger);
+}
+
+.lf-sync {
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.lf-foot .act.spin .lf-sync {
+  animation: lf-spin 900ms linear infinite;
+}
+
+@keyframes lf-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
+ * 打ち切りの行。**末尾の状態行の下に検索ごと1行ずつ**出す。
+ * 描画行数と検索ヒット数は別の母集団なので、小見出しの数と同じ表記に混ぜない。
+ */
+.lf-truncated {
+  font-size: 10px;
+  color: var(--nemo-ink-dim);
+  padding: 1px 8px;
+  opacity: 0.8;
+}
+
+.lf-truncated .lf-bucket {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
 .children {
   border-left: 1px solid var(--nemo-border);
   margin-left: 15px;
@@ -633,6 +868,18 @@ body[data-view='toolbar'] {
 
 .row-menu button.danger {
   color: var(--nemo-danger);
+}
+
+/*
+ * 押せない項目（`rate-limit` 中の「いま更新する」など）。
+ * **項目ごと消さずに disabled にする**（消すと末尾の状態行と挙動が食い違う）。
+ */
+.row-menu button:disabled {
+  opacity: 0.4;
+}
+
+.row-menu button:disabled:hover {
+  background: none;
 }
 
 /* 拡張のアイコン行 */

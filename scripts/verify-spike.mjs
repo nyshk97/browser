@@ -113,9 +113,26 @@ function activeContentsId(state) {
   return state.tabs.find((t) => t.key === state.activeTabKey)?.webContentsId ?? null
 }
 
+/**
+ * 拡張の service worker につなぐ。
+ *
+ * **止まっていたら起こしてから繋ぐ。** MV3 の service worker は無操作が続くと
+ * idle 停止するので、「target が無い＝壊れている」ではない
+ * （検証全体が長くなると、それだけで `--storage-write` が落ちるようになる。実際に踏んだ）。
+ * 起こす手段はアプリが持っている `restartServiceWorkers()` を使う。
+ */
 async function swSession() {
-  const t = (await targets()).find((x) => x.type === 'service_worker')
-  if (!t) throw new Error('拡張の service worker が起動していない')
+  let t = (await targets()).find((x) => x.type === 'service_worker')
+  if (!t) {
+    // このファイルの `connect()` は close を返さない（開いたままにする）
+    const ui = await uiSession()
+    await ui.ev('window.nemo.restartServiceWorkers()')
+    for (let i = 0; i < 20 && !t; i += 1) {
+      await sleep(300)
+      t = (await targets()).find((x) => x.type === 'service_worker')
+    }
+  }
+  if (!t) throw new Error('拡張の service worker が起動していない（起こしても出てこない）')
   return connect(t.webSocketDebuggerUrl)
 }
 

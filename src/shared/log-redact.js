@@ -35,6 +35,29 @@ const SECRET_KEY_PATTERNS = [
   'body'
 ]
 
+/**
+ * どこに紛れ込んでいても消すトークンのパターン。
+ *
+ * キー名だけの秘匿では足りない。GitHub のエラーは**トークンを含む URL やヘッダを
+ * `message` に載せる**ことがあり、その message は `note` のような無害な名前のキーや
+ * `Error.message` として渡ってくる。
+ *
+ * - `gh[pousr]_…` … classic PAT / OAuth / user-to-server / server-to-server / refresh
+ * - `github_pat_…` … fine-grained PAT（**上のパターンでは消えない**）
+ */
+const TOKEN_PATTERNS = [/\bgh[pousr]_[A-Za-z0-9]{36,}/g, /\bgithub_pat_[A-Za-z0-9_]{22,}/g]
+
+/**
+ * 文字列に埋まったトークンを潰す。
+ * @param {string} value
+ * @returns {string}
+ */
+export function maskTokens(value) {
+  let result = value
+  for (const pattern of TOKEN_PATTERNS) result = result.replace(pattern, '[token]')
+  return result
+}
+
 const MAX_STRING = 200
 const MAX_DEPTH = 4
 const MAX_KEYS = 40
@@ -81,11 +104,14 @@ export function sanitizeValue(value, depth = 0) {
   if (typeof value === 'bigint') return String(value)
   if (typeof value === 'string') {
     if (looksLikeUrl(value)) return redactUrl(value)
-    return value.length > MAX_STRING ? `${value.slice(0, MAX_STRING)}…` : value
+    const masked = maskTokens(value)
+    return masked.length > MAX_STRING ? `${masked.slice(0, MAX_STRING)}…` : masked
   }
   if (depth >= MAX_DEPTH) return '[deep]'
   if (Array.isArray(value)) return value.slice(0, MAX_KEYS).map((item) => sanitizeValue(item, depth + 1))
-  if (value instanceof Error) return value.message
+  // **Error も文字列パスと同じ扱いにする**。`message` をそのまま返していたので、
+  // トークンを含むエラーがここから素通りしていた
+  if (value instanceof Error) return sanitizeValue(value.message, depth)
   if (typeof value === 'object') {
     /** @type {Record<string, unknown>} */
     const result = {}

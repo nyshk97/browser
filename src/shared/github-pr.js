@@ -313,7 +313,7 @@ function readSearch(search, bucket) {
   }
   items.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
 
-  // **打ち切りは検索単位**（`nodes` の長さと総ヒット数を比べる。描画行数はここに入れない）
+  // **打ち切りは検索単位**（`nodes` の長さと総ヒット数を比べる。バケットに割り当てられた件数はここに入れない）
   const truncation = issueCount > nodes.length ? { returned: nodes.length, total: issueCount } : null
   return { items, truncation }
 }

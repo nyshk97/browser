@@ -150,6 +150,113 @@ async function until(fn, { timeoutMs = 9000, interval = 200 } = {}) {
 /** リクエスト総数が n になるまで待つ。 */
 const waitRequests = (n, timeoutMs = 9000) => until(() => total >= n, { timeoutMs })
 
+/* ---- 小見出しの開閉 ----
+ * 小見出しは**起動のたびに両方折りたたみ**で、行は開くまで DOM に無い。
+ * 開閉は React の state なので、初回マウントと再マウント（設定の再有効化・`--restart-read`）で畳まれる。
+ * どの検査がどの経路の後に来るかを追うより、
+ * 「行が見えている前提」の読み取りは**読むたびに開き直す**（`readExpanded`）。
+ * 開閉状態そのものを検査するときは `ui.ev` を直接使う（`readExpanded` を通すと再展開されて検査にならない）。
+ */
+const CLOSED_SUBS = `document.querySelectorAll('.lf-sub[aria-expanded="false"]').length`
+const OPEN_SUBS = `document.querySelectorAll('.lf-sub[aria-expanded="true"]').length`
+const SUBS = `document.querySelectorAll('.lf-sub').length`
+const ROWS = `document.querySelectorAll('.lf-row').length`
+
+/** 畳まれている小見出しを全部開く（無ければ何もしない。冪等）。 */
+async function expandAll(ui) {
+  if ((await ui.ev(CLOSED_SUBS)) === 0) return
+  await ui.ev(`document.querySelectorAll('.lf-sub[aria-expanded="false"]').forEach((b) => b.click())`)
+  await until(async () => (await ui.ev(CLOSED_SUBS)) === 0, { timeoutMs: 3000 })
+}
+
+/** 開いている小見出しを全部畳む（検査の冒頭で状態を揃える）。 */
+async function collapseAll(ui) {
+  if ((await ui.ev(OPEN_SUBS)) === 0) return
+  await ui.ev(`document.querySelectorAll('.lf-sub[aria-expanded="true"]').forEach((b) => b.click())`)
+  await until(async () => (await ui.ev(OPEN_SUBS)) === 0, { timeoutMs: 3000 })
+}
+
+/** 行が見えている前提の式を、直前に全部開いてから評価する。 */
+async function readExpanded(ui, expression) {
+  await expandAll(ui)
+  return ui.ev(expression)
+}
+
+/** 指定バケットの小見出し（`.lf-bucket[data-bucket=…] > .lf-sub`）を触るための式。 */
+const sub = (bucket) => `document.querySelector('.lf-bucket[data-bucket="${bucket}"] > .lf-sub')`
+const subExpanded = (bucket) => `${sub(bucket)}?.getAttribute('aria-expanded')`
+const countOf = (selector) => `document.querySelectorAll(${JSON.stringify(selector)}).length`
+
+/** 要素の中心へ合成マウスを動かす（`:hover` を作る）。 */
+async function hoverAt(ui, expression) {
+  const rect = JSON.parse(await ui.ev(`JSON.stringify((${expression}).getBoundingClientRect())`))
+  await ui.send('Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x: rect.x + rect.width / 2,
+    y: rect.y + rect.height / 2
+  })
+  return rect
+}
+
+/** 合成マウスをサイドバー外へ退避して `:hover` を消す。 */
+async function unhover(ui) {
+  await ui.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1 })
+  await until(async () => (await ui.ev(countOf('.live-folder :hover'))) === 0, { timeoutMs: 2000 })
+}
+
+/** `--nemo-hover` の計算値（比較用に一時要素へ当てて色文字列にする）。 */
+const HOVER_COLOR = `(() => {
+  const el = document.createElement('div')
+  el.style.background = 'var(--nemo-hover)'
+  document.body.appendChild(el)
+  const color = getComputedStyle(el).backgroundColor
+  el.remove()
+  return color
+})()`
+
+const bg = (expression) => `getComputedStyle(${expression}).backgroundColor`
+const CHEV_OPEN = 'matrix(0, 1, -1, 0, 0, 0)'
+const chev = (bucket) => `getComputedStyle(${sub(bucket)}.querySelector('.chev')).transform`
+
+/**
+ * `NEMO_VERIFY_SHOTS=<dir>` が指定されたときだけ、Live Folder の見た目を PNG に残す
+ * （自走検証の判定には使わない。矢印・件数・ドットの配置を目で確かめるため）。
+ */
+const SHOTS_DIR = process.env.NEMO_VERIFY_SHOTS ?? ''
+if (SHOTS_DIR) {
+  fs.mkdirSync(SHOTS_DIR, { recursive: true })
+  if (!fs.statSync(SHOTS_DIR).isDirectory()) {
+    console.error(`[verify-live-folder] NEMO_VERIFY_SHOTS がディレクトリでない: ${SHOTS_DIR}`)
+    process.exit(2)
+  }
+}
+
+async function shot(ui, name) {
+  if (!SHOTS_DIR) return
+  // 回転途中・hover 中を撮らない
+  await until(
+    async () =>
+      (await ui.ev(
+        `[...document.querySelectorAll('.lf-sub')].every((b) => getComputedStyle(b.querySelector('.chev')).transform === (b.getAttribute('aria-expanded') === 'true' ? ${JSON.stringify(CHEV_OPEN)} : 'none'))`
+      )) === true,
+    { timeoutMs: 2000 }
+  )
+  await unhover(ui)
+  // 右クリックやキー操作で残ったフォーカスリングと、hover 背景のフェード（0.12s）を写さない
+  await ui.ev(`document.activeElement?.blur()`)
+  await sleep(300)
+  const rect = JSON.parse(
+    await ui.ev(`JSON.stringify(document.querySelector('.live-folder').getBoundingClientRect())`)
+  )
+  const result = await ui.send('Page.captureScreenshot', {
+    format: 'png',
+    clip: { x: 0, y: Math.max(0, rect.y - 8), width: rect.right + 8, height: rect.height + 16, scale: 2 }
+  })
+  const file = path.join(SHOTS_DIR, `live-folder-${name}.png`)
+  fs.writeFileSync(file, Buffer.from(result.result.data, 'base64'))
+  console.log(`[verify-live-folder] スクショ ${file}`)
+}
+
 /** 診断ログの1イベント（時刻順）。 */
 function logEvents(event) {
   return readLogLines(USER_DATA)
@@ -268,8 +375,19 @@ async function restartRead() {
 
   // ① 一致する資格情報なら、取得を待たずにキャッシュが出る
   await savePat(ui, TEST_PAT_A)
-  await until(async () => JSON.parse(await ui.ev(ROW_TITLES)).length > 0, { timeoutMs: 8000 })
-  let titles = JSON.parse(await ui.ev(ROW_TITLES))
+  // 小見出しは**キャッシュ復元でも起動のたびに折りたたみ**（開く前に見る）。
+  // fixture は review 1000 件が先頭で 200 件に切られるので `mine` の小見出しは出ない
+  await until(async () => (await ui.ev(SUBS)) >= 1, { timeoutMs: 8000 })
+  const subsAtBoot = await ui.ev(SUBS)
+  const closedAtBoot = await ui.ev(CLOSED_SUBS)
+  const rowsAtBoot = await ui.ev(ROWS)
+  check(
+    '小見出しはキャッシュ復元でも折りたたみから始まる',
+    subsAtBoot >= 1 && closedAtBoot === subsAtBoot && rowsAtBoot === 0,
+    `小見出し ${subsAtBoot} 件 / 閉 ${closedAtBoot} 件 / 行 ${rowsAtBoot}`
+  )
+  await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length > 0, { timeoutMs: 8000 })
+  let titles = JSON.parse(await readExpanded(ui, ROW_TITLES))
   const state = await liveState(ui)
   check(
     '① 起動直後に前回のキャッシュが出る（取得は 500 で失敗している）',
@@ -295,8 +413,8 @@ async function restartRead() {
 
   // ⑳ トークンを別のものに差し替えたら、取得前に古い一覧が出ない
   await savePat(ui, TEST_PAT_B)
-  await until(async () => JSON.parse(await ui.ev(ROW_TITLES)).length === 0, { timeoutMs: 8000 })
-  titles = JSON.parse(await ui.ev(ROW_TITLES))
+  await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length === 0, { timeoutMs: 8000 })
+  titles = JSON.parse(await readExpanded(ui, ROW_TITLES))
   check(
     '⑳ fingerprint が一致しないキャッシュは取得前に捨てられる',
     titles.length === 0,
@@ -377,8 +495,34 @@ async function main() {
   await savePat(ui, TEST_PAT_A)
   const fetched = await waitRequests(1, 5000)
   check('⑫ PAT を保存した直後に取得が走る（60秒待たない）', fetched === true, `リクエスト ${total} 回`)
-  await until(async () => JSON.parse(await ui.ev(ROW_TITLES)).length === 3)
-  let titles = JSON.parse(await ui.ev(ROW_TITLES))
+
+  /* ---- 小見出しは初期折りたたみ ---- */
+  // **一覧が初めて出た瞬間、まだ何も開いていない状態**を raw の `ui.ev` で見る
+  // （`readExpanded` を1回でも通すと開いてしまい、初期値が「開」に退行しても気づけない）
+  await until(async () => (await ui.ev(SUBS)) === 2)
+  const closedAtFirst = await ui.ev(CLOSED_SUBS)
+  const rowsAtFirst = await ui.ev(ROWS)
+  const countsAtFirst = JSON.parse(
+    await ui.ev(
+      `JSON.stringify([...document.querySelectorAll('.lf-bucket[data-bucket]')].map((b) => [b.dataset.bucket, b.querySelector(':scope > .lf-sub .count').innerText, b.querySelector(':scope > .lf-sub .count').offsetParent !== null]))`
+    )
+  )
+  check(
+    '一覧が初めて出たとき小見出しは両方折りたたみで、行は DOM に無い',
+    closedAtFirst === 2 && rowsAtFirst === 0,
+    `閉 ${closedAtFirst} 件 / 行 ${rowsAtFirst}`
+  )
+  check(
+    '件数はバケットに割り当てられた件数（review 2 / mine 1）で、畳んでいても見える',
+    JSON.stringify(countsAtFirst) ===
+      JSON.stringify([
+        ['review', '2', true],
+        ['mine', '1', true]
+      ]),
+    JSON.stringify(countsAtFirst)
+  )
+  await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length === 3)
+  let titles = JSON.parse(await readExpanded(ui, ROW_TITLES))
   check('② 取得後に行が置き換わる', titles.length === 3, JSON.stringify(titles))
 
   /* ---- ⑱ 平文の PAT がファイルに無い ---- */
@@ -403,12 +547,13 @@ async function main() {
   /* ---- 小見出しと2行目 ---- */
   const sectionText = await ui.ev(SECTION_TEXT)
   check(
-    '小見出しは REVIEW REQUESTED / CREATED（右は描画行数）',
+    '小見出しは REVIEW REQUESTED / CREATED（右はバケットに割り当てられた件数）',
     /REVIEW REQUESTED\s*2/i.test(sectionText) && /CREATED\s*1/i.test(sectionText),
     JSON.stringify(sectionText)
   )
   const sublines = JSON.parse(
-    await ui.ev(
+    await readExpanded(
+      ui,
       `JSON.stringify([...document.querySelectorAll('.lf-row .lf-sub-line')].map((e) => e.innerText))`
     )
   )
@@ -417,6 +562,184 @@ async function main() {
     sublines[0] === 'quill' && sublines[2] === 'acme/widgets',
     JSON.stringify(sublines)
   )
+
+  /* ---- 小見出しの折りたたみ ---- */
+  // 初期状態は上（⑫ の直後）で見た。ここからは畳み直した状態から各検査を始める
+  await collapseAll(ui)
+  await until(async () => (await ui.ev(SUBS)) === 2)
+  const closedSubs = await ui.ev(CLOSED_SUBS)
+  const rowsWhileClosed = await ui.ev(ROWS)
+  check(
+    '開いた後に畳み直すと行が DOM から消える',
+    closedSubs === 2 && rowsWhileClosed === 0,
+    `閉 ${closedSubs} 件 / 行 ${rowsWhileClosed}`
+  )
+  await shot(ui, 'both-closed')
+
+  // 外観: 矢印の回転と hover 背景
+  // 直前の `collapseAll` で回転が戻る途中を読まない（閉も最終値まで待つ）
+  const chevClosed = await until(async () => ((await ui.ev(chev('review'))) === 'none' ? 'none' : ''))
+  const hoverColor = await ui.ev(HOVER_COLOR)
+  const subBefore = await ui.ev(bg(sub('review')))
+  await hoverAt(ui, sub('review'))
+  const subHovered = await until(async () =>
+    (await ui.ev(bg(sub('review')))) === hoverColor ? hoverColor : ''
+  )
+  const subIsHover = await ui.ev(`${sub('review')}.matches(':hover')`)
+  check(
+    '小見出しのホバー背景は .row:hover と同じ（--nemo-hover）',
+    subIsHover === true && subHovered === hoverColor && subBefore !== hoverColor,
+    `:hover=${subIsHover} 前=${subBefore} 後=${subHovered} 期待=${hoverColor}`
+  )
+  await unhover(ui)
+  await ui.ev(`${sub('review')}.click()`)
+  const chevOpened = await until(async () => ((await ui.ev(chev('review'))) === CHEV_OPEN ? CHEV_OPEN : ''))
+  check(
+    '矢印は閉で none、開で 90° 回転',
+    chevClosed === 'none' && chevOpened === CHEV_OPEN,
+    `閉=${chevClosed} 開=${chevOpened}`
+  )
+  const rowSel = `document.querySelector('.lf-bucket[data-bucket="review"] .lf-row')`
+  const rowBefore = await ui.ev(bg(rowSel))
+  await hoverAt(ui, rowSel)
+  const rowHovered = await until(async () => ((await ui.ev(bg(rowSel))) === hoverColor ? hoverColor : ''))
+  const rowIsHover = await ui.ev(`${rowSel}.matches(':hover')`)
+  check(
+    '（対照）行のホバー背景も同じ色に変わる',
+    rowIsHover === true && rowHovered === hoverColor && rowBefore !== hoverColor,
+    `:hover=${rowIsHover} 前=${rowBefore} 後=${rowHovered}`
+  )
+  await unhover(ui)
+
+  // 独立開閉: review だけ開いている
+  const reviewRows = await ui.ev(countOf('.lf-bucket[data-bucket="review"] .lf-row'))
+  const mineRows = await ui.ev(countOf('.lf-bucket[data-bucket="mine"] .lf-row'))
+  const mineExpanded = await ui.ev(subExpanded('mine'))
+  check(
+    'review だけ開くと review の行だけ出て mine は畳まれたまま',
+    reviewRows === 2 && mineRows === 0 && mineExpanded === 'false',
+    `review ${reviewRows} 行 / mine ${mineRows} 行 / mine aria-expanded=${mineExpanded}`
+  )
+  await shot(ui, 'review-open')
+
+  // 未読ドット: 畳んでいる間は小見出し側、開いたら行側だけ
+  await collapseAll(ui)
+  const listState = await liveState(ui)
+  const unreadReview = listState.items.filter((item) => item.bucket === 'review' && item.unread).length
+  const unreadMine = listState.items.filter((item) => item.bucket === 'mine' && item.unread).length
+  const headDotClosed = await ui.ev(countOf('.lf-bucket[data-bucket="review"] > .lf-sub .dot'))
+  const rowDotClosed = await ui.ev(countOf('.lf-row .dot'))
+  await ui.ev(`${sub('review')}.click()`)
+  await until(async () => (await ui.ev(subExpanded('review'))) === 'true')
+  const headDotOpen = await ui.ev(countOf('.lf-bucket[data-bucket="review"] > .lf-sub .dot'))
+  const rowDotOpen = await ui.ev(countOf('.lf-bucket[data-bucket="review"] .lf-row .dot'))
+  const mineHeadDot = await ui.ev(countOf('.lf-bucket[data-bucket="mine"] > .lf-sub .dot'))
+  check(
+    '畳んでいる間は小見出しに未読ドット、開くと行側だけに移る',
+    unreadReview >= 1 &&
+      headDotClosed === 1 &&
+      rowDotClosed === 0 &&
+      headDotOpen === 0 &&
+      rowDotOpen === unreadReview &&
+      mineHeadDot === (unreadMine > 0 ? 1 : 0),
+    `review 未読 ${unreadReview} / 閉: 見出し ${headDotClosed}・行 ${rowDotClosed} → 開: 見出し ${headDotOpen}・行 ${rowDotOpen} / mine 見出し ${mineHeadDot}（未読 ${unreadMine}）`
+  )
+
+  // 右クリック: メニューは出るが開閉しない・再取得もしない
+  await collapseAll(ui)
+  resetCounters()
+  const subRect = await hoverAt(ui, sub('review'))
+  for (const type of ['mousePressed', 'mouseReleased']) {
+    await ui.send('Input.dispatchMouseEvent', {
+      type,
+      button: 'right',
+      clickCount: 1,
+      x: subRect.x + subRect.width / 2,
+      y: subRect.y + subRect.height / 2
+    })
+  }
+  const menuShown = await until(async () => (await ui.ev(countOf('.row-menu'))) > 0, { timeoutMs: 2000 })
+  await sleep(300)
+  const expandedAfterRight = await ui.ev(subExpanded('review'))
+  check(
+    '小見出しの右クリックはメニューを出すだけで開閉も再取得もしない',
+    menuShown === true && expandedAfterRight === 'false' && total === 0,
+    `menu=${menuShown} aria-expanded=${expandedAfterRight} リクエスト ${total} 回`
+  )
+  await ui.send('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: 'Escape',
+    code: 'Escape',
+    windowsVirtualKeyCode: 27
+  })
+  await ui.send('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: 'Escape',
+    code: 'Escape',
+    windowsVirtualKeyCode: 27
+  })
+  await until(async () => (await ui.ev(countOf('.row-menu'))) === 0, { timeoutMs: 2000 })
+  await unhover(ui)
+
+  // 開閉で再取得しない
+  await collapseAll(ui)
+  resetCounters()
+  await expandAll(ui)
+  await shot(ui, 'both-open')
+  await collapseAll(ui)
+  await sleep(1000)
+  check('開閉しても再取得しない', total === 0, `リクエスト ${total} 回`)
+
+  // アクセシビリティ: aria-label / aria-controls / キーボード
+  await collapseAll(ui)
+  const labels = JSON.parse(
+    await ui.ev(
+      `JSON.stringify([...document.querySelectorAll('.lf-bucket[data-bucket]')].map((b) => [b.dataset.bucket, b.querySelector(':scope > .lf-sub').getAttribute('aria-label')]))`
+    )
+  )
+  const labelOf = (bucket) => labels.find(([key]) => key === bucket)?.[1] ?? ''
+  check(
+    'aria-label に件数と未読の有無が入る',
+    /2 件/.test(labelOf('review')) &&
+      /1 件/.test(labelOf('mine')) &&
+      labelOf('review').includes('未読あり') === unreadReview > 0 &&
+      labelOf('mine').includes('未読あり') === unreadMine > 0,
+    JSON.stringify(labels)
+  )
+  const controlsOk = await ui.ev(
+    `[...document.querySelectorAll('.lf-sub')].every((b) => b.getAttribute('aria-controls').split(' ').every((id) => document.getElementById(id) !== null))`
+  )
+  check('aria-controls の参照先が全部実在する（打ち切りなし）', controlsOk === true, '')
+  const pressKey = async (key, code, keyCode, text) => {
+    await ui.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key,
+      code,
+      windowsVirtualKeyCode: keyCode,
+      text
+    })
+    await ui.send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: keyCode })
+  }
+  await ui.ev(`${sub('review')}.focus()`)
+  await pressKey('Enter', 'Enter', 13, '\r')
+  const enterReview = await until(async () => ((await ui.ev(subExpanded('review'))) === 'true' ? 'true' : ''))
+  const enterMine = await ui.ev(subExpanded('mine'))
+  check(
+    'Enter でフォーカス中の小見出しだけ開く',
+    enterReview === 'true' && enterMine === 'false',
+    `review=${enterReview} mine=${enterMine}`
+  )
+  await collapseAll(ui)
+  await ui.ev(`${sub('mine')}.focus()`)
+  await pressKey(' ', 'Space', 32, ' ')
+  const spaceMine = await until(async () => ((await ui.ev(subExpanded('mine'))) === 'true' ? 'true' : ''))
+  const spaceReview = await ui.ev(subExpanded('review'))
+  check(
+    'Space でフォーカス中の小見出しだけ開く',
+    spaceMine === 'true' && spaceReview === 'false',
+    `mine=${spaceMine} review=${spaceReview}`
+  )
+  await collapseAll(ui)
 
   /* ---- ⑪ バックグラウンドのタブは既読扱いにしない ---- */
   // 1回目のレスポンスにその PR を含めず、同じ URL のタブを**非アクティブで**開いておく →
@@ -427,7 +750,7 @@ async function main() {
   // そもそも Live Folder の項目として通らない
   serve(okBody(BASE.filter((item) => item.node.url !== PR_12)))
   await refresh(ui)
-  await until(async () => JSON.parse(await ui.ev(ROW_TITLES)).length === 2)
+  await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length === 2)
   // ③ の基準になる一時タブの行数（PR のタブを開く前）
   const ephemeralBefore = JSON.parse(await ui.ev(EPHEMERAL_TITLES)).length
   const bgKey = await ui.ev(`window.nemo.createTab(${JSON.stringify(PR_12)}, { background: true })`)
@@ -473,6 +796,46 @@ async function main() {
     unreadBefore === true && unreadAfter === false,
     `選ぶ前 unread=${unreadBefore} → 選んだ後 unread=${unreadAfter}`
   )
+  // 既読化が行側のドットに反映される（review を開いたまま N-1 件。PR_41 は未読のままなので 0 は期待しない）
+  await collapseAll(ui)
+  await ui.ev(`${sub('review')}.click()`)
+  await until(async () => (await ui.ev(subExpanded('review'))) === 'true')
+  const unreadReviewNow = state.items.filter((item) => item.bucket === 'review' && item.unread).length
+  const rowDotsAfterRead = await until(async () => {
+    const n = await ui.ev(countOf('.lf-bucket[data-bucket="review"] .lf-row .dot'))
+    return n === unreadReviewNow ? n : -1
+  })
+  check(
+    '既読化した PR の行ドットが消える（review の行ドット = 未読数）',
+    unreadReviewNow === unreadReview - 1 && rowDotsAfterRead === unreadReviewNow,
+    `既読化前 ${unreadReview} → 後 ${unreadReviewNow} / 行ドット ${rowDotsAfterRead}`
+  )
+
+  // mine に既読の PR しか無い状態（既読済みの PR_12 を mine 側の検索に返し、review からは外す）。
+  // PR_88 を実際に開いて既読化すると GitHub へ実接続するタブが増えるので使わない
+  const pr12AsMine = mine({
+    repo: 'acme/tools',
+    number: 12,
+    title: 'Cache the parsed manifest',
+    author: 'octo-dev',
+    updatedAt: '2026-08-25T11:30:00Z'
+  })
+  serve(okBody([...BASE.filter((item) => item.node.url !== PR_12 && item.__bucket === 'review'), pr12AsMine]))
+  await refresh(ui)
+  await until(async () => (await liveState(ui))?.items.find((item) => item.url === PR_12)?.bucket === 'mine')
+  await collapseAll(ui)
+  const mineReadLabel = await ui.ev(`${sub('mine')}?.getAttribute('aria-label')`)
+  const mineReadDot = await ui.ev(countOf('.lf-bucket[data-bucket="mine"] > .lf-sub .dot'))
+  const mineReadState = (await liveState(ui)).items.filter((item) => item.bucket === 'mine')
+  check(
+    '未読が無いバケットは小見出しのドットも aria-label の「未読あり」も出ない',
+    mineReadState.length === 1 &&
+      mineReadState[0].unread === false &&
+      mineReadDot === 0 &&
+      typeof mineReadLabel === 'string' &&
+      !mineReadLabel.includes('未読あり'),
+    `mine=${JSON.stringify(mineReadState.map((item) => [item.url, item.unread]))} dot=${mineReadDot} label=${JSON.stringify(mineReadLabel)}`
+  )
 
   /* ---- アクティブなタブの PR は未読にしない ---- */
   serve(okBody(BASE.filter((item) => item.node.url !== PR_12)))
@@ -504,7 +867,7 @@ async function main() {
   await ui.ev(`window.nemo.closeTab(${JSON.stringify(bgKey)}).then(() => 'ok')`)
   serve(okBody(BASE))
   await refresh(ui)
-  await until(async () => JSON.parse(await ui.ev(ROW_TITLES)).length === 3)
+  await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length === 3)
 
   /* ---- ③ クエリ付きの PR タブも「同じ PR」として扱う ---- */
   //
@@ -562,11 +925,11 @@ async function main() {
   await refresh(ui)
   await until(async () => (await liveState(ui))?.truncation?.mine !== null)
   state = await liveState(ui)
-  const renderedMine = state.items.filter((item) => item.bucket === 'mine').length
+  const mineCount = state.items.filter((item) => item.bucket === 'mine').length
   check(
     '⑦ 100 件で止まる（サーバは 137 件と申告 / 返したのは 100 件）',
-    state.truncation.mine?.returned === 100 && state.truncation.mine?.total === 137 && renderedMine === 100,
-    `returned=${state.truncation.mine?.returned} total=${state.truncation.mine?.total} 描画=${renderedMine} 行`
+    state.truncation.mine?.returned === 100 && state.truncation.mine?.total === 137 && mineCount === 100,
+    `returned=${state.truncation.mine?.returned} total=${state.truncation.mine?.total} mine=${mineCount} 件`
   )
   check(
     '⑦ 切られていない側は null のまま',
@@ -579,31 +942,70 @@ async function main() {
     )
   )
   check(
-    '⑦ 小見出しの右は描画行数のまま（137 や total を名乗らない）',
+    '⑦ 小見出しの右はバケットに割り当てられた件数のまま（137 や total を名乗らない）',
     subheads.some((text) => /CREATED 100/i.test(text)) && !subheads.some((text) => text.includes('137')),
     JSON.stringify(subheads)
   )
-  const truncatedLines = JSON.parse(await ui.ev(TRUNCATED))
+  const truncatedLines = JSON.parse(await readExpanded(ui, TRUNCATED))
   check(
     '⑦ 末尾に First 100 of 137 fetched for CREATED が1行だけ',
     truncatedLines.length === 1 && /First 100 of 137 fetched for/i.test(truncatedLines[0]),
     JSON.stringify(truncatedLines)
   )
+  const controlsWithTruncation = await ui.ev(
+    `${sub('mine')}.getAttribute('aria-controls').split(' ').every((id) => document.getElementById(id) !== null) && ${sub('mine')}.getAttribute('aria-controls').includes('lf-truncated-mine')`
+  )
+  check(
+    'aria-controls が打ち切り行も指し、参照先が実在する（打ち切りあり）',
+    controlsWithTruncation === true,
+    ''
+  )
+  await collapseAll(ui)
+  const truncAll = await ui.ev(countOf('.lf-truncated'))
+  const truncVisibleClosed = await ui.ev(countOf('.lf-truncated:not([hidden])'))
+  await ui.ev(`${sub('mine')}.click()`)
+  const truncVisibleOpen = await until(async () =>
+    (await ui.ev(countOf('.lf-truncated:not([hidden])'))) === 1 ? 1 : 0
+  )
+  check(
+    '打ち切り行は小見出しを畳むと隠れ、開くと戻る（DOM からは消えない）',
+    truncAll === 1 && truncVisibleClosed === 0 && truncVisibleOpen === 1,
+    `全 ${truncAll} / 閉 ${truncVisibleClosed} / 開 ${truncVisibleOpen}`
+  )
+
+  // 重複除外で mine が空になっても打ち切り行は隠れない（小見出しが無いと開く手段が無い）
+  const dupAsMine = BASE.filter((item) => item.__bucket === 'review').map((item) => ({
+    __bucket: 'mine',
+    node: item.node
+  }))
+  serve(okBody([...BASE.filter((item) => item.__bucket === 'review'), ...dupAsMine], { mineTotal: 150 }))
+  await refresh(ui)
+  await until(async () => (await liveState(ui))?.truncation?.mine?.total === 150)
+  const dupMineSubs = await ui.ev(countOf('.lf-bucket[data-bucket="mine"]'))
+  const dupMineItems = (await liveState(ui)).items.filter((item) => item.bucket === 'mine').length
+  const dupTruncVisible = await until(async () =>
+    (await ui.ev(countOf('.lf-truncated:not([hidden])'))) === 1 ? 1 : 0
+  )
+  check(
+    '重複除外で小見出しが無いバケットの打ち切り行は初期折りたたみでも見える',
+    dupMineSubs === 0 && dupMineItems === 0 && dupTruncVisible === 1,
+    `mine 小見出し ${dupMineSubs} / mine 件数 ${dupMineItems} / 打ち切り行（可視） ${dupTruncVisible}`
+  )
   serve(okBody(BASE))
   await refresh(ui)
-  await until(async () => JSON.parse(await ui.ev(ROW_TITLES)).length === 3)
+  await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length === 3)
 
   /* ---- ⑤ 500 でも行が消えない ---- */
   serve({ status: 500, headers: {}, body: { message: 'boom' } })
   await refresh(ui)
   await until(async () => (await liveState(ui))?.failure?.kind === 'transient')
-  titles = JSON.parse(await ui.ev(ROW_TITLES))
+  titles = JSON.parse(await readExpanded(ui, ROW_TITLES))
   check('⑤ 500 でも行が消えない', titles.length === 3, `${titles.length} 行`)
   check('⑤ 末尾行が失敗表示になる', (await ui.ev(SECTION_TEXT)).includes("Couldn't refresh"), '')
   check(
     '⑤ 行の opacity が落ちる（stale）',
-    (await ui.ev(STALE_ROWS)) === 3,
-    `stale ${await ui.ev(STALE_ROWS)} 行`
+    (await readExpanded(ui, STALE_ROWS)) === 3,
+    `stale ${await readExpanded(ui, STALE_ROWS)} 行`
   )
   check('⑭ 500 は transient（Couldn’t refresh）', (await liveState(ui)).failure.kind === 'transient', '')
 
@@ -617,7 +1019,7 @@ async function main() {
   serve({ status: 200, headers: {}, body: { errors: [{ message: 'Something went wrong' }] } })
   await refresh(ui)
   await sleep(600)
-  titles = JSON.parse(await ui.ev(ROW_TITLES))
+  titles = JSON.parse(await readExpanded(ui, ROW_TITLES))
   check('⑥ HTTP 200 + errors でも行が消えない', titles.length === 3, `${titles.length} 行`)
   check(
     '⑥ 失敗として扱われる',
@@ -692,7 +1094,7 @@ async function main() {
   // 一覧を戻す
   serve(okBody(BASE))
   await refresh(ui)
-  await until(async () => JSON.parse(await ui.ev(ROW_TITLES)).length === 3)
+  await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length === 3)
 
   /* ---- ⑭ / ㉑ rate-limit の各経路 ---- */
   const rateReset = () => Math.floor(Date.now() / 1000) + 900
@@ -709,7 +1111,7 @@ async function main() {
     state.failure.kind === 'rate-limit',
     ''
   )
-  titles = JSON.parse(await ui.ev(ROW_TITLES))
+  titles = JSON.parse(await readExpanded(ui, ROW_TITLES))
   check('⑭ rate-limit でも前回の内容を出したまま', titles.length === 3, `${titles.length} 行`)
   const rateText = await ui.ev(SECTION_TEXT)
   check(
@@ -738,7 +1140,7 @@ async function main() {
   check('㉗ その 1 回も rate-limit なら以後は手動でも自動でも投げない', total === 0, `リクエスト ${total} 回`)
 
   /* ---- ⑰ 別アカウントの一覧が残らない ---- */
-  titles = JSON.parse(await ui.ev(ROW_TITLES))
+  titles = JSON.parse(await readExpanded(ui, ROW_TITLES))
   check(
     '⑰ PAT を別のものに替えて取得が失敗したら、前の資格情報の一覧が出ない',
     titles.length === 0,
@@ -749,7 +1151,7 @@ async function main() {
   // いったん成功させて rate-limit を解く
   serve(okBody(BASE))
   await savePat(ui, TEST_PAT_A)
-  await until(async () => JSON.parse(await ui.ev(ROW_TITLES)).length === 3)
+  await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length === 3)
 
   serve({
     status: 403,
@@ -766,7 +1168,7 @@ async function main() {
 
   serve(okBody(BASE))
   await savePat(ui, TEST_PAT_A + 'x')
-  await until(async () => JSON.parse(await ui.ev(ROW_TITLES)).length === 3)
+  await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length === 3)
   serve({
     status: 200,
     headers: {},
@@ -783,7 +1185,7 @@ async function main() {
   /* ---- ⑨ 取得の直列化 ---- */
   serve(okBody(BASE))
   await savePat(ui, TEST_PAT_A)
-  await until(async () => JSON.parse(await ui.ev(ROW_TITLES)).length === 3)
+  await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length === 3)
 
   resetCounters()
   const slowBase = [...BASE]
@@ -811,7 +1213,7 @@ async function main() {
     maxInFlight === 1,
     `同時 ${maxInFlight} 本 / 総数 ${total} 回`
   )
-  titles = JSON.parse(await ui.ev(ROW_TITLES))
+  titles = JSON.parse(await readExpanded(ui, ROW_TITLES))
   check(
     '⑨ 最後の要求の内容が最終状態になる（古い応答が上書きしない）',
     titles.includes('LAST'),
@@ -821,7 +1223,7 @@ async function main() {
   /* ---- ㉖ 遅い取得の実行中に手動 → その取得が rate-limit ---- */
   serve(okBody(BASE))
   await refresh(ui)
-  await until(async () => JSON.parse(await ui.ev(ROW_TITLES)).length === 3)
+  await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length === 3)
   resetCounters()
   serve(
     () =>
@@ -864,7 +1266,7 @@ async function main() {
   // 「旧 PAT で取得中」の状態そのものを作れない（＝シナリオが再現しないまま PASS する）
   serve(okBody(BASE))
   await savePat(ui, `${TEST_PAT_A}y`)
-  await until(async () => JSON.parse(await ui.ev(ROW_TITLES)).length === 3)
+  await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length === 3)
   // **値は1回だけ読む**（`check` の引数の中で2回読むと、ok と detail が別の瞬間の値になる）
   const beforeRace = await liveState(ui)
   check(
@@ -906,7 +1308,7 @@ async function main() {
   // rate-limit を解く（次のブロックのため）
   serve(okBody(BASE))
   await savePat(ui, `${TEST_PAT_A}w`)
-  await until(async () => JSON.parse(await ui.ev(ROW_TITLES)).length === 3)
+  await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length === 3)
 
   /* ---- ⑮ 実行中に来た自動の要求は捨てられる ---- */
   //
@@ -921,7 +1323,7 @@ async function main() {
   //      （世代を進める順序を間違えると、リクエスト数は1でも結果が捨てられて一覧が空になる）
   serve(okBody(BASE))
   await refresh(ui)
-  await until(async () => JSON.parse(await ui.ev(ROW_TITLES)).length === 3)
+  await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length === 3)
   resetCounters()
   // 直前の成功で次の自動取得は 60 秒後。そこでタイマーが**遅い**応答を掴む
   const slowItems = [
@@ -950,7 +1352,7 @@ async function main() {
     total === 1,
     `リクエスト ${total} 回（5 秒ごとのタイマーが 8 秒の取得中に起きている）`
   )
-  titles = JSON.parse(await ui.ev(ROW_TITLES))
+  titles = JSON.parse(await readExpanded(ui, ROW_TITLES))
   check(
     '⑮ その1回の結果が最終状態として適用される（世代の順序を間違えると捨てられる）',
     titles.includes('SLOW'),
@@ -960,7 +1362,7 @@ async function main() {
   /* ---- ⑬ 設定で無効 / 有効 ---- */
   serve(okBody(BASE))
   await refresh(ui)
-  await until(async () => JSON.parse(await ui.ev(ROW_TITLES)).length === 3)
+  await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length === 3)
   await setEnabled(ui, false)
   const gone = await until(async () => ((await ui.ev(HAS_SECTION)) === false ? 'gone' : ''), {
     timeoutMs: 3000
@@ -981,7 +1383,7 @@ async function main() {
   // **無効にしたのに GitHub へ1回つなぎに行く**。
   serve(okBody(BASE))
   await refresh(ui)
-  await until(async () => JSON.parse(await ui.ev(ROW_TITLES)).length === 3)
+  await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length === 3)
   resetCounters()
   serve(() => new Promise((resolve) => setTimeout(() => resolve(okBody(BASE)), 2000)))
   void refresh(ui) // ① 遅い取得が走り出す
@@ -1009,7 +1411,7 @@ async function main() {
   // 戻して、取得中の表示のまま止まっていないことも見る
   serve(okBody(BASE))
   await setEnabled(ui, true)
-  await until(async () => JSON.parse(await ui.ev(ROW_TITLES)).length === 3)
+  await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length === 3)
   const revived = await liveState(ui)
   check(
     '⑬ 戻したあと「取得中」のまま止まらない',

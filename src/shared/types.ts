@@ -203,7 +203,7 @@ export interface LivePullRequest {
 /**
  * その検索が 100 件で打ち切られたときの実測値。
  *
- * **描画行数（`rendered`）とは別の母集団**。`returned` は検索が返した件数、
+ * **バケットに割り当てられた件数（`items.length`）とは別の母集団**。`returned` は検索が返した件数、
  * `total` は検索の総ヒット数（`issueCount`）で、重複除外前の数。
  */
 export interface LiveFolderTruncation {

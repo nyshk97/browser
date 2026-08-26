@@ -681,6 +681,15 @@ mise run dev:popup
 `rate-limit` が手動を上書きできないこと・トークン変更の 1 回だけの例外・
 壊れたキャッシュからの起動・シークレットでの非表示。
 
+**小見出し（`REVIEW REQUESTED` / `CREATED`）は初期折りたたみ**で、行は開くまで DOM に無い。
+表示行を前提とする既存検査は `readExpanded`（直前に `expandAll` で全部開く）で読み、
+折りたたみ状態そのものの検査は raw の `ui.ev` で読む（`readExpanded` を通すと再展開されて検査にならない）。
+開閉は React の state で、初回マウントと再マウント（設定の再有効化・再起動）で畳まれる（通常の再描画では保つ）。
+どの検査が再マウントの後に来るかを追わずに済むよう「読むたびに開き直す」。
+
+見た目の自己確認は `NEMO_VERIFY_SHOTS=<dir> mise run verify:only live-folder` で
+「両方閉 / review だけ開 / 両方開」の PNG が `<dir>/live-folder-<場面>.png` に出る（判定には使わない）。
+
 **認証は `NEMO_GITHUB_TEST_AUTH=stored-only` で回す**（PAT の保存 / 削除で
 「未設定 → 取得 → 未設定」を同一プロセスで踏める唯一の値）。
 差し替え中は**実ストア（`safeStorage`）に一切触らない** —— 触ると macOS の

@@ -568,8 +568,18 @@ body[data-view='toolbar'] {
  * 親見出しは置かず、小見出し2つと区切り線で一塊として読ませる。
  * ------------------------------------------------------------------ */
 
-/* 小見出し（`REVIEW REQUESTED` / `CREATED`）。既存の `.label` と同じ作法 */
+/*
+ * 小見出し（`REVIEW REQUESTED` / `CREATED`）。既存の `.label` と同じ作法だが、
+ * **クリックでそのバケットだけ開閉する button**。ホバーは `.row` と同じ薄い背景
+ */
 .lf-sub {
+  appearance: none;
+  background: none;
+  border: 0;
+  width: 100%;
+  text-align: left;
+  cursor: default;
+  font-family: inherit;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -578,7 +588,36 @@ body[data-view='toolbar'] {
   text-transform: uppercase;
   font-weight: 600;
   color: var(--nemo-ink-dim);
-  padding: 10px 8px 3px;
+  padding: 6px 8px 3px;
+  border-radius: var(--nemo-radius);
+  transition: background 0.12s;
+}
+
+.lf-sub:hover {
+  background: var(--nemo-hover);
+}
+
+/* 開閉の矢印。閉 `›` → 開は 90° 回転（`inline-block` でないと transform が効かない） */
+.lf-sub .chev {
+  display: inline-block;
+  width: 10px;
+  font-size: 10px;
+  line-height: 1;
+  text-align: center;
+  transition: transform 0.12s;
+}
+
+.lf-sub[aria-expanded='true'] .chev {
+  transform: rotate(90deg);
+}
+
+/* 畳んでいて未読があるときの青ドット（`.row .dot` と同じ見た目。件数の右に 6px 空ける） */
+.lf-sub .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--nemo-accent);
+  flex: 0 0 auto;
 }
 
 .lf-sub .name {
@@ -589,7 +628,7 @@ body[data-view='toolbar'] {
   white-space: nowrap;
 }
 
-/* **右端は常に描画行数だけ**（打ち切りは末尾に別行で出す） */
+/* **右端はバケットに割り当てられた件数**（`items.length`。折りたたみ中も出す。打ち切りは末尾に別行で出す） */
 .lf-sub .count {
   font-variant-numeric: tabular-nums;
 }
@@ -779,7 +818,8 @@ body[data-view='toolbar'] {
 
 /*
  * 打ち切りの行。**末尾の状態行の下に検索ごと1行ずつ**出す。
- * 描画行数と検索ヒット数は別の母集団なので、小見出しの数と同じ表記に混ぜない。
+ * バケットに割り当てられた件数と検索ヒット数は別の母集団なので、小見出しの数と同じ表記に混ぜない。
+ * 小見出しを畳んでいる間は `hidden`。
  */
 .lf-truncated {
   font-size: 10px;

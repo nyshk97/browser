@@ -157,6 +157,11 @@ export function LiveFolder({
   const [menu, setMenu] = useState<RowMenuState | null>(null)
   // 相対時刻は**1分ごとに再描画する**（`3m ago` のまま止まると表示自体が嘘になる）
   const [now, setNow] = useState(() => Date.now())
+  // **小見出しは起動のたびに両方折りたたみ**（永続化しない。PR が多いとサイドバーを占領するので普段は畳む）
+  const [collapsed, setCollapsed] = useState<Record<LivePrBucket, boolean>>({ review: true, mine: true })
+  const toggleBucket = (bucket: LivePrBucket): void =>
+    // 関数形式にする（同一タスクで 2 つ連続クリックされても片方の更新を落とさない）
+    setCollapsed((prev) => ({ ...prev, [bucket]: !prev[bucket] }))
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000)
     return () => clearInterval(timer)
@@ -223,25 +228,33 @@ export function LiveFolder({
         ? groups.map(({ bucket, items }) =>
             // グループが 0 件ならその小見出しごと出さない
             items.length === 0 ? null : (
-              <div key={bucket}>
-                <div className="lf-sub">
-                  <span className="name">{BUCKET_LABEL[bucket]}</span>
-                  {/* **小見出しの右は常に描画行数だけ**（打ち切りは末尾に別行で出す） */}
-                  <span className="count">{items.length}</span>
+              <div key={bucket} className="lf-bucket" data-bucket={bucket}>
+                <BucketHeading
+                  bucket={bucket}
+                  count={items.length}
+                  collapsed={collapsed[bucket]}
+                  unread={items.some((item) => item.unread)}
+                  truncated={state.truncation[bucket] !== null}
+                  onToggle={() => toggleBucket(bucket)}
+                />
+                {/* 内容コンテナは常に描画する（`aria-controls` の参照先を消さない）。畳んだら中の行を描画しない */}
+                <div className="lf-items" id={`lf-items-${bucket}`} hidden={collapsed[bucket]}>
+                  {collapsed[bucket]
+                    ? null
+                    : items.map((item) => (
+                        <PrRow
+                          key={item.url}
+                          item={item}
+                          stale={view.stale}
+                          active={openUrls.has(item.url)}
+                          onContextMenu={(event) =>
+                            openSectionMenu(event, item.url, [
+                              { label: 'GitHub で開く', run: () => void window.nemo.liveFolderOpen(item.url) }
+                            ])
+                          }
+                        />
+                      ))}
                 </div>
-                {items.map((item) => (
-                  <PrRow
-                    key={item.url}
-                    item={item}
-                    stale={view.stale}
-                    active={openUrls.has(item.url)}
-                    onContextMenu={(event) =>
-                      openSectionMenu(event, item.url, [
-                        { label: 'GitHub で開く', run: () => void window.nemo.liveFolderOpen(item.url) }
-                      ])
-                    }
-                  />
-                ))}
               </div>
             )
           )
@@ -254,14 +267,22 @@ export function LiveFolder({
       {/*
         打ち切りは**末尾の状態行の下に別の1行**として出す。
         検索の話は検索の言葉（fetched）で書き、表示行数とは別の場所に置く
-        （`rendered` と `search.total` は別の母集団なので、同じ表記に混ぜない）。
+        （バケットに割り当てられた件数 `items.length` と `search.total` は別の母集団なので、同じ表記に混ぜない）。
+        小見出しが畳まれていれば `hidden` で隠す（DOM からは消さない。`aria-controls` の参照先を残す）。
+        **小見出しが無いバケット（重複除外で `items` が空）の打ち切り行は隠さない**（開く手段が無く永久に消える）。
       */}
       {view.kind === 'list'
         ? (['review', 'mine'] as const).flatMap((bucket) => {
             const truncation = state.truncation[bucket]
             if (!truncation) return []
+            const hasHeading = groups.some((group) => group.bucket === bucket && group.items.length > 0)
             return [
-              <div key={bucket} className="lf-truncated">
+              <div
+                key={bucket}
+                className="lf-truncated"
+                id={`lf-truncated-${bucket}`}
+                hidden={hasHeading && collapsed[bucket]}
+              >
                 First {truncation.returned} of {truncation.total} fetched for{' '}
                 <span className="lf-bucket">{BUCKET_LABEL[bucket]}</span>
               </div>
@@ -271,6 +292,50 @@ export function LiveFolder({
 
       {menu ? <RowMenu state={menu} onClose={() => setMenu(null)} /> : null}
     </div>
+  )
+}
+
+/**
+ * 小見出し（`REVIEW REQUESTED` / `CREATED`）。クリックでそのバケットだけ開閉する。
+ *
+ * - 右の数字は**バケットに割り当てられた件数**（`items.length`。重複除外後の値で、折りたたみ状態にも
+ *   DOM 上の行数にも検索の取得件数 `returned` にも依存しない）。打ち切りは末尾に別行で出す
+ * - 畳んでいて未読があれば件数の横に青ドット。開いたら行側のドットだけにする
+ * - ドットは装飾なので、支援技術には `aria-label` で件数と未読の有無を伝える
+ */
+function BucketHeading({
+  bucket,
+  count,
+  collapsed,
+  unread,
+  truncated,
+  onToggle
+}: {
+  bucket: LivePrBucket
+  count: number
+  collapsed: boolean
+  unread: boolean
+  truncated: boolean
+  onToggle: () => void
+}): React.JSX.Element {
+  const controls = truncated ? `lf-items-${bucket} lf-truncated-${bucket}` : `lf-items-${bucket}`
+  const label = `${BUCKET_LABEL[bucket]}, ${count} 件${unread ? ', 未読あり' : ''}`
+  return (
+    <button
+      type="button"
+      className="lf-sub"
+      aria-expanded={!collapsed}
+      aria-controls={controls}
+      aria-label={label}
+      onClick={onToggle}
+    >
+      <span className="chev" aria-hidden="true">
+        ›
+      </span>
+      <span className="name">{BUCKET_LABEL[bucket]}</span>
+      <span className="count">{count}</span>
+      {collapsed && unread ? <span className="dot" /> : null}
+    </button>
   )
 }
 

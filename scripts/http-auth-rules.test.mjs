@@ -27,7 +27,10 @@ test('patternFromUrl: 既定ポートは付けない', () => {
 })
 
 test('patternFromUrl: 非既定ポートは付く', () => {
-  assert.equal(patternFromUrl('https://staging.example.com:8443/a/b'), '^https://staging\\.example\\.com:8443/')
+  assert.equal(
+    patternFromUrl('https://staging.example.com:8443/a/b'),
+    '^https://staging\\.example\\.com:8443/'
+  )
 })
 
 test('patternFromUrl: 日本語ドメインは punycode になる', () => {
@@ -103,10 +106,7 @@ const rule = (id, pattern, extra = {}) => ({
 })
 
 test('matchRules: 長いパターンが勝つ', () => {
-  const rules = [
-    rule('short', '^https://example\\.com/'),
-    rule('long', '^https://example\\.com/admin/')
-  ]
+  const rules = [rule('short', '^https://example\\.com/'), rule('long', '^https://example\\.com/admin/')]
   const matched = matchRules(rules, 'https://example.com/admin/x')
   assert.deepEqual(
     matched.map((r) => r.id),
@@ -341,17 +341,19 @@ test('importMultipass: 拒否が混ざっていても通った分は取り込ま
 test('importMultipass: priority は捨てる。一様でなければ警告する', () => {
   assert.equal(importMultipass([entry('a.example.com', { priority: 1 })], []).priorityWarning, false)
   assert.equal(
-    importMultipass(
-      [entry('a.example.com', { priority: 1 }), entry('b.example.com', { priority: 5 })],
-      []
-    ).priorityWarning,
+    importMultipass([entry('a.example.com', { priority: 1 }), entry('b.example.com', { priority: 5 })], [])
+      .priorityWarning,
     true
   )
 })
 
 test('importMultipass: 欠損・数値 1・文字列 "1" が混在しても警告は出ない', () => {
   const result = importMultipass(
-    [entry('a.example.com'), entry('b.example.com', { priority: 1 }), entry('c.example.com', { priority: '1' })],
+    [
+      entry('a.example.com'),
+      entry('b.example.com', { priority: 1 }),
+      entry('c.example.com', { priority: '1' })
+    ],
     []
   )
   assert.equal(result.priorityWarning, false)

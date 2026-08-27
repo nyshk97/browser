@@ -1,9 +1,5 @@
 import { Worker } from 'node:worker_threads'
-import {
-  HTTP_AUTH_LIMITS,
-  HTTP_AUTH_PATTERN_TIMEOUT_MS,
-  rankRules
-} from '../shared/http-auth-rules.js'
+import { HTTP_AUTH_LIMITS, HTTP_AUTH_PATTERN_TIMEOUT_MS, rankRules } from '../shared/http-auth-rules.js'
 import { WORKER_SOURCE } from '../shared/http-auth-worker-source.js'
 import { log, logError } from './log.js'
 import type { HttpAuthRule } from '../shared/types.js'

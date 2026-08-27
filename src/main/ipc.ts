@@ -63,11 +63,7 @@ import {
 import { httpAuthCredentialsChanged } from './http-auth-reset.js'
 import { matchHttpAuthRules } from './http-auth-matcher.js'
 import { getTimings } from './timings.js'
-import {
-  HTTP_AUTH_LIMITS,
-  importMultipass,
-  validateHttpAuthPattern
-} from '../shared/http-auth-rules.js'
+import { HTTP_AUTH_LIMITS, importMultipass, validateHttpAuthPattern } from '../shared/http-auth-rules.js'
 import { windowsById } from './registry.js'
 import type {
   AppStatus,

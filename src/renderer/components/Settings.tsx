@@ -531,12 +531,7 @@ function HttpAuthRules(): React.JSX.Element {
                   />
                   有効
                 </label>
-                <button
-                  type="button"
-                  className="btn ha-save"
-                  disabled={!dirty}
-                  onClick={() => save(rule)}
-                >
+                <button type="button" className="btn ha-save" disabled={!dirty} onClick={() => save(rule)}>
                   保存
                 </button>
                 <button
@@ -590,9 +585,7 @@ function HttpAuthRules(): React.JSX.Element {
             : result.matchedIds.length > 1
               ? `→ この URL には ${result.matchedIds.length} 件マッチします。${nameOf(result.winnerId)} が使われます`
               : `→ ${nameOf(result.winnerId)} が使われます`}
-          {result.timedOutIds.length > 0
-            ? `（${result.timedOutIds.length} 件は照合がタイムアウトした）`
-            : ''}
+          {result.timedOutIds.length > 0 ? `（${result.timedOutIds.length} 件は照合がタイムアウトした）` : ''}
         </p>
       ))}
 

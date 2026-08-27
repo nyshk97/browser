@@ -182,10 +182,7 @@ export async function saveHttpAuthRule(input: SaveRuleInput): Promise<SaveRuleRe
   const backend = getSecretBackend()
   if (!validateHttpAuthPattern(input.pattern).ok) return { ok: false, reason: 'invalid-pattern' }
   if (input.username.length > HTTP_AUTH_LIMITS.MAX_USERNAME) return { ok: false, reason: 'too-long' }
-  if (
-    typeof input.password === 'string' &&
-    input.password.length > HTTP_AUTH_LIMITS.MAX_PASSWORD
-  ) {
+  if (typeof input.password === 'string' && input.password.length > HTTP_AUTH_LIMITS.MAX_PASSWORD) {
     return { ok: false, reason: 'too-long' }
   }
 
@@ -202,7 +199,9 @@ export async function saveHttpAuthRule(input: SaveRuleInput): Promise<SaveRuleRe
 
   let encrypted: string
   try {
-    encrypted = changesPassword ? backend.encrypt(input.password as string) : (existing as StoredRule).password
+    encrypted = changesPassword
+      ? backend.encrypt(input.password as string)
+      : (existing as StoredRule).password
   } catch (error) {
     logError('http_auth.encrypt_failed', error, {})
     return { ok: false, reason: 'no-encryption' }
@@ -217,7 +216,8 @@ export async function saveHttpAuthRule(input: SaveRuleInput): Promise<SaveRuleRe
     password: encrypted,
     enabled: input.enabled ?? existing?.enabled ?? true
   }
-  const importedFrom = input.importedFrom === undefined ? existing?.importedFrom : (input.importedFrom ?? undefined)
+  const importedFrom =
+    input.importedFrom === undefined ? existing?.importedFrom : (input.importedFrom ?? undefined)
   if (importedFrom !== undefined) next.importedFrom = importedFrom
 
   // 原因が直ったときだけ理由を消す

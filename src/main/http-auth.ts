@@ -361,7 +361,7 @@ export async function handleHttpAuthLogin(
     groupId:
       resolution.kind === 'autofill'
         ? resolution.ruleId
-        : (resolution.kind === 'rejected' ? resolution.rule?.id : null) ?? NO_RULE_GROUP,
+        : ((resolution.kind === 'rejected' ? resolution.rule?.id : null) ?? NO_RULE_GROUP),
     rejectedRule: resolution.kind === 'rejected' ? resolution.rule : null,
     url: ctx.url,
     scheme: ctx.authInfo.scheme,

@@ -513,10 +513,7 @@ export function importMultipass(json, existing) {
     const priority = Number(item['priority'] ?? 1)
     priorities.add(Number.isFinite(priority) ? priority : 1)
 
-    if (
-      username.length > HTTP_AUTH_LIMITS.MAX_USERNAME ||
-      password.length > HTTP_AUTH_LIMITS.MAX_PASSWORD
-    ) {
+    if (username.length > HTTP_AUTH_LIMITS.MAX_USERNAME || password.length > HTTP_AUTH_LIMITS.MAX_PASSWORD) {
       rejected.push({ pattern: shown, reason: 'too-long' })
       continue
     }

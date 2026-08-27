@@ -117,7 +117,9 @@ if (process.argv[2] === '--restart-plant') {
   const target = raw.data.rules.find((rule) => rule.username === 'broken')
   const prefix = 'NEMOTEST1:'
   if (!target || !target.password.startsWith(prefix)) {
-    console.log(`FAIL  再起動前の仕込み: 壊す対象が居る — ${JSON.stringify(raw.data.rules.map((r) => r.username))}`)
+    console.log(
+      `FAIL  再起動前の仕込み: 壊す対象が居る — ${JSON.stringify(raw.data.rules.map((r) => r.username))}`
+    )
     process.exit(1)
   }
   // **checksum の 1 バイトを反転する。** テスト backend は固定ヘッダ + checksum なので、
@@ -140,7 +142,8 @@ const ui = await connectUi(CDP)
 const overlay = await connectUi(CDP, 'overlay')
 
 const call = (expression) => ui.ev(`window.nemo.${expression}`)
-const json = async (expression) => JSON.parse(await ui.ev(`window.nemo.${expression}.then(v => JSON.stringify(v))`))
+const json = async (expression) =>
+  JSON.parse(await ui.ev(`window.nemo.${expression}.then(v => JSON.stringify(v))`))
 
 const listRules = () => json('listHttpAuthRules()')
 const saveRule = (input) => json(`saveHttpAuthRule(${JSON.stringify(input)})`)
@@ -258,8 +261,9 @@ const loggedReasons = () =>
 
 /** 出た認証ダイアログの数（診断ログの `prompt.opened` から数える）。 */
 const authDialogCount = () =>
-  readLogLines(USER_DATA).filter((line) => line.includes('"event":"prompt.opened"') && line.includes('"auth"'))
-    .length
+  readLogLines(USER_DATA).filter(
+    (line) => line.includes('"event":"prompt.opened"') && line.includes('"auth"')
+  ).length
 
 /* ------------------------------------------------------------------ *
  * 2 つ目のテストサーバ（別オリジン）
@@ -305,7 +309,11 @@ if (mode === '--restart-write') {
     ui.ev(`window.nemo.revealHttpAuthPassword(${JSON.stringify(broken.id ?? '')}).then(v => v ?? '')`)
   ])
   const ids = (await listRules()).rules.map((rule) => rule.id)
-  check('再起動前: 2 件とも復号できていた', before.every((value) => value === 'p'), JSON.stringify(before))
+  check(
+    '再起動前: 2 件とも復号できていた',
+    before.every((value) => value === 'p'),
+    JSON.stringify(before)
+  )
   console.log(`restart-write: rules=${JSON.stringify(ids)}`)
   process.exit(failures === 0 ? 0 : 1)
 }
@@ -357,9 +365,7 @@ try {
 }
 
 console.log(
-  failures === 0
-    ? `\n全項目 PASS${skipped > 0 ? `（SKIP ${skipped} 件）` : ''}`
-    : `\n${failures} 件 FAIL`
+  failures === 0 ? `\n全項目 PASS${skipped > 0 ? `（SKIP ${skipped} 件）` : ''}` : `\n${failures} 件 FAIL`
 )
 process.exit(failures === 0 ? 0 : 1)
 
@@ -560,7 +566,9 @@ async function checkNoResendAfterDialogSave() {
   await sleep(600)
 
   const entries = (await authEntries()).filter((entry) => entry.tag.startsWith('g22/'))
-  const sent = entries.filter((entry) => entry.authorization.length > 0).map((entry) => decodeAuth(entry.authorization))
+  const sent = entries
+    .filter((entry) => entry.authorization.length > 0)
+    .map((entry) => decodeAuth(entry.authorization))
   const resent = sent.filter((value) => value === 'u:wrong2')
   check(
     '打ち直しも間違えていたとき、手入力した資格情報は 1 回しか送らない',
@@ -634,7 +642,9 @@ async function checkDifferentRulesSameSpace() {
     sent.length === 1,
     `送信 ${sent.length} 回 / リクエスト ${entries.length} 件`
   )
-  const misdirected = sent.filter((entry) => !decodeAuth(entry.authorization).startsWith(`user-${entry.tag.at(-1)}`))
+  const misdirected = sent.filter(
+    (entry) => !decodeAuth(entry.authorization).startsWith(`user-${entry.tag.at(-1)}`)
+  )
   check(
     'ルール A の資格情報が URL B へ送られていない',
     misdirected.length === 0,
@@ -648,7 +658,9 @@ async function checkDifferentRulesSameSpace() {
   await cancelAuth()
   await sleep(400)
   const after = (await authEntries()).filter((entry) => entry.tag.startsWith('g8/'))
-  const typed = after.filter((entry) => entry.authorization && decodeAuth(entry.authorization).startsWith('typed-user'))
+  const typed = after.filter(
+    (entry) => entry.authorization && decodeAuth(entry.authorization).startsWith('typed-user')
+  )
   const typedTags = new Set(typed.map((entry) => entry.tag))
   check(
     '手入力した資格情報は答えたグループの URL にしか配られない',
@@ -777,7 +789,11 @@ async function checkUrlTooLong() {
   )
   await sleep(500)
   const after = (await listRules()).rules.length
-  check('canSave: false の状況で save: true を送ってもルールは作られない', after === before, `${before} → ${after}`)
+  check(
+    'canSave: false の状況で save: true を送ってもルールは作られない',
+    after === before,
+    `${before} → ${after}`
+  )
   await closeTab(key)
 }
 
@@ -802,11 +818,12 @@ async function checkPrivateWindow() {
     (await listTargets(CDP)).find((t) => t.url.includes('private=1') && t.url.includes('view=overlay'))
       ?.webSocketDebuggerUrl ?? target.webSocketDebuggerUrl
   )
-  await privateUi.ev(`window.nemo.createTab(${JSON.stringify(authUrl('g13/main', { realm: 'r13' }))}).then(() => 'ok')`)
-  const shown = await until(
-    async () => (await privateOverlay.ev(DIALOG_KIND)) === 'prompt-auth',
-    { timeoutMs: 8000 }
+  await privateUi.ev(
+    `window.nemo.createTab(${JSON.stringify(authUrl('g13/main', { realm: 'r13' }))}).then(() => 'ok')`
   )
+  const shown = await until(async () => (await privateOverlay.ev(DIALOG_KIND)) === 'prompt-auth', {
+    timeoutMs: 8000
+  })
   const entries = (await authEntries()).filter((entry) => entry.tag.startsWith('g13/'))
   check(
     'シークレットウィンドウでは自動入力しない',
@@ -836,7 +853,11 @@ async function checkAdversarialPattern() {
   await resetAuthLog()
   const normal = await saveRule({ pattern: patternFor('g14/'), username: 'u', password: 'p' })
   const evil = await saveRule({ pattern: adversarial('g14'), username: 'evil', password: 'p' })
-  check('敵対的なパターンは構文検査を通ってしまう（ワーカー隔離が要る理由）', evil.saved === true, JSON.stringify(evil))
+  check(
+    '敵対的なパターンは構文検査を通ってしまう（ワーカー隔離が要る理由）',
+    evil.saved === true,
+    JSON.stringify(evil)
+  )
 
   const started = Date.now()
   const key = await openTab(authUrl(`g14/${'a'.repeat(40)}`, { realm: 'r14' }))
@@ -893,7 +914,11 @@ async function checkTesterDoesNotDisable() {
   const normal = await saveRule({ pattern: patternFor('g15/'), username: 'u', password: 'p' })
   const results = await testPattern([authUrl(`g15/${'a'.repeat(40)}`, { realm: 'r15' })], adversarial('g15'))
   const timedOut = results[0]?.timedOutIds ?? []
-  check('テスターでは下書きの照合がタイムアウトとして返る', timedOut.includes('draft'), JSON.stringify(results))
+  check(
+    'テスターでは下書きの照合がタイムアウトとして返る',
+    timedOut.includes('draft'),
+    JSON.stringify(results)
+  )
   const after = (await listRules()).rules.find((rule) => rule.id === normal.id)
   check(
     'テスターのタイムアウトでは保存済みルールを無効化しない',
@@ -943,7 +968,11 @@ async function checkCredentialChangeClearsCache() {
   // **リロードせず同じ document から撃つ**（リロードすると attempts が消えて片方の実装でも PASS する）
   const afterDisable = fetchAuth('g16/x')
   const shownAfterDisable = await waitDialog()
-  check('有効トグルでも認証キャッシュが破棄され、再チャレンジが起きる', shownAfterDisable === true, await dialogKind())
+  check(
+    '有効トグルでも認証キャッシュが破棄され、再チャレンジが起きる',
+    shownAfterDisable === true,
+    await dialogKind()
+  )
   await cancelAuth()
   await afterDisable
 
@@ -955,12 +984,16 @@ async function checkCredentialChangeClearsCache() {
 
   // ユーザー名だけ編集してもパスワードは消えない（patch semantics）
   await saveRule({ id: rule.id, pattern: patternFor('g16/'), username: 'u2' })
-  const revealed = await ui.ev(`window.nemo.revealHttpAuthPassword(${JSON.stringify(rule.id)}).then(v => v ?? '')`)
+  const revealed = await ui.ev(
+    `window.nemo.revealHttpAuthPassword(${JSON.stringify(rule.id)}).then(v => v ?? '')`
+  )
   check('ユーザー名だけ編集してもパスワードが消えない', revealed === 'p2', JSON.stringify(revealed))
 
   // 「パスワードを変更」で空文字にできる
   await saveRule({ id: rule.id, pattern: patternFor('g16/'), username: 'u2', password: '' })
-  const emptied = await ui.ev(`window.nemo.revealHttpAuthPassword(${JSON.stringify(rule.id)}).then(v => v ?? '(null)')`)
+  const emptied = await ui.ev(
+    `window.nemo.revealHttpAuthPassword(${JSON.stringify(rule.id)}).then(v => v ?? '(null)')`
+  )
   check('空文字は有効な新パスワードとして保存される', emptied === '', JSON.stringify(emptied))
 
   page.close()
@@ -1058,8 +1091,8 @@ async function checkSettingsUi() {
   await clearRules()
   await saveRule({ pattern: patternFor('g20/'), username: 'listed', password: 'secret-pw' })
   await call(`setOverlay('settings').then(() => 'ok')`)
-  const opened = await until(
-    async () => ((await overlay.ev(`document.querySelector('.http-auth') ? 'ok' : ''`)) === 'ok' ? 'ok' : '')
+  const opened = await until(async () =>
+    (await overlay.ev(`document.querySelector('.http-auth') ? 'ok' : ''`)) === 'ok' ? 'ok' : ''
   )
   if (opened !== 'ok') {
     skip('Settings の HTTP 認証セクション', '設定画面が開かない')
@@ -1076,8 +1109,16 @@ async function checkSettingsUi() {
     const text = await overlay.ev(`document.querySelector('.ha-import-result')?.innerText ?? ''`)
     return text.length > 0 ? text : ''
   })
-  check('インポート結果に取り込み件数が出る', importText.includes('2 件を取り込んだ'), importText.split('\n')[0])
-  check('priority が一様でなければ一括警告が出る', importText.includes('優先度は取り込まれません'), importText)
+  check(
+    'インポート結果に取り込み件数が出る',
+    importText.includes('2 件を取り込んだ'),
+    importText.split('\n')[0]
+  )
+  check(
+    'priority が一様でなければ一括警告が出る',
+    importText.includes('優先度は取り込まれません'),
+    importText
+  )
   check(
     '取り込めなかったパターンが理由付きで出る',
     importText.includes('(a+)+$') && importText.includes('nouser.example.com'),
@@ -1095,7 +1136,10 @@ async function checkSettingsUi() {
 
   /* --- テスター --- */
   await overlay.ev(
-    setInput('.ha-test-urls', `${authUrl('g20/main', { realm: 'r20' })}\n${PAGES}/__nemo_basic_auth__/zzz/none`)
+    setInput(
+      '.ha-test-urls',
+      `${authUrl('g20/main', { realm: 'r20' })}\n${PAGES}/__nemo_basic_auth__/zzz/none`
+    )
   )
   await overlay.ev(`(() => { document.querySelector('.ha-test-run').click(); return 'ok' })()`)
   const testText = await until(async () => {
@@ -1104,7 +1148,11 @@ async function checkSettingsUi() {
     )
     return text !== '[]' ? text : ''
   })
-  check('テスターが勝者とマッチなしを出す', testText.includes('が使われます') && testText.includes('マッチなし'), testText)
+  check(
+    'テスターが勝者とマッチなしを出す',
+    testText.includes('が使われます') && testText.includes('マッチなし'),
+    testText
+  )
 
   /* --- validator に弾かれるパターン ---
    * **テスターより後に置く。** 壊れた下書きが残っている間はテスター自体が弾かれるので、
@@ -1132,7 +1180,8 @@ async function checkSettingsUi() {
   // ① タイマー（`httpAuthRevealMs` を検証用に縮めてある）
   const remasked = await until(
     async () =>
-      (await overlay.ev(`document.querySelector('${rowSelector} .ha-password')?.innerText ?? ''`)) === '••••••',
+      (await overlay.ev(`document.querySelector('${rowSelector} .ha-password')?.innerText ?? ''`)) ===
+      '••••••',
     { timeoutMs: timings.httpAuthRevealMs + 4000 }
   )
   check('表示から一定時間で再マスクされる', remasked === true, `${timings.httpAuthRevealMs}ms`)
@@ -1148,7 +1197,8 @@ async function checkSettingsUi() {
     )
     const previous = await until(
       async () =>
-        (await overlay.ev(`document.querySelector('${rowSelector} .ha-password')?.innerText ?? ''`)) === '••••••',
+        (await overlay.ev(`document.querySelector('${rowSelector} .ha-password')?.innerText ?? ''`)) ===
+        '••••••',
       { timeoutMs: 4000 }
     )
     check('別のルールを表示すると前の平文が消える', previous === true)
@@ -1195,9 +1245,17 @@ async function checkUnavailableBackend() {
   fs.writeFileSync(marker, '1')
   try {
     const state = await listRules()
-    check('暗号化が使えないことが一覧と一緒に返る', state.encryptionAvailable === false, JSON.stringify(state))
+    check(
+      '暗号化が使えないことが一覧と一緒に返る',
+      state.encryptionAvailable === false,
+      JSON.stringify(state)
+    )
 
-    const refused = await saveRule({ pattern: patternFor('g21b/'), username: 'u', password: 'plaintext-secret' })
+    const refused = await saveRule({
+      pattern: patternFor('g21b/'),
+      username: 'u',
+      password: 'plaintext-secret'
+    })
     check(
       '暗号化が使えない環境では保存を断る',
       refused.saved === false && refused.reason === 'no-encryption',
@@ -1222,7 +1280,11 @@ async function checkUnavailableBackend() {
     fs.rmSync(marker, { force: true })
   }
   const restored = await listRules()
-  check('マーカーを外すと元に戻る', restored.encryptionAvailable === true, JSON.stringify(restored.encryptionAvailable))
+  check(
+    'マーカーを外すと元に戻る',
+    restored.encryptionAvailable === true,
+    JSON.stringify(restored.encryptionAvailable)
+  )
 }
 
 /* ---- 最後に main の未捕捉例外を見る ---- */

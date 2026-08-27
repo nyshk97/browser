@@ -79,7 +79,18 @@ function runCommand(command: string): void {
     if (command === 'new-private-window') void openPrivateWindow()
     return
   }
+  runCommandForWindow(win, command)
+}
 
+/**
+ * コマンドを**対象のウィンドウを指定して**実行する。
+ *
+ * メニューからは「今フォーカスされているウィンドウ」で呼ばれるが、
+ * 自走検証は**送信元のウィンドウ**へ撃つ必要がある
+ * （メニューのアクセラレータは AppKit が NSEvent の段階で食うのでキーでは撃てず、
+ * `focusedOrFirstWindow()` のままだと別のウィンドウを操作してしまう）。
+ */
+export function runCommandForWindow(win: NemoWindow, command: string): void {
   // 小窓（Little Nemo）はタブを1つしか持たず、サイドバーもコマンドバーも無い。
   // **経路ごとに `if` を書くのではなく、ここでまとめて弾く**（塞ぎ漏れを作らない）。
   if (!canHostAdditionalTabs(win) && MINI_BLOCKED_COMMANDS.has(command)) {
@@ -313,9 +324,16 @@ export function installApplicationMenu(): void {
 function selectTabByIndex(index: number): void {
   const win = focusedOrFirstWindow()
   if (!win) return
+  selectTabByIndexIn(win, index)
+}
+
+/** ⌘1〜9 の中身。**対象のウィンドウを指定して**呼べるようにしてある（`runCommandForWindow` と同じ理由）。 */
+export function selectTabByIndexIn(win: NemoWindow, index: number): void {
   // 小窓はタブ1つなので番号で選ぶ意味がない
   if (!canHostAdditionalTabs(win)) return
-  // ⌘1〜9 はサイドバーの並びに対応させる（Peek は一覧に出ていないので数えない）
+  // ⌘1〜9 はタブの並びで数える（Peek は一覧に出ていないので数えない）。
+  // **分割は 2 つのタブのまま数える** —— サイドバーでは結合行 1 行に見えるが、
+  // 左右それぞれに番号が当たる（ペイン間のフォーカス移動にも使える。DESIGN.md 参照）
   const list = win.normalTabs
   // 9 は「最後のタブ」（Chrome / Arc と同じ）
   const tab = index === 9 ? list[list.length - 1] : list[index - 1]

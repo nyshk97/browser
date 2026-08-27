@@ -291,8 +291,9 @@ export function normalizeCustomTitle(value) {
  * - 1 … タブごとの `lastActiveAt` を持たない
  * - 2 … `lastActiveAt` を持つ（**自動アーカイブの寿命を再起動でリセットしないため**）
  * - 3 … **一時タブだけ**を保存する（`pinnedId` を持たない）。`customTitle` を持つ
+ * - 4 … 分割ビューの組み合わせ（`splits`）を持つ
  */
-export const SESSION_VERSION = 3
+export const SESSION_VERSION = 4
 
 /**
  * @typedef {object} SavedTab
@@ -307,6 +308,7 @@ export const SESSION_VERSION = 3
  * @property {{ x: number, y: number, width: number, height: number } | null} bounds
  * @property {SavedTab[]} tabs
  * @property {number} activeIndex
+ * @property {[number, number][]} splits 左右に並べた組（`tabs` の添字で `[左, 右]`）
  */
 
 /**
@@ -361,7 +363,8 @@ export function normalizeSession(raw) {
             ? value['activeIndex']
             : 0
         const activeIndex = moved.get(savedIndex) ?? 0
-        return [{ bounds: normalizeBounds(value['bounds']), tabs, activeIndex }]
+        const splits = normalizeSplits(value['splits'], moved, tabs.length)
+        return [{ bounds: normalizeBounds(value['bounds']), tabs, activeIndex, splits }]
       })
     : []
   return {
@@ -369,6 +372,46 @@ export function normalizeSession(raw) {
     cleanExit: input['cleanExit'] === true,
     savedAt: typeof input['savedAt'] === 'number' ? input['savedAt'] : 0
   }
+}
+
+/**
+ * 分割の組を検査する。
+ *
+ * 捨てる条件:
+ * - 整数でない / 2 要素でない / 左右が同じ
+ * - 除外されたタブを指している（`moved` に無い）か、読み替えた先が範囲外
+ * - **同じタブが 2 つ以上の組に現れる → 競合した組を全部落とす**。
+ *   先着を残すと結果が記述順に依存し、壊れたデータを読み直したときの
+ *   期待値（冪等性）が決まらなくなる
+ *
+ * 版 3 以前には `splits` が無いので、その場合は空配列（＝分割なし）に倒す。
+ *
+ * @param {unknown} raw
+ * @param {Map<number, number>} moved 元の添字 → 除外後の添字
+ * @param {number} length 除外後のタブ数
+ * @returns {[number, number][]}
+ */
+function normalizeSplits(raw, moved, length) {
+  if (!Array.isArray(raw)) return []
+  /** @type {[number, number][]} */
+  const pairs = []
+  for (const entry of raw) {
+    if (!Array.isArray(entry) || entry.length !== 2) continue
+    const [rawLeft, rawRight] = entry
+    if (!Number.isInteger(rawLeft) || !Number.isInteger(rawRight)) continue
+    const left = moved.get(rawLeft)
+    const right = moved.get(rawRight)
+    if (left === undefined || right === undefined) continue
+    if (left === right) continue
+    if (left < 0 || left >= length || right < 0 || right >= length) continue
+    pairs.push([left, right])
+  }
+  // 同じ添字に触れる組は**全部**落とす
+  const seen = new Map()
+  for (const [left, right] of pairs) {
+    for (const index of [left, right]) seen.set(index, (seen.get(index) ?? 0) + 1)
+  }
+  return pairs.filter(([left, right]) => seen.get(left) === 1 && seen.get(right) === 1)
 }
 
 /**

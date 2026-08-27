@@ -12,7 +12,7 @@ const PAGE_PARTITION = 'persist:nemo'
  * 別の WebContentsView なので、サイドバーと状態は共有せず、どちらも
  * `useWindowState()` で main から同じ状態を受け取る。
  */
-export function Toolbar(): React.JSX.Element {
+export function Toolbar({ pane = 'left' }: { pane?: 'left' | 'right' }): React.JSX.Element {
   const state = useWindowState()
   const shared = useSharedState()
   /**
@@ -24,19 +24,37 @@ export function Toolbar(): React.JSX.Element {
   const [draft, setDraft] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const activeTab: TabState | null = useMemo(
-    () => state?.tabs.find((tab) => tab.key === state.activeTabKey) ?? null,
-    [state]
-  )
+  /**
+   * このツールバーが担当するタブ。
+   *
+   * **基準は必ず `activeTabKey`**。1 ウィンドウに分割ペアは複数ありうるので、
+   * 「`splitSide === 'right'` の最初のタブ」のような探し方をすると、
+   * いま見えていない別のペアのツールバーが出る。
+   */
+  const activeTab: TabState | null = useMemo(() => paneTab(state, pane), [state, pane])
 
   const isPrivate = state?.isPrivate === true
   const sidebarVisible = state?.sidebarVisible !== false
+  /** 分割中か（✕ を出すかどうかの判定に使う）。 */
+  const inSplit = activeTab?.splitSide !== null && activeTab?.splitSide !== undefined
+
+  /**
+   * **ペイン固有の操作はフォーカスも移す**。
+   * 通さないと「左のアドレスバーを触ったのにフォーカス枠・⌘W・⌘F・拡張の対象は右のまま」になる。
+   * ウィンドウ共通の操作（サイドバー開閉・拡張・ダウンロード・履歴・＋）では呼ばない。
+   */
+  const focusPane = (): void => {
+    if (activeTab && state && activeTab.key !== state.activeTabKey) {
+      void window.nemo.selectTab(activeTab.key)
+    }
+  }
 
   const submit = (event: React.FormEvent): void => {
     event.preventDefault()
     const input = draft ?? activeTab?.url ?? ''
     setDraft(null)
     inputRef.current?.blur()
+    focusPane()
     if (activeTab) void window.nemo.navigate(activeTab.key, input)
     else void window.nemo.createTab(input)
   }
@@ -46,22 +64,39 @@ export function Toolbar(): React.JSX.Element {
      * サイドバーを隠しているときは、この View がウィンドウの左端まで伸びる。
      * 信号機ボタンはウィンドウ側に描かれるので、そのぶんの余白をここで空ける
      * （空けないと戻る・進むボタンが信号機の下に潜る）。
+     *
+     * **分割中は左ペインが `SPLIT_INSET` ぶん右から始まる**ので、
+     * 余白は窓の左端基準で測り直す（`.inset-split`）。付けないと 8px ぶん余分に空く。
      */
-    <div className={`toolbar${sidebarVisible ? '' : ' inset'}${isPrivate ? ' private' : ''}`}>
-      <button
-        type="button"
-        className="icon"
-        title={sidebarVisible ? 'サイドバーを隠す（⌘S）' : 'サイドバーを出す（⌘S）'}
-        onClick={() => void window.nemo.setSidebarVisible(!sidebarVisible)}
-      >
-        {sidebarVisible ? '⇤' : '⇥'}
-      </button>
+    <div
+      className={`toolbar${sidebarVisible || pane === 'right' ? '' : ' inset'}${
+        !sidebarVisible && pane === 'left' && inSplit ? ' inset-split' : ''
+      }${isPrivate ? ' private' : ''}`}
+    >
+      {/*
+        サイドバーの開閉は**ウィンドウ共通**なので左だけに置く。
+        右にも置くと同じボタンが 2 つ並ぶし、`.inset`（信号機ぶんの余白）も
+        右に付けると画面の真ん中に理由の無い余白ができる。
+      */}
+      {pane === 'left' ? (
+        <button
+          type="button"
+          className="icon"
+          title={sidebarVisible ? 'サイドバーを隠す（⌘S）' : 'サイドバーを出す（⌘S）'}
+          onClick={() => void window.nemo.setSidebarVisible(!sidebarVisible)}
+        >
+          {sidebarVisible ? '⇤' : '⇥'}
+        </button>
+      ) : null}
       <button
         type="button"
         className="icon nav"
         title="戻る"
         disabled={!activeTab?.canGoBack}
-        onClick={() => activeTab && void window.nemo.goBack(activeTab.key)}
+        onClick={() => {
+          focusPane()
+          if (activeTab) void window.nemo.goBack(activeTab.key)
+        }}
       >
         ‹
       </button>
@@ -70,7 +105,10 @@ export function Toolbar(): React.JSX.Element {
         className="icon nav"
         title="進む"
         disabled={!activeTab?.canGoForward}
-        onClick={() => activeTab && void window.nemo.goForward(activeTab.key)}
+        onClick={() => {
+          focusPane()
+          if (activeTab) void window.nemo.goForward(activeTab.key)
+        }}
       >
         ›
       </button>
@@ -79,13 +117,15 @@ export function Toolbar(): React.JSX.Element {
         className="icon nav"
         title={activeTab?.loading ? '停止' : '再読み込み（右クリックでキャッシュを無視）'}
         disabled={!activeTab}
-        onClick={() =>
-          activeTab &&
+        onClick={() => {
+          focusPane()
+          if (!activeTab) return
           void (activeTab.loading ? window.nemo.stop(activeTab.key) : window.nemo.reload(activeTab.key))
-        }
+        }}
         onContextMenu={(event) => {
           // スーパーリロード。⌘⇧R と同じ経路（キャッシュを捨てて読み直す）
           event.preventDefault()
+          focusPane()
           if (activeTab) void window.nemo.reload(activeTab.key, { ignoreCache: true })
         }}
       >
@@ -97,7 +137,10 @@ export function Toolbar(): React.JSX.Element {
           type="button"
           className="addr"
           title={activeTab?.url ?? ''}
-          onClick={() => setDraft(activeTab?.url ?? '')}
+          onClick={() => {
+            focusPane()
+            setDraft(activeTab?.url ?? '')
+          }}
         >
           <Address tab={activeTab} />
         </button>
@@ -139,33 +182,87 @@ export function Toolbar(): React.JSX.Element {
         ここにアイコンを出すと「押せるのに何も起きない」ので、そもそも出さない
         （partition が違うため、押しても通常セッションのタブを対象にしてしまう）。
       */}
-      {isPrivate ? null : <browser-action-list partition={PAGE_PARTITION} />}
-      <button
-        type="button"
-        className="icon"
-        title="ダウンロード（⌘⇧J）"
-        onClick={() => void window.nemo.setOverlay('downloads')}
-      >
-        ↓{shared.downloads.some((item) => item.state === 'progressing') ? <span className="badge" /> : null}
-      </button>
-      <button
-        type="button"
-        className="icon"
-        title="履歴とアーカイブ（⌘Y）"
-        onClick={() => void window.nemo.setOverlay('library')}
-      >
-        🕘
-      </button>
-      <button
-        type="button"
-        className="icon"
-        title="新規タブ（⌘T）"
-        onClick={() => void window.nemo.setOverlay('command-bar')}
-      >
-        ＋
-      </button>
+      {/*
+        拡張・ダウンロード・履歴・＋ は**ウィンドウ共通**なので左だけに置く。
+        特に `<browser-action-list>` は、同じ partition のものを 2 枚出すと
+        popup がどちらの View に属するのか曖昧になり、位置合わせ（`popupAnchorOffset`）が
+        当てにならなくなる。
+      */}
+      {pane === 'left' ? (
+        <>
+          {isPrivate ? null : <browser-action-list partition={PAGE_PARTITION} />}
+          <button
+            type="button"
+            className="icon"
+            title="ダウンロード（⌘⇧J）"
+            onClick={() => void window.nemo.setOverlay('downloads')}
+          >
+            ↓
+            {shared.downloads.some((item) => item.state === 'progressing') ? (
+              <span className="badge" />
+            ) : null}
+          </button>
+          <button
+            type="button"
+            className="icon"
+            title="履歴とアーカイブ（⌘Y）"
+            onClick={() => void window.nemo.setOverlay('library')}
+          >
+            🕘
+          </button>
+          <button
+            type="button"
+            className="icon"
+            title="新規タブ（⌘T）"
+            onClick={() => void window.nemo.setOverlay('command-bar')}
+          >
+            ＋
+          </button>
+        </>
+      ) : null}
+      {/*
+        このペインを閉じる。**⌘W とは別経路**にする。
+        ⌘W は「Peek が出ていれば Peek を閉じる」規則を持っているが、
+        こちらは担当ペインのタブそのものを閉じる（浮いている Peek は
+        `removeTab` が親と一緒に閉じるので、ここで書き足す処理は無い）。
+      */}
+      {inSplit ? (
+        <button
+          type="button"
+          className="icon"
+          title="このペインを閉じる"
+          onClick={() => {
+            // **ペイン固有の操作なのでフォーカスも移す**（戻る / 進む / リロード /
+            // アドレスバーと同じ規則）。閉じる直前に担当ペインへ移しておかないと、
+            // 相方に Peek が出ている場面で「どのタブの Peek を巻き添えにするか」が
+            // 押した側と食い違う。
+            focusPane()
+            if (activeTab) void window.nemo.closeTab(activeTab.key)
+          }}
+        >
+          ✕
+        </button>
+      ) : null}
     </div>
   )
+}
+
+/**
+ * このツールバーが担当するタブを決める。**規則はここ 1 つ**。
+ *
+ * 分割していなければ左が `activeTabKey`・右は担当なし（View ごと隠れる）。
+ * 分割していれば `splitSide` と `splitPartnerKey` から左右を導く。
+ */
+function paneTab(state: ReturnType<typeof useWindowState>, pane: 'left' | 'right'): TabState | null {
+  if (!state) return null
+  const active = state.tabs.find((tab) => tab.key === state.activeTabKey) ?? null
+  if (!active) return null
+  if (active.splitSide === null) return pane === 'left' ? active : null
+  const partner = state.tabs.find((tab) => tab.key === active.splitPartnerKey) ?? null
+  if (!partner) return pane === 'left' ? active : null
+  const left = active.splitSide === 'left' ? active : partner
+  const right = active.splitSide === 'left' ? partner : active
+  return pane === 'left' ? left : right
 }
 
 /**

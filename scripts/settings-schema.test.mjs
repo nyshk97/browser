@@ -322,6 +322,103 @@ test('会議の小窓の位置は壊れていれば null に落ちる', () => {
   assert.deepEqual(normalizeCallWindow({ position: { x: 'a', y: 1, displayId: 1 } }), { position: null })
 })
 
+/* ------------------------------------------------------------------ *
+ * セッション（分割ビューの組）
+ * ------------------------------------------------------------------ */
+
+/** タブ N 本ぶんのセッション（URL は `https://t<i>.example.com/`）。 */
+function sessionWith(tabs, splits) {
+  return normalizeSession({
+    windows: [{ bounds: null, activeIndex: 0, tabs, splits }],
+    cleanExit: true,
+    savedAt: 1
+  })
+}
+
+/** `https?:` の一時タブを n 本。 */
+function plainTabs(n) {
+  return Array.from({ length: n }, (_, i) => ({
+    url: `https://t${i}.example.com/`,
+    title: `t${i}`,
+    pinnedId: null,
+    lastActiveAt: 1
+  }))
+}
+
+test('版 3 以前（splits なし）は分割なしに倒す', () => {
+  const result = normalizeSession({
+    windows: [{ bounds: null, activeIndex: 0, tabs: plainTabs(2) }],
+    cleanExit: true,
+    savedAt: 1
+  })
+  assert.deepEqual(result.windows[0].splits, [])
+})
+
+test('正しい splits はそのまま残る', () => {
+  const result = sessionWith(plainTabs(4), [
+    [0, 1],
+    [2, 3]
+  ])
+  assert.deepEqual(result.windows[0].splits, [
+    [0, 1],
+    [2, 3]
+  ])
+})
+
+test('交差する組（非隣接）も有効な形として残る', () => {
+  // 通常操作では作れない形だが、`normalizeSession` は通す
+  // （復元側が「先に全部解決してから並べ替える」ことの前提）
+  const result = sessionWith(plainTabs(4), [
+    [0, 2],
+    [1, 3]
+  ])
+  assert.deepEqual(result.windows[0].splits, [
+    [0, 2],
+    [1, 3]
+  ])
+})
+
+test('壊れた splits は落とす（範囲外・左右同一・非整数・形が違う）', () => {
+  const result = sessionWith(plainTabs(3), [[0, 9], [1, 1], ['a', 2], [0], null, [0, 2]])
+  assert.deepEqual(result.windows[0].splits, [[0, 2]])
+})
+
+test('同じタブに触れる組は競合した分を全部落とす（先着を残さない）', () => {
+  // 先着を残すと結果が記述順に依存し、読み直したときの期待値が決まらない
+  const result = sessionWith(plainTabs(4), [
+    [0, 1],
+    [1, 2],
+    [3, 0]
+  ])
+  assert.deepEqual(result.windows[0].splits, [])
+})
+
+test('除外されたタブがあっても splits の添字は読み替えられる', () => {
+  // ピン留めタブ（版 2 以前）と不正 URL を**組の前と間**に混ぜる。
+  // 読み替えを間違えると**有効な組が別のタブに繋がる**（一番危険なのに、
+  // 無効値の検査だけでは検知できない）。
+  const tabs = [
+    { url: 'https://pinned.example.com/', title: 'p', pinnedId: 'pin-1', lastActiveAt: 1 }, // 落ちる
+    { url: 'https://left.example.com/', title: 'L', pinnedId: null, lastActiveAt: 1 }, // → 0
+    { url: 'file:///etc/passwd', title: 'x', pinnedId: null, lastActiveAt: 1 }, // 落ちる
+    { url: 'https://right.example.com/', title: 'R', pinnedId: null, lastActiveAt: 1 } // → 1
+  ]
+  const result = sessionWith(tabs, [[1, 3]])
+  const win = result.windows[0]
+  assert.deepEqual(win.splits, [[0, 1]])
+  // **URL で突き合わせる**（添字だけ見ても繋ぎ間違いは分からない）
+  assert.equal(win.tabs[win.splits[0][0]].url, 'https://left.example.com/')
+  assert.equal(win.tabs[win.splits[0][1]].url, 'https://right.example.com/')
+})
+
+test('除外されたタブを指す組は丸ごと落とす', () => {
+  const tabs = [
+    { url: 'https://pinned.example.com/', title: 'p', pinnedId: 'pin-1', lastActiveAt: 1 },
+    { url: 'https://a.example.com/', title: 'a', pinnedId: null, lastActiveAt: 1 }
+  ]
+  assert.deepEqual(sessionWith(tabs, [[0, 1]]).windows[0].splits, [])
+})
+
 test('会議の小窓の位置は整数へ丸めて読む', () => {
   assert.deepEqual(normalizeCallWindow({ position: { x: 10.4, y: 20.6, displayId: 7 } }), {
     position: { x: 10, y: 21, displayId: 7 }

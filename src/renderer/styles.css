@@ -121,6 +121,14 @@ body[data-view='toolbar'] {
   padding-left: 82px;
 }
 
+/*
+ * 分割中の左ペインは窓の左端から `SPLIT_INSET`（8px）右にある。
+ * 信号機ぶんの余白はウィンドウ左端が基準なので、その 8px を引く。
+ */
+.toolbar.inset.inset-split {
+  padding-left: 74px;
+}
+
 .toolbar button,
 .toolbar .addr,
 .toolbar browser-action-list {
@@ -551,6 +559,120 @@ body[data-view='toolbar'] {
 .row .x:hover {
   opacity: 1;
   background: rgba(255, 255, 255, 0.12);
+}
+
+/* ------------------------------------------------------------------ *
+ * 分割ビュー（結合行）— DESIGN.md「分割ビュー」
+ * ------------------------------------------------------------------ */
+
+/*
+ * 左右に並べた 2 本を表す 1 行。**通常のタブ行と同じ 40px**（案A）。
+ * 器の中に小さな面を 2 つ並べ、行の律動を崩さない。
+ */
+.split-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: var(--nemo-row-h);
+  padding: 3px;
+  border-radius: var(--nemo-radius);
+  color: #c2c2ce;
+  transition: background 0.12s;
+}
+
+/* そのペアが**画面に出ている**とき（出ていなければ通常行と同じ地） */
+.split-row.active {
+  background: var(--nemo-surface-hi);
+  color: #fff;
+}
+
+.split-row .chip {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 5px 0 7px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.05);
+  position: relative;
+}
+
+.split-row .chip:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/*
+ * フォーカスを持っている側。**面を明るくするだけでなく左端にアクセントの縦バー**を出す。
+ * 「どちらも見えている」と「どちらを操作中か」を別の記号で分ける
+ * （ペインの外周に出す 2px の枠と色を揃える）。
+ */
+.split-row .chip.focus {
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 2px 0 0 var(--nemo-accent);
+}
+
+.split-row .chip.asleep {
+  opacity: 0.45;
+}
+
+.split-row .chip .tt {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.split-row .chip .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--nemo-accent);
+  flex: 0 0 auto;
+}
+
+.split-row .chip .mark {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* チップは狭いので × も一回り小さくする（行の × は 26px） */
+.split-row .chip .x {
+  opacity: 0;
+  width: 20px;
+  height: 20px;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  flex: 0 0 auto;
+  margin-right: -3px;
+  color: var(--nemo-ink-dim);
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+.split-row:hover .chip .x {
+  opacity: 0.75;
+}
+
+.split-row .chip .x:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/*
+ * 分割を受け付けるドロップ先。**行の中央帯だけ**に出る
+ * （上下端は将来の並べ替え用に空けてある死に帯で、受け皿を出さない）。
+ */
+.row.drop-split {
+  box-shadow: inset 0 0 0 2px var(--nemo-accent);
+  background: rgba(91, 157, 255, 0.12);
 }
 
 /*

@@ -13,6 +13,7 @@ import { registerIpcHandlers, setLoadedExtensions } from './ipc.js'
 import {
   collectSession,
   createTab,
+  linkSplit,
   createWindow,
   findWindowIdForPageContents,
   markQuitting,
@@ -229,8 +230,28 @@ app
               lastActiveAt: tab.lastActiveAt
             })
           })
-          const active = win.tabs[saved.activeIndex] ?? win.tabs[0]
-          if (active) selectTab(win, active.key)
+          /*
+           * 分割の関係だけを繋ぐ。**通常の `splitTabs` は使わない** ——
+           * あれは右を選択して `applyVisibility()` を通すので、組の数だけ
+           * WebContents が起きてしまい、「復元直後は寝かせたまま」が壊れる
+           * （`lastActiveAt` も現在時刻に上書きされる）。
+           *
+           * **添字は全部まとめて先に解決してから繋ぐ**。1 組ずつ
+           * 「添字を引く → 並べ替える」で処理すると、最初の並べ替えで
+           * 後続の組の添字が別のタブを指す（`[[0,2],[1,3]]` のような
+           * 交差する組で壊れる。`normalizeSession` は非隣接の組も通す）。
+           * アクティブタブも並べ替えの前に控えておく。
+           */
+          const activeBefore = win.tabs[saved.activeIndex] ?? win.tabs[0] ?? null
+          const pairs = saved.splits.flatMap(([leftIndex, rightIndex]) => {
+            const left = win.tabs[leftIndex]
+            const right = win.tabs[rightIndex]
+            return left && right ? [[left, right] as const] : []
+          })
+          for (const [left, right] of pairs) linkSplit(win, left, right)
+
+          // 選択は**最後に一度だけ**
+          if (activeBefore) selectTab(win, activeBefore.key)
           win.layout()
         })
       }

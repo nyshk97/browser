@@ -251,6 +251,9 @@ export function watchServiceWorkerStatus(session: Electron.Session): void {
  * （`PopupView.updatePosition`）。アイコンはサイドバーの右にある
  * ツールバー View に載っているので、足し戻さないとサイドバー幅ぶん
  * 左（＝サイドバーの上）にずれて出る。
+ *
+ * **サイドバー幅を直接使わない**。分割中は左ペインの外周余白ぶん
+ * ツールバーがさらに右にいるので、View の実際の左端を聞く。
  */
 function popupAnchorOffset(popupWindow: Electron.BrowserWindow): number {
   const parent = popupWindow.getParentWindow()
@@ -258,7 +261,7 @@ function popupAnchorOffset(popupWindow: Electron.BrowserWindow): number {
   const win = findWindowByBaseWindow(parent)
   // 小窓は拡張アイコンを持たない（そもそも popup が出ない）
   if (!win || win.kind === 'mini') return 0
-  return win.sidebarWidth
+  return win.toolbarOriginX
 }
 
 /** popup を View のオフセットぶんずらし、画面（work area）からはみ出していたら押し戻す。 */

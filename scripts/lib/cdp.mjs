@@ -84,7 +84,10 @@ export async function connectUi(cdp, view = 'sidebar', options = {}) {
   // 素直に先頭を拾うと、検証が**シークレットウィンドウを操作してしまう**
   // （そこで作ったタブはセッションに保存されないので、後の復元検証が落ちる。実際に踏んだ）。
   // 明示的に欲しいときは `includePrivate: true` を渡す。
-  const session = await connectTo(cdp, `view=${view}`, {
+  // `urlPart` を渡すと、そちらで target を選ぶ
+  // （`?view=toolbar&window=1&pane=right` のように `view=` の直後に別のパラメータが
+  // 挟まる URL は `view=toolbar&pane=right` では一致しないため）。
+  const session = await connectTo(cdp, options.urlPart ?? `view=${view}`, {
     exclude: options.includePrivate ? null : 'private=1',
     ...options
   })

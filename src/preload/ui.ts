@@ -13,6 +13,7 @@ import type {
   Prompt,
   PromptAnswer,
   SharedState,
+  SplitDiagnostics,
   Suggestion,
   SwitcherState,
   WindowState
@@ -59,6 +60,18 @@ const api: NemoUiApi = {
   movePinned: (id, parentId, index) =>
     ipcRenderer.invoke('nemo:move-pinned', id, parentId, index) as Promise<void>,
   moveFavorite: (id, index) => ipcRenderer.invoke('nemo:move-favorite', id, index) as Promise<void>,
+
+  splitTabs: (leftKey, rightKey) => ipcRenderer.invoke('nemo:split-tabs', leftKey, rightKey) as Promise<void>,
+  separateSplit: (key) => ipcRenderer.invoke('nemo:separate-split', key) as Promise<void>,
+
+  /*
+   * 自走検証専用。**本番ではハンドラが登録されていない**ので invoke が reject する。
+   * 「使えないなら null / false」に倒して、UI から誤って呼ばれても壊れないようにする。
+   */
+  splitDiagnostics: () =>
+    ipcRenderer.invoke('nemo:split-diagnostics').catch(() => null) as Promise<SplitDiagnostics | null>,
+  runCommandForVerify: (command) =>
+    ipcRenderer.invoke('nemo:run-command-for-verify', command).catch(() => false) as Promise<boolean>,
 
   promoteForegroundView: () => ipcRenderer.invoke('nemo:promote-foreground-view') as Promise<void>,
   closePeek: () => ipcRenderer.invoke('nemo:close-peek') as Promise<void>,

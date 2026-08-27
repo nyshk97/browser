@@ -1,5 +1,6 @@
 import {
   BaseWindow,
+  View,
   WebContentsView,
   app,
   dialog,
@@ -58,6 +59,7 @@ import { getUpdateState, onUpdateChanged } from './updater.js'
 import {
   getLiveFolderState,
   initLiveFolders,
+  isLiveFolderTabUrl,
   markLiveFolderRead,
   onLiveFolderChanged,
   stopLiveFolders
@@ -68,6 +70,7 @@ import type {
   Prompt,
   RemovedDefinition,
   SharedState,
+  SplitDiagnostics,
   TabState,
   WindowState
 } from '../shared/types.js'
@@ -117,6 +120,33 @@ const PEEK_PLACEHOLDER_TIMEOUT = 8000
 const PEEK_TOOL_BAND = 42
 /** 小窓の上部バーの高さ（DESIGN.md「小窓」と一致させる）。 */
 const MINI_BAR_HEIGHT = 38
+
+/* 分割ビュー（DESIGN.md「分割ビュー」と一致させる）。 */
+/** 左右のペインのあいだ。 */
+const SPLIT_GAP = 8
+/** ページ領域の外周の余白。**分割中だけ**空ける（単独表示は今までどおりベタ塗り）。 */
+const SPLIT_INSET = 8
+/**
+ * ペインの角丸。
+ *
+ * **0 で確定している**。`View.setBorderRadius()` はその View 自身にしか効かず、
+ * 子の `WebContentsView` はクリップされない（`scripts/spike-split-chrome.mjs` で実測）。
+ * ページだけを丸めるとツールバーとの継ぎ目にえぐれが出るので、
+ * **その見た目を取るくらいなら角丸を捨てる**という判断（DESIGN.md の決定表）。
+ */
+const SPLIT_RADIUS = 0
+/** フォーカス中のペインの外周に出す枠の太さ。 */
+const SPLIT_FOCUS_RING = 2
+/** フォーカス枠の色（`--nemo-accent` の実値）。 */
+const SPLIT_FOCUS_COLOR = '#5b9dff'
+/**
+ * ツールバーの地色（`--nemo-sidebar` の実値）。
+ *
+ * 右ペインのツールバーは**遅延生成して同じ `layout()` の中で表示する**ので、
+ * `loadURL()` が終わるまでの数フレームは中身が無い。敷いておかないと
+ * WebContents の既定色（白）が出て、初めて分割を作った瞬間だけ帯が白く光る。
+ */
+const TOOLBAR_GROUND_COLOR = '#1b1b20'
 
 /**
  * ページ側 WebContents の設定。
@@ -345,15 +375,17 @@ export type OverlayKind =
 /**
  * オーバーレイの種類ごとに、UI View が受け取る矩形を決める。
  *
- * `toolbarHeight` は**ページ領域の上端**（アドレスバーの下）。モーダル以外は
- * ここより下に置く —— 上に重ねるとアドレスバーが隠れ、「今どのページか」が
- * 見えないままダイアログに答えることになる。小窓はツールバーを持たないので 0。
+ * **`pageTop` は「ページ領域の上端」**（アドレスバーの下。ツールバーの高さそのものではない）。
+ * モーダル以外はここより下に置く —— 上に重ねるとアドレスバーが隠れ、
+ * 「今どのページか」が見えないままダイアログに答えることになる。
+ * 小窓はツールバーを持たないので 0。**分割中は外周余白のぶん下がる**ので、
+ * 呼び出し側が実際のペインの上端を渡す（渡さないと 8px 上へずれてツールバーに掛かる）。
  */
 function overlayBounds(
   kind: Exclude<OverlayKind, null>,
   content: { width: number; height: number },
   sidebarWidth: number,
-  toolbarHeight: number
+  pageTop: number
 ): Electron.Rectangle {
   switch (kind) {
     // モーダル。背景を暗くするため全面を覆う。
@@ -364,19 +396,19 @@ function overlayBounds(
       return { x: 0, y: 0, width: content.width, height: content.height }
     case 'find': {
       const width = Math.min(460, Math.max(content.width - sidebarWidth - 24, 240))
-      return { x: content.width - width - 12, y: toolbarHeight + 12, width, height: 68 }
+      return { x: content.width - width - 12, y: pageTop + 12, width, height: 68 }
     }
     case 'prompt': {
       const width = Math.min(560, Math.max(content.width - sidebarWidth - 24, 320))
-      return { x: sidebarWidth + 12, y: toolbarHeight + 12, width, height: 220 }
+      return { x: sidebarWidth + 12, y: pageTop + 12, width, height: 220 }
     }
     case 'downloads': {
       const width = 380
       return {
         x: Math.max(content.width - width - 12, 0),
-        y: toolbarHeight + 12,
+        y: pageTop + 12,
         width,
-        height: Math.max(Math.min(460, content.height - toolbarHeight - 24), 120)
+        height: Math.max(Math.min(460, content.height - pageTop - 24), 120)
       }
     }
     // ライブラリと設定はページの上に大きく重ねる（別ウィンドウにしない）。
@@ -386,8 +418,8 @@ function overlayBounds(
     case 'settings': {
       const margin = 24
       const width = Math.min(920, Math.max(content.width - sidebarWidth - margin * 2, 360))
-      const height = Math.max(content.height - toolbarHeight - margin * 2, 240)
-      return { x: sidebarWidth + margin, y: toolbarHeight + margin, width, height }
+      const height = Math.max(content.height - pageTop - margin * 2, 240)
+      return { x: sidebarWidth + margin, y: pageTop + margin, width, height }
     }
   }
 }
@@ -406,6 +438,39 @@ function peekBounds(page: Electron.Rectangle): Electron.Rectangle {
     y: page.y + Math.round((page.height - height) / 2),
     width,
     height
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 分割ビュー（2 ペイン）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 左右に並べた 2 本。
+ *
+ * **左右を別々のフィールドで持たない**。両方のタブが同じインスタンスを指し、
+ * 「自分がどちら側か」はここから導出する。2 つのフィールドに分けると
+ * 片方だけ更新して食い違う余地が生まれる（Peek の親子で踏んだのと同じ形）。
+ *
+ * 分割に入れるのは**一時タブだけ**（ピン留め / Favorites / Live Folder は対象外）で、
+ * 1 本が入れるペアは 1 つまで。3 つ以上は作らない。
+ */
+export class SplitPair {
+  constructor(
+    readonly left: NemoTab,
+    readonly right: NemoTab
+  ) {}
+
+  sideOf(tab: NemoTab): 'left' | 'right' | null {
+    if (tab === this.left) return 'left'
+    if (tab === this.right) return 'right'
+    return null
+  }
+
+  partnerOf(tab: NemoTab): NemoTab | null {
+    if (tab === this.left) return this.right
+    if (tab === this.right) return this.left
+    return null
   }
 }
 
@@ -434,6 +499,18 @@ export class NemoTab {
   peek: NemoTab | null = null
   /** 自分が Peek なら、その親タブ。通常タブなら `null`。 */
   peekOf: NemoTab | null = null
+  /**
+   * 左右に並べている相手との関係。分割していなければ `null`。
+   * **相方と同じインスタンスを共有する**（`SplitPair` の JSDoc を参照）。
+   * 解くのは `removeTab` / `separateSplit` の 2 か所だけ。
+   */
+  split: SplitPair | null = null
+  /**
+   * 「このタブをクリックしたらフォーカスを移す」ための購読の解除関数。
+   * **見えている分割の 2 本にだけ付ける**（`applyVisibility()` が管理）。
+   * `input-event` はマウス移動でも飛ぶので、常時付けっぱなしにはしない。
+   */
+  paneFocusOff: (() => void) | null = null
   /**
    * Peek で、**まだ中身のドキュメントが来ていない**。
    *
@@ -546,6 +623,15 @@ export class NemoTab {
     this.pendingUrl = this.url
     this.view = null
     this.find = null
+    // ペインのフォーカス購読は**この WebContents に張ってある**ので、ここで落とす。
+    // 今は「見えていないと寝ない」ので、寝る前の非表示化で `syncPaneFocusWatchers` が
+    // 既に外している（＝いまは踏まない）。ただし残ったまま起き直すと
+    // 再購読条件（`!tab.paneFocusOff`）に引っかかって新しい WebContents へ張り直されず、
+    // そのペインをクリックしてもフォーカスが移らなくなる。
+    // `removeTab` / `moveTabToWindow` と同じ後始末をここにも置いて、
+    // 寝る条件を将来触ったときに黙って壊れないようにする。
+    this.paneFocusOff?.()
+    this.paneFocusOff = null
     this.window.baseWindow.contentView.removeChildView(view)
     if (!wc.isDestroyed()) {
       if (!this.window.isPrivate) extensions?.removeTab(wc)
@@ -578,7 +664,9 @@ export class NemoTab {
       crashed: this.crashed,
       audible: wc ? wc.isCurrentlyAudible() : false,
       unread: this.unread,
-      zoomFactor: this.zoomFactor
+      zoomFactor: this.zoomFactor,
+      splitPartnerKey: this.split?.partnerOf(this)?.key ?? null,
+      splitSide: this.split?.sideOf(this) ?? null
     }
   }
 }
@@ -630,8 +718,10 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
   })
   wc.on('did-start-loading', notify)
   wc.on('did-stop-loading', () => {
-    // 非アクティブのまま読み込みが終わったら未読にする
-    if (win().activeTabKey !== tab.key) tab.unread = true
+    // **見えていない**まま読み込みが終わったら未読にする。
+    // `activeTabKey` で見ると、分割の相方は画面に出ているのに未読が付く
+    // （落とす側だけ直しても、ここで付け直されて意味が無い）。
+    if (!win().visibleTabKeys.has(tab.key)) tab.unread = true
     notify()
   })
   // 会議の検知は **`dom-ready` / `did-navigate` / `did-navigate-in-page` の3つ**で拾う。
@@ -980,6 +1070,16 @@ export class NemoWindow {
    */
   private peekChromeViewRef: WebContentsView | null = null
   private emptyViewRef: WebContentsView | null = null
+  /**
+   * 右ペインのツールバー。**分割を初めて作るときに作る**。
+   * 一度作ったら捨てず、分割していない間は隠すだけにする。
+   */
+  private splitToolbarViewRef: WebContentsView | null = null
+  /**
+   * フォーカス中ペインの外周に出す枠。`WebContents` を持たない素の `View`。
+   * ページの**後ろ**に敷いて 2px はみ出させる（前面に置くとクリックを遮る）。
+   */
+  private focusRingViewRef: View | null = null
   readonly tabs: NemoTab[] = []
   activeTabKey: string | null = null
   sidebarVisible: boolean
@@ -1079,11 +1179,12 @@ export class NemoWindow {
   }
 
   /** UI View を作る（生成とナビゲーション防御は `ui-view.ts` に寄せてある）。 */
-  private createUiView(view: UiViewKind): WebContentsView {
+  private createUiView(view: UiViewKind, pane?: 'right'): WebContentsView {
     return createUiView({
       view,
       windowId: this.id,
       isPrivate: this.isPrivate,
+      ...(pane ? { pane } : {}),
       onLoad: () => this.onUiViewLoaded(view)
     })
   }
@@ -1187,6 +1288,45 @@ export class NemoWindow {
     return view
   }
 
+  /**
+   * 右ペインのツールバー（`?view=toolbar&pane=right`）。
+   * 分割を使わないウィンドウで WebContents を1つ増やさないよう、遅延生成する。
+   */
+  ensureSplitToolbar(): WebContentsView {
+    if (this.splitToolbarViewRef && !this.splitToolbarViewRef.webContents.isDestroyed()) {
+      return this.splitToolbarViewRef
+    }
+    const view = this.createUiView('toolbar', 'right')
+    view.setBackgroundColor(TOOLBAR_GROUND_COLOR)
+    this.splitToolbarViewRef = view
+    this.baseWindow.contentView.addChildView(view)
+    view.setVisible(false)
+    return view
+  }
+
+  /** 既に作ってあれば右ペインのツールバー。無ければ null（作らない）。 */
+  get splitToolbarView(): WebContentsView | null {
+    const view = this.splitToolbarViewRef
+    return view && !view.webContents.isDestroyed() ? view : null
+  }
+
+  /** フォーカス枠。角丸は `SPLIT_RADIUS` より枠のぶん大きくする（角だけ太って見えないように）。 */
+  ensureFocusRing(): View {
+    if (this.focusRingViewRef) return this.focusRingViewRef
+    const view = new View()
+    view.setBackgroundColor(SPLIT_FOCUS_COLOR)
+    view.setBorderRadius(SPLIT_RADIUS + SPLIT_FOCUS_RING)
+    this.focusRingViewRef = view
+    this.baseWindow.contentView.addChildView(view)
+    view.setVisible(false)
+    return view
+  }
+
+  /** 既に作ってあればフォーカス枠。無ければ null（作らない）。 */
+  get focusRingView(): View | null {
+    return this.focusRingViewRef
+  }
+
   /** 既に作ってあれば空状態の UI View。無ければ null（作らない）。 */
   get emptyView(): WebContentsView | null {
     if (!this.emptyViewRef) return null
@@ -1198,6 +1338,10 @@ export class NemoWindow {
   private get uiContents(): WebContents[] {
     const list = [this.chromeWebContents, this.overlayWebContents]
     if (this.toolbarView) list.push(this.toolbarView.webContents)
+    // **右ペインのツールバーを忘れない**（忘れると ✕ や戻るの IPC が拒否される。
+    // Peek の暗幕で踏んだのと同じ罠）
+    const splitToolbar = this.splitToolbarView
+    if (splitToolbar) list.push(splitToolbar.webContents)
     const peek = this.peekChromeView
     if (peek) list.push(peek.webContents)
     return list.filter((contents) => !contents.isDestroyed())
@@ -1215,6 +1359,20 @@ export class NemoWindow {
     return this.sidebarVisible ? SIDEBAR_WIDTH : SIDEBAR_HIDDEN_WIDTH
   }
 
+  /**
+   * 拡張アイコンが載っているツールバー View の**左端の絶対 x**。
+   *
+   * popup は「その View のクライアント座標 + ウィンドウの左上」に置かれるので、
+   * View のオフセットを足し戻す必要がある（`extensions.ts` の `popupAnchorOffset`）。
+   * **分割中は左ペインの外周余白ぶんさらに右にいる**ので、
+   * `sidebarWidth` を返すと popup が 8px 左にずれる。
+   */
+  get toolbarOriginX(): number {
+    if (this.kind === 'mini') return 0
+    const sidebar = this.sidebarWidth
+    return this.visibleSplit ? sidebar + SPLIT_INSET : sidebar
+  }
+
   layout(): void {
     if (this.destroyed || this.baseWindow.isDestroyed()) return
     const { width, height } = this.baseWindow.getContentBounds()
@@ -1230,35 +1388,108 @@ export class NemoWindow {
     this.chromeView.setBounds({ x: 0, y: 0, width: sidebar, height })
     this.chromeView.setVisible(this.sidebarVisible)
 
+    /** サイドバーの右側すべて（ツールバーの行を含む）。ペインの外枠はここから割る。 */
+    const area = {
+      x: sidebar,
+      y: 0,
+      width: Math.max(width - sidebar, 0),
+      height: Math.max(height, 0)
+    }
+    const toolbarHeight = this.toolbarView ? TOOLBAR_HEIGHT : 0
+    const pair = this.visibleSplit
+    const active = this.getActiveTab()
+
     /*
-     * アドレスバーはページ領域の上端（サイドバーの右）。
+     * 分割していないときの矩形（今までどおり）。
+     * アドレスバーはページ領域の上端いっぱい、ページはその下いっぱい。
      * **サイドバーを隠したら左端まで伸ばす** —— サイドバーを隠すボタンも
      * ここにあるので、伸ばさないと戻す導線ごと消える。
      */
-    const toolbarHeight = this.toolbarView ? TOOLBAR_HEIGHT : 0
+    const singleToolbar = { x: area.x, y: 0, width: area.width, height: toolbarHeight }
+    const singlePage = {
+      x: area.x,
+      y: toolbarHeight,
+      width: area.width,
+      height: Math.max(height - toolbarHeight, 0)
+    }
+
+    /** ペインごとの矩形。分割していなければ null。 */
+    const panes = pair
+      ? {
+          left: paneInnerBounds(paneOuterBounds(area, 'left')),
+          right: paneInnerBounds(paneOuterBounds(area, 'right'))
+        }
+      : null
+    const outers = pair
+      ? { left: paneOuterBounds(area, 'left'), right: paneOuterBounds(area, 'right') }
+      : null
+
+    /** そのタブが載るページの矩形。分割に関係ないタブは単独表示と同じ場所へ置く。 */
+    const pageBoundsFor = (tab: NemoTab): Electron.Rectangle => {
+      if (!pair || !panes) return singlePage
+      if (tab === pair.left) return panes.left.page
+      if (tab === pair.right) return panes.right.page
+      return singlePage
+    }
+
     if (this.toolbarView) {
-      this.toolbarView.setBounds({
-        x: sidebar,
-        y: 0,
-        width: Math.max(width - sidebar, 0),
-        height: toolbarHeight
-      })
+      this.toolbarView.setBounds(panes ? panes.left.toolbar : singleToolbar)
       this.toolbarView.setVisible(true)
+    }
+    // 右ペインのツールバーは分割中だけ。**遅延生成したものを隠すだけ**にして捨てない
+    if (panes) {
+      const right = this.ensureSplitToolbar()
+      right.setBounds(panes.right.toolbar)
+      right.setVisible(true)
+    } else {
+      this.splitToolbarView?.setVisible(false)
+    }
+
+    // フォーカス中ペインの外周に枠を出す。**ページの後ろに敷く**
+    // （前面に置くとページのクリックを遮る）。分割していなければ必ず隠す。
+    if (pair && outers && active) {
+      const outer = active === pair.right ? outers.right : outers.left
+      const ring = this.ensureFocusRing()
+      ring.setBounds({
+        x: outer.x - SPLIT_FOCUS_RING,
+        y: outer.y - SPLIT_FOCUS_RING,
+        width: outer.width + SPLIT_FOCUS_RING * 2,
+        height: outer.height + SPLIT_FOCUS_RING * 2
+      })
+      ring.setVisible(true)
+      this.baseWindow.contentView.removeChildView(ring)
+      this.baseWindow.contentView.addChildView(ring)
+    } else {
+      this.focusRingView?.setVisible(false)
     }
 
     // 表示・非表示は setVisible で制御し、bounds は全タブに与えておく。
     // バックグラウンドタブが 0x0 のままだと、選択した瞬間にレイアウトが走って
     // 一瞬崩れて見えるうえ、chrome.tabs のサイズも 0 になる。
-    const pageBounds = {
-      x: sidebar,
-      y: toolbarHeight,
-      width: Math.max(width - sidebar, 0),
-      height: Math.max(height - toolbarHeight, 0)
-    }
-    const peekArea = peekBounds(pageBounds)
+    const pageBounds = panes && active ? pageBoundsFor(active) : singlePage
     for (const tab of this.tabs) {
-      // Peek はページ領域の中央に小さく置く（ページはページ領域いっぱい）
-      tab.view?.setBounds(tab.peekOf ? peekArea : pageBounds)
+      // Peek は**親が載っているペインの**ページ領域の中央に小さく置く
+      const host = tab.peekOf ?? tab
+      tab.view?.setBounds(tab.peekOf ? peekBounds(pageBoundsFor(host)) : pageBoundsFor(tab))
+    }
+
+    // 分割中のツールバーとページは z 順を組み直す（タブを作ると子の順序が変わる）
+    if (pair && panes) {
+      for (const tab of [pair.left, pair.right]) {
+        const view = tab.view
+        if (!view) continue
+        this.baseWindow.contentView.removeChildView(view)
+        this.baseWindow.contentView.addChildView(view)
+      }
+      if (this.toolbarView) {
+        this.baseWindow.contentView.removeChildView(this.toolbarView)
+        this.baseWindow.contentView.addChildView(this.toolbarView)
+      }
+      const right = this.splitToolbarView
+      if (right) {
+        this.baseWindow.contentView.removeChildView(right)
+        this.baseWindow.contentView.addChildView(right)
+      }
     }
 
     // タブが 1 つも無いときだけ、ページ領域に空状態を敷く（DESIGN.md「空状態」）。
@@ -1277,11 +1508,12 @@ export class NemoWindow {
     // z 順は毎回作り直す。**タブを作ると子 View の順序が変わる**ので、
     // 「一度並べれば済む」ようには書けない。
     // 下から: ページ → Peek の暗幕 → Peek 本体 → オーバーレイ。
-    const activePeek = this.getActiveTab()?.peek ?? null
+    const activePeek = active?.peek ?? null
     const peekChrome = this.peekChromeView
     if (activePeek) {
       const chrome = this.ensurePeekChrome()
-      chrome.setBounds(pageBounds)
+      // 暗幕は**そのペインのページ領域だけ**を覆う（外枠を使うとツールバーまで隠れる）
+      chrome.setBounds(active ? pageBoundsFor(active) : singlePage)
       chrome.setVisible(true)
       this.baseWindow.contentView.removeChildView(chrome)
       this.baseWindow.contentView.addChildView(chrome)
@@ -1296,13 +1528,76 @@ export class NemoWindow {
     }
 
     if (this.overlay) {
-      this.overlayView.setBounds(overlayBounds(this.overlay, { width, height }, sidebar, toolbarHeight))
+      // 第4引数は**ページの上端**。分割中は外周余白のぶん下がるので、そのぶんを渡す
+      // （渡さないと検索バー・ダイアログ・ダウンロードがツールバーに掛かる）。
+      this.overlayView.setBounds(overlayBounds(this.overlay, { width, height }, sidebar, pageBounds.y))
       this.overlayView.setVisible(true)
       // オーバーレイは必ず最前面にする（タブを作ると子 View の順序が変わる）
       this.baseWindow.contentView.removeChildView(this.overlayView)
       this.baseWindow.contentView.addChildView(this.overlayView)
     } else {
       this.overlayView.setVisible(false)
+    }
+  }
+
+  /**
+   * レイアウトの実測値（**自走検証専用**）。
+   *
+   * View の bounds は外から測れないので、機械検証はここが唯一の情報源。
+   * ハンドラを生やすかどうかは `ipc.ts` 側のゲートが決める（ここは値を作るだけ）。
+   */
+  splitDiagnostics(): SplitDiagnostics {
+    const { width, height } = this.baseWindow.getContentBounds()
+    const sidebar = this.sidebarWidth
+    // ペインを置いた領域。**ウィンドウの実寸とサイドバーの実幅から出す**
+    // （`paneOuterBounds()` は通さない。通すと外周余白の検算が自己参照になる）
+    const area = { x: sidebar, y: 0, width: Math.max(width - sidebar, 0), height }
+    const pair = this.visibleSplit
+    const active = this.getActiveTab()
+
+    const panes: SplitDiagnostics['panes'] = []
+    let focusRing: SplitDiagnostics['focusRing'] = null
+    if (pair) {
+      for (const side of ['left', 'right'] as const) {
+        const tab = side === 'left' ? pair.left : pair.right
+        /*
+         * **View から実測で読む**。`paneOuterBounds()` / `paneInnerBounds()` を
+         * ここで呼び直すと、`layout()` が `setBounds` を 1 度も呼ばなくても
+         * 自走検証の「隔間 8px」「外周余白 8px」「ツールバーとページの幅が外枠と一致」が
+         * 全部 PASS してしまう（同じ純関数を 2 回呼んで比べているだけになる）。
+         */
+        const toolbarView = side === 'left' ? this.toolbarView : this.splitToolbarView
+        const toolbar = toolbarView?.getBounds() ?? null
+        const page = tab.view?.getBounds() ?? null
+        // 外枠は実測のツールバーとページの和（＝ 2 つが縦に積まれている前提そのものを検算できる）
+        const outer =
+          toolbar && page
+            ? {
+                x: Math.min(toolbar.x, page.x),
+                y: Math.min(toolbar.y, page.y),
+                width: Math.max(toolbar.x + toolbar.width, page.x + page.width) - Math.min(toolbar.x, page.x),
+                height:
+                  Math.max(toolbar.y + toolbar.height, page.y + page.height) - Math.min(toolbar.y, page.y)
+              }
+            : (toolbar ?? page)
+        if (!outer || !toolbar || !page) continue
+        panes.push({ side, tabKey: tab.key, outer, toolbar, page })
+      }
+      const ring = this.focusRingView
+      if (ring && ring.getVisible()) focusRing = ring.getBounds()
+    }
+
+    const peekTab = active?.peek ?? null
+    const scrim = this.peekChromeView
+    return {
+      mediaSourceId: this.baseWindow.getMediaSourceId(),
+      area,
+      panes,
+      focusRing,
+      focusRingVisible: this.focusRingView?.getVisible() ?? false,
+      peek: peekTab?.view?.getVisible() ? peekTab.view.getBounds() : null,
+      peekScrim: scrim?.getVisible() ? scrim.getBounds() : null,
+      overlay: this.overlayView.getVisible() ? this.overlayView.getBounds() : null
     }
   }
 
@@ -1369,24 +1664,115 @@ export class NemoWindow {
   }
 
   /**
-   * 実際に表示する View のタブ key。
+   * 実際に表示する View のタブ key。**見えるものを決める唯一の述語**。
    *
-   * **「選択中の通常タブ」と「あればその Peek」の2つ**になりうる。
-   * `activeTabKey` ただ1つではない（Peek はページの上に重ねて出す）。
+   * 中身は「選択中の通常タブ」＋「分割していればその相方」＋
+   * 「あればフォーカス中タブの Peek」の**最大3つ**。`activeTabKey` ただ1つではない。
+   *
+   * **相方の Peek は出さない**。Peek の暗幕はウィンドウに 1 枚しかないので、
+   * 2 つ同時に出すと片方が暗幕を持てない。相方の Peek はフォーカスを移したときに出る
+   * （破棄はしないので、行き来しても消えない）。
    */
   get visibleTabKeys(): Set<string> {
     const keys = new Set<string>()
     const active = this.getActiveTab()
     if (!active) return keys
     keys.add(active.key)
+    const partner = active.split?.partnerOf(active)
+    if (partner) keys.add(partner.key)
     // 中身がまだ来ていない Peek は出さない（プレースホルダーに任せる）
     if (active.peek && !active.peek.peekAwaitingDocument) keys.add(active.peek.key)
     return keys
   }
 
+  /** いま見えている分割（アクティブタブが入っているペア）。無ければ null。 */
+  get visibleSplit(): SplitPair | null {
+    return this.getActiveTab()?.split ?? null
+  }
+
+  /**
+   * `visibleTabKeys` を実際の View へ反映する。**可視状態を変える経路はここ 1 本**。
+   *
+   * 以前は `selectTab` の中に直書きされていて、`selectTab` を通らない経路
+   * （分割の生成 / 解除・Peek だけを閉じる `removeTab`）で可視状態が取り残されていた。
+   *
+   * やること:
+   * - 見えるのに寝ているタブを起こす（相方が寝ていると片側が真っ白になる）
+   * - 全タブへ `setVisible`
+   * - **`lastActiveAt` はフォーカス中のタブだけ**更新する。両方に同じ値を書くと
+   *   ⌃M の MRU 順（`lastActiveAt` の降順）で左右が同着になり、
+   *   「右ペインから別タブへ行って ⌃M」で左へ戻ってしまう。
+   *   相方が先に自動アーカイブされる問題は sweep 側（`pairLastActiveAt`）で塞ぐ
+   * - **見えているタブ全部の未読を落とす**（相方に未読ドットが残らないように）
+   * - ペインのクリックでフォーカスが移るよう、見えている分割の 2 本にだけ購読を張る
+   */
+  applyVisibility(): void {
+    if (this.destroyed) return
+    const visible = this.visibleTabKeys
+    const active = this.getActiveTab()
+
+    for (const key of visible) {
+      const tab = this.findTab(key)
+      if (tab?.asleep) {
+        tab.materialize()
+        log('tab.woke', { key: tab.key, windowId: this.id })
+      }
+    }
+    for (const tab of this.tabs) tab.view?.setVisible(visible.has(tab.key))
+
+    if (active) active.lastActiveAt = Date.now()
+
+    for (const key of visible) {
+      const tab = this.findTab(key)
+      if (!tab) continue
+      tab.unread = false
+      // **Live Folder の未読も同じ経路で落とす。** 行のクリックだけで消すと、
+      // コマンドバー・履歴・⌘数字・タブ切替から同じ URL を開いても未読が残る
+      markLiveFolderRead(tab.url)
+    }
+
+    this.syncPaneFocusWatchers()
+  }
+
+  /**
+   * ペインのクリックでフォーカスを移すための購読を張り直す。
+   *
+   * **`webContents.on('focus')` は使えない**。合成クリック（`sendInputEvent` / CDP）では
+   * native のフォーカスが移らず飛ばないので、自走検証から撃てない（スパイクで実測）。
+   * `input-event` は WebContents の入力パイプラインを通るので実クリックでも合成でも飛ぶ。
+   *
+   * ただし `input-event` は**マウス移動でも飛ぶ**ので、
+   * **見えている分割の 2 本にだけ**付けて、それ以外からは必ず外す。
+   */
+  private syncPaneFocusWatchers(): void {
+    const pair = this.visibleSplit
+    const watched = new Set(pair ? [pair.left.key, pair.right.key] : [])
+    for (const tab of this.tabs) {
+      const wc = tab.webContents
+      const wants = watched.has(tab.key) && wc !== null
+      if (wants && !tab.paneFocusOff && wc) {
+        const onInput = (_event: Electron.Event, input: Electron.InputEvent): void => {
+          if (input.type !== 'mouseDown') return
+          // 既にフォーカスがあるなら何もしない（毎クリックで再選択しない）
+          if (this.activeTabKey === tab.key) return
+          // 見えていないタブからのイベントは無視する（背面で勝手に切り替わらないように）
+          if (!this.visibleTabKeys.has(tab.key)) return
+          selectTab(this, tab.key)
+        }
+        wc.on('input-event', onInput)
+        tab.paneFocusOff = () => {
+          if (!wc.isDestroyed()) wc.off('input-event', onInput)
+        }
+      } else if (!wants && tab.paneFocusOff) {
+        tab.paneFocusOff()
+        tab.paneFocusOff = null
+      }
+    }
+  }
+
   /**
    * 実際に表示されている View のタブ key。
-   * 正常なら「選択中の通常タブ」と、あれば「その Peek」の最大2つ。
+   * 正常なら「選択中の通常タブ」「分割中ならその相方」「あればフォーカス中タブの Peek」の最大3つ。
    */
   getVisibleTabKeys(): string[] {
     return this.tabs.filter((tab) => tab.view?.getVisible()).map((tab) => tab.key)
@@ -1494,7 +1880,24 @@ export class NemoWindow {
       saved.findIndex((tab) => tab.key === this.activeTabKey),
       0
     )
-    return { bounds, tabs, activeIndex }
+    /*
+     * 分割の組。**`saved` と同じ配列の添字**で表す（`activeIndex` と揃える）。
+     *
+     * - **左右の両方が保存対象に入っている組だけ**書く。`saved` は `https?:` 以外を
+     *   落とすので、片方が `about:blank` の組をそのまま書くと `-1` を含む値を自分で作る
+     * - **`tab === pair.left` のときだけ**出す。左右の両タブが同じ `SplitPair` を
+     *   指しているので、素朴に走査すると同じ組が 2 回出て、次の起動で
+     *   自分が書いた `splits` を「添字の重複」として捨てることになる
+     */
+    const splits: [number, number][] = []
+    for (const [index, tab] of saved.entries()) {
+      const pair = tab.split
+      if (!pair || pair.left !== tab) continue
+      const rightIndex = saved.indexOf(pair.right)
+      if (rightIndex === -1) continue
+      splits.push([index, rightIndex])
+    }
+    return { bounds, tabs, activeIndex, splits }
   }
 
   destroy(): void {
@@ -1532,13 +1935,25 @@ export class NemoWindow {
       this.toolbarView,
       this.overlayView,
       this.peekChromeViewRef,
-      this.emptyViewRef
+      this.emptyViewRef,
+      // **足し忘れるとウィンドウを閉じてもレンダラプロセスが残る**（1 枚 89MB）
+      this.splitToolbarViewRef
     ]) {
       if (!view) continue
       disposeUiView(this.baseWindow.contentView, view)
     }
+    // フォーカス枠は `WebContents` を持たないので外すだけ
+    if (this.focusRingViewRef) {
+      try {
+        this.baseWindow.contentView.removeChildView(this.focusRingViewRef)
+      } catch {
+        // 親が既に壊れている（ウィンドウごと破棄された）
+      }
+    }
     this.peekChromeViewRef = null
     this.emptyViewRef = null
+    this.splitToolbarViewRef = null
+    this.focusRingViewRef = null
 
     windowsById.delete(this.id)
     // 会議タブごと消えた可能性があるので、候補と表示対象を見直す
@@ -1834,23 +2249,14 @@ export function selectTab(win: NemoWindow, key: string): void {
   // activeIndex が全部おかしくなる。拡張からの呼び返しがここに来る。
   if (tab.peekOf) tab = tab.peekOf
 
-  // sleep していたら起こす
-  if (tab.asleep) {
-    tab.materialize()
-    win.layout()
-    log('tab.woke', { key: tab.key, windowId: win.id })
-  }
-
   const already = win.activeTabKey === tab.key
   win.activeTabKey = tab.key
-  // 表示するのは「選択した通常タブ」と、あれば「その Peek」の2つ。
-  const visible = win.visibleTabKeys
-  for (const other of win.tabs) other.view?.setVisible(visible.has(other.key))
-  tab.lastActiveAt = Date.now()
-  tab.unread = false
-  // **Live Folder の未読も同じ経路で落とす。** 行のクリックだけで消すと、
-  // コマンドバー・履歴・⌘数字・タブ切替から同じ URL を開いても未読が残る
-  markLiveFolderRead(tab.url)
+  // 見えるものの決定と反映は `applyVisibility()` に一本化してある
+  // （sleep からの復帰・未読落とし・ペインのフォーカス購読も全部そこ）。
+  win.applyVisibility()
+  // **`already` でも必ずレイアウトし直す**。`applyVisibility()` が寝ていたタブを
+  // 起こしていることがあり、新しい View に bounds を配らないと 0x0 のまま出る。
+  win.layout()
 
   if (already) {
     // 既に選択済みでも、Peek の出入りで前面のページが変わっていることがある
@@ -1859,11 +2265,154 @@ export function selectTab(win: NemoWindow, key: string): void {
     return
   }
 
-  win.layout()
   syncForegroundTab(win)
   log('tab.select', { key: tab.key, windowId: win.id })
   win.pushState()
   notifyCall()
+}
+
+/**
+ * ペインの外枠（**ツールバーの行を含む**）。
+ *
+ * 今までの `pageBounds` は「共有ツールバーより下」だったので、それを左右に割っても
+ * ツールバー込みのペインにならない（左のツールバーが全幅のまま残る）。
+ * **先に外枠を 2 つ出し、その中でツールバーとページを積む**という順にする。
+ *
+ * 幅は**左が `floor`・右が残り全部**。割り切れないときの 1px は必ず右へ寄せる
+ * （丸め方を決めておかないと 1px の隙間や重なりが出る）。
+ *
+ * @param area サイドバーの右側すべて（ウィンドウ座標）
+ */
+function paneOuterBounds(area: Electron.Rectangle, side: 'left' | 'right'): Electron.Rectangle {
+  const usable = Math.max(area.width - SPLIT_INSET * 2 - SPLIT_GAP, 0)
+  const leftWidth = Math.floor(usable / 2)
+  const y = area.y + SPLIT_INSET
+  const height = Math.max(area.height - SPLIT_INSET * 2, 0)
+  if (side === 'left') {
+    return { x: area.x + SPLIT_INSET, y, width: leftWidth, height }
+  }
+  return {
+    x: area.x + SPLIT_INSET + leftWidth + SPLIT_GAP,
+    y,
+    width: Math.max(usable - leftWidth, 0),
+    height
+  }
+}
+
+/**
+ * ペインの外枠の中の内訳。**返す矩形はウィンドウ座標**
+ * （器 View を挟まないので、そのまま `contentView` の子に渡せる）。
+ */
+function paneInnerBounds(outer: Electron.Rectangle): {
+  toolbar: Electron.Rectangle
+  page: Electron.Rectangle
+} {
+  return {
+    toolbar: { x: outer.x, y: outer.y, width: outer.width, height: TOOLBAR_HEIGHT },
+    page: {
+      x: outer.x,
+      y: outer.y + TOOLBAR_HEIGHT,
+      width: outer.width,
+      height: Math.max(outer.height - TOOLBAR_HEIGHT, 0)
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 分割ビュー（2 ペイン）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 分割に入れてよいタブか。**受け付ける条件はここ 1 つ**（renderer 側の受け皿と揃える）。
+ *
+ * 対象は**野良の一時タブだけ**。ピン留め / Favorites は「枠」に属していて、
+ * 枠の行と結合行の two-place 問題が出る。Live Folder は自動生成の層で、
+ * 行の並べ替えもドラッグもできない。
+ */
+function canJoinSplit(win: NemoWindow, tab: NemoTab): { ok: true } | { ok: false; reason: string } {
+  if (tab.peekOf) return { ok: false, reason: 'peek' }
+  if (tab.pinnedId) return { ok: false, reason: 'pinned' }
+  if (tab.favoriteId) return { ok: false, reason: 'favorite' }
+  if (tab.split) return { ok: false, reason: 'already_split' }
+  // **作るときだけ**弾く。作った後に PR の URL へ遷移しても分割は解かない
+  // （勝手に解けるより、結合行が残って自分で解除できる方がよい。DESIGN.md 参照）。
+  // **そのウィンドウのサイドバーに実際に出ている一覧**で照合する
+  // （シークレット・設定で無効・照合前は行が出ないので、ここでも弾かない）。
+  if (isLiveFolderTabUrl(tab.url, win.isPrivate)) return { ok: false, reason: 'live_folder' }
+  return { ok: true }
+}
+
+/**
+ * 関係の構築だけを行う（選択も materialize もしない）。
+ *
+ * **セッション復元はここだけを使う。** `splitTabs` を使うとペアの数だけ
+ * 選択と `applyVisibility()` が走り、寝かせたまま復元するはずのタブが
+ * 全部起きてしまう（`lastActiveAt` も現在時刻に上書きされる）。
+ *
+ * **右のタブを左の直後へ移す**。これで ⌘1〜9 / ⌃Tab / セッション保存の並びが
+ * サイドバーの見た目（左が上・右が下）と自動的に一致し、解除時の並べ替えが要らなくなる。
+ */
+export function linkSplit(win: NemoWindow, left: NemoTab, right: NemoTab): SplitPair {
+  const pair = new SplitPair(left, right)
+  left.split = pair
+  right.split = pair
+  const from = win.tabs.indexOf(right)
+  if (from !== -1) win.tabs.splice(from, 1)
+  const leftIndex = win.tabs.indexOf(left)
+  win.tabs.splice(leftIndex + 1, 0, right)
+  return pair
+}
+
+/**
+ * 2 本のタブを左右に並べる。**左 → 右の順**（サイドバーのドロップ先が左）。
+ *
+ * 受け付けない組み合わせは黙って捨てる（理由はログに出す）。
+ * renderer 側でも受け皿を出さないが、**IPC を直接叩かれても通さない**
+ * （`liveFolderOpen` が一覧との照合を main でやっているのと同じ作法）。
+ */
+export function splitTabs(win: NemoWindow, leftKey: string, rightKey: string): void {
+  const reject = (reason: string): void => {
+    log('split.rejected', { reason, windowId: win.id, left: leftKey, right: rightKey })
+  }
+  if (leftKey === rightKey) return reject('same_tab')
+  // 小窓はタブを1つしか持てない
+  if (!canHostAdditionalTabs(win)) return reject('window_kind')
+  const left = win.findTab(leftKey)
+  const right = win.findTab(rightKey)
+  if (!left || !right) return reject('not_in_window')
+  const leftOk = canJoinSplit(win, left)
+  if (!leftOk.ok) return reject(`left_${leftOk.reason}`)
+  const rightOk = canJoinSplit(win, right)
+  if (!rightOk.ok) return reject(`right_${rightOk.reason}`)
+
+  linkSplit(win, left, right)
+  // **右にフォーカス**（持ってきた方を今見たいはず）。
+  // `applyVisibility()` が両方を起こして見せる。
+  selectTab(win, right.key)
+  win.pushState()
+  log('split.created', { windowId: win.id, left: left.key, right: right.key })
+}
+
+/**
+ * 分割を解く（左右どちらの key でもよい）。
+ *
+ * **可視の再適用を省かない**。省くと、解除前に見えていた 2 枚が
+ * 同じ全画面 bounds のまま重なって残る（`layout()` は bounds を配るだけで
+ * `setVisible` を触らない）。
+ *
+ * **タブの並びは触らない**。既に「左 → 右」の順に並んでいるので、
+ * そのまま 2 行になれば「左だったタブが上・右だったタブが下」になる。
+ */
+export function separateSplit(win: NemoWindow, key: string): void {
+  const tab = win.findTab(key)
+  const pair = tab?.split
+  if (!tab || !pair) return
+  pair.left.split = null
+  pair.right.split = null
+  win.applyVisibility()
+  win.layout()
+  win.pushState()
+  log('split.separated', { windowId: win.id, left: pair.left.key, right: pair.right.key })
 }
 
 /* ------------------------------------------------------------------ *
@@ -2080,6 +2629,19 @@ export function removeTab(
     tab.peekOf.peek = null
     tab.peekOf = null
   }
+  // 分割も**同じ場所で解く**（規則を1か所に揃える）。
+  // 相方は後で「次に選ぶタブ」にも使うので、解く前に控えておく。
+  // **`tab.split` を消しながら読まない** —— 自分が左だと 1 行目で `tab.split` が
+  // null になり、2 行目が null 参照で落ちる（右を閉じるときだけ無事なので気づきにくい）。
+  const pair = tab.split
+  const splitPartner = pair?.partnerOf(tab) ?? null
+  if (pair) {
+    pair.left.split = null
+    pair.right.split = null
+  }
+  // ペインのフォーカス購読も必ず外す（WebContents ごと消えるが、参照を残さない）
+  tab.paneFocusOff?.()
+  tab.paneFocusOff = null
   // 親タブを閉じるなら、その上に浮いている Peek も閉じる
   if (tab.peek) {
     const peek = tab.peek
@@ -2100,19 +2662,27 @@ export function removeTab(
   log('tab.remove', { key, windowId: win.id })
 
   if (win.activeTabKey === key) {
+    // **分割の相方が居たらそれを選ぶ**。位置で選ぶ既定の規則だと、
+    // ペアの右を閉じたときに「ペアの後ろにいたタブ」が選ばれ、
+    // 左ではない無関係なページが全画面になる。
     // **通常タブから選ぶ**。全タブから選ぶと「別の親の Peek」を選びかねない
     const candidates = win.normalTabs
-    const next = candidates[Math.min(index, candidates.length - 1)]
+    const next =
+      splitPartner && candidates.includes(splitPartner)
+        ? splitPartner
+        : candidates[Math.min(index, candidates.length - 1)]
     win.activeTabKey = null
     if (next) {
       selectTab(win, next.key)
       return
     }
   }
-  // **必ずレイアウトし直す**。Peek だけを閉じた経路では `activeTabKey` が親のままなので
-  // 上の `selectTab` を通らず、`layout()` が一度も走らない。
+  // **必ず可視の再適用とレイアウトを通す**。Peek だけを閉じた経路や、
+  // アクティブでない分割の相方を閉じた経路では `activeTabKey` が変わらないので
+  // 上の `selectTab` を通らず、`applyVisibility()` も `layout()` も一度も走らない。
   // Peek 用の透明 View を隠すのは `layout()` の中だけなので、省くと
   // **✕ / Esc / ⌘W のあとも暗幕の View が最前面に残り、ページのクリックを丸ごと遮る**。
+  win.applyVisibility()
   win.layout()
   syncForegroundTab(win)
   win.pushState()
@@ -2202,6 +2772,19 @@ export function moveTabToWindow(tab: NemoTab, target: NemoWindow): boolean {
   }
 
   const index = source.tabs.indexOf(tab)
+  // 分割はウィンドウをまたげないので、移す前に解く。
+  // **相方は控えておく**（`removeTab` と同じ罠。控えないと、右ペインを移したときに
+  // 元のウィンドウで「ペアの後ろにいたタブ」が選ばれる）。
+  // **ペアを控えてから消す**（`removeTab` と同じ罠）
+  const pair = tab.split
+  const splitPartner = pair?.partnerOf(tab) ?? null
+  if (pair) {
+    pair.left.split = null
+    pair.right.split = null
+  }
+  tab.paneFocusOff?.()
+  tab.paneFocusOff = null
+
   const moving = tab.peek ? [tab, tab.peek] : [tab]
   for (const item of moving) transferOne(item, source, target)
 
@@ -2209,9 +2792,13 @@ export function moveTabToWindow(tab: NemoTab, target: NemoWindow): boolean {
     source.activeTabKey = null
     // **通常タブから選ぶ**（別の親の Peek を選ばない）
     const candidates = source.normalTabs
-    const next = candidates[Math.min(index, candidates.length - 1)]
+    const next =
+      splitPartner && candidates.includes(splitPartner)
+        ? splitPartner
+        : candidates[Math.min(index, candidates.length - 1)]
     if (next) selectTab(source, next.key)
   }
+  source.applyVisibility()
   source.layout()
   syncForegroundTab(source)
   source.pushState()
@@ -2581,9 +3168,13 @@ function applyConversion(tab: NemoTab, result: ConversionResult, kind: 'pinned' 
  */
 export function togglePin(tab: NemoTab): void {
   if (tab.pinnedId) {
+    // **降格（unpin）は分割と無関係**なので触らない
     unpinEverywhere(tab.pinnedId)
     return
   }
+  // **ピン留めは分割に入れない**ので、昇格の手前で解く（⌘D / 右クリック / ピン留めツリーへの D&D）。
+  // `pinTabInto` はここを通るので、経路はこの1か所で足りる。
+  separateSplit(tab.window, tab.key)
   const favoriteId = tab.favoriteId ?? findFavoriteByUrl(tab.url)?.id ?? null
   if (favoriteId) {
     const result = convertFavoriteToPin(favoriteId)
@@ -2601,7 +3192,10 @@ export function togglePin(tab: NemoTab): void {
  * `togglePin` と対称に、ピン留めに属していれば**定義ごと**移す。
  */
 export function addFavoriteFromTab(tab: NemoTab): void {
+  // **既に Favorites なら何もしない**（降格・付け替えは分割と無関係）
   if (tab.favoriteId) return
+  // Favorites も分割に入れない（`togglePin` と同じ規則）。昇格の手前で解く
+  separateSplit(tab.window, tab.key)
   const pinnedId = tab.pinnedId ?? findPinnedByUrl(tab.url)?.id ?? null
   if (pinnedId) {
     const result = convertPinToFavorite(pinnedId)
@@ -2723,19 +3317,34 @@ export function startBackgroundWork(): void {
   // 未読の判定に「いま見られているタブ」が要るので、registry から借りる形で渡す
   // （live-folders 側から registry を import すると循環する）
   initLiveFolders({
+    // **「見えている」で見る**（`activeTabKey` だけだと分割の相方の PR が未読のまま残る）
     activeUrls: () =>
       [...windowsById.values()]
         .filter((win) => !win.isDestroyed && !win.isPrivate && win.kind === 'normal')
-        .flatMap((win) => {
-          const active = win.getActiveTab()
-          return active ? [active.url] : []
-        })
+        .flatMap((win) =>
+          [...win.visibleTabKeys].flatMap((key) => {
+            const tab = win.findTab(key)
+            return tab ? [tab.url] : []
+          })
+        )
   })
 
   // ダイアログの表示先はウィンドウ
   setPromptNotifier((windowId, prompt) => {
     windowsById.get(windowId)?.pushPrompt(prompt)
   })
+}
+
+/**
+ * 自動 sleep / 自動アーカイブが見る「最後に使った時刻」。
+ *
+ * 分割に入っているタブは**ペアの新しい方**を使う。`lastActiveAt` はフォーカスを
+ * 持っていた側だけが更新されるので（⌃M の MRU 順を素直に保つため）、素の値で判定すると
+ * **見ていない間に片側だけ先に閉じられてペアが解ける**。
+ */
+function pairLastActiveAt(tab: NemoTab): number {
+  const partner = tab.split?.partnerOf(tab)
+  return partner ? Math.max(tab.lastActiveAt, partner.lastActiveAt) : tab.lastActiveAt
 }
 
 /** 触っていないタブのメモリを解放する。 */
@@ -2746,12 +3355,14 @@ function sweepSleep(): void {
   for (const win of windowsById.values()) {
     if (win.isDestroyed) continue
     let slept = false
+    const visible = win.visibleTabKeys
     for (const tab of win.normalTabs) {
-      if (tab.key === win.activeTabKey) continue
+      // **見えているタブは触らない**（分割の相方は `activeTabKey` ではないが画面に出ている）
+      if (visible.has(tab.key)) continue
       // **Peek を持つ親タブは寝かせない**（親を捨てると Peek の置き場所が無くなる）
       if (tab.peek) continue
       if (tab.asleep) continue
-      if (tab.lastActiveAt > threshold) continue
+      if (pairLastActiveAt(tab) > threshold) continue
       // 音が出ているタブは寝かせない
       if (tab.webContents?.isCurrentlyAudible()) continue
       // 会議中のタブは寝かせない（計画 R3）。全員ミュートの静かな瞬間は
@@ -2783,13 +3394,15 @@ function sweepArchive(): void {
   let archived = 0
   for (const win of [...windowsById.values()]) {
     if (win.isDestroyed || win.isPrivate) continue
+    const visible = win.visibleTabKeys
     for (const tab of [...win.normalTabs]) {
       // ピン留め / Favorites の専用タブは触らない（Arc と同じ）
       if (tab.pinnedId !== null || tab.favoriteId !== null) continue
-      if (tab.key === win.activeTabKey) continue
+      // **見えているタブは触らない**（分割の相方も画面に出ている）
+      if (visible.has(tab.key)) continue
       // Peek を持つ親タブは触らない（見ている最中の Peek ごと消えるのは事故）
       if (tab.peek) continue
-      if (tab.lastActiveAt > threshold) continue
+      if (pairLastActiveAt(tab) > threshold) continue
       if (tab.webContents?.isCurrentlyAudible()) continue
       // 会議中のタブは閉じない（sleep と同じ除外。計画 R3）
       if (callWatcher?.isSleepExempt(tab)) continue

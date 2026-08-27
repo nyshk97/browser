@@ -65,7 +65,9 @@ const appEnv = () => ({
   NEMO_REMOTE_DEBUGGING_PORT: debugPort,
   NEMO_USER_DATA_DIR: userDataDir,
   NEMO_EXT_DIR: path.join(extRoot, 'extensions'),
-  NEMO_EXT_LOCK: path.join(extRoot, 'extensions.lock.json')
+  NEMO_EXT_LOCK: path.join(extRoot, 'extensions.lock.json'),
+  // 分割中の popup 位置を見るのに、ペインの実 bounds を main から出してもらう
+  NEMO_VERIFY_DIAGNOSTICS: '1'
 })
 
 async function startPagesServer() {
@@ -457,6 +459,77 @@ try {
       await popup.ev('window.close()').catch(() => {})
     }
     popup?.close()
+
+    /*
+     * **分割中も同じ位置に出ること**。
+     * 分割すると左ペインのツールバーは外周余白ぶん右へ動くので、
+     * `popupAnchorOffset` がサイドバー幅のままだとその余白ぶん左にずれる。
+     * 期待値は診断 IPC が返す**左ペインの実 x** から取る（定数を書き写さない）。
+     */
+    const keys = JSON.parse(
+      await ui.ev(`Promise.all([
+        window.nemo.createTab('about:blank', { background: true }),
+        window.nemo.createTab('about:blank', { background: true })
+      ]).then((k) => JSON.stringify(k))`)
+    )
+    await ui.ev(
+      `window.nemo.splitTabs(${JSON.stringify(keys[0])}, ${JSON.stringify(keys[1])}).then(() => 'ok')`
+    )
+    const diag = JSON.parse(await ui.ev('window.nemo.splitDiagnostics().then((d) => JSON.stringify(d))'))
+    const leftPane = diag?.panes?.find((pane) => pane.side === 'left') ?? null
+    if (leftPane) {
+      const splitAnchor = await toolbar
+        .ev(
+          `(() => {
+            const list = document.querySelector('browser-action-list')
+            const btn = list && (list.shadowRoot ?? list).querySelector('.action')
+            if (!btn) return JSON.stringify({ ok: false })
+            const r = btn.getBoundingClientRect()
+            btn.click()
+            return JSON.stringify({ ok: true, right: window.screenX + ${leftPane.outer.x} + r.right })
+          })()`
+        )
+        .then(JSON.parse)
+      const splitPopup = splitAnchor.ok
+        ? await connectTo(cdp, 'popup.html', { timeoutMs: 5000 }).catch(() => null)
+        : null
+      if (splitPopup) await sleep(1000)
+      const splitBox = splitPopup
+        ? await splitPopup
+            .ev(
+              `JSON.stringify({ left: window.screenX, width: window.outerWidth,
+                availLeft: screen.availLeft, availWidth: screen.availWidth })`
+            )
+            .then(JSON.parse, () => null)
+        : null
+      if (
+        splitBox &&
+        splitAnchor.right - splitBox.width >= splitBox.availLeft &&
+        splitAnchor.right <= splitBox.availLeft + splitBox.availWidth
+      ) {
+        check(
+          '分割中も popup の右端がアイコンの右端に合う（外周余白ぶんずれない）',
+          Math.abs(splitBox.left + splitBox.width - splitAnchor.right) <= 2,
+          `popup right ${splitBox.left + splitBox.width} / anchor right ${splitAnchor.right}`
+        )
+      } else {
+        check(
+          '分割中も popup の右端がアイコンの右端に合う（外周余白ぶんずれない）',
+          splitBox !== null,
+          splitBox ? '画面端で押し戻されたので位置は見ない' : 'popup が開かなかった'
+        )
+      }
+      await splitPopup?.ev('window.close()').catch(() => {})
+      splitPopup?.close()
+    } else {
+      check(
+        '分割中も popup の右端がアイコンの右端に合う（外周余白ぶんずれない）',
+        false,
+        '分割が作れなかった'
+      )
+    }
+    for (const key of keys) await ui.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
+
     toolbar.close()
     await sleep(500)
   }

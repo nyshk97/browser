@@ -22,6 +22,7 @@
     "verify:ext": "node scripts/verify-ext-smoke.mjs",
     "verify:packaged": "node scripts/verify-packaged.mjs",
     "verify:spike": "node scripts/verify-spike.mjs",
+    "spike:split": "node scripts/spike-split-chrome.mjs",
     "ext:fetch": "node scripts/ext-fetch.mjs",
     "ext:verify": "node scripts/ext-verify.mjs",
     "licenses": "node scripts/license-report.mjs --check",

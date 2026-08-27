@@ -36,6 +36,11 @@ export interface CreateUiViewOptions {
    */
   windowId: number
   isPrivate?: boolean
+  /**
+   * 分割ビューの**どちらのペインを担当するか**（`toolbar` のときだけ意味を持つ）。
+   * 省略＝左（分割していないときの唯一のツールバーでもある）。
+   */
+  pane?: 'right'
   /** 読み込みが終わるたびに呼ぶ（`once` ではない。HMR や読み直しでも状態を送り直す）。 */
   onLoad?: (contents: WebContents) => void
 }
@@ -89,7 +94,7 @@ function lockUiNavigation(contents: WebContents, view: UiViewKind, uiUrl: string
 }
 
 export function createUiView(options: CreateUiViewOptions): WebContentsView {
-  const { view, windowId, isPrivate = false, onLoad } = options
+  const { view, windowId, isPrivate = false, pane, onLoad } = options
   // オーバーレイと Peek の暗幕は下のページを透かす必要がある
   const transparent = view === 'overlay' || view === 'peek'
   const contentsView = new WebContentsView({
@@ -105,7 +110,9 @@ export function createUiView(options: CreateUiViewOptions): WebContentsView {
   })
   if (transparent) contentsView.setBackgroundColor('#00000000')
 
-  const uiUrl = `${UI_INDEX_URL}?view=${view}&window=${windowId}${isPrivate ? '&private=1' : ''}`
+  const uiUrl =
+    `${UI_INDEX_URL}?view=${view}&window=${windowId}` +
+    `${isPrivate ? '&private=1' : ''}${pane ? `&pane=${pane}` : ''}`
   lockUiNavigation(contentsView.webContents, view, uiUrl)
 
   void contentsView.webContents.loadURL(uiUrl)

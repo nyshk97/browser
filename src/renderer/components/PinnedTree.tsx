@@ -212,6 +212,9 @@ export function PinnedTree({
           className={classes.join(' ')}
           style={depth ? { marginLeft: depth * 14 } : undefined}
           title={name}
+          // 自走検証がピン留め行を引くための手がかり（一時タブ行の `data-key` と同じ理由）。
+          // ピン留め行はタブ key ではなく**定義の ID**で並ぶので、こちらを出す。
+          data-pin={node.id}
           onClick={() => {
             if (editing) return
             // **閉じている行のクリックだけ**を遅らせる。ここを遅らせないと、

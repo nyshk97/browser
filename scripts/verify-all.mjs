@@ -50,6 +50,7 @@ const KNOWN_TARGETS = [
   'pins', // ピン留め / Favorites
   'switcher', // タブスイッチャー（⌃M）
   'peek', // Peek と小窓
+  'split', // 分割ビュー（2 ペイン）
   'call', // 会議の小窓（Meet の通話コントロール）
   'live-folder', // Live Folder（GitHub の PR）
   'restart', // 再起動をまたぐ永続性（spike / phase1 / pins の write → read）
@@ -57,7 +58,18 @@ const KNOWN_TARGETS = [
   'db' // 旧スキーマの履歴 DB からの移行
 ]
 /** アプリとページサーバを立てる必要があるもの（migration / db は自分で起動する）。 */
-const NEEDS_APP = ['spike', 'phase1', 'phase2', 'pins', 'switcher', 'peek', 'call', 'live-folder', 'restart']
+const NEEDS_APP = [
+  'spike',
+  'phase1',
+  'phase2',
+  'pins',
+  'switcher',
+  'peek',
+  'split',
+  'call',
+  'live-folder',
+  'restart'
+]
 
 const onlyAt = process.argv.indexOf('--only')
 const only = new Set(
@@ -159,7 +171,11 @@ async function startApp() {
       // （向けないと自走検証が実 GitHub を叩く）。
       // 認証は `stored-only`（PAT の保存 / 削除で「未設定 → 取得 → 未設定」を同一プロセスで踏める）
       NEMO_GITHUB_TEST_ENDPOINT: githubEndpoint,
-      NEMO_GITHUB_TEST_AUTH: 'stored-only'
+      NEMO_GITHUB_TEST_AUTH: 'stored-only',
+      // 分割ビューの検証は View の bounds を外から測れないので、
+      // main に実測値を出す口を生やす。**`--only` に依存させない**
+      // （条件分岐にすると「フルでは通るのに絞ると落ちる」を作る）。
+      NEMO_VERIFY_DIAGNOSTICS: '1'
     }
   })
   await waitForHttp(`${cdp}/json/list`, {
@@ -195,6 +211,7 @@ const phase2 = (args) => runVerify('scripts/verify-phase2.mjs', args)
 const pins = (args) => runVerify('scripts/verify-pins.mjs', args)
 const switcher = (args) => runVerify('scripts/verify-switcher.mjs', args)
 const peek = (args) => runVerify('scripts/verify-peek.mjs', args)
+const split = (args) => runVerify('scripts/verify-split.mjs', args)
 const call = (args) => runVerify('scripts/verify-call.mjs', args)
 const liveFolder = (args) => runVerify('scripts/verify-live-folder.mjs', args)
 
@@ -266,6 +283,12 @@ try {
     if (peekCode !== 0) exitCode = peekCode
   }
 
+  if (want('split')) {
+    console.log('\n=== 自走検証（分割ビュー）')
+    const splitCode = await split([])
+    if (splitCode !== 0) exitCode = splitCode
+  }
+
   if (want('call')) {
     console.log('\n=== 自走検証（会議の小窓）')
     const callCode = await call([])
@@ -285,6 +308,12 @@ try {
     // ピン / Favorites の遅延ロードも再起動をまたぐので、同じ再起動に相乗りする
     const lazyWriteCode = await pins(['--lazy-write'])
     if (lazyWriteCode !== 0) exitCode = lazyWriteCode
+    // **分割はアプリが動いているうちに作る**（セッションに書かせる）。
+    // 止めてから仕込む会議 / Live Folder の plant とは違うので、`stopAll()` より前に置く。
+    if (want('split')) {
+      const splitWriteCode = await split(['--restart-write'])
+      if (splitWriteCode !== 0) exitCode = splitWriteCode
+    }
     await stopAll()
 
     // 会議の小窓の位置は**アプリを止めてから**仕込む。
@@ -310,6 +339,10 @@ try {
     if (want('live-folder')) {
       const liveReadCode = await liveFolder(['--restart-read'])
       if (liveReadCode !== 0) exitCode = liveReadCode
+    }
+    if (want('split')) {
+      const splitReadCode = await split(['--restart-read'])
+      if (splitReadCode !== 0) exitCode = splitReadCode
     }
     // **タブを作る検証はいちばん最後に置く**。会議の小窓を出すには会議タブが要るが、
     // その1枚が「復元直後のタブは sleep 状態」の検査に混ざって落とす（実際に踏んだ）。

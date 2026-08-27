@@ -48,6 +48,7 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 | ナビゲーション判定・設定スキーマ・キーバインド・ログ | `mise run check` |
 | **タブスイッチャー（⌃M）**・MRU の並び・オーバーレイの割り込み | `mise run verify:switcher` |
 | **Peek（ウィンドウ内ポップアップ）・小窓（Little Nemo）**・popup の受け皿・⌘O の昇格 | `mise run verify`（`verify-peek.mjs` が含まれる）+ 下の「Peek と小窓（実機）」 |
+| **分割ビュー（2 ペイン）**・ペインのレイアウト・結合行・sleep / アーカイブの除外 | `mise run verify:only split restart` + 下の「分割ビュー」 |
 | タブ / ウィンドウ・サイドバー・**ツールバー（アドレスバー）**・コマンドバー・ダウンロード・権限 | `mise run verify` |
 | **空状態（タブが 1 つも無いときの画面）** | `mise run verify:only phase1`（1-10。View 単位でスクショも撮れる） |
 | **会議の小窓（Meet の通話コントロール）**・`meet-adapter.ts`・sleep の除外 | `mise run verify:only call restart` + 下の「会議の小窓（実機）」 |
@@ -276,6 +277,36 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 - セッション復元（前回のタブが戻る / 復元直後は sleep / 選ぶと読み直す）
 
 個別に回すときは Nemo を起動した状態で `pnpm verify:spike`。
+
+## 分割ビュー（2 ペイン）
+
+```bash
+mise run verify:split                 # 単体（アプリの起動ごと面倒を見る）
+mise run verify:only split restart    # 再起動をまたぐ復元も含める
+NEMO_VERIFY_SHOTS=<dir> mise run verify:only split   # 目視用の PNG を出す
+```
+
+- **D&D は合成イベントで撃つ**。`dragstart` → `dragover` → `drop` を、
+  `dataTransfer` を差し込んだ `Event` で順に投げる（`verify-split.mjs` の `dragScript`）。
+  **`dragover` に渡す `dataTransfer` は `getData` が空を返すものにする** ——
+  HTML5 では `dragover` の時点で値が読めないので、そこを再現しないと
+  「`types` だけ見て素通りする」誤実装が通ってしまう。行は `data-key` で引ける
+- **キー操作（⌘W / ⌘数字 / ⌃Tab / ⌘F / ⌘⇧N）は撃てない**。メニューのアクセラレータは
+  AppKit が NSEvent の段階で食う。`window.nemo.runCommandForVerify('close-tab')` から撃つ
+  （`NEMO_VERIFY_DIAGNOSTICS=1` かつ未パッケージのときだけ生える口。
+  `verify-all.mjs` の `startApp()` が渡している）
+- **View の bounds は `window.nemo.splitDiagnostics()`** で読む。CDP からは測れない。
+  角丸だけはここに出ないので、`NEMO_VERIFY_SHOTS` で撮った PNG を人が見る
+- **スクリーンショットは `screencapture -l`**（`scripts/lib/window-shot.mjs`）。
+  `Page.captureScreenshot` は**その WebContents しか撮らない**ので、
+  フォーカス枠（素の `View`）も隔間も 1 枚も写らない
+
+### 人が見る分
+
+- タブ行を別のタブ行へドラッグして分割になるか（当たり判定が狭すぎないか）
+- 分割中に Bitwarden の自動入力が両ペインで効くか
+- **キーを実際に押す**（⌘W・⌘数字・⌃Tab・⌘F・⌘⇧N を分割中に）。
+  自動検証はコマンドの口から撃っていて、**実キー入力からアクセラレータへの接続は通っていない**
 
 ## 手で CDP を叩く
 

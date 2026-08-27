@@ -24,11 +24,15 @@ if (!root) throw new Error('#root not found')
  * - `mini` … 小窓の上部バー
  * - `call` … 会議の小窓（他アプリの上に浮くバー。**ウィンドウの中身がこれ1枚だけ**）
  */
-const view = new URLSearchParams(location.search).get('view')
+const params = new URLSearchParams(location.search)
+const view = params.get('view')
+/** 分割ビューでどちらのペインを担当するか（`toolbar` のときだけ意味を持つ）。 */
+const pane = params.get('pane') === 'right' ? 'right' : 'left'
 document.body.dataset['view'] = view ?? 'sidebar'
+document.body.dataset['pane'] = pane
 
 function Root(): React.JSX.Element | null {
-  if (view === 'toolbar') return <Toolbar />
+  if (view === 'toolbar') return <Toolbar pane={pane} />
   if (view === 'overlay') return <Overlay />
   if (view === 'peek') return <Peek />
   if (view === 'empty') return <EmptyState />

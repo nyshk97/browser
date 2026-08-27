@@ -135,6 +135,28 @@ export function isLiveFolderUrl(url: string): boolean {
 }
 
 /**
+ * そのタブの URL が、**サイドバーにいま出ている** Live Folder の PR か。
+ *
+ * **サイドバーと同じ見え方で判定する**（`getLiveFolderState()` を通す）。
+ * 生キャッシュを見ると、設定で無効・照合前（`cacheVerified === false`）・
+ * シークレットウィンドウでは一覧に 1 件も出ていないのに main だけがそのタブを
+ * 「Live Folder の行」と見なし、**ドロップできる見た目なのに黙って何も起きない**になる。
+ *
+ * **正準形どうしで照合する**（サイドバーが一時タブを一覧から外すのと同じ規則）。
+ * `isLiveFolderUrl` は完全一致で、通知から開いた `?notification_referrer_id=…` 付きを拾えない。
+ *
+ * @param isPrivate シークレットウィンドウか（`liveFolder` を null で渡す側と同じ除外）
+ */
+export function isLiveFolderTabUrl(url: string, isPrivate: boolean): boolean {
+  if (isPrivate) return false
+  const key = normalizePrUrl(url)
+  if (!key) return false
+  const state = getLiveFolderState()
+  if (!state) return false
+  return state.items.some((item) => normalizePrUrl(item.url) === key)
+}
+
+/**
  * その URL の未読を落とす。
  *
  * **タブ選択の共通経路（`registry.selectTab`）から呼ぶ。**

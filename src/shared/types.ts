@@ -97,11 +97,16 @@ export interface TabState {
   canGoForward: boolean
   /** メモリ解放済み（再訪時に読み直す）。 */
   asleep: boolean
-  /** 直近でアクティブだった時刻（自動アーカイブの判定に使う）。 */
+  /**
+   * 直近でアクティブだった時刻（自動アーカイブの判定に使う）。
+   * **分割中でも「フォーカスを持っていた側」だけが更新される**（⌃M の MRU 順を素直に保つため）。
+   * 相方が先に期限切れになる問題は、sweep 側がペアの新しい方を見ることで塞いでいる。
+   */
   lastActiveAt: number
   /**
    * View が実際に表示されているか。
-   * 正常なら「選択中の通常タブ」と、あれば「その Peek」の2つだけが true になる。
+   * 正常なら「選択中の通常タブ」「分割中ならその相方」「あればフォーカス中タブの Peek」の
+   * **最大3つ**だけが true になる。
    */
   visible: boolean
   /** renderer がクラッシュした状態か。 */
@@ -111,6 +116,16 @@ export interface TabState {
   /** 非アクティブのまま読み込みが終わった（サイドバーの未読表示に使う）。 */
   unread: boolean
   zoomFactor: number
+  /**
+   * 左右に並べている相方のタブ key。分割していなければ null。
+   * 分割は**一時タブ同士だけ**で、1 本が入れるペアは 1 つまで。
+   */
+  splitPartnerKey: string | null
+  /**
+   * 分割の中での位置。分割していなければ null。
+   * サイドバーは **`left` の側が結合行を描き、`right` は行を出さない**。
+   */
+  splitSide: 'left' | 'right' | null
 }
 
 export interface WindowState {
@@ -531,7 +546,7 @@ export interface NemoUiApi {
   getExtensions(): Promise<LoadedExtensionInfo[]>
   /**
    * 実際に表示されている View のタブ key。
-   * 正常なら「選択中の通常タブ」と、あれば「その Peek」の最大2つ。
+   * 正常なら「選択中の通常タブ」「分割中ならその相方」「あればフォーカス中タブの Peek」の**最大3つ**。
    */
   getVisibleTabKeys(): Promise<string[]>
 
@@ -571,6 +586,16 @@ export interface NemoUiApi {
   /** ドラッグ & ドロップの結果を反映する。 */
   movePinned(id: string, parentId: string | null, index: number): Promise<void>
   moveFavorite(id: string, index: number): Promise<void>
+
+  /* 分割ビュー（2 ペイン） */
+  /**
+   * 2 本の一時タブを左右に並べる。**左 → 右の順で渡す**（ドロップ先が左）。
+   * 受け付けない組み合わせ（ピン留め / Favorites / Live Folder に載っている URL /
+   * すでに分割に入っている / 別ウィンドウ）は main 側で黙って捨てる。
+   */
+  splitTabs(leftKey: string, rightKey: string): Promise<void>
+  /** そのタブが入っている分割を解除する（左右どちらの key でもよい）。 */
+  separateSplit(key: string): Promise<void>
 
   /* Peek / 小窓 */
   /**
@@ -649,6 +674,19 @@ export interface NemoUiApi {
   /** 落とし終えた更新を適用する（再起動の確認ダイアログを出す）。 */
   restartForUpdate(): Promise<void>
 
+  /* 自走検証専用（`NEMO_VERIFY_DIAGNOSTICS=1` かつ未パッケージのときだけ生える） */
+  /**
+   * レイアウトの実測値。**本番では `null` が返る**（ハンドラを登録しない）。
+   * 検証は View の bounds を外から測れないので、main から出してもらうしかない。
+   */
+  splitDiagnostics(): Promise<SplitDiagnostics | null>
+  /**
+   * メニューのコマンドを名前で実行する。**本番では何もしない**。
+   * ⌘W / ⌘数字 / ⌃Tab はアクセラレータを AppKit が食うので合成キーでは撃てず、
+   * 自走検証はここを通す。対象は**呼び出し元のウィンドウ**。
+   */
+  runCommandForVerify(command: string): Promise<boolean>
+
   /** オーバーレイの現在の状態（購読より前に起きた分を取りこぼさないため）。 */
   getOverlayState(): Promise<{
     kind: string | null
@@ -687,6 +725,48 @@ export interface NemoUiApi {
   onCommand(listener: (command: string) => void): () => void
   onOverlay(listener: (kind: string | null) => void): () => void
   onSwitcher(listener: (state: SwitcherState | null) => void): () => void
+}
+
+/** 矩形。診断で返す値は**全部ウィンドウ座標**（`contentBounds` 基準）。 */
+export interface DiagRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** 1 つのペインの実測値。 */
+export interface SplitPaneDiagnostics {
+  side: 'left' | 'right'
+  tabKey: string
+  /** ペインの外枠（ツールバーの行を含む）。 */
+  outer: DiagRect
+  toolbar: DiagRect
+  page: DiagRect
+}
+
+/**
+ * レイアウトの実測値（自走検証専用）。
+ *
+ * View の bounds は外から測れないので、機械検証はここが唯一の情報源。
+ * **角丸だけはここに出ない**ので、それだけはスクリーンショットで見る。
+ */
+export interface SplitDiagnostics {
+  /** `screencapture -l` に渡す `window:<CGWindowID>:0`。合成後のウィンドウを撮る唯一の経路。 */
+  mediaSourceId: string
+  /** ペインを配置した領域（サイドバーの右側すべて）。外周余白の検算に使う。 */
+  area: DiagRect
+  /** 分割中でなければ空。 */
+  panes: SplitPaneDiagnostics[]
+  /** フォーカス枠。分割中でなければ `null`。 */
+  focusRing: DiagRect | null
+  /** フォーカス枠の View が実際に見えているか（隠し忘れの検出に使う）。 */
+  focusRingVisible: boolean
+  /** 出ていれば Peek 本体と暗幕。 */
+  peek: DiagRect | null
+  peekScrim: DiagRect | null
+  /** 出ていればオーバーレイ（検索バー等）。 */
+  overlay: DiagRect | null
 }
 
 export type PromptAnswer =

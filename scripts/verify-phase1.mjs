@@ -85,9 +85,18 @@ if (mode === '--session-read') {
     urls.some((u) => u.includes('/login.html')) && urls.some((u) => u.includes('/iframe.html')),
     urls.join(', ')
   )
+  /**
+   * 復元直後に起きていてよいのは**画面に出ているタブだけ**。
+   * アクティブタブに加えて、**分割中ならその相方**も出ている（DESIGN.md「分割ビュー」）。
+   */
+  const awakeAllowed = (w, tab) => {
+    if (tab.key === w.state.activeTabKey) return true
+    const active = w.state.tabs.find((t) => t.key === w.state.activeTabKey)
+    return active?.splitPartnerKey === tab.key
+  }
   check(
     'セッション復元: 復元直後のタブは sleep 状態（一斉に読み込まない）',
-    windows.every((w) => w.state.tabs.filter((t) => t.key !== w.state.activeTabKey).every((t) => t.asleep)),
+    windows.every((w) => w.state.tabs.filter((t) => !awakeAllowed(w, t)).every((t) => t.asleep)),
     windows.flatMap((w) => w.state.tabs.map((t) => (t.asleep ? 'asleep' : 'awake'))).join(', ')
   )
 

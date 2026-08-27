@@ -1,4 +1,4 @@
-import { clipboard, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, clipboard, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { PAGE_PARTITION, userDataPath } from './paths.js'
 import { restartServiceWorkers } from './extensions.js'
 import { log } from './log.js'
@@ -16,6 +16,8 @@ import {
   removeTab,
   renameTab,
   selectTab,
+  separateSplit,
+  splitTabs,
   togglePin,
   openPrivateWindow,
   unpinEverywhere,
@@ -25,6 +27,8 @@ import {
   type OverlayKind
 } from './registry.js'
 import { isUiUrl, normalizeNavigationInput } from './security.js'
+import { runCommandForWindow, selectTabByIndexIn } from './menu.js'
+import { COMMANDS, SELECT_TAB_ACCELERATORS } from '../shared/keybindings.js'
 import { answerPrompt, currentPrompt } from './prompts.js'
 import { advanceSwitcher, cancelSwitcher, currentSwitcherState, pickSwitcherTab } from './tab-switcher.js'
 import { suggest } from './suggest.js'
@@ -54,6 +58,7 @@ import type {
   LoadedExtensionInfo,
   PromptAnswer,
   SharedState,
+  SplitDiagnostics,
   WindowState
 } from '../shared/types.js'
 
@@ -223,6 +228,48 @@ export function registerIpcHandlers(): void {
     const target = createWindow(undefined, { isPrivate: win.isPrivate })
     target.whenUiReady(() => moveTabToWindow(tab, target))
   })
+
+  /* ---- 分割ビュー（2 ペイン） ---- */
+  ipcMain.handle('nemo:split-tabs', (event, leftKey: unknown, rightKey: unknown) => {
+    // **両方とも送信元のウィンドウのタブか**を main で照合する
+    // （renderer から任意の key を渡せないようにする）
+    const { win, tab: left } = requireTab(event, leftKey)
+    const right = typeof rightKey === 'string' ? win.findTab(rightKey) : null
+    if (!right) return
+    splitTabs(win, left.key, right.key)
+  })
+
+  ipcMain.handle('nemo:separate-split', (event, key: unknown) => {
+    const { win, tab } = requireTab(event, key)
+    separateSplit(win, tab.key)
+  })
+
+  /*
+   * 自走検証専用の口。**`NEMO_VERIFY_DIAGNOSTICS=1` かつ未パッケージのときだけ生やす**
+   * （既存の `NEMO_GITHUB_TEST_ENDPOINT` / `NEMO_MEET_TEST_URL_PREFIX` と同じゲート。
+   * env だけだと、環境変数を付けて起動したパッケージ版にも診断 API が生える）。
+   * 生やさないときは**ハンドラごと登録しない** —— 本番の renderer から呼べる面を増やさない。
+   */
+  if (process.env['NEMO_VERIFY_DIAGNOSTICS'] === '1' && !app.isPackaged) {
+    log('ipc.verify_diagnostics_enabled', {})
+    ipcMain.handle('nemo:split-diagnostics', (event): SplitDiagnostics => {
+      return requireWindow(event).splitDiagnostics()
+    })
+    ipcMain.handle('nemo:run-command-for-verify', (event, command: unknown): boolean => {
+      const win = requireWindow(event)
+      if (typeof command !== 'string') return false
+      // ⌘1〜9 は別経路（コマンド表に載っていない）
+      const numbered = SELECT_TAB_ACCELERATORS.find((entry) => entry.id === command)
+      if (numbered) {
+        selectTabByIndexIn(win, numbered.index)
+        return true
+      }
+      // **知らない名前は実行しない**（任意の文字列で main を動かせないようにする）
+      if (!COMMANDS.some((entry) => entry.id === command)) return false
+      runCommandForWindow(win, command)
+      return true
+    })
+  }
 
   /* ---- Peek / 小窓 ---- */
   // ⌘O と同じ経路に乗せる（展開ボタンとキーで挙動が分かれないようにする）

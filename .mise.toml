@@ -65,7 +65,7 @@ run = "node scripts/verify-all.mjs"
 
 [tasks."verify:only"]
 description = "自走検証のうち指定したものだけ回す（例: mise run verify:only phase1 pins）"
-usage = 'arg "<targets>" var=#true help="spike / phase1 / phase2 / pins / switcher / peek / call / live-folder / restart / migration / db"'
+usage = 'arg "<targets>" var=#true help="spike / phase1 / phase2 / pins / switcher / peek / split / call / live-folder / restart / migration / db"'
 run = '''
 #!/usr/bin/env bash
 set -euo pipefail
@@ -82,6 +82,10 @@ run = "node scripts/verify-session-migration.mjs"
 [tasks."verify:db-migration"]
 description = "旧スキーマの履歴 DB から起動して favicon_url 列の追加が壊れていないか確かめる"
 run = "node scripts/verify-db-migration.mjs"
+
+[tasks."verify:split"]
+description = "分割ビュー（2 ペイン）だけを検証する（アプリの起動ごと面倒を見る）"
+run = "node scripts/verify-all.mjs --only split"
 
 [tasks."verify:switcher"]
 description = "タブスイッチャー（⌃M）だけを検証する（Nemo を起動してから回す）"

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useCommand, useSharedState, useWindowState } from '../useNemo.js'
 import { PinnedTree } from './PinnedTree.js'
 import { TabRow, TAB_DRAG_TYPE, useDragEnd } from './TabRow.js'
+import { SplitRow } from './SplitRow.js'
 import { RenameInput, useDelayedClick } from './InlineRename.js'
 import { RowMenu, type RowMenuState } from './RowMenu.js'
 import { LiveFolder } from './LiveFolder.js'
@@ -74,6 +75,10 @@ export function Sidebar(): React.JSX.Element {
     () =>
       (state?.tabs ?? []).filter((tab) => {
         if (tab.pinnedId !== null || tab.favoriteId !== null || tab.peekParentKey !== null) return false
+        // **分割に入っているタブは Live Folder の除外より結合行を優先する**。
+        // 除外を掛けたままだと、分割したページが PR の URL へ遷移した瞬間に
+        // 結合行ごと消え、画面には分割が出ているのに解除する導線が無くなる。
+        if (tab.splitSide !== null) return true
         const key = normalizePrUrl(tab.url)
         return !(key !== null && liveUrls.has(key))
       }),
@@ -152,9 +157,33 @@ export function Sidebar(): React.JSX.Element {
           <span className="plus">＋</span>
           <span className="tt">New Tab</span>
         </button>
-        {ephemeral.map((tab) => (
-          <TabRow key={tab.key} tab={tab} active={tab.key === state?.activeTabKey} />
-        ))}
+        {ephemeral.map((tab) => {
+          // 分割の右側は自分の行を持たない（左が結合行として両方を描く）。
+          // 相方が見つからないときだけ通常の行に落とす（保険）。
+          const partner = tab.splitPartnerKey
+            ? (ephemeral.find((other) => other.key === tab.splitPartnerKey) ?? null)
+            : null
+          if (tab.splitSide === 'right' && partner) return null
+          if (tab.splitSide === 'left' && partner) {
+            return (
+              <SplitRow
+                key={tab.key}
+                left={tab}
+                right={partner}
+                focusedKey={state?.activeTabKey ?? null}
+                visible={tab.key === state?.activeTabKey || partner.key === state?.activeTabKey}
+              />
+            )
+          }
+          return (
+            <TabRow
+              key={tab.key}
+              tab={tab}
+              active={tab.key === state?.activeTabKey}
+              splitTargets={ephemeral}
+            />
+          )
+        })}
       </div>
 
       <ExtensionFooter

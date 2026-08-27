@@ -452,6 +452,20 @@ document.querySelector('[data-testid]')?.getAttribute('data-testid')  // prompt-
 
 権限要求は**アクティブなタブから**でないと Chromium 側で保留され、ダイアログまで届かない。
 
+### React が持っている入力欄に値を入れる
+
+`el.value = x` では React の state が変わらない（送信すると空のまま飛ぶ）。
+native setter を呼んでから `input` を bubbles で撃つ。
+
+```js
+const el = document.querySelector('input[autocomplete="username"]')
+const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement : HTMLInputElement
+Object.getOwnPropertyDescriptor(proto.prototype, 'value').set.call(el, 'admin')
+el.dispatchEvent(new Event('input', { bubbles: true }))
+```
+
+チェックボックスは `el.click()`。`<form>` の中の `button.primary` も `click()` で submit が走る。
+
 ### マイク / カメラ / 画面共有
 
 テストページ `http://127.0.0.1:8787/media.html` のボタンを押して、

@@ -49,13 +49,13 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 それは「この差分は検証の対象外」と言っているだけで、フルが通った証明ではない。
 コミット前のフル（`mise run verify`）は別に 1 回通す。
 
-**`restart` は随伴する**。`split` / `call` / `live-folder` / `spike` / `phase1` / `pins` を
+**`restart` は随伴する**。`split` / `call` / `live-folder` / `http-auth` / `spike` / `phase1` / `pins` を
 選ぶと `restart` も自動で付く（片方だけだと `--restart-write` / `--restart-read` が
 丸ごと落ちたまま PASS するため）。逆に `restart` の中身も `--only` / `--changed` で絞られるので、
 `verify:only split restart` では spike / phase1 / pins の write+read は走らない。
 
 指定できるのは `spike` / `phase1` / `phase2` / `pins` / `switcher` / `peek` / `split` / `call` /
-`live-folder` / `restart` / `migration` / `db`。
+`live-folder` / `http-auth` / `restart` / `migration` / `db`。
 
 **待ち時間は `NEMO_VERIFY_TIMINGS` で縮めている**。`verify-all.mjs` が「見に行く周期 / デバウンス」の
 検証値（`sleepSweepMs` など）を決めて、**アプリと検証スクリプトの両方**に同じ JSON を env で渡す。
@@ -827,6 +827,64 @@ Keychain 許可ダイアログ（`SecurityAgent`）が出て**検証が永久に
    grep '"event":"live_folder.fetched"' "$HOME/Library/Application Support/Nemo-dev/logs/"*.jsonl | tail -3
    # → "cost":1 / "remaining":4999 のように出る
    ```
+
+## HTTP Basic 認証の自動入力
+
+自走検証（`mise run verify:only http-auth restart`）が**大半を見る**。
+401 を返す経路は `scripts/test-server.mjs` に入っていて、
+クロスオリジンの検査用に `scripts/verify-http-auth.mjs` が**2 つ目のテストサーバを自分で立てる**
+（`localhost` と `127.0.0.1` で分ける手は使えない。macOS の `localhost` は ::1 を先に引く）。
+
+自走検証が見るもの: ルール無し / 有りの出し分け・誤パスワードの 2 回目でダイアログ・
+protection space 単位の直列化（誤パスワードの送信は 1 回だけ）・ダイアログのグループ集約・
+prefill と自己修復・拒否後のリロードで再送しないこと・
+勝つルールが違う URL の並列・302 で別オリジンへ飛んだ先・遷移中断後の pending・
+URL 長超過 / クロスオリジン / シークレット / `canSave: false` の直接投げ・
+**敵対的な正規表現でも UI が固まらず、そのルールだけ無効化されること**・
+テスターでは無効化されないこと・書き込み失敗 / キャッシュ消去失敗 / 同時保存・
+復号失敗が再起動後も残ること・Settings の一覧 / インポート / テスター / 再マスク 3 経路。
+
+**暗号化は `NEMO_HTTP_AUTH_TEST_CRYPTO=memory` に差し替えて回す**。
+実 `safeStorage` に触ると macOS の Keychain 許可ダイアログ（`SecurityAgent`）が出て
+**検証が永久に止まる**（PAT のときに実際に踏んだ）。
+差し替え backend は**固定ヘッダ + checksum** で、暗号文を 1 バイト変えれば必ず復号エラーになる
+（base64 や XOR だと壊しても例外にならず「1 件だけ無効化」の検査が空振りで PASS する）。
+
+**「自動入力されない」を調べるときは `auth.not_autofilled` を見る**:
+
+```bash
+grep '"event":"auth.not_autofilled"' "$HOME/Library/Application Support/Nemo-dev/logs/"*.jsonl | tail
+# → "reason":"cross-origin" / "scheme" / "private" / "not-a-tab" / "url-too-long" /
+#    "no-match" / "pattern-timeout" / "decrypt-failed" / "rejected" のどれかが出る
+```
+
+**マーカーファイルで失敗経路を差し込む**（どちらも `!app.isPackaged` かつ差し替え中だけ有効）:
+
+- `<userData>/.nemo-fail-auth-cache-clear` … `clearAuthCache()` だけを失敗させる
+- `<userData>/.nemo-crypto-unavailable` … 「この端末では暗号化できない」に倒す
+
+env にしない理由は、**起動から終了まで効きっぱなしになって他の検査を巻き添えにする**から。
+
+### 人が見る分
+
+自走検証は実 `safeStorage` に触らないので、**本番の暗号化経路はここでしか通らない**。
+
+1. 実際に使っている Basic 認証のサイトで、ダイアログ → チェック → 次回自動入力。
+   **保存したあと Nemo を完全に終了して起動し直してから**アクセスする ——
+   同じセッションのままだと HttpAuthCache が答えてしまい、保存したルールも復号も一度も通らない
+2. `http-auth.json` に平文のパスワードが無いこと:
+
+   ```bash
+   cat "$HOME/Library/Application Support/Nemo-dev/http-auth.json"
+   # → password は base64 の暗号文だけ。入力した文字列が現れないこと
+   ```
+
+3. MultiPass のエクスポート JSON を取り込み、**変換後のパターンが意図どおりか一覧で確認**
+   （黙って変換する方針なので、ここが唯一の確認機会）
+4. **パッケージ済みの dev 版**で、通常の照合が効くこと・敵対的パターンでタイムアウト →
+   ワーカー再生成が起きることを 1 回ずつ確認する
+   （照合ワーカーは `{ eval: true }` でソースを文字列から起こすので asar のパス解決には依存しないが、
+   `worker_threads` そのものが動くかは配布形態でしか確かめられない）
 
 ## 設定同期（Phase 2-1）
 

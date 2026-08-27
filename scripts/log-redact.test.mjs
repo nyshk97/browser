@@ -67,3 +67,27 @@ test('Error.message に埋まったトークンも消える', () => {
 test('資格情報の fingerprint はログに出さない', () => {
   assert.equal(sanitizeDetail({ credentialKey: '0123456789abcdef' }).credentialKey, '[redacted]')
 })
+
+/**
+ * HTTP 認証のルールは `pattern` / `username` / `password` を持つ。
+ * **ログに載せる経路が無くても**、うっかり detail に渡したときに
+ * 平文が診断ログへ落ちないことを固定しておく（出口で必ず消える側に倒す）。
+ */
+test('HTTP 認証のルールを detail に渡してもパスワードが出ない', () => {
+  const out = sanitizeDetail({
+    rule: {
+      id: 'r1',
+      pattern: '^https://example\\.com/',
+      username: 'admin',
+      password: 'hunter2',
+      enabled: true
+    },
+    prefill: { username: 'admin', password: 'hunter2' }
+  })
+  assert.equal(out.rule.password, '[redacted]')
+  assert.equal(out.rule.username, '[redacted]')
+  assert.equal(out.prefill.password, '[redacted]')
+  // パターンは秘密ではないので残る（Settings と同じ情報）
+  assert.equal(out.rule.pattern, '^https://example\\.com/')
+  assert.ok(!JSON.stringify(out).includes('hunter2'))
+})

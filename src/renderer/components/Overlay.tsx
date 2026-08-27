@@ -77,7 +77,9 @@ export function Overlay(): React.JSX.Element | null {
     return () => window.removeEventListener('keydown', onKey)
   }, [close, prompt, kind])
 
-  if (prompt) return <PromptDialog prompt={prompt} />
+  // **`prompt.id` を key にして再マウントする。** 認証ダイアログが連続すると
+  // React が同じコンポーネントを使い回し、前のホストの入力値とチェック状態が次のホストに残る
+  if (prompt) return <PromptDialog key={prompt.id} prompt={prompt} />
   // 同じコマンドバーだが、⌘T（新規タブ）と ⌘L（現在のタブ）で既定の行き先が違う。
   // key を分けて、開き直すたびに入力を初期化する。
   if (kind === 'command-bar') return <CommandBar key="command-bar" onClose={close} state={state} newTab />

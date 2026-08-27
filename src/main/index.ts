@@ -15,6 +15,7 @@ import {
   createTab,
   linkSplit,
   createWindow,
+  findTabByWebContents,
   findWindowIdForPageContents,
   markQuitting,
   openMiniWindow,
@@ -38,6 +39,9 @@ import { pruneArchive } from './store/archive.js'
 import { closePermissionStore, initPermissionStore } from './store/permissions.js'
 import { closeSession, initSession, markCleanExit } from './store/session.js'
 import { closeCallWindowStore, initCallWindowStore } from './store/call-window.js'
+import { closeHttpAuthStore, initHttpAuthStore } from './store/http-auth.js'
+import { initSecretBackend } from './store/secret-backend.js'
+import { stopHttpAuthMatcher } from './http-auth-matcher.js'
 import { configureMeetTestUrlPrefix } from './meet-adapter.js'
 import { configureGithubTestEndpoint } from './live-folders/github-pr.js'
 import { configureTestAuth } from './live-folders/token.js'
@@ -120,6 +124,9 @@ app
     initPins()
     initPermissionStore()
     initCallWindowStore()
+    // **認証ハンドラ・IPC 登録より前**（暗号化 backend の解決 → ストアの読み込みの順）
+    initSecretBackend()
+    initHttpAuthStore()
     initDb()
     pruneArchive()
     const restored = initSession()
@@ -130,7 +137,11 @@ app
     applySessionSecurityDefaults(pageSession, 'page', findWindowIdForPageContents)
     applySessionSecurityDefaults(uiSession, 'ui', findWindowIdForPageContents)
     installCertificateHandler(findWindowIdForPageContents)
-    installAuthHandler(findWindowIdForPageContents)
+    installAuthHandler(findWindowIdForPageContents, (contents) => {
+      // **strict な解決**。タブでない WebContents は自動入力の対象にしない
+      const found = findTabByWebContents(contents)
+      return found ? { isPrivate: found.win.isPrivate } : null
+    })
     installDownloadHandler(pageSession)
 
     // ブラウザ UI は nemo://ui/ から配信する（file:// を使わない）
@@ -327,6 +338,9 @@ app.on('before-quit', () => {
   closePins()
   closePermissionStore()
   closeSession()
+  // `JsonStore` はデバウンス保存なので、flush しないと直前の変更が落ちる
+  closeHttpAuthStore()
+  stopHttpAuthMatcher()
   closeCallWindowStore()
   closeDb()
   log('app.quit', {})

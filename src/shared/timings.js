@@ -27,6 +27,11 @@
  *   **`liveFolderPollMs` との比を保つこと**（tick と同オーダーにすると「取得中に起きたタイマーを捨てる」の
  *   検証が撃てなくなる）。既定は 1:12。
  * @property {number} liveFolderBackoffMinMs `transient` 失敗のバックオフの初期値（以降 2 倍ずつ伸びる）。
+ * @property {number} httpAuthRevealMs Settings で「表示」したパスワードを再マスクするまで。
+ *   **判定の中身ではなく「いつ再マスクするか」だけ**を変えるので、ここに載せてよい。
+ * @property {number} httpAuthWatchdogMs 自動入力を送ったあと、応答も 2 回目の `login` も
+ *   来ないまま待つ上限。満了したら**ダイアログに倒す**（成功にはしない）。
+ *   縮めても倒す先は変わらない（保険経路への「すり替わり」が起きない）ので載せている。
  */
 
 /** @type {Timings} */
@@ -36,7 +41,9 @@ export const DEFAULT_TIMINGS = {
   sessionStoreDebounceMs: 1_000,
   liveFolderPollMs: 60_000,
   liveFolderTickMs: 5_000,
-  liveFolderBackoffMinMs: 60_000
+  liveFolderBackoffMinMs: 60_000,
+  httpAuthRevealMs: 30_000,
+  httpAuthWatchdogMs: 10_000
 }
 
 /** 上書きに使える名前。 */

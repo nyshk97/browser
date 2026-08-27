@@ -28,6 +28,7 @@ export const KNOWN_TARGETS = [
   'split', // 分割ビュー（2 ペイン）
   'call', // 会議の小窓（Meet の通話コントロール）
   'live-folder', // Live Folder（GitHub の PR）
+  'http-auth', // HTTP Basic 認証の自動入力
   'restart', // 再起動をまたぐ永続性（spike / phase1 / pins / split / call / live-folder の write → read）
   'migration', // 旧版セッションからの移行
   'db' // 旧スキーマの履歴 DB からの移行
@@ -44,6 +45,7 @@ export const NEEDS_APP = [
   'split',
   'call',
   'live-folder',
+  'http-auth',
   'restart'
 ]
 
@@ -53,7 +55,15 @@ export const NEEDS_APP = [
  * `restart` ブロックの中は `want('split')` のように入れ子で分岐しているので、
  * `split` だけを選ぶと `--restart-write` / `--restart-read` が丸ごと落ちたまま PASS する。
  */
-export const RESTART_COMPANIONS = ['spike', 'phase1', 'pins', 'split', 'call', 'live-folder']
+export const RESTART_COMPANIONS = [
+  'spike',
+  'phase1',
+  'pins',
+  'split',
+  'call',
+  'live-folder',
+  'http-auth'
+]
 
 /**
  * 検証に影響しないと**分かっている**パス。
@@ -90,13 +100,22 @@ export const OWNERS = new Map([
   ['scripts/verify-split.mjs', ['split']],
   ['scripts/verify-call.mjs', ['call']],
   ['scripts/verify-live-folder.mjs', ['live-folder']],
+  ['scripts/verify-http-auth.mjs', ['http-auth']],
   ['scripts/verify-session-migration.mjs', ['migration']],
   ['scripts/verify-db-migration.mjs', ['db']],
   // 単一の画面にしか出ないリーフのコンポーネント（親は 1 か所からしか import していない）
   ['src/renderer/components/SplitRow.tsx', ['split']],
   ['src/renderer/components/Peek.tsx', ['peek']],
   ['src/renderer/components/MiniBar.tsx', ['peek']],
-  ['src/renderer/components/CallBar.tsx', ['call']]
+  ['src/renderer/components/CallBar.tsx', ['call']],
+  // HTTP 認証だけが読む main のモジュール（他のスイートは触らない）
+  ['src/main/http-auth.ts', ['http-auth']],
+  ['src/main/http-auth-matcher.ts', ['http-auth']],
+  ['src/main/http-auth-reset.ts', ['http-auth']],
+  ['src/main/store/http-auth.ts', ['http-auth']],
+  ['src/shared/http-auth-rules.js', ['http-auth']],
+  ['src/shared/http-auth-worker-source.js', ['http-auth']],
+  ['scripts/http-auth-rules.test.mjs', ['http-auth']]
 ])
 
 /**

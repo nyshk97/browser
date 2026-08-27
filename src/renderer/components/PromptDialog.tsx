@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { HTTP_AUTH_LIMITS } from '../../shared/http-auth-rules.js'
 import type { Prompt } from '../../shared/types.js'
 
 /**
@@ -19,7 +20,32 @@ export function PromptDialog({ prompt }: { prompt: Prompt }): React.JSX.Element 
       return <ExternalProtocolPrompt prompt={prompt} />
     case 'system-media':
       return <SystemMediaPrompt prompt={prompt} />
+    case 'notice':
+      return <NoticePrompt prompt={prompt} />
   }
+}
+
+/**
+ * 情報を伝えるだけのダイアログ。
+ * **新しい通知基盤は作らない**——資格情報の保存に失敗したことなどを、
+ * 既存の `ask` / `PromptDialog` に種別を 1 つ足して出す。
+ */
+function NoticePrompt({ prompt }: { prompt: Extract<Prompt, { type: 'notice' }> }): React.JSX.Element {
+  return (
+    <div className="dialog" data-testid="prompt-notice">
+      <div className="dialog-title">{prompt.title}</div>
+      <div className="dialog-sub">{prompt.detail}</div>
+      <div className="dialog-actions">
+        <button
+          type="button"
+          className="primary"
+          onClick={() => void window.nemo.resolvePrompt(prompt.id, { kind: 'notice' })}
+        >
+          閉じる
+        </button>
+      </div>
+    </div>
+  )
 }
 
 const PERMISSION_LABEL: Record<string, string> = {
@@ -120,15 +146,28 @@ function SystemMediaPrompt({
   )
 }
 
+/**
+ * HTTP 認証。
+ *
+ * 保存チェックは**既定 OFF**（`permissions.ts` の「今後も許可」は既定 ON だが、
+ * パスワードは取り消しコストが違う）。`canSave` が false のときは**出さない**。
+ * ただし**チェックボックスを出さないことは認可にならない**ので、
+ * 実際に保存してよいかは main が `eligibility.canSave` で持っている。
+ *
+ * このコンポーネントは `prompt.id` を key に再マウントされる（`Overlay.tsx`）。
+ * 使い回すと前のホストの入力値とチェック状態が次のホストに残る。
+ */
 function AuthPrompt({ prompt }: { prompt: Extract<Prompt, { type: 'auth' }> }): React.JSX.Element {
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
+  // 拒否された保存済みルールがあれば、その値で埋めて直せるようにする（#6 の自己修復）
+  const [username, setUsername] = useState(prompt.prefill?.username ?? '')
+  const [password, setPassword] = useState(prompt.prefill?.password ?? '')
+  const [save, setSave] = useState(false)
   const first = useRef<HTMLInputElement>(null)
   useEffect(() => first.current?.focus(), [])
 
   const submit = (event: React.FormEvent): void => {
     event.preventDefault()
-    void window.nemo.resolvePrompt(prompt.id, { kind: 'auth', username, password })
+    void window.nemo.resolvePrompt(prompt.id, { kind: 'auth', username, password, save })
   }
 
   return (
@@ -136,12 +175,18 @@ function AuthPrompt({ prompt }: { prompt: Extract<Prompt, { type: 'auth' }> }): 
       <div className="dialog-title">
         {prompt.isProxy ? 'プロキシ' : prompt.host} がユーザー名とパスワードを求めています
       </div>
+      {prompt.rejected ? (
+        <div className="dialog-sub warn" data-testid="prompt-auth-rejected">
+          保存されている資格情報が拒否されました。直して保存し直すと上書きされます。
+        </div>
+      ) : null}
       {prompt.realm ? <div className="dialog-sub">realm: {prompt.realm}</div> : null}
       <input
         ref={first}
         value={username}
         placeholder="ユーザー名"
         autoComplete="username"
+        maxLength={HTTP_AUTH_LIMITS.MAX_USERNAME}
         onChange={(event) => setUsername(event.target.value)}
       />
       <input
@@ -149,8 +194,20 @@ function AuthPrompt({ prompt }: { prompt: Extract<Prompt, { type: 'auth' }> }): 
         type="password"
         placeholder="パスワード"
         autoComplete="current-password"
+        maxLength={HTTP_AUTH_LIMITS.MAX_PASSWORD}
         onChange={(event) => setPassword(event.target.value)}
       />
+      {prompt.canSave ? (
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={save}
+            data-testid="prompt-auth-save"
+            onChange={(event) => setSave(event.target.checked)}
+          />
+          次回から自動で入力する
+        </label>
+      ) : null}
       <div className="dialog-actions">
         <button
           type="button"

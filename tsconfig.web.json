@@ -15,5 +15,5 @@
     "isolatedModules": true,
     "noEmit": true
   },
-  "include": ["src/renderer/**/*", "src/shared/types.ts", "src/shared/live-folder-schema.js"]
+  "include": ["src/renderer/**/*", "src/shared/types.ts", "src/shared/live-folder-schema.js", "src/shared/http-auth-rules.js"]
 }

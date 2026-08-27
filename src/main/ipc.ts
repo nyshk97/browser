@@ -51,10 +51,31 @@ import {
 } from './live-folders/index.js'
 import { clearToken, hasToken, resolveToken, saveToken, tokenStorageAvailable } from './live-folders/token.js'
 import { isGithubTestEndpoint } from './live-folders/github-pr.js'
+import {
+  deleteHttpAuthRule,
+  httpAuthEncryptionAvailable,
+  importHttpAuthRules,
+  listHttpAuthRules,
+  revealHttpAuthPassword,
+  saveHttpAuthRule,
+  setHttpAuthRuleEnabled
+} from './store/http-auth.js'
+import { httpAuthCredentialsChanged } from './http-auth-reset.js'
+import { matchHttpAuthRules } from './http-auth-matcher.js'
+import { getTimings } from './timings.js'
+import {
+  HTTP_AUTH_LIMITS,
+  importMultipass,
+  validateHttpAuthPattern
+} from '../shared/http-auth-rules.js'
 import { windowsById } from './registry.js'
 import type {
   AppStatus,
   CallState,
+  HttpAuthImportResult,
+  HttpAuthRule,
+  HttpAuthTestResult,
+  HttpAuthWriteResult,
   LoadedExtensionInfo,
   PromptAnswer,
   SharedState,
@@ -665,6 +686,157 @@ export function registerIpcHandlers(): void {
     }
   })
 
+  /* ---- HTTP 認証の自動入力 ---- */
+  /*
+   * **パスワードを返す口は `reveal` の 1 件取得だけ**にする。
+   * 一覧に載せると Settings を開いた瞬間に全資格情報が renderer に渡ることになる。
+   * `github-token.ts` の「返す口は作らない」と意図的に分けているのは、
+   * PAT が広いスコープの bearer token なのに対し、こちらはサイト個別のパスワードで
+   * 「あのサイトのパスワード何だっけ」を引ける価値が上回るため（#15）。
+   */
+  ipcMain.handle(
+    'nemo:list-http-auth-rules',
+    (event): { rules: HttpAuthRule[]; encryptionAvailable: boolean } => {
+      requireWindow(event)
+      // 端末鍵が使えるかも一緒に返す（renderer が保存を試す前に案内を出せるように）
+      return { rules: listHttpAuthRules(), encryptionAvailable: httpAuthEncryptionAvailable() }
+    }
+  )
+
+  ipcMain.handle('nemo:reveal-http-auth-password', async (event, id: unknown) => {
+    requireWindow(event)
+    const ruleId = requireString(id, 'id')
+    log('auth_rule.revealed', { id: ruleId })
+    return revealHttpAuthPassword(ruleId)
+  })
+
+  /**
+   * ルールの保存。**`password` を省略したら既存の暗号文を保持する**（patch semantics）。
+   * 一覧は password を持たないので、これが無いと「pattern だけ編集したら空パスワードで上書き」か
+   * 「編集のために renderer へ平文を返す」のどちらかになる。
+   */
+  ipcMain.handle('nemo:save-http-auth-rule', async (event, input: unknown): Promise<HttpAuthWriteResult> => {
+    requireWindow(event)
+    const patch = requireRecord(input, 'input')
+    const id = typeof patch['id'] === 'string' ? patch['id'] : null
+    const enabled = typeof patch['enabled'] === 'boolean' ? patch['enabled'] : undefined
+
+    // 有効トグルだけの変更（`disabledReason` がある間は main が拒否する）
+    if (id !== null && patch['pattern'] === undefined) {
+      const ok = enabled === undefined ? false : await setHttpAuthRuleEnabled(id, enabled)
+      if (!ok) return { saved: false, authCacheCleared: false, reason: 'refused' }
+      return { saved: true, id, authCacheCleared: await httpAuthCredentialsChanged('rule-toggled') }
+    }
+
+    /*
+     * **上限超過は切り詰めずに拒否する。** `credential()` の `slice` で黙って詰めると、
+     * 入力した値と実際に保存される値が食い違ううえ、store 側の `too-long` は
+     * 切り詰め済みの値しか見ないので永久に真にならない（＝入口ごとに挙動が割れる）。
+     */
+    const pattern = credential(patch['pattern'], Number.MAX_SAFE_INTEGER)
+    const username = credential(patch['username'], Number.MAX_SAFE_INTEGER)
+    // **省略と空文字を区別する**（空文字は有効な新パスワード）
+    const password =
+      patch['password'] === undefined || patch['password'] === null
+        ? null
+        : credential(patch['password'], Number.MAX_SAFE_INTEGER)
+    if (
+      pattern.length > HTTP_AUTH_LIMITS.MAX_PATTERN ||
+      username.length > HTTP_AUTH_LIMITS.MAX_USERNAME ||
+      (password !== null && password.length > HTTP_AUTH_LIMITS.MAX_PASSWORD)
+    ) {
+      return { saved: false, authCacheCleared: false, reason: 'too-long' }
+    }
+    if (!validateHttpAuthPattern(pattern).ok) {
+      return { saved: false, authCacheCleared: false, reason: 'invalid-pattern' }
+    }
+    const result = await saveHttpAuthRule({
+      id,
+      pattern,
+      username,
+      password,
+      ...(enabled === undefined ? {} : { enabled })
+    })
+    // IPC がエラーになるのは**永続化そのものが失敗したとき**だけ
+    if (!result.ok) return { saved: false, authCacheCleared: false, reason: result.reason }
+    // **採番された ID を返す**（renderer と検証が「今保存したルール」を指せるように）
+    return { saved: true, id: result.id, authCacheCleared: await httpAuthCredentialsChanged('rule-saved') }
+  })
+
+  ipcMain.handle('nemo:delete-http-auth-rule', async (event, id: unknown): Promise<HttpAuthWriteResult> => {
+    requireWindow(event)
+    const ok = await deleteHttpAuthRule(requireString(id, 'id'))
+    if (!ok) return { saved: false, authCacheCleared: false, reason: 'write-failed' }
+    return { saved: true, authCacheCleared: await httpAuthCredentialsChanged('rule-deleted') }
+  })
+
+  /**
+   * MultiPass の JSON テキストを取り込む。
+   * **取り込み全体を 1 回のトランザクションで永続化し、そのあと共通の後始末を通す**
+   * （通さないと HttpAuthCache が古い資格情報を送り続け、同一セッションに反映されない）。
+   */
+  ipcMain.handle('nemo:import-multipass', async (event, text: unknown): Promise<HttpAuthImportResult> => {
+    requireWindow(event)
+    const json = credential(text, 1_000_000)
+    const existing = listHttpAuthRules().map((rule) => ({ id: rule.id, pattern: rule.pattern }))
+    const parsed = importMultipass(json, existing)
+    const persisted = await importHttpAuthRules(parsed.entries)
+    if (!persisted) {
+      return {
+        imported: 0,
+        rejected: parsed.rejected,
+        priorityWarning: parsed.priorityWarning,
+        authCacheCleared: false,
+        failed: true
+      }
+    }
+    return {
+      imported: parsed.entries.length,
+      rejected: parsed.rejected,
+      priorityWarning: parsed.priorityWarning,
+      authCacheCleared: await httpAuthCredentialsChanged('imported'),
+      failed: false
+    }
+  })
+
+  /**
+   * 正規表現テスター。**URL ごとに「マッチした ID 群」と「勝者」を返す**。
+   * 優先順位のロジックを renderer に再実装させないための形で、正規表現の実行は main に閉じる。
+   */
+  ipcMain.handle(
+    'nemo:test-http-auth-pattern',
+    async (event, urls: unknown, draftPattern: unknown): Promise<HttpAuthTestResult[]> => {
+      requireWindow(event)
+      if (!Array.isArray(urls)) throw new Error('invalid urls')
+      const draft = typeof draftPattern === 'string' && draftPattern.length > 0 ? draftPattern : null
+      const rules = listHttpAuthRules()
+      if (draft !== null) {
+        // 未保存の下書きも**同じ関門を通す**
+        if (!validateHttpAuthPattern(draft).ok) throw new Error('invalid pattern')
+        rules.push({ id: 'draft', pattern: draft, username: '', enabled: true })
+      }
+      const results: HttpAuthTestResult[] = []
+      for (const raw of urls.slice(0, 20)) {
+        const url = credential(raw, HTTP_AUTH_LIMITS.MAX_URL)
+        // **`tester` として撃つ**（タイムアウトしても保存済みルールを無効化しない）
+        const matched = await matchHttpAuthRules(rules, url, 'tester')
+        results.push({
+          url,
+          matchedIds: matched.matchedIds,
+          winnerId: matched.winner?.id ?? null,
+          timedOutIds: matched.timedOutIds
+        })
+      }
+      return results
+    }
+  )
+
+  /** 「表示」したパスワードを再マスクするまで（検証から短縮できる）。 */
+  ipcMain.handle('nemo:http-auth-reveal-ms', (event): number => {
+    requireWindow(event)
+    return getTimings().httpAuthRevealMs
+  })
+
   ipcMain.handle('nemo:check-for-updates', (event) => {
     requireWindow(event)
     checkForUpdatesManually()
@@ -716,11 +888,15 @@ function validateAnswer(value: unknown): PromptAnswer {
       // 資格情報は空文字もありうるので requireString（非空を要求）は使わない
       return {
         kind: 'auth',
-        username: credential(answer['username'], 256),
-        password: credential(answer['password'], 512)
+        username: credential(answer['username'], HTTP_AUTH_LIMITS.MAX_USERNAME),
+        password: credential(answer['password'], HTTP_AUTH_LIMITS.MAX_PASSWORD),
+        // **保存してよいかを決めるのは main**（`answer.save` は「押したか」でしかない）
+        save: answer['save'] === true
       }
     case 'auth-cancel':
       return { kind: 'auth-cancel' }
+    case 'notice':
+      return { kind: 'notice' }
     case 'certificate':
       return { kind: 'certificate', proceed: answer['proceed'] === true }
     case 'external-protocol':

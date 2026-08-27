@@ -144,7 +144,10 @@ const verifyTimings = JSON.stringify({
   liveFolderPollMs: 12_000,
   liveFolderTickMs: 1_000,
   // バックオフは失敗したときにしか効かないので、poll より深く縮めても副作用が無い
-  liveFolderBackoffMinMs: 6_000
+  liveFolderBackoffMinMs: 6_000,
+  // パスワードの再マスク（実時間 30 秒を待たない）と、自動入力の直列化の保険
+  httpAuthRevealMs: 1_500,
+  httpAuthWatchdogMs: 2_000
 })
 
 /**
@@ -211,6 +214,13 @@ async function startApp() {
       // 認証は `stored-only`（PAT の保存 / 削除で「未設定 → 取得 → 未設定」を同一プロセスで踏める）
       NEMO_GITHUB_TEST_ENDPOINT: githubEndpoint,
       NEMO_GITHUB_TEST_AUTH: 'stored-only',
+      /*
+       * **HTTP 認証の暗号化を Keychain に触らない backend に差し替える。**
+       * 実 `safeStorage` に触ると macOS が `SecurityAgent` を上げ、
+       * 自走検証が**永久に止まる**（このリポジトリで PAT のときに踏んでいる）。
+       * 実際の暗号化経路は人間の動作確認に分ける（`VERIFY.md` の PAT と同じ作法）。
+       */
+      NEMO_HTTP_AUTH_TEST_CRYPTO: 'memory',
       // 分割ビューの検証は View の bounds を外から測れないので、
       // main に実測値を出す口を生やす。**`--only` に依存させない**
       // （条件分岐にすると「フルでは通るのに絞ると落ちる」を作る）。
@@ -259,6 +269,7 @@ const peek = (args) => runVerify('scripts/verify-peek.mjs', args)
 const split = (args) => runVerify('scripts/verify-split.mjs', args)
 const call = (args) => runVerify('scripts/verify-call.mjs', args)
 const liveFolder = (args) => runVerify('scripts/verify-live-folder.mjs', args)
+const httpAuth = (args) => runVerify('scripts/verify-http-auth.mjs', args)
 
 let exitCode = 0
 try {
@@ -346,6 +357,12 @@ try {
     if (liveFolderCode !== 0) exitCode = liveFolderCode
   }
 
+  if (want('http-auth')) {
+    console.log('\n=== 自走検証（HTTP Basic 認証の自動入力）')
+    const httpAuthCode = await httpAuth([])
+    if (httpAuthCode !== 0) exitCode = httpAuthCode
+  }
+
   if (want('restart')) {
     /*
      * **中身も `want()` で絞る**。ここは spike / phase1 / pins / split / call / live-folder が
@@ -368,7 +385,18 @@ try {
       const splitWriteCode = await split(['--restart-write'])
       if (splitWriteCode !== 0) exitCode = splitWriteCode
     }
+    // 資格情報は**アプリが動いているうちに**作る（暗号文はプロセス内の backend で作られる）
+    if (want('http-auth')) {
+      const authWriteCode = await httpAuth(['--restart-write'])
+      if (authWriteCode !== 0) exitCode = authWriteCode
+    }
     await stopAll()
+
+    // 暗号文を壊すのは**アプリを止めてから**（起動中に書くと終了時の close が上書きする）
+    if (want('http-auth')) {
+      const plantCode = await httpAuth(['--restart-plant'])
+      if (plantCode !== 0) exitCode = plantCode
+    }
 
     // 会議の小窓の位置は**アプリを止めてから**仕込む。
     // 起動中に書くと、終了時の `closeCallWindowStore()` が上書きしてしまう。
@@ -403,6 +431,10 @@ try {
     if (want('split')) {
       const splitReadCode = await split(['--restart-read'])
       if (splitReadCode !== 0) exitCode = splitReadCode
+    }
+    if (want('http-auth')) {
+      const authReadCode = await httpAuth(['--restart-read'])
+      if (authReadCode !== 0) exitCode = authReadCode
     }
     // **タブを作る検証はいちばん最後に置く**。会議の小窓を出すには会議タブが要るが、
     // その1枚が「復元直後のタブは sleep 状態」の検査に混ざって落とす（実際に踏んだ）。

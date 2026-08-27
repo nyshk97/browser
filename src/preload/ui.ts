@@ -6,6 +6,10 @@ import type {
   CallState,
   DefaultBrowserStatus,
   GithubTokenStatus,
+  HttpAuthImportResult,
+  HttpAuthRule,
+  HttpAuthTestResult,
+  HttpAuthWriteResult,
   HistoryEntry,
   LoadedExtensionInfo,
   NemoSettings,
@@ -118,6 +122,25 @@ const api: NemoUiApi = {
   saveGithubToken: (token) => ipcRenderer.invoke('nemo:github-token-save', token) as Promise<boolean>,
   clearGithubToken: () => ipcRenderer.invoke('nemo:github-token-clear') as Promise<void>,
   getGithubTokenStatus: () => ipcRenderer.invoke('nemo:github-token-source') as Promise<GithubTokenStatus>,
+
+  listHttpAuthRules: () =>
+    ipcRenderer.invoke('nemo:list-http-auth-rules') as Promise<{
+      rules: HttpAuthRule[]
+      encryptionAvailable: boolean
+    }>,
+  revealHttpAuthPassword: (id) =>
+    ipcRenderer.invoke('nemo:reveal-http-auth-password', id) as Promise<string | null>,
+  saveHttpAuthRule: (input) =>
+    ipcRenderer.invoke('nemo:save-http-auth-rule', input) as Promise<HttpAuthWriteResult>,
+  deleteHttpAuthRule: (id) =>
+    ipcRenderer.invoke('nemo:delete-http-auth-rule', id) as Promise<HttpAuthWriteResult>,
+  importMultipassJson: (text) =>
+    ipcRenderer.invoke('nemo:import-multipass', text) as Promise<HttpAuthImportResult>,
+  testHttpAuthPattern: (urls, draftPattern) =>
+    ipcRenderer.invoke('nemo:test-http-auth-pattern', urls, draftPattern ?? null) as Promise<
+      HttpAuthTestResult[]
+    >,
+  getHttpAuthRevealMs: () => ipcRenderer.invoke('nemo:http-auth-reveal-ms') as Promise<number>,
 
   checkForUpdates: () => ipcRenderer.invoke('nemo:check-for-updates') as Promise<void>,
   restartForUpdate: () => ipcRenderer.invoke('nemo:restart-for-update') as Promise<void>,

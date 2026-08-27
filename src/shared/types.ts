@@ -335,6 +335,30 @@ export interface AuthPrompt {
   host: string
   realm: string
   isProxy: boolean
+  /**
+   * 「次回から自動で入力する」を出してよいか。
+   *
+   * **`resolveCredential` の除外条件と同じ判定を共有する**
+   * （暗号化可 / 通常タブ / 非プロキシ / Basic / 同一オリジン）。**リトライ回数だけは見ない**。
+   * ここを暗号化とシークレットだけにすると、プロキシ・非 Basic・クロスオリジンでも
+   * 保存チェックが出て、**保存しても次回自動入力されないルール**ができる。
+   */
+  canSave: boolean
+  /** 保存済みの資格情報が拒否されたか（文言の出し分け用）。 */
+  rejected: boolean
+  /** 拒否された保存済みルールがあれば、その値で入力欄を埋める（#6 の自己修復）。 */
+  prefill?: { username: string; password: string }
+}
+
+/**
+ * 情報を伝えるだけのダイアログ（**新しい通知基盤は作らない**）。
+ * 資格情報の保存に失敗したことなどを、既存の `ask` / `PromptDialog` に乗せて出す。
+ */
+export interface NoticePrompt {
+  type: 'notice'
+  id: string
+  title: string
+  detail: string
 }
 
 export interface CertificatePrompt {
@@ -368,7 +392,67 @@ export interface SystemMediaPrompt {
 }
 
 export type Prompt =
-  PermissionPrompt | AuthPrompt | CertificatePrompt | ExternalProtocolPrompt | SystemMediaPrompt
+  | PermissionPrompt
+  | AuthPrompt
+  | CertificatePrompt
+  | ExternalProtocolPrompt
+  | SystemMediaPrompt
+  | NoticePrompt
+
+/* ------------------------------------------------------------------ *
+ * HTTP 認証の自動入力
+ * ------------------------------------------------------------------ */
+
+/**
+ * Settings に出すルール 1 件。**パスワードは含まない**
+ * （値が要るときだけ `revealHttpAuthPassword` で 1 件取得する）。
+ */
+export interface HttpAuthRule {
+  id: string
+  /** リクエスト URL に当てる正規表現。 */
+  pattern: string
+  username: string
+  enabled: boolean
+  /** インポート時に変換した場合の変換元（黙って変換する分、追えるようにする）。 */
+  importedFrom?: string
+  /**
+   * 自動で無効化された理由。**ある間は `enabled` に関わらず実効無効**で、
+   * 有効トグルも効かない。原因のフィールドを直すと消える。
+   */
+  disabledReason?: 'pattern-timeout' | 'decrypt-failed'
+}
+
+/** ルールの保存・削除の結果。**認証キャッシュの消去に失敗しても保存は成立する**。 */
+export interface HttpAuthWriteResult {
+  saved: boolean
+  /** 保存できたルールの ID（新規なら採番されたもの）。 */
+  id?: string
+  /** false なら「反映には再起動が必要」を出す（自動リトライはしない）。 */
+  authCacheCleared: boolean
+  /** 保存できなかったときの理由。 */
+  reason?: string
+}
+
+/** MultiPass のインポート結果。 */
+export interface HttpAuthImportResult {
+  imported: number
+  rejected: { pattern: string; reason: string }[]
+  /** MultiPass の priority が一様でなかった（順序が変わりうる）。 */
+  priorityWarning: boolean
+  authCacheCleared: boolean
+  /** 永続化そのものに失敗した。 */
+  failed: boolean
+}
+
+/** 正規表現テスターの結果（優先順のロジックを renderer に再実装させないための形）。 */
+export interface HttpAuthTestResult {
+  url: string
+  /** マッチしたルール ID（勝ち順）。未保存の下書きは `draft`。 */
+  matchedIds: string[]
+  winnerId: string | null
+  /** 照合がタイムアウトしたルール ID（テスターでは**無効化しない**）。 */
+  timedOutIds: string[]
+}
 
 /* ------------------------------------------------------------------ *
  * コマンドバーの候補
@@ -669,6 +753,31 @@ export interface NemoUiApi {
   /** いま何が使われているか。**トークンの値は返さない**。 */
   getGithubTokenStatus(): Promise<GithubTokenStatus>
 
+  /* HTTP 認証の自動入力 */
+  /** ルール一覧（**パスワードは含まない**）と、端末鍵が使えるか。 */
+  listHttpAuthRules(): Promise<{ rules: HttpAuthRule[]; encryptionAvailable: boolean }>
+  /** 1 件だけパスワードを取り出す（Settings の「表示」）。 */
+  revealHttpAuthPassword(id: string): Promise<string | null>
+  /**
+   * ルールを保存する。**`password` を省略すると既存の暗号文を保持する**（patch semantics）。
+   * 空文字は「空のパスワードに変更」として扱う。
+   */
+  saveHttpAuthRule(input: {
+    id?: string | null
+    /** **省略すると有効トグルだけの変更**として扱う（`id` 必須）。 */
+    pattern?: string
+    username: string
+    password?: string | null
+    enabled?: boolean
+  }): Promise<HttpAuthWriteResult>
+  deleteHttpAuthRule(id: string): Promise<HttpAuthWriteResult>
+  /** MultiPass のエクスポート JSON（テキスト）を取り込む。 */
+  importMultipassJson(text: string): Promise<HttpAuthImportResult>
+  /** URL 群を保存済みルール（+ 編集中の未保存パターン）に当てる。正規表現の実行は main に閉じる。 */
+  testHttpAuthPattern(urls: string[], draftPattern?: string | null): Promise<HttpAuthTestResult[]>
+  /** 「表示」したパスワードを再マスクするまでの時間（検証から短縮できるようにする）。 */
+  getHttpAuthRevealMs(): Promise<number>
+
   /* 更新 */
   checkForUpdates(): Promise<void>
   /** 落とし終えた更新を適用する（再起動の確認ダイアログを出す）。 */
@@ -771,8 +880,9 @@ export interface SplitDiagnostics {
 
 export type PromptAnswer =
   | { kind: 'permission'; allow: boolean; remember: boolean }
-  | { kind: 'auth'; username: string; password: string }
+  | { kind: 'auth'; username: string; password: string; save: boolean }
   | { kind: 'auth-cancel' }
+  | { kind: 'notice' }
   | { kind: 'certificate'; proceed: boolean }
   | { kind: 'external-protocol'; open: boolean; remember: boolean }
   | { kind: 'system-media'; openSettings: boolean }

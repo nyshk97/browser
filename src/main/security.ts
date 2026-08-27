@@ -9,6 +9,7 @@ import {
   type MediaKind
 } from './media-access.js'
 import { ask } from './prompts.js'
+import { handleHttpAuthLogin } from './http-auth.js'
 import { getDecision, getSchemeDecision, rememberDecision, rememberScheme } from './store/permissions.js'
 import {
   BLANK_URL,
@@ -528,28 +529,39 @@ export function installCertificateHandler(resolveWindowId: (contents: WebContent
   })
 }
 
-/** HTTP 認証（Basic / Digest / プロキシ）。 */
-export function installAuthHandler(resolveWindowId: (contents: WebContents) => number | null): void {
-  app.on('login', (event, contents, _details, authInfo, callback) => {
+/**
+ * HTTP 認証（Basic / Digest / プロキシ）。
+ *
+ * **宛先の解決は二段にする。**
+ * - 自動入力の可否判定には strict な `findTab`（タブとして解決できたか）を使う。
+ *   `resolveWindowId`（= `findWindowIdForPageContents`）はタブでない WebContents を
+ *   **フォーカス中のウィンドウにフォールバック**するので、シークレット判定を取り違える。
+ * - **手動ダイアログの宛先には従来どおり `resolveWindowId`** を使う。
+ *   strict 版の `null` をそのまま返すと既存の `if (windowId === null) return` に落ちて
+ *   **認証キャンセルになりダイアログが出ない**。
+ */
+export function installAuthHandler(
+  resolveWindowId: (contents: WebContents) => number | null,
+  findTab: (contents: WebContents) => { isPrivate: boolean } | null
+): void {
+  app.on('login', (event, contents, details, authInfo, callback) => {
     const windowId = resolveWindowId(contents)
     log('auth.requested', { isProxy: authInfo.isProxy })
     if (windowId === null) return
     event.preventDefault()
-    void ask(windowId, {
-      type: 'auth',
-      host: `${authInfo.host}:${authInfo.port}`,
-      realm: authInfo.realm,
-      isProxy: authInfo.isProxy
-    }).then((answer) => {
-      if (answer?.kind === 'auth') {
-        // 資格情報はログに出さない（イベント名だけ残す）
-        log('auth.submitted', { isProxy: authInfo.isProxy })
-        callback(answer.username, answer.password)
-      } else {
-        log('auth.cancelled', { isProxy: authInfo.isProxy })
-        callback()
-      }
-    })
+    const tab = findTab(contents)
+    void handleHttpAuthLogin(
+      {
+        contents,
+        // `_details` は今まで捨てていたが、**URL 正規表現マッチにはこれを使う**
+        url: details.url,
+        authInfo,
+        isPrivate: tab?.isPrivate === true,
+        isTab: tab !== null,
+        windowId
+      },
+      callback
+    )
   })
 }
 

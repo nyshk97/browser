@@ -13,6 +13,7 @@ import {
 import { randomUUID } from 'node:crypto'
 import type { ElectronChromeExtensions } from 'electron-chrome-extensions'
 import { PAGE_PARTITION } from './paths.js'
+import { trackNavigationForHttpAuth } from './http-auth.js'
 import {
   BLANK_URL,
   applySessionSecurityDefaults,
@@ -717,6 +718,10 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
     remember(() => recordFavicon(tab.url, next))
     notify()
   })
+  // HTTP 認証の自動入力は「遷移中の URL」を知らないと同一オリジン判定ができない
+  // （`login` の時点で `getURL()` はまだ古いページを指している）
+  trackNavigationForHttpAuth(wc)
+
   wc.on('did-start-loading', notify)
   wc.on('did-stop-loading', () => {
     // **見えていない**まま読み込みが終わったら未読にする。

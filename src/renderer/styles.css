@@ -1730,6 +1730,46 @@ body[data-view='toolbar'] {
   opacity: 0.4;
 }
 
+/* HTTP 認証の自動入力 */
+.http-auth textarea {
+  background: var(--nemo-surface);
+  border-radius: var(--nemo-radius);
+  padding: 6px 8px;
+  width: 320px;
+  font-family: inherit;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.ha-row {
+  border-top: 1px solid var(--nemo-surface);
+  padding: 6px 0;
+}
+
+.ha-row:first-child {
+  border-top: none;
+}
+
+.ha-password {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.ha-reason,
+.ha-rejected,
+.ha-priority-warning,
+.ha-test-error,
+.ha-no-encryption {
+  color: var(--nemo-danger);
+  font-size: 11px;
+}
+
+.ha-imported,
+.ha-message,
+.ha-test-result {
+  font-size: 11px;
+}
+
 /* シークレットウィンドウ */
 .sidebar.private {
   background: #241c30;

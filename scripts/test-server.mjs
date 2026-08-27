@@ -60,6 +60,31 @@ const gateHeld = new Map()
 /** 印ごとの到達回数。**解放後も残す**（撮影の後に数え直せるように）。 */
 const gateArrived = new Map()
 
+/**
+ * HTTP Basic 認証の自走検証用。
+ *
+ * `/__nemo_basic_auth__/<tag>?user=<u>&pass=<p>` に `Authorization` が一致しなければ
+ * `401` + `WWW-Authenticate: Basic realm="..."`、一致すれば `200`。
+ *
+ * **パスに tag を持たせる**のが要点で、クエリ文字列だと正規表現の `?` を
+ * エスケープしなければならず、テスト用パターンが読めなくなる。
+ * 「同じ origin / realm で勝つルールが違う URL」を作るのにも path が要る。
+ *
+ * 受け取った `Authorization` は `/__nemo_auth_log__` から読める
+ * （**送信回数だけでなく宛先違いも見る**ため、中身ごと残す）。
+ */
+const AUTH_PREFIX = '/__nemo_basic_auth__/'
+/** 保護されたサブリソースを持つページ。 */
+const AUTH_PAGE_PATH = '/__nemo_auth_page__'
+const AUTH_LOG_PATH = '/__nemo_auth_log__'
+const AUTH_RESET_PATH = '/__nemo_auth_reset__'
+/** 接続ごと落とす（メインフレームの `did-fail-load` を作る）。 */
+const ABORT_PATH = '/__nemo_abort__'
+/** 204 を返してナビゲーションだけ中断させる（元のページは残る）。 */
+const NO_CONTENT_PATH = '/__nemo_no_content__'
+/** @type {{tag: string, path: string, authorization: string}[]} */
+const authLog = []
+
 const types = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -137,6 +162,90 @@ const server = http.createServer((req, res) => {
     }
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
     res.end(JSON.stringify({ released: held.length }))
+    return
+  }
+
+  if (url.pathname.startsWith(AUTH_PREFIX)) {
+    const tag = url.pathname.slice(AUTH_PREFIX.length)
+    const user = url.searchParams.get('user') ?? 'u'
+    const pass = url.searchParams.get('pass') ?? 'p'
+    const realm = url.searchParams.get('realm') ?? 'Nemo Test'
+    const delay = Number(url.searchParams.get('delay') ?? 0)
+    const header = req.headers.authorization ?? ''
+    authLog.push({ tag, path: url.pathname + url.search, authorization: header })
+    const expected = `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`
+    const send = () => {
+      if (header === expected) {
+        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
+        res.end(`nemo-basic-auth ok ${tag}`)
+        return
+      }
+      res.writeHead(401, {
+        'www-authenticate': `Basic realm="${realm}"`,
+        'content-type': 'text/plain; charset=utf-8',
+        'cache-control': 'no-store'
+      })
+      res.end('unauthorized')
+    }
+    // **遅らせるのは資格情報が載っているリクエストだけ**。最初の 401 まで遅らせると、
+    // 「自動入力を送ったあと応答が来ない」を作るのに毎回その遅延を待つことになる
+    if (delay > 0 && header.length > 0) setTimeout(send, delay)
+    else send()
+    return
+  }
+
+  if (url.pathname === AUTH_PAGE_PATH) {
+    // `?tags=a,b` の数だけ保護されたサブリソースを踏むページ。
+    // `?origin=` を付けるとクロスオリジンのサブリソースになる。
+    const tags = (url.searchParams.get('tags') ?? '').split(',').filter(Boolean)
+    const user = url.searchParams.get('user') ?? 'u'
+    const pass = url.searchParams.get('pass') ?? 'p'
+    const realm = url.searchParams.get('realm') ?? 'Nemo Test'
+    const origin = url.searchParams.get('origin') ?? ''
+    const delay = url.searchParams.get('delay') ?? ''
+    const query =
+      `user=${encodeURIComponent(user)}&pass=${encodeURIComponent(pass)}&realm=${encodeURIComponent(realm)}` +
+      (delay ? `&delay=${encodeURIComponent(delay)}` : '')
+    const sources = tags.map((tag) => `${origin}${AUTH_PREFIX}${tag}?${query}`)
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+    res.end(
+      `<!doctype html><meta charset="utf-8"><title>auth page</title><h1>auth page</h1>` +
+        // **同時に投げる**（並列に飛ぶ 401 を作るため）。結果は本文に書き出す
+        `<pre id="result">pending</pre><script>
+          const sources = ${JSON.stringify(sources)}
+          Promise.all(sources.map((src) => fetch(src).then((r) => r.status).catch(() => 'error')))
+            .then((codes) => { document.getElementById('result').textContent = codes.join(',') })
+        </script>`
+    )
+    return
+  }
+
+  if (url.pathname === NO_CONTENT_PATH) {
+    // **204 はナビゲーションを中断させるが、元のページはそのまま残る**。
+    // 接続断（`__nemo_abort__`）だとエラーページに置き換わり、
+    // 「遷移に失敗して元のページに留まった」状態が作れない。
+    res.writeHead(204, { 'cache-control': 'no-store' })
+    res.end()
+    return
+  }
+
+  if (url.pathname === ABORT_PATH) {
+    // **接続ごと落とす**（404 では `did-fail-load` にならない）。
+    // 「クロスオリジンへの遷移が失敗した直後」の検証に要る。
+    req.socket.destroy()
+    return
+  }
+
+  if (url.pathname === AUTH_LOG_PATH) {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+    res.end(JSON.stringify({ entries: authLog }))
+    return
+  }
+
+  if (url.pathname === AUTH_RESET_PATH) {
+    authLog.length = 0
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
+    res.end('reset')
     return
   }
 

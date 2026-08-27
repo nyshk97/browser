@@ -25,6 +25,7 @@ import {
 import { log, logError } from './log.js'
 import { createUiView, disposeUiView, type UiViewKind } from './ui-view.js'
 import { buildSwipeInjection } from '../shared/swipe-gesture.js'
+import { buildVimScrollInjection } from '../shared/vim-scroll.js'
 import { cancelPrompts, currentPrompt, setPromptNotifier } from './prompts.js'
 import { getSettings } from './store/settings.js'
 import { getTimings } from './timings.js'
@@ -796,6 +797,7 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
   })
 
   attachSwipeNavigation(tab, wc)
+  attachVimScroll(tab, wc)
 
   // ページが自分で閉じた（`window.close()`）ときの後始末。
   //
@@ -994,6 +996,40 @@ function attachSwipeNavigation(tab: NemoTab, wc: WebContents): void {
     if (isMainFrame) return
     injectFrame(webFrameMain.fromId(processId, routingId))
   })
+}
+
+/**
+ * ページの `gg` / `G` で縦方向の端へ飛ぶ（vim の作法）。
+ *
+ * 判定を main の `before-input-event` に置けない。あそこには `input.key` しか渡ってこないので、
+ * **ページの入力欄にフォーカスがあるかを判別できず**、検索ボックスに `G` と打った瞬間に
+ * 最下部へ飛ぶ。そこで swipe と同じく**隔離ワールド**へ判定コードを入れる。
+ *
+ * **子フレームには入れない**（swipe との違い）。swipe が全フレームに入れているのは
+ * 「`wheel` が iframe の境界を越えて親へ伝わらない」ためだが、**キーはフォーカスに付いて回る**
+ * ので、iframe をクリックしていない限りメインフレームで受けられる。
+ * 広告・トラッキング iframe にまで入れずに済む。
+ */
+// **1729 はスワイプ判定・1730 は会議のプローブ（`call-coordinator.ts`）が使っている。**
+// 同じワールドに同居させると、どちらかがグローバルを1つ増やした瞬間に
+// **その機能を使うタブでだけ静かに壊れる**（再現条件が機能横断で切り分けが高くつく）。
+const VIM_SCROLL_WORLD_ID = 1731
+const vimScrollInjection = buildVimScrollInjection()
+
+function attachVimScroll(tab: NemoTab, wc: WebContents): void {
+  const inject = (): void => {
+    wc.executeJavaScriptInIsolatedWorld(VIM_SCROLL_WORLD_ID, [{ code: vimScrollInjection }]).catch(
+      (error) => {
+        logError('tab.vim_scroll_inject_failed', error, { key: tab.key })
+      }
+    )
+  }
+
+  // swipe と同じ理由で**両方に張る**。bfcache から復元されると `dom-ready` は出ないので、
+  // それだけでは一度戻ったあと二度と効かない。
+  // 注入コード自身が二重登録を弾くので、余分に呼んでも害はない。
+  wc.on('dom-ready', inject)
+  wc.on('did-navigate', inject)
 }
 
 /* ------------------------------------------------------------------ *

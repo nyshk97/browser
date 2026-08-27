@@ -28,6 +28,7 @@ import http from 'node:http'
 import path from 'node:path'
 import { connectTo, connectUi, listTargets, sleep, waitFor } from './lib/cdp.mjs'
 import { captureWindow } from './lib/window-shot.mjs'
+import { afterSessionSave, afterSweep } from './lib/timings.mjs'
 
 const CDP = process.env.NEMO_CDP ?? 'http://127.0.0.1:9333'
 const PAGES = process.env.NEMO_TEST_PAGES ?? 'http://127.0.0.1:8787'
@@ -124,11 +125,21 @@ async function makeTabs(n, prefix = 'split') {
     const key = await ui.ev(`window.nemo.createTab(${JSON.stringify(url)}, { background: true })`)
     keys.push(key)
   }
-  // 一覧に出るまで待つ
+  /*
+   * 一覧に出て、**読み込みが終わるまで**待つ。
+   *
+   * 一覧に出た時点で返すと、まだ読み込み中のタブに `navigate()` を撃つ経路ができる。
+   * Electron の `loadURL` は**別 URL の `did-fail-load` でも reject する**ので、
+   * 中断された元の読み込み（`ERR_ABORTED (-3) loading 'blank.html?lf-0'`）が
+   * `nemo:navigate` の失敗として飛び、スクリプトごと落ちる（間欠的に踏んだ）。
+   */
   await waitFor(
     ui,
     `window.nemo.getWindowState().then((s) =>
-       ${JSON.stringify(keys)}.every((k) => s.tabs.some((t) => t.key === k)) ? 'ok' : '')`
+       ${JSON.stringify(keys)}.every((k) => {
+         const tab = s.tabs.find((t) => t.key === k)
+         return tab !== undefined && !tab.loading
+       }) ? 'ok' : '')`
   )
   return keys
 }
@@ -333,7 +344,8 @@ if (MODE === 'restart-write') {
   // **セッション保存はデバウンスされている**ので、書かれるまで待つ
   // （待たずに抜けると、運が悪いと分割が保存されないまま終了する。
   // フル検証でだけ間欠的に落ちた）。`verify-phase1.mjs` の `--session-write` と同じ作法。
-  await sleep(3000)
+  // 待ちはデバウンス 2 段の合計から導く（`scripts/lib/timings.mjs`）
+  await sleep(afterSessionSave())
   /*
    * **書いたものを読み返す**。「復元されない」が起きたとき、
    * 書けていないのか読めていないのかをここで切り分けられるようにする。
@@ -1573,8 +1585,11 @@ await resetTabs()
     await waitFor(ui, "window.nemo.getWindowState().then((s) => s.tabs.some((t) => t.splitSide) ? 'ok' : '')")
 
     // 見えているあいだは寝ない。対照タブ（見えていない非分割）は寝ること
-    await updateSetting({ tabSleepMinutes: 0.05 })
-    await sleep(7000)
+    // **設定値は ms 定数から導出する**（両方に数字を書くと片方だけ直してズレる）
+    const SLEEP_THRESHOLD_MS = 1_500
+    await updateSetting({ tabSleepMinutes: SLEEP_THRESHOLD_MS / 60_000 })
+    // 直前に触ったタブが期限切れになるまで + sweep 1 周（**周期は timings 経由で読み戻す**）
+    await sleep(afterSweep(SLEEP_THRESHOLD_MS))
     const s = await state()
     check(
       'sleep: 分割中の 2 本は寝ない',
@@ -1594,19 +1609,37 @@ await resetTabs()
      * 「両方とも期限切れ」になると `pairLastActiveAt` が無くても 2 本とも寝るので、
      * 検査が空振りする（フル検証でだけ落ちた実例）。
      */
-    const THRESHOLD_MS = 12_000 // = tabSleepMinutes 0.2
+    const THRESHOLD_MS = 6_000
+    /*
+     * 前提チェックのマージンは**この 2 つの差**で決まる（= `THRESHOLD_MS / 12`）。
+     * 痩せると「両方とも期限切れ」に化けて検査が空振りする（フル検証でだけ落ちた実例がある）。
+     *
+     * **閾値に対する比で書く**。素の引き算（`THRESHOLD_MS - 2000`）だと閾値を縮めたときに
+     * マージンだけが不釣り合いに痩せる。比で書けば閾値と一緒に比例して縮む。
+     * 実測のマージンは `sleep: 検査の前提…` の行に毎回出るので、痩せ過ぎたら気づける。
+     */
+    const AGE_HEAD_START_MS = Math.round((THRESHOLD_MS * 5) / 6) // 左を先に触ってから右を触るまでの間隔
+    const GAP_FLOOR_MS = Math.round((THRESHOLD_MS * 3) / 4) // 前提が成立していると見なす下限
     await updateSetting({ tabSleepMinutes: 0 }) // 仕込みの間は sweep を止める
     await call(`window.nemo.selectTab(${JSON.stringify(a)})`) // 左を触る
     await call(`window.nemo.selectTab(${JSON.stringify(control)})`) // ペアを隠す
-    await sleep(THRESHOLD_MS - 2000) // 左だけが十分古くなる
+    await sleep(AGE_HEAD_START_MS) // 左だけが十分古くなる
     await call(`window.nemo.selectTab(${JSON.stringify(b)})`) // 右を触り直す（右だけ新しい）
     await call(`window.nemo.selectTab(${JSON.stringify(control)})`)
-    await updateSetting({ tabSleepMinutes: 0.2 })
-    await sleep(7000) // 左は期限切れ・右はまだ期限内
+    await updateSetting({ tabSleepMinutes: THRESHOLD_MS / 60_000 })
+    // 左は既に AGE_HEAD_START_MS だけ古い。残り（= THRESHOLD_MS の 1/6）で期限切れになり、そこから sweep 1 周。
+    // 右はこの時点で若いままなので期限内に留まる
+    await sleep(afterSweep(THRESHOLD_MS - AGE_HEAD_START_MS))
     const paired = await state()
-    // **前提が成立していること**を先に見る（左が実際に十分古いか）
+    // **前提が成立していること**を先に見る（左が実際に十分古いか）。
+    // 実測の差と余裕は PASS のときも必ず出す（flaky が出たとき「マージン不足」か
+    // 「別要因」かを 1 回の実行で切り分けるため）
     const gap = (tabOf(paired, b)?.lastActiveAt ?? 0) - (tabOf(paired, a)?.lastActiveAt ?? 0)
-    check('sleep: 検査の前提（左だけが期限切れ）が成立している', gap >= THRESHOLD_MS - 3000, `差=${gap}ms`)
+    check(
+      'sleep: 検査の前提（左だけが期限切れ）が成立している',
+      gap >= GAP_FLOOR_MS,
+      `差=${gap}ms（下限 ${GAP_FLOOR_MS}ms / 余裕 ${gap - GAP_FLOOR_MS}ms）`
+    )
     check(
       'sleep: ペアの新しい方の時刻を使う（古い側だけ寝ない）',
       tabOf(paired, a)?.asleep === false && tabOf(paired, b)?.asleep === false,
@@ -1628,8 +1661,9 @@ await resetTabs()
         tabOf(beforeArchive, b) !== null &&
         tabOf(beforeArchive, control) !== null
     )
-    await updateSetting({ tabArchiveHours: 0.001 })
-    await sleep(8000)
+    const ARCHIVE_THRESHOLD_MS = 1_800
+    await updateSetting({ tabArchiveHours: ARCHIVE_THRESHOLD_MS / 3_600_000 })
+    await sleep(afterSweep(ARCHIVE_THRESHOLD_MS))
     const archived = await state()
     check(
       'archive: 見えている分割の 2 本は残る',
@@ -1650,23 +1684,28 @@ await resetTabs()
     await updateSetting({ tabArchiveHours: 0 })
     const [p1, p2, spare] = await makeTabs(3, 'agepair')
     await makeSplit(p1, p2)
-    const AGE_MS = 12_000 // = tabArchiveHours 0.003333
+    const AGE_MS = 6_000
     await call(`window.nemo.selectTab(${JSON.stringify(p1)})`) // 左を触る
     await call(`window.nemo.selectTab(${JSON.stringify(spare)})`) // ペアを隠す
-    await sleep(AGE_MS + 2000) // 左だけが十分古くなる
+    await sleep(Math.round((AGE_MS * 7) / 6)) // 左だけが十分古くなる（閾値に比例させる）
     await call(`window.nemo.selectTab(${JSON.stringify(p2)})`) // 右を触り直す
     await call(`window.nemo.selectTab(${JSON.stringify(spare)})`) // また隠す
     const aged = await state()
     const ageGap = (tabOf(aged, p2)?.lastActiveAt ?? 0) - (tabOf(aged, p1)?.lastActiveAt ?? 0)
     // **前提が成立していること**を先に見る（両方とも期限切れだと検査が空振りする）
-    check('archive: 検査の前提（左だけが期限切れ）が成立している', ageGap >= AGE_MS, `差=${ageGap}ms`)
+    check(
+      'archive: 検査の前提（左だけが期限切れ）が成立している',
+      ageGap >= AGE_MS,
+      `差=${ageGap}ms（下限 ${AGE_MS}ms / 余裕 ${ageGap - AGE_MS}ms）`
+    )
     check(
       'archive: 前提（ペアが隠れている）が成立している',
       !(await visibleKeys()).includes(p1) && !(await visibleKeys()).includes(p2),
       JSON.stringify(await visibleKeys())
     )
     await updateSetting({ tabArchiveHours: AGE_MS / 3_600_000 })
-    await sleep(8000)
+    // 左は既に AGE_MS の 7/6 だけ古い（= 設定した瞬間に期限切れ）ので、あとは sweep 1 周待つだけ
+    await sleep(afterSweep(0))
     const agedAfter = await state()
     check(
       'archive: ペアの新しい方の時刻を使う（古い側だけ消えない）',

@@ -29,6 +29,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { connect, connectTo, connectUi, listTargets, sleep, waitFor } from './lib/cdp.mjs'
 import { countLogEvents, projectRoot, readLogLines } from './lib/harness.mjs'
+import { afterSessionSave, afterSweep } from './lib/timings.mjs'
 
 const require = createRequire(import.meta.url)
 const electronPath = require('electron')
@@ -867,11 +868,28 @@ console.log('\n--- sleep / archive の除外')
 
   // 別タブを選んで親を非アクティブにする（アクティブなタブはそもそも寝ない）
   const other = await ui.ev(`window.nemo.createTab(${JSON.stringify(`${PAGES}/index.html`)})`)
-  await ui.ev(`window.nemo.updateSettings({ tabSleepMinutes: 0.02 }).then(() => 'ok')`)
-  await sleep(9000)
+  /*
+   * **比較用の普通のタブ**（見えていない・Peek を持たない）。
+   * 下の検査は「寝ない」という否定形なので、これが無いと **sweep が一度も走らなくても PASS** する。
+   * 待ちを timings 由来にして縮めた以上、空振りしていない証拠を同じブロックに置く。
+   */
+  const control = await ui.ev(
+    `window.nemo.createTab(${JSON.stringify(`${PAGES}/index.html`)}, { background: true })`
+  )
+  // **設定値は ms 定数から導出する**（両方に数字を書くと片方だけ直してズレる）
+  const SLEEP_THRESHOLD_MS = 600
+  await ui.ev(
+    `window.nemo.updateSettings({ tabSleepMinutes: ${SLEEP_THRESHOLD_MS / 60_000} }).then(() => 'ok')`
+  )
+  await sleep(afterSweep(SLEEP_THRESHOLD_MS))
 
   const s = await state()
   const parentTab = s.tabs.find((t) => t.key === parent.key)
+  check(
+    '比較用の普通のタブは寝る（除外の検査が空振りしていない証拠）',
+    s.tabs.find((t) => t.key === control)?.asleep === true,
+    `asleep=${s.tabs.find((t) => t.key === control)?.asleep}`
+  )
   check(
     'Peek を持つ親タブは tabSleepMinutes を過ぎても寝ない',
     parentTab !== undefined && parentTab.asleep === false,
@@ -885,6 +903,7 @@ console.log('\n--- sleep / archive の除外')
   await ui.ev(`window.nemo.updateSettings({ tabSleepMinutes: ${settings.tabSleepMinutes} }).then(() => 'ok')`)
   await call(`window.nemo.closeTab(${JSON.stringify(parent.key)})`)
   await call(`window.nemo.closeTab(${JSON.stringify(other)})`)
+  await call(`window.nemo.closeTab(${JSON.stringify(control)})`)
   parent.page.close()
   await sleep(600)
 }
@@ -970,10 +989,27 @@ async function miniStates() {
 
   /* セッションに含まれない */
   if (USER_DATA) {
-    await sleep(2600) // セッション保存のデバウンス
+    /*
+     * **否定形の検査なので、先に「書かれた後に読んでいる」を担保する**。
+     *
+     * `小窓はセッションに保存されない` は完全な否定形で、`session.json` がまだ
+     * 書かれていなくても（`existsSync` が false で `'{}'` にフォールバックしても）PASS する。
+     * そこで**必ず現れるはずの普通のタブ URL**を通常ウィンドウに用意し、
+     * それが書かれていることを先に assert する。これが PASS して初めて
+     * 下の否定形が「読めた内容に小窓が無い」という意味になる。
+     */
+    const marker = `${PAGES}/index.html?session-marker`
+    const markerKey = await ui.ev(`window.nemo.createTab(${JSON.stringify(marker)}, { background: true })`)
+    await sleep(afterSessionSave()) // セッション保存のデバウンス（2 段の合計から導く）
     const sessionFile = path.join(USER_DATA, 'session.json')
     const raw = fs.existsSync(sessionFile) ? fs.readFileSync(sessionFile, 'utf8') : '{}'
+    check(
+      'session.json が実際に書かれている（否定形の検査が空振りしていない証拠）',
+      raw.includes('session-marker'),
+      `exists=${fs.existsSync(sessionFile)} len=${raw.length}`
+    )
     check('小窓はセッションに保存されない', !raw.includes('site=mini'), raw.slice(0, 200))
+    await call(`window.nemo.closeTab(${JSON.stringify(markerKey)})`)
   }
 
   /* ⌘W（= closeTab）でウィンドウごと閉じ、⌘⇧T で戻せる */

@@ -21,6 +21,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { connectUi, sleep } from './lib/cdp.mjs'
 import { readLogLines } from './lib/harness.mjs'
+import { timings } from './lib/timings.mjs'
 
 const CDP = process.env.NEMO_CDP ?? 'http://127.0.0.1:9333'
 const USER_DATA = process.env.NEMO_USER_DATA_DIR ?? ''
@@ -681,7 +682,16 @@ async function main() {
   await until(async () => (await ui.ev(countOf('.row-menu'))) === 0, { timeoutMs: 2000 })
   await unhover(ui)
 
-  // 開閉で再取得しない
+  /*
+   * 開閉で再取得しない。
+   *
+   * **計測の窓は「成功した取得の直後」から始める。** 自動取得の間隔は成功のたびに
+   * 引き直されるので、直前に 1 回成功させておけば窓のあいだは自動取得が来ない。
+   * これをやらないと、`liveFolderPollMs` を縮めたときに
+   * **たまたま自動取得が窓に入って「開閉で再取得した」と誤判定する**。
+   */
+  await refresh(ui)
+  await until(async () => (await liveState(ui))?.loading === false)
   await collapseAll(ui)
   resetCounters()
   await expandAll(ui)
@@ -1028,7 +1038,7 @@ async function main() {
   )
 
   /* ---- ⑲ / ㉕ 待ち時間（バックオフ）を値で確かめる ---- */
-  // **先に1回成功させてバックオフを 60 秒に戻す。** これをやらないと
+  // **先に1回成功させてバックオフを初期値に戻す。** これをやらないと
   // ここまでの失敗で伸びきった値を見ることになり、「60s → 120s」を撃てない
   serve(okBody(BASE))
   await refresh(ui)
@@ -1041,18 +1051,30 @@ async function main() {
   await sleep(700)
   let backoffs = logEvents('live_folder.backoff').slice(backoffBefore)
   const transientWaits = backoffs.filter((entry) => entry.kind === 'transient').map((entry) => entry.waitMs)
+  const BACKOFF_MIN = timings.liveFolderBackoffMinMs
   check(
-    '⑲ transient のバックオフは 60s → 120s と倍々になる',
-    transientWaits.length >= 2 && transientWaits.at(-2) === 60_000 && transientWaits.at(-1) === 120_000,
+    `⑲ transient のバックオフは ${BACKOFF_MIN}ms → ${BACKOFF_MIN * 2}ms と倍々になる`,
+    transientWaits.length >= 2 &&
+      transientWaits.at(-2) === BACKOFF_MIN &&
+      transientWaits.at(-1) === BACKOFF_MIN * 2,
     `waitMs=${JSON.stringify(transientWaits.slice(-2))}`
   )
 
-  // ⑲ タイマー（15 秒ごと）がバックオフを迂回しない。
-  // **待つのは 35 秒だけ**にして、正確な待ち時間は上の waitMs で見る
+  /*
+   * ⑲ タイマーがバックオフを迂回しない。
+   *
+   * **観測窓はいまのバックオフ（= 初期値の 2 倍）の 3 割**にする。正確な待ち時間は上の waitMs で見る。
+   * 3 割にするのは、窓がバックオフを超えると「待ちが明けたから飛んだ」と区別が付かなくなるため。
+   * 同時に**タイマーが何度も起きる長さ**でなければ空振りするので、tick の 5 倍を下限にする。
+   *
+   * これは否定形の検査だが、**同じプロセスで後の ⑮ が「時が来れば必ず 1 回飛ぶ」を撃つ**ので、
+   * 「タイマーが死んでいるから飛ばない」ではないことはそちらで担保される。
+   */
   resetCounters()
-  console.log('[verify-live-folder] バックオフ中に何も飛ばないことを 35 秒観測する…')
-  await sleep(35_000)
-  check('⑲ バックオフ中はタイマーが起きても投げない', total === 0, `35 秒で ${total} 回`)
+  const observeMs = Math.max(timings.liveFolderTickMs * 5, Math.round(BACKOFF_MIN * 2 * 0.3))
+  console.log(`[verify-live-folder] バックオフ中に何も飛ばないことを ${observeMs}ms 観測する…`)
+  await sleep(observeMs)
+  check('⑲ バックオフ中はタイマーが起きても投げない', total === 0, `${observeMs}ms で ${total} 回`)
 
   /* ---- ㉕ 503 + Retry-After: 120 ---- */
   const before503 = logEvents('live_folder.backoff').length
@@ -1325,7 +1347,7 @@ async function main() {
   await refresh(ui)
   await until(async () => JSON.parse(await readExpanded(ui, ROW_TITLES)).length === 3)
   resetCounters()
-  // 直前の成功で次の自動取得は 60 秒後。そこでタイマーが**遅い**応答を掴む
+  // 直前の成功で次の自動取得は `liveFolderPollMs` 後。そこでタイマーが**遅い**応答を掴む
   const slowItems = [
     ...BASE,
     mine({
@@ -1336,21 +1358,32 @@ async function main() {
       updatedAt: '2026-08-28T00:00:00Z'
     })
   ]
-  // **クライアント側のタイムアウト（15 秒）より短くする。**
-  // 長くすると abort されて transient になり、「結果が適用される」を撃てない
-  serve(() => new Promise((resolve) => setTimeout(() => resolve(okBody(slowItems)), 8_000)))
-  console.log('[verify-live-folder] 自動取得（60秒後）が 8 秒かかる状況を観測する…')
-  const started = await until(() => total >= 1, { timeoutMs: 80_000, interval: 500 })
-  check('⑮ 60 秒後にタイマーが自動取得を1回始める', started === true, `リクエスト ${total} 回`)
-  // 取得中（20 秒）のあいだ、タイマーは 15 秒ごとに起きて条件を見る。
-  // ここで予約が立つと2回目が飛ぶ
-  // 取得中（8 秒）のあいだ、タイマーは 5 秒ごとに起きて条件を見る。
-  // ここで予約が立つと2回目が飛ぶ
-  await sleep(12_000)
+  /*
+   * 応答を遅らせる長さ。**取得中にタイマーが何度も起きる**必要があるので tick より十分長く、
+   * かつ**クライアント側のタイムアウト（15 秒）より短く**する
+   * （長いと abort されて transient になり、「結果が適用される」を撃てない）。
+   * 本番の tick 5 秒なら 8 秒（元の値）、検証時の短い tick なら比例して短くなる。
+   */
+  const SLOW_MS = Math.max(2_000, timings.liveFolderTickMs * 1.6)
+  serve(() => new Promise((resolve) => setTimeout(() => resolve(okBody(slowItems)), SLOW_MS)))
+  console.log(
+    `[verify-live-folder] 自動取得（${timings.liveFolderPollMs}ms 後）が ${SLOW_MS}ms かかる状況を観測する…`
+  )
+  const started = await until(() => total >= 1, {
+    timeoutMs: timings.liveFolderPollMs + 20_000,
+    interval: Math.min(500, Math.max(50, Math.round(timings.liveFolderTickMs / 4)))
+  })
+  check(
+    `⑮ ${timings.liveFolderPollMs}ms 後にタイマーが自動取得を1回始める`,
+    started === true,
+    `リクエスト ${total} 回`
+  )
+  // 取得中のあいだ、タイマーは tick ごとに起きて条件を見る。ここで予約が立つと2回目が飛ぶ
+  await sleep(SLOW_MS + timings.liveFolderTickMs)
   check(
     '⑮ 実行中に来た自動の要求は捨てられる（取得は1回のまま）',
     total === 1,
-    `リクエスト ${total} 回（5 秒ごとのタイマーが 8 秒の取得中に起きている）`
+    `リクエスト ${total} 回（${timings.liveFolderTickMs}ms ごとのタイマーが ${SLOW_MS}ms の取得中に起きている）`
   )
   titles = JSON.parse(await readExpanded(ui, ROW_TITLES))
   check(

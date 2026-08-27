@@ -3,6 +3,7 @@ import { JsonStore } from '../store/json-store.js'
 import { userDataPath } from '../paths.js'
 import { log, logError } from '../log.js'
 import { getSettings } from '../store/settings.js'
+import { getTimings } from '../timings.js'
 import {
   LIVE_FOLDER_VERSION,
   normalizeLiveFolderCache,
@@ -21,19 +22,29 @@ import type { LiveFolderCache, LiveFolderState, LivePullRequest } from '../../sh
  * タイマーは 60 秒ごとに起きて条件を確認するだけの存在で、**取得間隔を決めない**。
  */
 
-/** 自動取得の基本間隔。 */
-const POLL_INTERVAL_MS = 60_000
-/**
- * タイマーが起きる間隔。
- * **取得の間隔を決めるのは `nextAutomaticAttemptAt` の方**で、ここは
- * 「条件を見るだけ」なので短くてよい（短いほど、制限が解けた直後の復帰が速い）。
+/*
+ * 取得の間隔まわりは `src/shared/timings.js` に既定値を置き、
+ * 自走検証のときだけ `NEMO_VERIFY_TIMINGS` で縮める（判定の中身は変えない）。
+ * ここは待ち時間そのものなので、**verify の所要時間の 89 秒分がここ 2 つで決まっていた**。
+ *
+ * - 自動取得の基本間隔 = `liveFolderPollMs`
+ * - タイマーが起きる間隔 = `liveFolderTickMs`。**取得の間隔を決めるのは
+ *   `nextAutomaticAttemptAt` の方**で、ここは「条件を見るだけ」なので短くてよい
+ *   （短いほど、制限が解けた直後の復帰が速い）。poll との比は保つこと
+ * - `transient` 失敗のバックオフの初期値 = `liveFolderBackoffMinMs`
  */
-const TICK_MS = 5_000
-/** `transient` 失敗のバックオフ。 */
-const BACKOFF_MIN_MS = 60_000
-const BACKOFF_MAX_MS = 15 * 60_000
+const pollIntervalMs = (): number => getTimings().liveFolderPollMs
+const backoffMinMs = (): number => getTimings().liveFolderBackoffMinMs
+/** バックオフの上限は初期値の 15 倍（本番で 60秒 → 15分）。 */
+const backoffMaxMs = (): number => backoffMinMs() * 15
+
+/** いまのバックオフ幅（まだ入っていなければ初期値を入れてから返す）。 */
+function currentBackoffMs(): number {
+  if (backoffMs === 0) backoffMs = backoffMinMs()
+  return backoffMs
+}
 /** `auth` 失敗は資格情報を直すまで投げても無駄。 */
-const AUTH_RETRY_MS = 15 * 60_000
+const authRetryMs = (): number => backoffMinMs() * 15
 /**
  * `gh auth token` の呼び出し自体に失敗したときの再試行。
  *
@@ -41,7 +52,7 @@ const AUTH_RETRY_MS = 15 * 60_000
  * タイムアウトすると**起動して 60 秒間ずっと `Connect GitHub`（＝未設定）に見える**
  * （実際に踏んだ。ログでは startup の要求が取得も失敗もせず消えていた）。
  */
-const TOKEN_RETRY_MS = 5_000
+const tokenRetryMs = (): number => getTimings().liveFolderTickMs
 
 /**
  * 取得の要求元。
@@ -76,7 +87,12 @@ let loading = false
 let failure: LiveFolderState['failure'] = null
 
 let nextAutomaticAttemptAt = 0
-let backoffMs = BACKOFF_MIN_MS
+/**
+ * いまの `transient` バックオフ幅。**0 は「まだ初期値を入れていない」**。
+ * 初期値は `timings` 由来なので、モジュール読み込み時ではなく初めて使うときに入れる
+ * （`initTimings()` はアプリ起動時に走るので、モジュール初期化では上書きが間に合わない）。
+ */
+let backoffMs = 0
 
 /** single-flight。実行中は1本だけ。 */
 let running = false
@@ -194,7 +210,7 @@ export function initLiveFolders(nextHost: LiveFolderHost): void {
   cache = store.get()
   loading = true
 
-  timer = setInterval(tick, TICK_MS)
+  timer = setInterval(tick, getTimings().liveFolderTickMs)
   timer.unref?.()
 
   // focus / resume も**同じゲート**（`now >= nextAutomaticAttemptAt`）だけを見る
@@ -342,7 +358,7 @@ async function run(kind: RequestKind, myGeneration: number, reason: string): Pro
       // 未設定は失敗ではない（UI は `Connect GitHub` の1行だけを出す）。
       // ただし**「解決に失敗した」だけは短く retry する**（未設定と同じ扱いにしない）。
       failure = null
-      const wait = resolved.reason === 'gh-failed' ? TOKEN_RETRY_MS : POLL_INTERVAL_MS
+      const wait = resolved.reason === 'gh-failed' ? tokenRetryMs() : pollIntervalMs()
       nextAutomaticAttemptAt = Date.now() + wait
       log('live_folder.no_token', { reason: resolved.reason, retryInMs: wait })
       return
@@ -408,8 +424,8 @@ function applyResult(
 
   const now = Date.now()
   failure = null
-  backoffMs = BACKOFF_MIN_MS
-  nextAutomaticAttemptAt = now + POLL_INTERVAL_MS
+  backoffMs = backoffMinMs()
+  nextAutomaticAttemptAt = now + pollIntervalMs()
   rateLimitedCredentialKey = null
   log('live_folder.fetched', {
     count: result.items.length,
@@ -445,7 +461,7 @@ function recordFailure(
   const now = Date.now()
   failure = { kind: classification.kind, resetAt: classification.resetAt }
   if (classification.kind === 'rate-limit') {
-    nextAutomaticAttemptAt = classification.resetAt ?? now + POLL_INTERVAL_MS
+    nextAutomaticAttemptAt = classification.resetAt ?? now + pollIntervalMs()
     rateLimitedCredentialKey = credentialKey
     // **同じ資格情報の予約はキャンセルする。** そうしないと
     // 「古い世代の結果を捨てる → 予約ぶんが即送信される」で
@@ -457,15 +473,15 @@ function recordFailure(
     return
   }
   if (classification.kind === 'auth') {
-    nextAutomaticAttemptAt = now + AUTH_RETRY_MS
-    log('live_folder.backoff', { kind: 'auth', waitMs: AUTH_RETRY_MS })
+    nextAutomaticAttemptAt = now + authRetryMs()
+    log('live_folder.backoff', { kind: 'auth', waitMs: authRetryMs() })
     return
   }
   // `transient` でも `retry-after` は待機時刻として尊重する
   // （503 + `Retry-After: 120` を無視して 60 秒で叩きに行かない）
-  const wait = classification.retryAfterMs ?? backoffMs
+  const wait = classification.retryAfterMs ?? currentBackoffMs()
   nextAutomaticAttemptAt = now + wait
-  backoffMs = Math.min(backoffMs * 2, BACKOFF_MAX_MS)
+  backoffMs = Math.min(currentBackoffMs() * 2, backoffMaxMs())
   // **待ち時間そのものをログに出す。** 「120 秒待つこと」を外から確かめるのに
   // 実際に 120 秒待つのは検証が重すぎるので、値で見られるようにしておく
   log('live_folder.backoff', { kind: classification.kind, waitMs: wait })

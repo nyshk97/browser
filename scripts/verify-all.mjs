@@ -14,6 +14,11 @@
  * 関係するものだけなら十数秒で済む。絞ったときは**何を飛ばしたかを必ず出す**
  * （出さないと「フルで通った」と読み違える）。
  *
+ * `--changed` は作業ツリーの差分から回すものを**自動で選ぶ**（`mise run verify:changed`）。
+ * 逆引きは `scripts/lib/verify-targets.mjs`。担当が確定しないファイルはフルに倒し、
+ * 「無関係と分かっている」パス（`docs/**` など）だけの変更は**回さずに正常終了**する。
+ * 決めた集合と理由は必ず標準出力に出す（黙って絞ると「速いけど何も見ていない」に化ける）。
+ *
  * 検証対象の取り違えを防ぐための決まりごと:
  * - ポートは毎回空きを採番する（固定ポートだと別プロセスを検証して PASS しうる。実際に踏んだ）
  * - 採番したエンドポイントは verify-spike に env で明示的に渡す
@@ -21,7 +26,7 @@
  * - 次の段へ進む前に、止めた子プロセスの**終了を待つ**（固定 sleep で進まない）
  * - データディレクトリは使い捨て（実 Vault の入ったプロファイルで CDP を開けない）
  */
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -35,46 +40,20 @@ import {
   stopChildren,
   waitForHttp
 } from './lib/harness.mjs'
+import { KNOWN_TARGETS, NEEDS_APP, selectVerifyTargets } from './lib/verify-targets.mjs'
 
 const require = createRequire(import.meta.url)
 const electronPath = require('electron')
 
-/**
- * 回せる検証の名前。`--only` はここに無い名前を**エラーにする**
- * （typo を黙って無視すると「何も回さずに PASS」になる）。
- */
-const KNOWN_TARGETS = [
-  'spike', // Phase 0: 拡張
-  'phase1', // ブラウザ本体
-  'phase2', // ライブラリ・アーカイブ・シークレット
-  'pins', // ピン留め / Favorites
-  'switcher', // タブスイッチャー（⌃M）
-  'peek', // Peek と小窓
-  'split', // 分割ビュー（2 ペイン）
-  'call', // 会議の小窓（Meet の通話コントロール）
-  'live-folder', // Live Folder（GitHub の PR）
-  'restart', // 再起動をまたぐ永続性（spike / phase1 / pins の write → read）
-  'migration', // 旧版セッションからの移行
-  'db' // 旧スキーマの履歴 DB からの移行
-]
-/** アプリとページサーバを立てる必要があるもの（migration / db は自分で起動する）。 */
-const NEEDS_APP = [
-  'spike',
-  'phase1',
-  'phase2',
-  'pins',
-  'switcher',
-  'peek',
-  'split',
-  'call',
-  'live-folder',
-  'restart'
-]
-
 const onlyAt = process.argv.indexOf('--only')
+const useChanged = process.argv.includes('--changed')
 const only = new Set(
   onlyAt === -1 ? [] : process.argv.slice(onlyAt + 1).filter((arg) => !arg.startsWith('--'))
 )
+if (onlyAt !== -1 && useChanged) {
+  console.error('[verify] --only と --changed は同時に指定できない（どちらが効いたか分からなくなる）')
+  process.exit(2)
+}
 if (onlyAt !== -1 && only.size === 0) {
   console.error(`[verify] --only には回すものを渡す。使えるのは: ${KNOWN_TARGETS.join(' / ')}`)
   process.exit(2)
@@ -84,9 +63,45 @@ if (unknown.length > 0) {
   console.error(`[verify] 知らない検証名: ${unknown.join(', ')}\n  使えるのは: ${KNOWN_TARGETS.join(' / ')}`)
   process.exit(2)
 }
-/** その検証を回すか（`--only` を渡していなければ全部回す）。 */
+
+/**
+ * 作業ツリーの差分（未 commit + staged + untracked）。
+ *
+ * main 直コミット運用なのでコミット直後は必ず空になるが、それは
+ * 「回すものが無い → 回さずに正常終了（理由: 変更なし）」で受ける。
+ */
+function collectChangedFiles() {
+  const git = (args) => execFileSync('git', args, { cwd: projectRoot, encoding: 'utf8' }).split('\n')
+  return [
+    ...git(['diff', '--name-only']),
+    ...git(['diff', '--cached', '--name-only']),
+    ...git(['ls-files', '--others', '--exclude-standard'])
+  ].filter((line) => line.length > 0)
+}
+
+if (useChanged) {
+  const changed = collectChangedFiles()
+  const selection = selectVerifyTargets(changed)
+  if (selection.kind === 'none') {
+    // **回さずに正常終了**。前段（ユニットテスト / ビルド / 拡張の照合）も飛ばす。
+    // 「変更ゼロ」も「無関係パスだけ」も**同じ結論**にする（分けると変更量に対して非単調になる）。
+    console.log(`=== 自走検証: 回すものが無い（${selection.reason}）`)
+    console.log('（コミット前のフルは mise run verify で回す）')
+    process.exit(0)
+  }
+  if (selection.kind === 'full') {
+    console.log(`[verify] --changed: 絞れないのでフルを回す（引き金: ${selection.triggers.join(', ')}）`)
+  } else {
+    console.log(`[verify] --changed: ${selection.reason} → ${selection.targets.join(' ')}`)
+    for (const name of selection.targets) only.add(name)
+  }
+}
+
+/** その検証を回すか（`--only` も `--changed` も絞っていなければ全部回す）。 */
 const want = (name) => only.size === 0 || only.has(name)
 const needsApp = NEEDS_APP.some(want)
+/** 絞り込みの出所（ログを読んだ人が `--only` と `--changed` を取り違えないため）。 */
+const scopeFlag = useChanged ? '--changed' : '--only'
 
 const debugPort = String(await getFreePort())
 const pagesPort = String(await getFreePort())
@@ -107,6 +122,30 @@ const pages = `http://127.0.0.1:${pagesPort}`
  * 値は**採番済みのポートから組む**（固定値を書かない）。
  */
 const meetPrefix = `${pages}/meet-fake.html`
+
+/**
+ * 自走検証のあいだだけ縮める「見に行く周期 / デバウンス」（`src/shared/timings.js` の既定値を上書き）。
+ *
+ * **検証値を決めるのはここ 1 か所**。アプリにも検証スクリプトにも同じ JSON を渡し、
+ * 検証スクリプト側は `scripts/lib/timings.mjs` でこれを**読み戻して**待ちを組む
+ * （決め打ちにすると、アプリを手で起動して単独で回す経路で待ちが本番値より短くなる）。
+ *
+ * 縮めてよいのは「いつ判定するか」だけを変えるものに限る。閾値そのもの
+ * （`tabSleepMinutes` / `tabArchiveHours`）と保険のタイムアウト（`PEEK_PLACEHOLDER_TIMEOUT`）は
+ * 判定の中身が変わる / 正常系が保険経路にすり替わるので**含めない**。
+ */
+const verifyTimings = JSON.stringify({
+  sleepSweepMs: 500,
+  sessionSaveDebounceMs: 300,
+  sessionStoreDebounceMs: 200,
+  // Live Folder の待ちは verify 全体で最も長かった（自動取得 61s + バックオフ観測 27s）。
+  // **poll と tick の比（本番 1:12）は保つ** —— tick と同オーダーにすると
+  // 「取得中に起きたタイマーの要求を捨てる」の検証が撃てなくなる
+  liveFolderPollMs: 12_000,
+  liveFolderTickMs: 1_000,
+  // バックオフは失敗したときにしか効かないので、poll より深く縮めても副作用が無い
+  liveFolderBackoffMinMs: 6_000
+})
 
 /**
  * 自走検証は CDP を開けるので、**実 Vault の入ったプロファイルでは絶対に回さない**。
@@ -175,7 +214,10 @@ async function startApp() {
       // 分割ビューの検証は View の bounds を外から測れないので、
       // main に実測値を出す口を生やす。**`--only` に依存させない**
       // （条件分岐にすると「フルでは通るのに絞ると落ちる」を作る）。
-      NEMO_VERIFY_DIAGNOSTICS: '1'
+      NEMO_VERIFY_DIAGNOSTICS: '1',
+      // 待ちの本体である「見に行く周期」を検証中だけ縮める。
+      // **`runVerify` にも同じ値を渡す**（検証側は読み戻して待ちを組む）。同じく `--only` 非依存
+      NEMO_VERIFY_TIMINGS: verifyTimings
     }
   })
   await waitForHttp(`${cdp}/json/list`, {
@@ -201,7 +243,10 @@ const runVerify = (script, args = []) =>
       NEMO_USER_DATA_DIR: userDataDir,
       NEMO_DOWNLOAD_DIR: downloadDir,
       NEMO_MEET_TEST_URL_PREFIX: meetPrefix,
-      NEMO_GITHUB_TEST_ENDPOINT: githubEndpoint
+      NEMO_GITHUB_TEST_ENDPOINT: githubEndpoint,
+      // **アプリに渡すだけでは届かない**。検証スクリプトは別の env で起動されるので、
+      // ここにも同じ値を載せる（載せ忘れると verify だけ本番値で待ち、無駄に遅くなる）
+      NEMO_VERIFY_TIMINGS: verifyTimings
     }
   })
 
@@ -221,7 +266,7 @@ try {
   console.log(`（CDP ${cdp} / テストページ ${pages} / userData ${userDataDir}）`)
   if (only.size > 0) {
     const skipped = KNOWN_TARGETS.filter((name) => !only.has(name))
-    console.log(`（--only ${[...only].join(' ')} … 回さない: ${skipped.join(' ')}）`)
+    console.log(`（${scopeFlag} ${[...only].join(' ')} … 回さない: ${skipped.join(' ')}）`)
   }
 
   console.log('\n=== ユニットテスト')
@@ -302,12 +347,21 @@ try {
   }
 
   if (want('restart')) {
+    /*
+     * **中身も `want()` で絞る**。ここは spike / phase1 / pins / split / call / live-folder が
+     * 1 回の再起動に相乗りする場所で、以前は spike / phase1 / pins を無条件に回していた。
+     * `restart` は随伴ルールで事実上ほぼ毎回選ばれるので、その無条件分がそのまま
+     * `--changed` の下限コストになっていた。再起動そのもの（`stopAll()` → `startApp()`）は
+     * 1 回のままにする（write と read を分ける構造は崩さない）。
+     */
     console.log('\n=== 再起動をまたぐ永続性')
-    await spike(['--storage-write'])
-    await phase1(['--session-write'])
+    if (want('spike')) await spike(['--storage-write'])
+    if (want('phase1')) await phase1(['--session-write'])
     // ピン / Favorites の遅延ロードも再起動をまたぐので、同じ再起動に相乗りする
-    const lazyWriteCode = await pins(['--lazy-write'])
-    if (lazyWriteCode !== 0) exitCode = lazyWriteCode
+    if (want('pins')) {
+      const lazyWriteCode = await pins(['--lazy-write'])
+      if (lazyWriteCode !== 0) exitCode = lazyWriteCode
+    }
     // **分割はアプリが動いているうちに作る**（セッションに書かせる）。
     // 止めてから仕込む会議 / Live Folder の plant とは違うので、`stopAll()` より前に置く。
     if (want('split')) {
@@ -330,12 +384,18 @@ try {
 
     await startPagesServer()
     await startApp()
-    const storageCode = await spike(['--storage-read'])
-    if (storageCode !== 0) exitCode = storageCode
-    const sessionCode = await phase1(['--session-read'])
-    if (sessionCode !== 0) exitCode = sessionCode
-    const lazyReadCode = await pins(['--lazy-read'])
-    if (lazyReadCode !== 0) exitCode = lazyReadCode
+    if (want('spike')) {
+      const storageCode = await spike(['--storage-read'])
+      if (storageCode !== 0) exitCode = storageCode
+    }
+    if (want('phase1')) {
+      const sessionCode = await phase1(['--session-read'])
+      if (sessionCode !== 0) exitCode = sessionCode
+    }
+    if (want('pins')) {
+      const lazyReadCode = await pins(['--lazy-read'])
+      if (lazyReadCode !== 0) exitCode = lazyReadCode
+    }
     if (want('live-folder')) {
       const liveReadCode = await liveFolder(['--restart-read'])
       if (liveReadCode !== 0) exitCode = liveReadCode
@@ -403,6 +463,6 @@ try {
   }
 }
 
-const scope = only.size > 0 ? `（--only ${[...only].join(' ')} だけ）` : ''
+const scope = only.size > 0 ? `（${scopeFlag} ${[...only].join(' ')} だけ）` : ''
 console.log(exitCode === 0 ? `\n=== 自走検証: すべて PASS${scope}` : `\n=== 自走検証: FAIL あり${scope}`)
 process.exit(exitCode)

@@ -19,10 +19,12 @@ import {
   getFreePort,
   isChildAlive,
   projectRoot,
+  readLogLines,
   stopChildren,
   waitForHttp,
   waitForLogEvent
 } from './lib/harness.mjs'
+import { DEFAULT_TIMINGS } from '../src/shared/timings.js'
 
 const channel = process.argv[2] === 'stable' ? 'stable' : 'dev'
 const productName = channel === 'stable' ? 'Nemo' : 'Nemo Dev'
@@ -99,7 +101,15 @@ try {
       // **わざと渡す**。会議の判定 URL の差し替え口がパッケージ版で塞がっていることを
       // 見るには、渡したうえで効かないことを確かめるしかない（計画 R6）。
       // 「渡さずに起動して出なかった」では塞がった証明にならない。
-      NEMO_MEET_TEST_URL_PREFIX: `${pages}/meet-fake.html`
+      NEMO_MEET_TEST_URL_PREFIX: `${pages}/meet-fake.html`,
+      // 同じ理由で**わざと渡す**。timings は本番のスリープ / アーカイブの発火間隔を
+      // 変えうる裏口なので、パッケージ版で効かないことを実物で確かめる。
+      // 全キーを本番と別の値にする（1 つでも効いたら下の検査が落ちる）
+      NEMO_VERIFY_TIMINGS: JSON.stringify({
+        sleepSweepMs: 137,
+        sessionSaveDebounceMs: 139,
+        sessionStoreDebounceMs: 149
+      })
     }
   })
   if (channel === 'stable') {
@@ -187,6 +197,31 @@ try {
     )
     check('差し替えを受け付けたログも残っていない', countLogEvents(userDataDir, 'call.test_url_prefix') === 0)
     await ui.ev(`window.nemo.closeTab(${JSON.stringify(meetKey)}).then(() => 'ok')`)
+
+    /*
+     * 「見に行く周期 / デバウンス」の裏口（`NEMO_VERIFY_TIMINGS`）が塞がっていること。
+     *
+     * ゲートは会議の差し替えと同じ **`!app.isPackaged`**（`isDevChannel` では塞げない）。
+     * 上と同じく**わざと渡したうえで**、実効値が本番既定値のままであることを見る。
+     * ここが開いていると、配った常用版のスリープ / 自動アーカイブが env 1 つで早まる。
+     */
+    const resolvedLine = readLogLines(userDataDir)
+      .filter((line) => line.includes('"event":"timings.resolved"'))
+      .pop()
+    check(
+      'timings.resolved が起動ログに出ている（実効値を目で確かめられる）',
+      Boolean(resolvedLine),
+      resolvedLine ?? '(無い)'
+    )
+    const logged = resolvedLine ? JSON.parse(resolvedLine) : {}
+    // 実効値は `effective` に JSON 文字列で入っている（キーを平たく出すと redaction に食われる）
+    const resolved = typeof logged.effective === 'string' ? JSON.parse(logged.effective) : {}
+    const mismatched = Object.entries(DEFAULT_TIMINGS).filter(([key, value]) => resolved[key] !== value)
+    check(
+      'パッケージ版では NEMO_VERIFY_TIMINGS が効かない（実効値が本番既定値のまま）',
+      mismatched.length === 0 && logged.overridden === false,
+      `${JSON.stringify(resolved)} overridden=${logged.overridden}（期待: ${JSON.stringify(DEFAULT_TIMINGS)}）`
+    )
 
     // 診断ログがデータディレクトリに出ている
     const logDir = path.join(userDataDir, 'logs')

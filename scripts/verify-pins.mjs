@@ -16,6 +16,7 @@
  *   node scripts/verify-pins.mjs --lazy-read  再起動後にタブ実体が無いことを見る
  */
 import { connectTo, connectUi, listTargets, sleep, waitFor } from './lib/cdp.mjs'
+import { afterSessionSave } from './lib/timings.mjs'
 
 const CDP = process.env.NEMO_CDP ?? 'http://127.0.0.1:9333'
 const PAGES = process.env.NEMO_TEST_PAGES ?? 'http://127.0.0.1:8787'
@@ -120,8 +121,9 @@ if (mode === '--lazy-write') {
     s.tabs.some((t) => t.pinnedId) && s.tabs.some((t) => t.favoriteId),
     json(s.tabs.map((t) => [t.pinnedId ? 'pin' : t.favoriteId ? 'fav' : 'tmp', t.url.split('/').pop()]))
   )
-  // セッション保存はデバウンスされているので、書かれるまで待つ
-  await sleep(3000)
+  // セッション保存はデバウンスされているので、書かれるまで待つ（デバウンス 2 段の合計から導く）。
+  // `verify-phase1.mjs` の `--session-write` と同じく、実際の担保は終了時の `markCleanExit()` 側
+  await sleep(afterSessionSave())
   console.log('lazy-write done')
   process.exit(failures === 0 ? 0 : 1)
 }

@@ -1,5 +1,6 @@
 import { JsonStore } from './json-store.js'
 import { userDataPath } from '../paths.js'
+import { getTimings } from '../timings.js'
 
 /**
  * セッション復元。
@@ -22,8 +23,14 @@ let store: JsonStore<SessionData> | null = null
 let restored: SessionData = { windows: [], cleanExit: true, savedAt: 0 }
 
 export function initSession(): SessionData {
-  // 起動直後に「前回の状態」を確定させたいのでデバウンスは短め
-  store = new JsonStore<SessionData>(userDataPath('session.json'), SESSION_VERSION, normalizeSession, 1000)
+  // 起動直後に「前回の状態」を確定させたいのでデバウンスは短め（`JsonStore` の既定 400 ではない）。
+  // **2 段あるデバウンスの 2 段目**（1 段目は `registry.ts` の `scheduleSessionSave`）。
+  store = new JsonStore<SessionData>(
+    userDataPath('session.json'),
+    SESSION_VERSION,
+    normalizeSession,
+    getTimings().sessionStoreDebounceMs
+  )
   restored = store.get()
   // 起動した瞬間に cleanExit を落とす。ここで落とさないと、
   // クラッシュしたのに「正常終了だった」と記録が残る。

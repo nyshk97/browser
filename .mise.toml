@@ -75,6 +75,10 @@ eval "set -- ${usage_targets:-}"
 node scripts/verify-all.mjs --only "$@"
 '''
 
+[tasks."verify:changed"]
+description = "作業ツリーの変更から回す検証を自動で選んで回す（無関係な変更だけなら何も回さない）"
+run = "node scripts/verify-all.mjs --changed"
+
 [tasks."verify:migration"]
 description = "旧版（セッション v2 / pins v1）のデータから起動して移行が壊れていないか確かめる"
 run = "node scripts/verify-session-migration.mjs"

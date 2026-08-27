@@ -29,6 +29,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { connect, connectUi, listTargets, sleep, waitFor } from './lib/cdp.mjs'
 import { readLogLines } from './lib/harness.mjs'
+import { afterSweep, timings } from './lib/timings.mjs'
 
 const CDP = process.env.NEMO_CDP ?? 'http://127.0.0.1:9333'
 const PAGES = process.env.NEMO_TEST_PAGES ?? 'http://127.0.0.1:8787'
@@ -720,13 +721,25 @@ console.log('\n--- R3: sleep の除外')
 const originalSleep = JSON.parse(
   await ui.ev('window.nemo.getSettings().then((s) => JSON.stringify(s))')
 ).tabSleepMinutes
-// 0.05 分 = 3 秒。sweep は 5 秒ごとなので 12 秒待てば必ず 1 回は通る
-await ui.ev('window.nemo.updateSettings({ tabSleepMinutes: 0.05 }).then(() => "ok")')
+// **設定値は ms 定数から導出する**（両方に数字を書くと片方だけ直してズレる）
+const SLEEP_THRESHOLD_MS = 1_500
+/**
+ * `call-coordinator.ts` の `PROBE_INTERVAL_JOINED`。
+ * 会議の状態が変わっても、`isSleepExempt` に反映されるのは**次のプローブを撃ってから**。
+ * （timings 経由にするかは計画の Phase 4 ⑤ 待ち。ここは値を写して根拠をコメントで残す）
+ */
+const PROBE_INTERVAL_JOINED_MS = 2_000
+/** 状態変化がプローブに拾われるまで（1 回だと撃った直後の変化を取りこぼすので 2 周期分見る）。 */
+const PROBE_SETTLE_MS = PROBE_INTERVAL_JOINED_MS * 2
+await ui.ev(
+  `window.nemo.updateSettings({ tabSleepMinutes: ${SLEEP_THRESHOLD_MS / 60_000} }).then(() => "ok")`
+)
 
 const sleeper = await ui.ev(
   `window.nemo.createTab(${JSON.stringify(`${PAGES}/index.html`)}, { background: true })`
 )
-await sleep(12000)
+// 作ったばかりの sleeper が期限切れになるまで + sweep 1 周（周期は timings 経由で読み戻す）
+await sleep(afterSweep(SLEEP_THRESHOLD_MS))
 
 const asleepOf = async (key) => {
   const s = await windowState()
@@ -738,13 +751,16 @@ check('会議中のタブは寝ない', (await asleepOf(bf.key)) === false, `asl
 
 // 縮退中でも寝ない
 await bf.act('break')
-await sleep(12000)
+// bf は既に期限切れ（上で SLEEP_THRESHOLD_MS 以上待っている）。
+// 待ちを決めるのは**縮退がプローブに拾われるまで**と sweep 1 周の大きい方
+await sleep(afterSweep(Math.max(0, PROBE_SETTLE_MS - timings.sleepSweepMs)))
 check('縮退中（プローブが読めない）でも会議タブは寝ない', (await asleepOf(bf.key)) === false)
 await bf.act('repair')
 
 // 会議が終われば寝るようになる（永久に寝ないタブを残さない）
 await bf.act('leave')
-await sleep(12000)
+// 退出がプローブに拾われて除外が外れてから、sweep 1 周で寝る
+await sleep(afterSweep(PROBE_SETTLE_MS))
 check(
   '会議が終わったら寝るようになる（除外が外れる）',
   (await asleepOf(bf.key)) === true,

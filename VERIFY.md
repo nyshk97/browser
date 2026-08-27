@@ -18,6 +18,7 @@ mise run dev       # 開発版 Nemo を起動（HMR あり）
 mise run check              # lint → typecheck → ユニットテスト（Electron 不要・数秒）
 mise run verify             # 自走検証（ビルド→起動→CDP で検証→後片付け）。終了コードが合否
 mise run verify:only phase1 pins  # そのうち指定したものだけ回す（1回あたり数十秒）
+mise run verify:changed     # 作業ツリーの変更から回すものを自動で選ぶ（ふだんの往復はこれ）
 mise run verify:switcher    # タブスイッチャー（⌃M）だけを個別に回す
 mise run verify:ext         # 拡張互換 smoke（自作テスト拡張・資格情報なし・CI 必須と同じもの）
 mise run verify:ext-idle    # 上に service worker の idle 停止をまたぐ確認を足す（+2分ほど）
@@ -26,12 +27,55 @@ mise run verify:packaged    # パッケージした .app を起動して smoke t
 mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残ることを実物で検証
 ```
 
-**1か所直して確かめ直すときは `verify:only` で絞る**。`mise run verify` は 9 本すべてを
-毎回回すので 1 回 3 分半かかるが、関係するものだけなら 40 秒以内で終わる
-（`phase1` + `pins` の実測で 36 秒）。**最後に 1 回だけフルを通す**。
+**ふだんの往復は `mise run verify:changed`、コミット前に 1 回だけ `mise run verify`**。
+フルは 12 本すべてを回すので 1 回 6 分ほどかかる（実測 372 秒）。
+`verify:changed` は作業ツリーの差分（未 commit + staged + untracked）から回すものを
+自動で選ぶ（例: `SplitRow.tsx` だけ → `split` + `restart` の 50 秒ほど）。
+どれを回すか自分で分かっているときは `verify:only` で直接指定してもよい。
 
-指定できるのは `spike` / `phase1` / `phase2` / `pins` / `switcher` / `peek` / `call` /
+`verify:changed` の決め方（逆引きは `scripts/lib/verify-targets.mjs`。ユニットテストつき）:
+
+- **担当が確定しないファイルはフルに倒す**。`src/main/registry.ts` のように複数スイートが
+  依存するものは意図的に対応表へ載せていない。対応表に無いパスも同じくフル
+- **「検証に影響しないと分かっている」パス**（`docs/**` / `*.md` / `.github/**` など）だけの
+  変更なら**何も回さずに正常終了する**。`docs/plans/` を毎ループ触るので、これが無いと
+  最頻ケースでフルと同義になる
+- **変更が一切ないときも同じ結論**（回さずに正常終了）。理由だけ `（変更なし）` /
+  `（無関係パスのみ: …）` と出し分ける
+- 決めた集合と、フルに倒れたときの引き金は必ず標準出力に出る
+- `--only` と `--changed` の同時指定はエラー
+
+**「回すもの無し」で終わった exit 0 をコミット可否の判断に使ってはいけない**。
+それは「この差分は検証の対象外」と言っているだけで、フルが通った証明ではない。
+コミット前のフル（`mise run verify`）は別に 1 回通す。
+
+**`restart` は随伴する**。`split` / `call` / `live-folder` / `spike` / `phase1` / `pins` を
+選ぶと `restart` も自動で付く（片方だけだと `--restart-write` / `--restart-read` が
+丸ごと落ちたまま PASS するため）。逆に `restart` の中身も `--only` / `--changed` で絞られるので、
+`verify:only split restart` では spike / phase1 / pins の write+read は走らない。
+
+指定できるのは `spike` / `phase1` / `phase2` / `pins` / `switcher` / `peek` / `split` / `call` /
 `live-folder` / `restart` / `migration` / `db`。
+
+**待ち時間は `NEMO_VERIFY_TIMINGS` で縮めている**。`verify-all.mjs` が「見に行く周期 / デバウンス」の
+検証値（`sleepSweepMs` など）を決めて、**アプリと検証スクリプトの両方**に同じ JSON を env で渡す。
+本番既定値は `src/shared/timings.js` が唯一の置き場で、検証スクリプトは
+`scripts/lib/timings.mjs` で env を**読み戻して**待ちを組む。
+
+- **各スクリプトを単独で回す経路（`mise run verify:switcher` など）も壊れない**。
+  そのときアプリは env を受け取らず本番値で動き、verify 側も同じ本番値にフォールバックする
+- 知らないキー・数値でない値は**アプリ側も verify 側も即エラー**（黙って本番値に倒すと
+  「アプリは本番値・verify は縮めたつもり」のズレが静かに生まれる）
+- 実効値は起動ログの `timings.resolved` に 1 行出る（`effective` に JSON 文字列）。
+  `mise run dev` で `overridden:false` かつ本番既定値になっていることを見れば、既定値の書き間違いに気づける
+- **パッケージ版では効かない**（ゲートは `!app.isPackaged`）。`verify-packaged.mjs` が
+  わざと env を渡したうえで実効値が本番既定値のままであることを見る
+- 縮めてよいのは**「いつ判定するか」だけを変えるもの**に限る。載せてあるのは
+  `sleepSweepMs` / `sessionSaveDebounceMs` / `sessionStoreDebounceMs` /
+  `liveFolderPollMs` / `liveFolderTickMs` / `liveFolderBackoffMinMs`。
+  `PEEK_PLACEHOLDER_TIMEOUT`（縮めると正常系が保険経路にすり替わる）は**載せない**
+- **`liveFolderPollMs` と `liveFolderTickMs` の比（本番 1:12）は保つこと**。
+  tick と同オーダーにすると「取得中に起きたタイマーの要求を捨てる」の検証が撃てなくなる
 
 - 知らない名前はエラーにする（typo で「何も回さずに PASS」にしない）
 - 回さなかったものは実行中と最後のサマリの両方に出る（フルで通ったと読み違えないため）
@@ -40,6 +84,30 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
   候補や件数が足りずに落ちることがある。落ちたら「絞ったせい」で済ませず、
   **その検証が自分で前提を作るように直す**（コマンドバーの上下移動がこれで落ちた実例あり。
   候補を 3 件以上作ってから撃つように直した）
+
+**待ちを縮める変更をしたら安全弁を通す**。「待ちが短すぎて検査が空振りしたまま PASS」は
+実行しても気づけないので、**壊してから FAIL することを先に見る**。
+
+```bash
+# 例: sweep 周期を縮めたとき。sweepSleep と sweepArchive を「別々に」殺す
+#     （registry.ts の関数先頭に `if (true) return` を入れてビルドし直す）
+mise run verify:only split
+```
+
+- `sweepSleep` を殺す → `sleep: 対照タブ（見えていない非分割）は寝ている` に至る待ちが FAIL
+- `sweepArchive` を殺す → sleep 側は PASS のまま
+  `archive: 対照タブ（見えていない非分割）は閉じられている` だけが FAIL
+- **閾値そのものを縮めたときは、前提チェックの「余裕」を実測で見る**。
+  `sleep: 検査の前提…（下限 4500ms / 余裕 511ms）` の余裕が実測のばらつき（10ms 前後）に
+  近づいたら縮め過ぎ。閾値 1/2 で余裕も 1/2 になる
+- Live Folder の取得間隔を縮めたとき → `live-folders/index.ts` の `requestAutomatic()` にある
+  `now >= nextAutomaticAttemptAt` のゲートを殺す。
+  `⑲ バックオフ中はタイマーが起きても投げない` を筆頭に 4 件が FAIL する
+- セッション保存のデバウンスを縮めたとき → `store/session.ts` の `saveSession` を空にする。
+  `session.json が実際に書かれている（否定形の検査が空振りしていない証拠）`（peek）と
+  `再起動前: session.json に分割が 2 組書かれている`（split）が FAIL する。
+  **`--session-read` / `--lazy-read` は FAIL しない** —— 復元は定期保存ではなく
+  終了時の `markCleanExit()` が担保しているため
 
 **どれを回すか**:
 

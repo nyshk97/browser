@@ -30,6 +30,7 @@ import { installRuntimeMarker } from './runtime-marker.js'
 import { flushOpenUrls, handleSecondInstance, hasPendingOpenUrls, installOpenUrlHandler } from './open-url.js'
 import { installDownloadHandler } from './downloads.js'
 import { closeLogFile, log, logError, openLogFile } from './log.js'
+import { initTimings } from './timings.js'
 import { closeSettings, getSettings, initSettings, updateSettings } from './store/settings.js'
 import { closePins, initPins } from './store/pins.js'
 import { closeDb, initDb } from './store/db.js'
@@ -97,6 +98,9 @@ app
   .whenReady()
   .then(async () => {
     openLogFile()
+    // **ストアの初期化より前**。セッション保存のデバウンスは `initSession()` が
+    // `JsonStore` を作る時点で確定するので、後に置くと片方だけ本番値のまま残る。
+    initTimings()
     if (remoteDebuggingPort && isDevChannel) {
       log('app.remote_debugging_enabled', { port: remoteDebuggingPort })
     }

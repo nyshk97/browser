@@ -16,6 +16,7 @@
  *   node scripts/verify-phase1.mjs --session-read  再起動後に復元されたか見る
  */
 import { connectTo, connectUi, listTargets, sleep, waitFor } from './lib/cdp.mjs'
+import { afterSessionSave } from './lib/timings.mjs'
 
 const CDP = process.env.NEMO_CDP ?? 'http://127.0.0.1:9333'
 const PAGES = process.env.NEMO_TEST_PAGES ?? 'http://127.0.0.1:8787'
@@ -60,8 +61,15 @@ if (mode === '--session-write') {
   // **サイドバーを隠した状態で終了する**（この設定は永続化される）。
   // 次の起動でちゃんと出て来ることを --session-read で見る。
   await ui.ev('window.nemo.setSidebarVisible(false).then(() => "ok")')
-  // セッション保存はデバウンスされているので、書かれるまで待つ
-  await sleep(3000)
+  /*
+   * セッション保存はデバウンスされているので、書かれるまで待つ（デバウンス 2 段の合計から導く）。
+   *
+   * **正常終了のときは `markCleanExit()` が終了時に書き切る**ので、この待ちは
+   * 「正常終了できなかった経路」への保険（実測: `saveSession` を殺しても
+   * この下の `--session-read` は PASS した）。保険なので残すが、実際の担保は
+   * 終了時の書き切りのほうにある。
+   */
+  await sleep(afterSessionSave())
   console.log('session-write done')
   process.exit(0)
 }

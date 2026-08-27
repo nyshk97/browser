@@ -26,6 +26,7 @@ import { createUiView, disposeUiView, type UiViewKind } from './ui-view.js'
 import { buildSwipeInjection } from '../shared/swipe-gesture.js'
 import { cancelPrompts, currentPrompt, setPromptNotifier } from './prompts.js'
 import { getSettings } from './store/settings.js'
+import { getTimings } from './timings.js'
 import {
   addFavorite as addFavoriteDefinition,
   convertFavoriteToPin,
@@ -3285,18 +3286,19 @@ export function updatePinnedUrlFromTab(tab: NemoTab): void {
 let sleepTimer: NodeJS.Timeout | null = null
 let sessionSaveTimer: NodeJS.Timeout | null = null
 
-/**
- * sleep 判定の間隔。
- * 設定より短い周期で見に行かないと「30分後に寝る」が最大1分ずれる。
- * 5秒なら短い設定（自走検証で使う 0.05 分など）でも実際に効く。
- */
-const SLEEP_SWEEP_MS = 5_000
-
 export function startBackgroundWork(): void {
+  /*
+   * sleep 判定の間隔。既定は 5 秒（`src/shared/timings.js`）。
+   * 設定より短い周期で見に行かないと「30分後に寝る」が最大1分ずれる。
+   * 5秒なら短い設定（自走検証で使う 0.05 分など）でも実際に効く。
+   *
+   * 自走検証のときだけ `NEMO_VERIFY_TIMINGS` でさらに短くできる。
+   * 変わるのは**いつ判定するか**だけで、`sweepSleep()` / `sweepArchive()` の中身は不変。
+   */
   sleepTimer = setInterval(() => {
     sweepSleep()
     sweepArchive()
-  }, SLEEP_SWEEP_MS)
+  }, getTimings().sleepSweepMs)
   sleepTimer.unref?.()
 
   // ピン留め定義が変わったら全ウィンドウのサイドバーを更新する
@@ -3428,13 +3430,19 @@ export function stopBackgroundWork(): void {
   sessionSaveTimer = null
 }
 
-/** セッションは頻繁に変わるのでデバウンスして書く。 */
+/**
+ * セッションは頻繁に変わるのでデバウンスして書く。
+ *
+ * **これは 2 段あるデバウンスの 1 段目**（2 段目は `store/session.ts` が `JsonStore` に
+ * 渡す値）。自走検証のときだけ両方を `timings` 経由で縮める —— 片方だけ縮めても
+ * 下限がもう片方に張り付く。書かれる中身は変わらない。
+ */
 function scheduleSessionSave(): void {
   if (sessionSaveTimer) return
   sessionSaveTimer = setTimeout(() => {
     sessionSaveTimer = null
     saveSession(collectSession())
-  }, 2000)
+  }, getTimings().sessionSaveDebounceMs)
   sessionSaveTimer.unref?.()
 }
 

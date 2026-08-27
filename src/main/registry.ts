@@ -102,6 +102,14 @@ const PEEK_RATIO = 0.91
 /** Peek の角丸（`WebContentsView.setBorderRadius`）。 */
 const PEEK_RADIUS = 16
 /**
+ * Peek の中身が来るまで、View を出さずに待つ上限。
+ *
+ * 通常は `dom-ready` で切り替わる。**来ないページがある**（204 で終わる・
+ * ダウンロードに化ける・開いた瞬間に `window.close()` する子）ので、
+ * 保険が無いと Peek が永久に出ないままになる。
+ */
+const PEEK_PLACEHOLDER_TIMEOUT = 8000
+/**
  * Peek の外側に ✕ / ⌘O を置くための帯。
  * **上下の余白をこれ以上に保つ**。割合だけで決めると小さいウィンドウでボタンが
  * Peek の下に潜り込み、押せなくなる（Peek は暗幕より前面にいる）。
@@ -426,6 +434,14 @@ export class NemoTab {
   peek: NemoTab | null = null
   /** 自分が Peek なら、その親タブ。通常タブなら `null`。 */
   peekOf: NemoTab | null = null
+  /**
+   * Peek で、**まだ中身のドキュメントが来ていない**。
+   *
+   * この間は View を出さず、暗幕側のプレースホルダーに任せる（DESIGN.md「Peek」）。
+   * 採用済みの `WebContents` は `setBackgroundColor` を受け付けないので、
+   * 「まだ描いていない View」を前に出したままにすると下の絵がそのまま透ける。
+   */
+  peekAwaitingDocument = false
   url: string
   title: string
   faviconUrl: string | null = null
@@ -1363,7 +1379,8 @@ export class NemoWindow {
     const active = this.getActiveTab()
     if (!active) return keys
     keys.add(active.key)
-    if (active.peek) keys.add(active.peek.key)
+    // 中身がまだ来ていない Peek は出さない（プレースホルダーに任せる）
+    if (active.peek && !active.peek.peekAwaitingDocument) keys.add(active.peek.key)
     return keys
   }
 
@@ -1854,6 +1871,63 @@ export function selectTab(win: NemoWindow, key: string): void {
  * ------------------------------------------------------------------ */
 
 /**
+ * Peek の中身が来たら View を出す。
+ *
+ * `dom-ready` まで待つのは、**採用済みの `WebContents` には背景色を敷けない**ため
+ * （実測済み。`setBackgroundColor` も `overrideBrowserWindowOptions.backgroundColor` も効かない）。
+ * 何も描いていない View を前に出したままにすると、暗幕側のプレースホルダーがその下で
+ * くすんで見える。View を後から出せば、待っている間に見えるのは暗幕と
+ * プレースホルダーだけになる。
+ *
+ * **印を落とす経路はこの関数1か所にまとめる**。取りこぼすと Peek が永久に出ない。
+ */
+function waitForPeekDocument(peek: NemoTab, wc: WebContents): void {
+  let done = false
+  let timer: NodeJS.Timeout | null = null
+
+  const onDomReady = (): void => reveal('dom-ready')
+  /**
+   * **トップフレームの失敗だけを見る**。`did-fail-load` は iframe でも出るので、
+   * フレームを見ないと「本文より先に落ちた広告の iframe」で待機が解けて、
+   * まだ何も描いていない View が前に出る。
+   */
+  const onFailLoad = (
+    _event: Electron.Event,
+    _code: number,
+    _description: string,
+    _url: string,
+    isMainFrame: boolean
+  ): void => {
+    if (isMainFrame) reveal('failed')
+  }
+  const stop = (): void => {
+    done = true
+    if (timer) clearTimeout(timer)
+    timer = null
+    wc.off('dom-ready', onDomReady)
+    wc.off('did-fail-load', onFailLoad)
+  }
+
+  const reveal = (reason: string): void => {
+    if (done) return
+    stop()
+    if (!peek.peekAwaitingDocument) return
+    peek.peekAwaitingDocument = false
+    const win = peek.window
+    if (win.isDestroyed || win.baseWindow.isDestroyed()) return
+    // 親が選択中のときだけ出す（別タブへ行っていれば隠れたままにする）
+    if (win.activeTabKey === peek.peekOf?.key) selectTab(win, win.activeTabKey)
+    win.pushState()
+    log('peek.revealed', { key: peek.key, windowId: win.id, reason })
+  }
+
+  timer = setTimeout(() => reveal('timeout'), PEEK_PLACEHOLDER_TIMEOUT)
+  wc.on('dom-ready', onDomReady)
+  wc.on('did-fail-load', onFailLoad)
+  wc.once('destroyed', stop)
+}
+
+/**
  * 親タブの上に Peek を作る。
  *
  * **`loadURL` は呼ばない**。`setWindowOpenHandler` の `createWindow` から
@@ -1867,7 +1941,9 @@ function openPeek(parent: NemoTab, url: string, adopt: WebContents): NemoTab | n
   peek.peekOf = parent
   parent.peek = peek
   win.tabs.push(peek)
+  peek.peekAwaitingDocument = true
   peek.materialize({ adopt })
+  waitForPeekDocument(peek, adopt)
 
   // 親が選択中なら Peek もそのまま見せる。選択中でなければ隠れたまま
   // （タブを切り替えて戻ってきたときに出る）。
@@ -1891,6 +1967,8 @@ export function promotePeek(win: NemoWindow, peek: NemoTab): void {
   if (!parent) return
   parent.peek = null
   peek.peekOf = null
+  // 通常タブになったら中身待ちは関係ない。落とさないと View が出ないまま残る
+  peek.peekAwaitingDocument = false
 
   const index = win.tabs.indexOf(peek)
   if (index !== -1) {

@@ -22,11 +22,12 @@
  *   メニューのアクセラレータと同じで CDP からは撃てない
  * - **実 Vault の Bitwarden**での自動入力
  */
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
-import { connect, connectUi, listTargets, sleep, waitFor } from './lib/cdp.mjs'
+import { connect, connectTo, connectUi, listTargets, sleep, waitFor } from './lib/cdp.mjs'
 import { countLogEvents, projectRoot, readLogLines } from './lib/harness.mjs'
 
 const require = createRequire(import.meta.url)
@@ -95,6 +96,112 @@ async function connectPage(url, { timeoutMs = 15000 } = {}) {
 async function pageTargetCount(urlPart) {
   const targets = await listTargets(CDP)
   return targets.filter((t) => t.type === 'page' && t.url.includes(urlPart)).length
+}
+
+/** プレースホルダーの面の色（DESIGN.md「Peek」の `--nemo-sidebar`）。 */
+const PLACEHOLDER_RGB = '#1b1b20'
+/**
+ * ピクセル比較の許容差（各チャンネル）。
+ * **`sips` を通すと色が 1〜2 ずれる**（PNG → BMP でカラープロファイルが噛む。
+ * 実測で `#1b1b20` が `#1c1c1f` になった）ので、完全一致では見られない。
+ */
+const COLOR_TOLERANCE = 4
+
+/** 2つの `#rrggbb` が許容差の中に収まっているか。 */
+function nearlyEqual(a, b, tolerance = COLOR_TOLERANCE) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false
+  const parse = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
+  const [x, y] = [parse(a), parse(b)]
+  return x.every((v, i) => Math.abs(v - y[i]) <= tolerance)
+}
+
+/**
+ * 32bpp BMP から色を読む小さな道具。
+ * `sips` を通すのは、**PNG デコーダを持ち込まずにピクセルを見る**ため。
+ */
+function readBmp(file) {
+  const d = fs.readFileSync(file)
+  const offset = d.readUInt32LE(10)
+  const width = d.readInt32LE(18)
+  const rawHeight = d.readInt32LE(22)
+  const height = Math.abs(rawHeight)
+  const topDown = rawHeight < 0
+  const bpp = d.readUInt16LE(28)
+  const bytes = bpp / 8
+  // 24bpp は行が 4 バイト境界に揃う
+  const stride = Math.ceil((width * bytes) / 4) * 4
+  const at = (x, y) => {
+    const px = Math.min(Math.max(Math.round(x), 0), width - 1)
+    const py = Math.min(Math.max(Math.round(y), 0), height - 1)
+    const row = topDown ? py : height - 1 - py
+    const i = offset + row * stride + px * bytes
+    return `#${[d[i + 2], d[i + 1], d[i]].map((v) => v.toString(16).padStart(2, '0')).join('')}`
+  }
+  return { width, height, at }
+}
+
+/**
+ * 暗幕の UI View を撮って、プレースホルダーの中央・内側の縁・角の色を返す。
+ *
+ * **合成後の画面（`screencapture`）は使わない**。ウィンドウが別 Space にあると
+ * 古い絵が返るので判定に使えない（plan のログを見る）。ここはレンダラ単体を撮る。
+ * 撮れた画は**物理ピクセル**なので、画像の幅と viewport の幅から倍率を出して換算する。
+ */
+async function samplePlaceholderPixels(session, measured) {
+  if (!measured.found) return { error: 'プレースホルダーが無いので撮っても意味がない' }
+  const png = path.join(os.tmpdir(), 'nemo-verify-peek-placeholder.png')
+  const bmp = path.join(os.tmpdir(), 'nemo-verify-peek-placeholder.bmp')
+  try {
+    await session.send('Page.enable')
+    /*
+     * **地を指定して合成させてから撮る**。透過のまま撮ると alpha を捨てて読むことになり、
+     * 面が半透明でも RGB だけは期待どおりに見えてしまう（祖先の `opacity` や
+     * フェードの途中を「正しい色」と誤判定する）。
+     * 合成させれば薄いぶんだけ色がずれる —— `.peek-placeholder` に `opacity: 0.5` を
+     * 入れて実測すると `#1b1b20` が `#141419` になり、この検査は FAIL する。
+     */
+    await session.send('Emulation.setDefaultBackgroundColorOverride', {
+      color: { r: 255, g: 255, b: 255, a: 1 }
+    })
+    /*
+     * 暗幕のフェードイン（`peek-fade`）を**待たずに終端へ飛ばす**。
+     * 「終わるまで待つ」形にすると、描画が遅い環境で待ち切れずに途中を撮り、
+     * 薄く写った絵で偽 FAIL になる。
+     */
+    await session.ev(
+      "(() => { for (const a of document.getAnimations()) { try { a.finish() } catch { /* 無限アニメは飛ばせない */ } } return 'done' })()"
+    )
+    const shot = await session.send('Page.captureScreenshot', { format: 'png' })
+    fs.writeFileSync(png, Buffer.from(shot.result.data, 'base64'))
+
+    // **前回の BMP を必ず消してから変換する**。残っていると、変換に失敗しても
+    // 古い画像を読んで PASS してしまう
+    fs.rmSync(bmp, { force: true })
+    const converted = spawnSync('/usr/bin/sips', ['-s', 'format', 'bmp', png, '--out', bmp], {
+      encoding: 'utf8'
+    })
+    if (converted.status !== 0) return { error: `sips が失敗した: ${converted.stderr ?? ''}` }
+    if (!fs.existsSync(bmp)) return { error: 'sips が BMP を書かなかった' }
+
+    const image = readBmp(bmp)
+    const scale = image.width / measured.viewport.w
+    const r = measured.rect
+    const at = (x, y) => image.at(x * scale, y * scale)
+    return {
+      file: png,
+      scale,
+      image: `${image.width}x${image.height}`,
+      center: at(r.x + r.w / 2, r.y + r.h / 2),
+      insideEdge: at(r.x + 4, r.y + r.h / 2),
+      // 角丸の外側。**面の色が来たら丸まっていない**
+      corner: at(r.x + 1, r.y + 1)
+    }
+  } catch (error) {
+    return { error: String(error) }
+  } finally {
+    // **途中で落ちても地の指定は必ず戻す**。残すと後続の検査の描画条件が変わる
+    await session.send('Emulation.setDefaultBackgroundColorOverride', {}).catch(() => null)
+  }
 }
 
 const peekOf = (s, parentKey) => s.tabs.find((t) => t.peekParentKey === parentKey) ?? null
@@ -277,6 +384,218 @@ await sleep(1200)
   check('main の未捕捉例外が出ていない', crashes === 0, `${crashes} 件`)
 
   await call(`window.nemo.closeTab(${JSON.stringify(other)})`)
+  await sleep(300)
+}
+
+/* ------------------------------------------------------------------ *
+ * 3. プレースホルダー（中身が来るまでの「窓の形」）
+ * ------------------------------------------------------------------ */
+
+console.log('\n--- プレースホルダー')
+
+{
+  /**
+   * **合成後の画面は見ない**。`screencapture` はウィンドウが別 Space にあると
+   * 古い絵を返すので、ピクセル判定に使えない（実測。plan のログを見る）。
+   * ここでは暗幕の UI View そのものに CDP で繋いで、レンダラの中で判定する。
+   */
+  const parent = await openParent('placeholder')
+  const gateId = `verify-${process.pid}-${Date.now()}`
+  const gateUrl = `${PAGES}/__nemo_gate__?id=${gateId}`
+  const gateState = async () => await (await fetch(`${PAGES}/__nemo_gate_state__?id=${gateId}`)).json()
+
+  await evUser(parent.page, `window.open(${JSON.stringify(gateUrl)}, '_blank')`)
+  // **固定の sleep で間に合わせない**。リクエストが着いたことを確かめてから測る
+  for (let i = 0; i < 60; i += 1) {
+    if ((await gateState()).arrived >= 1) break
+    await sleep(200)
+  }
+  check('止まる URL でも Peek はできる', (await gateState()).arrived >= 1)
+  await sleep(400)
+
+  const held = await state()
+  const heldPeek = peekOf(held, parent.key)
+  check('中身が来るまで Peek の View は出さない', heldPeek?.visible === false, `visible=${heldPeek?.visible}`)
+
+  const chrome = await connectTo(CDP, 'view=peek')
+  /**
+   * 矩形・色・角丸をレンダラの中で測る。
+   * **角は `elementFromPoint` で見る**（角丸は当たり判定にも効くので、
+   * 角の内側 2px がプレースホルダー以外を返せば「丸まっている」と言える）。
+   */
+  const probe = `(() => {
+    const el = document.querySelector('.peek-placeholder')
+    if (!el) return JSON.stringify({ found: false })
+    const r = el.getBoundingClientRect()
+    const style = getComputedStyle(el)
+    const at = (x, y) => (document.elementFromPoint(x, y) === el ? 'placeholder' : (document.elementFromPoint(x, y)?.className ?? 'none'))
+    return JSON.stringify({
+      found: true,
+      rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
+      viewport: { w: innerWidth, h: innerHeight },
+      background: style.backgroundColor,
+      radius: style.borderTopLeftRadius,
+      center: at(r.x + r.width / 2, r.y + r.height / 2),
+      insideEdge: at(r.x + 4, r.y + r.height / 2),
+      corner: at(r.x + 2, r.y + 2)
+    })
+  })()`
+  const measured = JSON.parse(await chrome.ev(probe))
+  check('プレースホルダーが描かれている', measured.found === true)
+  check('面の色が DESIGN.md の値', measured.background === 'rgb(27, 27, 32)', String(measured.background))
+  check('角丸 16px', measured.radius === '16px', String(measured.radius))
+  check(
+    '中央と内側の縁がプレースホルダー',
+    measured.center === 'placeholder' && measured.insideEdge === 'placeholder',
+    JSON.stringify(measured)
+  )
+  // **`found` を条件に入れる**。入れないと「そもそも描かれていない」ときに素通りで PASS になる
+  check(
+    '角は丸まっている（角の内側は当たらない）',
+    measured.found === true && measured.corner !== 'placeholder',
+    `corner=${measured.corner}`
+  )
+
+  /*
+   * **実際に描かれた色をピクセルで見る**。DOM と computed style だけだと、
+   * 祖先に `opacity: 0` が付いているような「要素はあるのに見えない」を通してしまう。
+   */
+  const pixels = await samplePlaceholderPixels(chrome, measured)
+  if (pixels.error) {
+    check('プレースホルダーのピクセルを確認できた', false, pixels.error)
+  } else {
+    check(
+      'ピクセルでも面が DESIGN.md の色（合成しても色がずれない＝不透明）',
+      nearlyEqual(pixels.center, PLACEHOLDER_RGB) && nearlyEqual(pixels.insideEdge, PLACEHOLDER_RGB),
+      JSON.stringify(pixels)
+    )
+    check(
+      'ピクセルでも角が抜けている（角丸）',
+      !nearlyEqual(pixels.corner, PLACEHOLDER_RGB),
+      `corner=${pixels.corner} scale=${pixels.scale} img=${pixels.image}`
+    )
+    console.log(`      スクショ: ${pixels.file}`)
+  }
+
+  /* 解放したら本体が出て、プレースホルダーは消える */
+  await (await fetch(`${PAGES}/__nemo_gate_release__?id=${gateId}`)).json()
+  await sleep(1500)
+  const after = await state()
+  const afterPeek = peekOf(after, parent.key)
+  check('中身が来たら Peek の View が出る', afterPeek?.visible === true, `visible=${afterPeek?.visible}`)
+  // **`found` を条件に入れる**。描かれていない状態からの「消えた」は検査にならない
+  check(
+    '本体が出たらプレースホルダーは消える',
+    measured.found === true &&
+      (await chrome.ev("document.querySelector('.peek-placeholder') ? 'ある' : 'ない'")) === 'ない'
+  )
+
+  /**
+   * **main の `peekBounds()` と CSS の矩形がずれていないこと**。
+   * 割合を main と CSS の2か所に書いているので、片方だけ変えると
+   * 「本体が出た瞬間に窓が飛ぶ」。解放後のページの viewport が実寸なので突き合わせる。
+   */
+  const gate = await connectPage(gateUrl)
+  const inner = JSON.parse(await gate.ev('JSON.stringify({ w: innerWidth, h: innerHeight })'))
+  gate.close()
+  // 描かれていなければ比べようがない。**ここで例外にして後続の検証ごと落とさない**
+  const placeholderRect = measured.rect ?? { w: -1, h: -1 }
+  check(
+    'プレースホルダーの寸法が Peek 本体と一致する',
+    Math.abs(inner.w - placeholderRect.w) <= 1 && Math.abs(inner.h - placeholderRect.h) <= 1,
+    `本体=${inner.w}x${inner.h} プレースホルダー=${placeholderRect.w}x${placeholderRect.h}`
+  )
+  chrome.close()
+
+  /*
+   * **保険のタイムアウト**。`dom-ready` が来ないページ（204 で終わる・ダウンロードに化ける）
+   * でも View が出ることを見る。**これが無いと Peek が永久に出ないままの回帰を拾えない**。
+   * ゲートは解放せず、時間だけで出てくることを確かめる。
+   */
+  /*
+   * **`dom-ready` の前に閉じられた Peek**。タイマーだけが残って、後から
+   * 幽霊の Peek が生えたり main が落ちたりしないことを見る。
+   * （この後の「保険」の待ちが 8 秒のタイマーを跨ぐので、待ち時間は共用できる）
+   */
+  const earlyId = `${gateId}-early`
+  await evUser(
+    parent.page,
+    `window.open(${JSON.stringify(`${PAGES}/__nemo_gate__?id=${earlyId}`)}, '_blank')`
+  )
+  for (let i = 0; i < 60; i += 1) {
+    const r = await (await fetch(`${PAGES}/__nemo_gate_state__?id=${earlyId}`)).json()
+    if (r.arrived >= 1) break
+    await sleep(200)
+  }
+  const earlyPeek = peekOf(await state(), parent.key)
+  /*
+   * **「まだ中身が来ていない」ことを前提として必ず確かめる**。ここが崩れていると
+   * （保険のタイムアウトで既に表示済みだと）以降は何も検査していないのに通ってしまう。
+   */
+  check(
+    '（早期 close）閉じる前は中身待ちの Peek がある',
+    earlyPeek !== null && earlyPeek.visible === false,
+    `peek=${earlyPeek === null ? 'なし' : `visible=${earlyPeek.visible}`}`
+  )
+  await call('window.nemo.closePeek()')
+  await sleep(500)
+  check('（早期 close）中身が来る前でも閉じられる', peekOf(await state(), parent.key) === null)
+
+  const stuckId = `${gateId}-stuck`
+  await evUser(
+    parent.page,
+    `window.open(${JSON.stringify(`${PAGES}/__nemo_gate__?id=${stuckId}`)}, '_blank')`
+  )
+  for (let i = 0; i < 60; i += 1) {
+    const r = await (await fetch(`${PAGES}/__nemo_gate_state__?id=${stuckId}`)).json()
+    if (r.arrived >= 1) break
+    await sleep(200)
+  }
+  await sleep(400)
+  const stuckPeek = peekOf(await state(), parent.key)
+  check(
+    '（保険）来ないうちは View を出していない',
+    stuckPeek?.visible === false,
+    `visible=${stuckPeek?.visible}`
+  )
+  // registry.ts の `PEEK_PLACEHOLDER_TIMEOUT`（8000ms）に余裕を足した待ち
+  await sleep(10000)
+  const revealed = peekOf(await state(), parent.key)
+  check(
+    '（保険）dom-ready が来なくてもタイムアウトで View が出る',
+    revealed?.visible === true,
+    `visible=${revealed?.visible}`
+  )
+  /*
+   * **閉じた Peek の key で `peek.revealed` が出ていないこと**。
+   * タブの本数だけ見ても、破棄済みの Peek に対してタイマーが発火したことは分からない。
+   */
+  check(
+    '（早期 close）閉じた Peek のタイマーが後から発火しない',
+    earlyPeek !== null &&
+      !readLogLines(USER_DATA).some(
+        (line) => line.includes('"event":"peek.revealed"') && line.includes(earlyPeek.key)
+      ),
+    `key=${earlyPeek?.key}`
+  )
+  check(
+    '（保険）出た理由がタイムアウトとして記録されている',
+    readLogLines(USER_DATA).some(
+      (line) => line.includes('"event":"peek.revealed"') && line.includes('"reason":"timeout"')
+    )
+  )
+  check(
+    '（早期 close）main の未捕捉例外が出ていない',
+    countLogEvents(USER_DATA, 'app.uncaught_exception') === 0
+  )
+  await (await fetch(`${PAGES}/__nemo_gate_release__?id=${stuckId}`)).json()
+  await (await fetch(`${PAGES}/__nemo_gate_release__?id=${earlyId}`)).json()
+  await sleep(500)
+
+  await call('window.nemo.closePeek()')
+  await sleep(400)
+  await call(`window.nemo.closeTab(${JSON.stringify(parent.key)})`)
+  parent.page.close()
   await sleep(300)
 }
 

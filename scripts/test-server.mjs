@@ -41,6 +41,24 @@ const ECHO_PATH = '/__nemo_echo__'
  * 塞げているかを確かめられない。
  */
 const REDIRECT_PATH = '/__nemo_redirect__'
+/**
+ * Peek のプレースホルダー検証用。**応答を握ったまま止める門**。
+ *
+ * `?id=<印>` で開くと、`/__nemo_gate_release__?id=<印>` を叩くまで**1バイトも返さない**。
+ * ページが一度も描画されない状態を検証側の都合で好きなだけ保てるので、
+ * 「まだ描いていない Peek の矩形」を撮れる。
+ *
+ * **固定の `sleep` で代用しない**。`screencapture` や CDP が遅れると応答後を撮ってしまい、
+ * 「速いマシンでだけ落ちる検査」になる。到達を `/__nemo_gate_state__` で確かめてから撮り、
+ * 撮り終えてから解放する。
+ */
+const GATE_PATH = '/__nemo_gate__'
+const GATE_STATE_PATH = '/__nemo_gate_state__'
+const GATE_RELEASE_PATH = '/__nemo_gate_release__'
+/** 印ごとの、握ったままの `res`。 */
+const gateHeld = new Map()
+/** 印ごとの到達回数。**解放後も残す**（撮影の後に数え直せるように）。 */
+const gateArrived = new Map()
 
 const types = {
   '.html': 'text/html; charset=utf-8',
@@ -78,6 +96,47 @@ const server = http.createServer((req, res) => {
   if (url.pathname === CACHE_COUNT_PATH) {
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
     res.end(JSON.stringify({ hits: cachedAssetHits }))
+    return
+  }
+
+  if (url.pathname === GATE_PATH) {
+    const id = url.searchParams.get('id') ?? 'default'
+    gateArrived.set(id, (gateArrived.get(id) ?? 0) + 1)
+    const held = gateHeld.get(id) ?? []
+    held.push(res)
+    gateHeld.set(id, held)
+    // ページ側が閉じた（Peek を閉じた・再読み込みした）ぶんは持ち続けない。
+    // **`req` ではなく `res` を見る**。`req` の `close` は「本文を読み切った」でも出るので、
+    // Node の版によっては GET が届いた直後に外れて、解放できない握りになる。
+    res.on('close', () => {
+      if (res.writableEnded) return
+      const list = gateHeld.get(id)
+      if (!list) return
+      const index = list.indexOf(res)
+      if (index !== -1) list.splice(index, 1)
+    })
+    return
+  }
+  if (url.pathname === GATE_STATE_PATH) {
+    const id = url.searchParams.get('id') ?? 'default'
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+    res.end(JSON.stringify({ arrived: gateArrived.get(id) ?? 0, held: (gateHeld.get(id) ?? []).length }))
+    return
+  }
+  if (url.pathname === GATE_RELEASE_PATH) {
+    const id = url.searchParams.get('id') ?? 'default'
+    const held = gateHeld.get(id) ?? []
+    gateHeld.set(id, [])
+    for (const target of held) {
+      target.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+      // 解放後は**白一色**にする。プレースホルダー（暗い面）と確実に見分けられる
+      target.end(
+        `<!doctype html><meta charset="utf-8"><title>gate</title>` +
+          `<style>html,body{margin:0;height:100%;background:#fff}</style><h1 id="gate">released</h1>`
+      )
+    }
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+    res.end(JSON.stringify({ released: held.length }))
     return
   }
 

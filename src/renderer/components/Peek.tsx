@@ -34,6 +34,12 @@ export function Peek(): React.JSX.Element | null {
         暗幕は**クリックしても閉じない**。ページ内のテキスト選択でドラッグが
         Peek の外へはみ出したときに、意図せず閉じてしまうのを避ける。
       */}
+      {/*
+        中身が来るまでの間に置く「窓の形」。main は Peek の View を
+        `dom-ready` まで出さない（`peekAwaitingDocument`）ので、その間ここが見える。
+        これが無いと、リンクを踏んでも暗幕だけが出て窓が数百 ms〜数秒あらわれない。
+      */}
+      {!peek.visible && <div className="peek-placeholder" />}
       <div className="peek-tools">
         <button
           type="button"

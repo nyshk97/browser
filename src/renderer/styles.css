@@ -1657,6 +1657,25 @@ body[data-view='toolbar'] {
   }
 }
 
+/*
+ * 中身が来るまでの「窓の形」。
+ *
+ * **main の `peekBounds()` と同じ矩形にする**（DESIGN.md「Peek」の表が出どころ）。
+ * この View はページ領域そのものなので、割合でそのまま書ける:
+ * 幅 91%（`PEEK_RATIO`）、高さは 91% と「上下に 42px ずつ（`PEEK_TOOL_BAND`）残した高さ」の小さい方。
+ * ずれると本体が出た瞬間に位置が飛ぶので、値を変えるときは main と一緒に直す。
+ */
+.peek-placeholder {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 91%;
+  height: min(91%, calc(100% - 84px));
+  background: var(--nemo-sidebar);
+  border-radius: 16px;
+}
+
 /* Peek の外側・ページ領域の右上。main 側が上下に 42px の余白を残している */
 .peek-tools {
   position: absolute;

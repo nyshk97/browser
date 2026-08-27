@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>長いページ — gg / G のテスト</title>
+    <style>
+      /*
+       * **`body` を「高さ固定 + overflow-y: scroll」にしてある。**
+       * スクロールバー常時表示のために実サイトでよく使われる形で、`body` は
+       * 「overflowY が scroll かつ縦の room がある」を満たすのに、overflow の viewport 伝播で
+       * 実際に動くのは `scrollingElement` 側なので `body.scrollTo()` は何もしない。
+       * 注入側の「`body` / `documentElement` は採らない」guard を外すと、この fixture では
+       * gg / G が無反応になって検証が落ちる。
+       *
+       * 高さを `auto` にすると `scrollHeight - clientHeight ≈ 0` で room が消え、
+       * guard を外しても素通りで PASS してしまう（守っているつもりの空検査）。
+       */
+      html { height: 100%; }
+      body {
+        font: 15px/1.6 -apple-system, sans-serif;
+        margin: 0;
+        padding: 40px;
+        box-sizing: border-box;
+        height: 100vh;
+        overflow-y: scroll;
+      }
+      .row { padding: 24px 0; border-bottom: 1px solid #eee; }
+      /*
+       * 入力欄は **position: fixed** で常に画面内に置く。
+       * 文書の流れの中（ページ上部）に置くと、スクロール位置が下のときに文字を打った瞬間
+       * ブラウザが**キャレットを見せるためにスクロールする**（実測: 7013 → 173）。
+       * これは Chromium 本来の挙動で gg / G とは無関係だが、
+       * 「入力欄では飛ばない」の検査を必ず落とす交絡になる。
+       */
+      #probe-box {
+        position: fixed;
+        top: 8px;
+        right: 8px;
+        background: #fff;
+        border: 1px solid #ccc;
+        padding: 8px;
+        z-index: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>長いページ</h1>
+    <p>`gg` で最上部、`G` で最下部。スクロールを読むのは <code>document.scrollingElement</code>。</p>
+    <div id="probe-box">
+      <input id="probe" type="text" placeholder="ここにフォーカスがあるあいだは効かない" size="34" />
+    </div>
+    <div id="filler"></div>
+    <p id="bottom-marker">ここが最下部</p>
+    <script>
+      // 中身は body の高さ（100vh）より十分に高くする。
+      const filler = document.getElementById('filler')
+      for (let i = 0; i < 200; i += 1) {
+        const row = document.createElement('div')
+        row.className = 'row'
+        row.textContent = `row ${i}`
+        filler.appendChild(row)
+      }
+    </script>
+  </body>
+</html>

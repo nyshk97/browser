@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>内側スクローラ — gg / G のテスト</title>
+    <style>
+      /*
+       * Gmail / Slack / Notion 型。**ルートは動かず、内側の div がスクローラ**。
+       * `document.scrollingElement` だけを見る実装ではここで無反応になる。
+       *
+       * スクローラは `tabindex="-1"` で focusable にし、**画面中央から外した位置**に置く。
+       * 素の <div> は focus() が効かず activeElement が body のままになるので、
+       * 中央フォールバックが拾って「通るが activeElement 経路を一度も通らない」検査に化ける。
+       * 中央から外しておけば、activeElement 起点の祖先探索だけを撃てる。
+       */
+      html, body { height: 100%; margin: 0; overflow: hidden; }
+      body { font: 15px/1.6 -apple-system, sans-serif; display: flex; }
+      #scroller {
+        width: 40%;
+        height: 100%;
+        overflow-y: auto;
+        padding: 16px;
+        box-sizing: border-box;
+        border-right: 1px solid #ccc;
+      }
+      #dead { flex: 1; padding: 16px; }
+      .row { padding: 24px 0; border-bottom: 1px solid #eee; }
+    </style>
+  </head>
+  <body>
+    <div id="scroller" tabindex="-1"></div>
+    <div id="dead">
+      <p>ここが画面中央。<strong>スクロールしない</strong>ので、中央フォールバックでは拾えない。</p>
+    </div>
+    <script>
+      const scroller = document.getElementById('scroller')
+      for (let i = 0; i < 200; i += 1) {
+        const row = document.createElement('div')
+        row.className = 'row'
+        row.textContent = `row ${i}`
+        scroller.appendChild(row)
+      }
+    </script>
+  </body>
+</html>

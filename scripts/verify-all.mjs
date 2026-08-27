@@ -7,6 +7,9 @@
  *   verify-peek → 再起動をまたぐ永続性 → 旧版セッションからの移行 →
  *   履歴 DB の列追加 → 後片付け
  *
+ * **`verify-vim-scroll`（ページの gg / G）は既定から外れている**（`OPT_IN_ONLY`）。
+ * `--only vim-scroll` / `--changed` のときだけ、`http-auth` の後・`restart` の前に入る。
+ *
  * 終了コードがそのまま合否になるので CI にも載せられる。
  *
  * `--only <名前...>` で回すものを絞れる（`mise run verify:only phase1 pins`）。
@@ -40,7 +43,7 @@ import {
   stopChildren,
   waitForHttp
 } from './lib/harness.mjs'
-import { KNOWN_TARGETS, NEEDS_APP, selectVerifyTargets } from './lib/verify-targets.mjs'
+import { KNOWN_TARGETS, NEEDS_APP, OPT_IN_ONLY, selectVerifyTargets } from './lib/verify-targets.mjs'
 
 const require = createRequire(import.meta.url)
 const electronPath = require('electron')
@@ -79,6 +82,16 @@ function collectChangedFiles() {
   ].filter((line) => line.length > 0)
 }
 
+/**
+ * `--changed` が絞れずフルに倒れたか。
+ *
+ * **`only` を埋めて表すのはやめる**（絞っていないのに「絞っている」表示になり、
+ * `回さない: ` が空で尻切れになる）。フラグで持って `want()` だけを素通しにする。
+ * ここを素通しにしないと、`registry.ts` のような `OWNERS` 外のファイル
+ * ＝**その機能の配線を直したときに限って** `OPT_IN_ONLY` のスイートが一度も回らない。
+ */
+let changedFull = false
+
 if (useChanged) {
   const changed = collectChangedFiles()
   const selection = selectVerifyTargets(changed)
@@ -91,14 +104,24 @@ if (useChanged) {
   }
   if (selection.kind === 'full') {
     console.log(`[verify] --changed: 絞れないのでフルを回す（引き金: ${selection.triggers.join(', ')}）`)
+    changedFull = true
   } else {
     console.log(`[verify] --changed: ${selection.reason} → ${selection.targets.join(' ')}`)
     for (const name of selection.targets) only.add(name)
   }
 }
 
-/** その検証を回すか（`--only` も `--changed` も絞っていなければ全部回す）。 */
-const want = (name) => only.size === 0 || only.has(name)
+/**
+ * その検証を回すか（`--only` も `--changed` も絞っていなければ全部回す）。
+ *
+ * ただし `OPT_IN_ONLY` のものは**既定から外れる**（名指ししたときだけ回る）。
+ * `--changed` は選んだ名前を `only` に足してからここへ来るので、素通しでよい。
+ */
+const want = (name) => (only.size === 0 ? changedFull || !OPT_IN_ONLY.includes(name) : only.has(name))
+if (only.size === 0 && !changedFull && OPT_IN_ONLY.length > 0) {
+  // **黙って外さない。** 出さないと「回っているつもり」にも「勝手に回り始めた」にも気づけない。
+  console.log(`[verify] 既定から外している: ${OPT_IN_ONLY.join(' ')}（回すなら --only で名指しする）`)
+}
 const needsApp = NEEDS_APP.some(want)
 /** 絞り込みの出所（ログを読んだ人が `--only` と `--changed` を取り違えないため）。 */
 const scopeFlag = useChanged ? '--changed' : '--only'
@@ -270,6 +293,7 @@ const split = (args) => runVerify('scripts/verify-split.mjs', args)
 const call = (args) => runVerify('scripts/verify-call.mjs', args)
 const liveFolder = (args) => runVerify('scripts/verify-live-folder.mjs', args)
 const httpAuth = (args) => runVerify('scripts/verify-http-auth.mjs', args)
+const vimScroll = (args) => runVerify('scripts/verify-vim-scroll.mjs', args)
 
 let exitCode = 0
 try {
@@ -361,6 +385,17 @@ try {
     console.log('\n=== 自走検証（HTTP Basic 認証の自動入力）')
     const httpAuthCode = await httpAuth([])
     if (httpAuthCode !== 0) exitCode = httpAuthCode
+  }
+
+  /*
+   * **実行順の最後に置く**（`restart` の前）。CDP の合成キーは撃った先へフォーカスが移るので
+   * （`verify-switcher.mjs` の 7 に実測）、キーを大量に撃つこのスイートを前に置くと
+   * 後続のキー検証が原因不明で落ちる。落ちても自分の変更に見えないのが厄介。
+   */
+  if (want('vim-scroll')) {
+    console.log('\n=== 自走検証（ページの gg / G）')
+    const vimScrollCode = await vimScroll([])
+    if (vimScrollCode !== 0) exitCode = vimScrollCode
   }
 
   if (want('restart')) {

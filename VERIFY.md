@@ -55,7 +55,16 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 `verify:only split restart` では spike / phase1 / pins の write+read は走らない。
 
 指定できるのは `spike` / `phase1` / `phase2` / `pins` / `switcher` / `peek` / `split` / `call` /
-`live-folder` / `http-auth` / `restart` / `migration` / `db`。
+`live-folder` / `http-auth` / `vim-scroll` / `restart` / `migration` / `db`。
+
+**`vim-scroll`（ページの `gg` / `G`）はフルの既定から外れている**（`verify-targets.mjs` の
+`OPT_IN_ONLY`）。回るのは 3 経路 —— `mise run verify:only vim-scroll` で名指ししたとき、
+`src/shared/vim-scroll.js` などを触って `--changed` が担当スイートとして選んだとき、
+**`--changed` が絞れずフルに倒れたとき**（`registry.ts` のような `OWNERS` 外を触った場合。
+その機能の配線を直したときこそ回ってほしいので素通しにしている。+10s 乗るのはこの経路）。フルに常設しないのは、縮めたフルの時間を無言で戻さないため
+（増分は実測 +10s 程度）。**代償として「CDP の合成キーが後続スイートを壊す回帰」を
+フルで拾えない**ので、撃つスイートを増やすときは `OPT_IN_ONLY` から一時的に外して
+フルを 1 回通すこと（実行順は `http-auth` の後・`restart` の前）。
 
 **待ち時間は `NEMO_VERIFY_TIMINGS` で縮めている**。`verify-all.mjs` が「見に行く周期 / デバウンス」の
 検証値（`sleepSweepMs` など）を決めて、**アプリと検証スクリプトの両方**に同じ JSON を env で渡す。
@@ -115,6 +124,7 @@ mise run verify:only split
 |---|---|
 | ナビゲーション判定・設定スキーマ・キーバインド・ログ | `mise run check` |
 | **タブスイッチャー（⌃M）**・MRU の並び・オーバーレイの割り込み | `mise run verify:switcher` |
+| **ページの `gg` / `G`**（縦の端へ飛ぶ）・スクロール対象の選択・入力欄の除外 | `mise run verify:only vim-scroll` + 下の「ページの gg / G（実機）」 |
 | **Peek（ウィンドウ内ポップアップ）・小窓（Little Nemo）**・popup の受け皿・⌘O の昇格 | `mise run verify`（`verify-peek.mjs` が含まれる）+ 下の「Peek と小窓（実機）」 |
 | **分割ビュー（2 ペイン）**・ペインのレイアウト・結合行・sleep / アーカイブの除外 | `mise run verify:only split restart` + 下の「分割ビュー」 |
 | タブ / ウィンドウ・サイドバー・**ツールバー（アドレスバー）**・コマンドバー・ダウンロード・権限 | `mise run verify` |
@@ -345,6 +355,28 @@ mise run verify:only split
 - セッション復元（前回のタブが戻る / 復元直後は sleep / 選ぶと読み直す）
 
 個別に回すときは Nemo を起動した状態で `pnpm verify:spike`。
+
+## ページの gg / G（実機）
+
+自走検証（`mise run verify:only vim-scroll`）が**大半を見る**。
+`gg` で最上部・`G` で最下部・猶予切れで飛ばない・内側スクローラ・入力欄の除外まで通す。
+
+**自走では撃てないので実機で見るもの**:
+
+- **実サイトでスクロール対象が当たるか** — Gmail / Slack / Notion（ルートが動かず内側の div が
+  スクローラ）で効くこと。記事ページ（Wikipedia 等）でルートが動くこと
+- **ページ側の `g` プレフィックスが無傷か** — GitHub で `g` `c`（コードへ）・`g` `i`（Issues へ）。
+  Nemo は `preventDefault` しないので、これが壊れていたら設計が崩れている
+- **入力欄に文字が入るか** — Gmail の検索ボックスや GitHub のコメント欄で `G` を打つ
+- **なめらかさの手触り** — 長大なページで待たされすぎないか
+  （気になるなら `behavior` を `'auto'` に倒す。倒すと自走検証の到達 polling も一緒に変わる）
+- **Peek・小窓・分割ビュー**の各ペインで効くこと（分割は**フォーカスのある側だけ**が動く）
+- **サイドバー・コマンドバーにフォーカスがあるときは効かない**こと
+  （注入はページ側だけなので効かないのが正しい）
+- **戻る / 進むでページに戻った後も効く**こと（bfcache から復元されると `dom-ready` が
+  出ないため、`did-navigate` にも張ってある。片方だけだと一度戻ったあと二度と効かない）
+- **iframe をクリックした後は効かない**こと（メインフレームにしか注入しない。
+  ページの余白をクリックすれば戻る）
 
 ## 分割ビュー（2 ペイン）
 

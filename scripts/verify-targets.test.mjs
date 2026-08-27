@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url'
 import {
   KNOWN_TARGETS,
   NEEDS_APP,
+  OPT_IN_ONLY,
   OWNERS,
   RESTART_COMPANIONS,
   UNMAPPED_VERIFY_SCRIPTS,
@@ -31,7 +32,7 @@ test('対応表の名前はすべて KNOWN_TARGETS にある', () => {
       assert.ok(KNOWN_TARGETS.includes(target), `${file} → 知らない検証名 ${target}`)
     }
   }
-  for (const name of [...NEEDS_APP, ...RESTART_COMPANIONS]) {
+  for (const name of [...NEEDS_APP, ...RESTART_COMPANIONS, ...OPT_IN_ONLY]) {
     assert.ok(KNOWN_TARGETS.includes(name), `知らない検証名 ${name}`)
   }
 })

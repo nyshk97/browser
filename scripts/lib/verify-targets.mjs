@@ -29,6 +29,7 @@ export const KNOWN_TARGETS = [
   'call', // 会議の小窓（Meet の通話コントロール）
   'live-folder', // Live Folder（GitHub の PR）
   'http-auth', // HTTP Basic 認証の自動入力
+  'vim-scroll', // ページの gg / G（フル既定からは外れている。OPT_IN_ONLY を見る）
   'restart', // 再起動をまたぐ永続性（spike / phase1 / pins / split / call / live-folder の write → read）
   'migration', // 旧版セッションからの移行
   'db' // 旧スキーマの履歴 DB からの移行
@@ -46,8 +47,24 @@ export const NEEDS_APP = [
   'call',
   'live-folder',
   'http-auth',
+  'vim-scroll',
   'restart'
 ]
+
+/**
+ * **フル実行の既定からは外す**スイート。`--only` / `--changed` で名指ししたときだけ回る。
+ *
+ * フルは 529s → 372s に縮めたばかりで、ここに常設すると縮めた分を無言で戻すことになる。
+ * 回るのは 3 経路: **`--only` で名指し**・**担当スイートとして `--changed` に選ばれる**・
+ * **`--changed` が絞れずフルに倒れた**とき（`registry.ts` のような `OWNERS` 外を触った場合。
+ * その機能の配線を直したときこそ回ってほしいので素通しにする）。
+ * `verify-all.mjs` の `want()` が「`only` が空で、かつフル落ちでもないときはこれを除く」形で見る。
+ *
+ * **代償は「CDP の合成キーが後続スイートを壊す回帰を CI で拾えない」こと。**
+ * 実行順の最後に置いてあるので後続は `restart` だけだが、
+ * 撃つスイートを増やすときはここから外してフルで一度見ること。
+ */
+export const OPT_IN_ONLY = ['vim-scroll']
 
 /**
  * `restart` に相乗りしているスイート。**選んだら `restart` を随伴させる**。
@@ -55,15 +72,7 @@ export const NEEDS_APP = [
  * `restart` ブロックの中は `want('split')` のように入れ子で分岐しているので、
  * `split` だけを選ぶと `--restart-write` / `--restart-read` が丸ごと落ちたまま PASS する。
  */
-export const RESTART_COMPANIONS = [
-  'spike',
-  'phase1',
-  'pins',
-  'split',
-  'call',
-  'live-folder',
-  'http-auth'
-]
+export const RESTART_COMPANIONS = ['spike', 'phase1', 'pins', 'split', 'call', 'live-folder', 'http-auth']
 
 /**
  * 検証に影響しないと**分かっている**パス。
@@ -101,6 +110,7 @@ export const OWNERS = new Map([
   ['scripts/verify-call.mjs', ['call']],
   ['scripts/verify-live-folder.mjs', ['live-folder']],
   ['scripts/verify-http-auth.mjs', ['http-auth']],
+  ['scripts/verify-vim-scroll.mjs', ['vim-scroll']],
   ['scripts/verify-session-migration.mjs', ['migration']],
   ['scripts/verify-db-migration.mjs', ['db']],
   // 単一の画面にしか出ないリーフのコンポーネント（親は 1 か所からしか import していない）
@@ -115,7 +125,10 @@ export const OWNERS = new Map([
   ['src/main/store/http-auth.ts', ['http-auth']],
   ['src/shared/http-auth-rules.js', ['http-auth']],
   ['src/shared/http-auth-worker-source.js', ['http-auth']],
-  ['scripts/http-auth-rules.test.mjs', ['http-auth']]
+  ['scripts/http-auth-rules.test.mjs', ['http-auth']],
+  // gg / G だけが読む shared のモジュール（他のスイートは触らない）
+  ['src/shared/vim-scroll.js', ['vim-scroll']],
+  ['scripts/vim-scroll.test.mjs', ['vim-scroll']]
 ])
 
 /**

@@ -7,8 +7,9 @@
  *   verify-peek → 再起動をまたぐ永続性 → 旧版セッションからの移行 →
  *   履歴 DB の列追加 → 後片付け
  *
- * **`verify-vim-scroll`（ページの gg / G）は既定から外れている**（`OPT_IN_ONLY`）。
- * `--only vim-scroll` / `--changed` のときだけ、`http-auth` の後・`restart` の前に入る。
+ * **`verify-vim-scroll`（gg / G）と `verify-slots`（セーブスロット）は既定から外れている**（`OPT_IN_ONLY`）。
+ * 名指し（`--only`）か `--changed` で選ばれたときだけ回る。
+ * `vim-scroll` は `http-auth` の後・`restart` の前、`slots` は最後（`db` の後）に入る。
  *
  * 終了コードがそのまま合否になるので CI にも載せられる。
  *
@@ -495,6 +496,15 @@ try {
     console.log('\n=== 旧スキーマの履歴 DB からの移行')
     const dbMigrationCode = await runToCompletion(process.execPath, ['scripts/verify-db-migration.mjs'])
     if (dbMigrationCode !== 0) exitCode = dbMigrationCode
+  }
+
+  if (want('slots')) {
+    // セーブスロットも別建て。**`NEMO_SLOTS_DIR` を自分で振る**必要があるので
+    // （渡し忘れると実 iCloud の常用スロットに書く）、ここまでの起動は止めてから回す。
+    await stopAll()
+    console.log('\n=== ブックマークのセーブスロット')
+    const slotsCode = await runToCompletion(process.execPath, ['scripts/verify-slots.mjs'])
+    if (slotsCode !== 0) exitCode = slotsCode
   }
 } catch (error) {
   console.error(`\n[verify] ${error instanceof Error ? error.message : String(error)}`)

@@ -12,6 +12,11 @@
  * マッピングはスイートやファイルが増えるたびに腐るが、**腐っても症状は「速く PASS する」**ので
  * 気づけない。だから対応表に載せたパスが実在することと、`scripts/verify-*.mjs` が
  * 漏れなく分類されていることをユニットテストで固定する。
+ *
+ * **ここに登録しただけでは 1 件も回らない。** `verify-all.mjs` の `if (want('<名前>'))` の
+ * 配線が別に要る（抜けていると `--only <名前>` が何も検査せず exit 0 になり、
+ * 下のテストは登録しか見ないので気づけない）。スイートを足すときは
+ * `KNOWN_TARGETS` / `NEEDS_APP` / `OWNERS` + `verify-all.mjs` で 1 セット。
  */
 
 /**
@@ -32,7 +37,8 @@ export const KNOWN_TARGETS = [
   'vim-scroll', // ページの gg / G（フル既定からは外れている。OPT_IN_ONLY を見る）
   'restart', // 再起動をまたぐ永続性（spike / phase1 / pins / split / call / live-folder の write → read）
   'migration', // 旧版セッションからの移行
-  'db' // 旧スキーマの履歴 DB からの移行
+  'db', // 旧スキーマの履歴 DB からの移行
+  'slots' // セーブスロット（保存 / 読み込み / 移行。自分で起動する。OPT_IN_ONLY を見る）
 ]
 
 /** アプリとページサーバを立てる必要があるもの（migration / db は自分で起動する）。 */
@@ -63,8 +69,11 @@ export const NEEDS_APP = [
  * **代償は「CDP の合成キーが後続スイートを壊す回帰を CI で拾えない」こと。**
  * 実行順の最後に置いてあるので後続は `restart` だけだが、
  * 撃つスイートを増やすときはここから外してフルで一度見ること。
+ *
+ * `slots` はキーを撃たないが、**アプリを 4 回起動し直す**のでフルが 1〜2 分伸びる。
+ * `OWNERS` でスロット関連のファイルを全部拾っているので、触ったときは `--changed` で必ず回る。
  */
-export const OPT_IN_ONLY = ['vim-scroll']
+export const OPT_IN_ONLY = ['vim-scroll', 'slots']
 
 /**
  * `restart` に相乗りしているスイート。**選んだら `restart` を随伴させる**。
@@ -113,6 +122,14 @@ export const OWNERS = new Map([
   ['scripts/verify-vim-scroll.mjs', ['vim-scroll']],
   ['scripts/verify-session-migration.mjs', ['migration']],
   ['scripts/verify-db-migration.mjs', ['db']],
+  ['scripts/verify-slots.mjs', ['slots']],
+  // セーブスロットだけが読むモジュール（他のスイートは触らない）。
+  // `Slots.tsx` は `verify-slots.mjs` が設定画面を開いてカードの描画まで見ている
+  // （IPC だけの検証だと描画例外を素通りするので、この割り当てが嘘になる）
+  ['src/main/store/slots.ts', ['slots']],
+  ['src/shared/slots-schema.js', ['slots']],
+  ['src/shared/slot-apply.js', ['slots']],
+  ['src/renderer/components/Slots.tsx', ['slots']],
   // 単一の画面にしか出ないリーフのコンポーネント（親は 1 か所からしか import していない）
   ['src/renderer/components/SplitRow.tsx', ['split']],
   ['src/renderer/components/Peek.tsx', ['peek']],

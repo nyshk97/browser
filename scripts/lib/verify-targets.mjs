@@ -38,7 +38,8 @@ export const KNOWN_TARGETS = [
   'restart', // 再起動をまたぐ永続性（spike / phase1 / pins / split / call / live-folder の write → read）
   'migration', // 旧版セッションからの移行
   'db', // 旧スキーマの履歴 DB からの移行
-  'slots' // セーブスロット（保存 / 読み込み / 移行。自分で起動する。OPT_IN_ONLY を見る）
+  'slots', // セーブスロット（保存 / 読み込み / 移行。自分で起動する。OPT_IN_ONLY を見る）
+  'auth-vault' // Basic 認証の保管庫（持ち出し。自分で起動する。OPT_IN_ONLY を見る）
 ]
 
 /** アプリとページサーバを立てる必要があるもの（migration / db は自分で起動する）。 */
@@ -72,8 +73,10 @@ export const NEEDS_APP = [
  *
  * `slots` はキーを撃たないが、**アプリを 4 回起動し直す**のでフルが 1〜2 分伸びる。
  * `OWNERS` でスロット関連のファイルを全部拾っているので、触ったときは `--changed` で必ず回る。
+ * `auth-vault` も同じ（アプリを 4 回起動し直す。**`NEEDS_APP` には入れない** ——
+ * 入れると共有のアプリとページサーバまで立ち上がって、使わない起動が 1 つ増える）。
  */
-export const OPT_IN_ONLY = ['vim-scroll', 'slots']
+export const OPT_IN_ONLY = ['vim-scroll', 'slots', 'auth-vault']
 
 /**
  * `restart` に相乗りしているスイート。**選んだら `restart` を随伴させる**。
@@ -123,6 +126,7 @@ export const OWNERS = new Map([
   ['scripts/verify-session-migration.mjs', ['migration']],
   ['scripts/verify-db-migration.mjs', ['db']],
   ['scripts/verify-slots.mjs', ['slots']],
+  ['scripts/verify-auth-vault.mjs', ['auth-vault']],
   // セーブスロットだけが読むモジュール（他のスイートは触らない）。
   // `Slots.tsx` は `verify-slots.mjs` が設定画面を開いてカードの描画まで見ている
   // （IPC だけの検証だと描画例外を素通りするので、この割り当てが嘘になる）
@@ -139,10 +143,21 @@ export const OWNERS = new Map([
   ['src/main/http-auth.ts', ['http-auth']],
   ['src/main/http-auth-matcher.ts', ['http-auth']],
   ['src/main/http-auth-reset.ts', ['http-auth']],
-  ['src/main/store/http-auth.ts', ['http-auth']],
-  ['src/shared/http-auth-rules.js', ['http-auth']],
+  // 保管庫が `updatedAt` / `readAllCredentials` を足したので**両方のスイートが持ち主**。
+  // 広げないと、この 2 ファイルを直しても `--changed` で `auth-vault` が回らない
+  ['src/main/store/http-auth.ts', ['http-auth', 'auth-vault']],
+  ['src/shared/http-auth-rules.js', ['http-auth', 'auth-vault']],
   ['src/shared/http-auth-worker-source.js', ['http-auth']],
-  ['scripts/http-auth-rules.test.mjs', ['http-auth']],
+  ['scripts/http-auth-rules.test.mjs', ['http-auth', 'auth-vault']],
+  // Basic 認証の保管庫だけが読むモジュール（他のスイートは触らない）
+  ['src/shared/auth-vault-schema.js', ['auth-vault']],
+  ['src/shared/auth-vault-crypto.js', ['auth-vault']],
+  ['src/shared/auth-vault-diff.js', ['auth-vault']],
+  ['src/main/store/auth-vault.ts', ['auth-vault']],
+  ['src/renderer/components/AuthVault.tsx', ['auth-vault']],
+  ['scripts/auth-vault-schema.test.mjs', ['auth-vault']],
+  ['scripts/auth-vault-crypto.test.mjs', ['auth-vault']],
+  ['scripts/auth-vault-diff.test.mjs', ['auth-vault']],
   // gg / G だけが読む shared のモジュール（他のスイートは触らない）
   ['src/shared/vim-scroll.js', ['vim-scroll']],
   ['scripts/vim-scroll.test.mjs', ['vim-scroll']]

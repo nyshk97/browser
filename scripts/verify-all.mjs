@@ -7,9 +7,10 @@
  *   verify-peek → 再起動をまたぐ永続性 → 旧版セッションからの移行 →
  *   履歴 DB の列追加 → 後片付け
  *
- * **`verify-vim-scroll`（gg / G）と `verify-slots`（セーブスロット）は既定から外れている**（`OPT_IN_ONLY`）。
+ * **`verify-vim-scroll`（gg / G）・`verify-slots`（セーブスロット）・
+ * `verify-auth-vault`（Basic 認証の保管庫）は既定から外れている**（`OPT_IN_ONLY`）。
  * 名指し（`--only`）か `--changed` で選ばれたときだけ回る。
- * `vim-scroll` は `http-auth` の後・`restart` の前、`slots` は最後（`db` の後）に入る。
+ * `vim-scroll` は `http-auth` の後・`restart` の前、`slots` と `auth-vault` は最後（`db` の後）に入る。
  *
  * 終了コードがそのまま合否になるので CI にも載せられる。
  *
@@ -505,6 +506,15 @@ try {
     console.log('\n=== ブックマークのセーブスロット')
     const slotsCode = await runToCompletion(process.execPath, ['scripts/verify-slots.mjs'])
     if (slotsCode !== 0) exitCode = slotsCode
+  }
+
+  if (want('auth-vault')) {
+    // 保管庫も別建て。**`NEMO_SLOTS_DIR` を自分で振る**必要があるうえ、
+    // 「別の Mac」を模すのに `NEMO_USER_DATA_DIR` を 2 つ使うので、ここまでの起動は止めてから回す。
+    await stopAll()
+    console.log('\n=== Basic 認証の保管庫')
+    const vaultCode = await runToCompletion(process.execPath, ['scripts/verify-auth-vault.mjs'])
+    if (vaultCode !== 0) exitCode = vaultCode
   }
 } catch (error) {
   console.error(`\n[verify] ${error instanceof Error ? error.message : String(error)}`)

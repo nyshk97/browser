@@ -438,6 +438,39 @@ test('normalizeRules: 上限超過の username は落とす（黙って切り詰
   assert.equal(normalized.length, 0)
 })
 
+test('normalizeRules: updatedAt を保つ（保管庫の差分で「どちらが新しいか」に使う）', () => {
+  const normalized = normalizeRules([
+    {
+      id: 'a',
+      pattern: '^https://example\\.com/',
+      username: 'u',
+      password: 'c',
+      updatedAt: 1_756_000_000_000
+    }
+  ])
+  assert.equal(normalized.length, 1)
+  assert.equal(normalized[0].updatedAt, 1_756_000_000_000)
+})
+
+test('normalizeRules: 不正な updatedAt はフィールドごと落ちる（ルールは残る）', () => {
+  // 0 や負値を通すと「1970 年に更新された」ことになり、差分の向きが必ず片側へ倒れる
+  for (const bad of [0, -1, 1.5, '2026', null, NaN]) {
+    const normalized = normalizeRules([
+      { id: 'a', pattern: '^https://example\\.com/', username: 'u', password: 'c', updatedAt: bad }
+    ])
+    assert.equal(normalized.length, 1, `updatedAt=${String(bad)}`)
+    assert.equal(normalized[0].updatedAt, undefined, `updatedAt=${String(bad)}`)
+  }
+})
+
+test('normalizeRules: updatedAt の無い既存ルールはそのまま通る', () => {
+  const normalized = normalizeRules([
+    { id: 'a', pattern: '^https://example\\.com/', username: 'u', password: 'c' }
+  ])
+  assert.equal(normalized.length, 1)
+  assert.equal(normalized[0].updatedAt, undefined)
+})
+
 /* ------------------------------------------------------------------ *
  * 結合（変換器と validator が互いを弾き合わないこと）
  * ------------------------------------------------------------------ */

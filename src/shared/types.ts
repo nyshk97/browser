@@ -102,6 +102,157 @@ export interface SlotSummary {
   hasConflictCopy: boolean
 }
 
+/* ------------------------------------------------------------------ *
+ * Basic 認証の保管庫（別の Mac への持ち出し）
+ * ------------------------------------------------------------------ */
+
+/** 保管庫の平文メタ（**復号せずに読める**ぶん）。 */
+export interface AuthVaultMeta {
+  count: number
+  savedAt: number
+  host: string
+  appVersion: string
+}
+
+/**
+ * カードに出す状態。
+ *
+ * **`locked`（パスフレーズで開けない）はここに入らない。** 混ぜるとカードを出すたびに
+ * scrypt を回すうえ、記憶していない Mac では常に locked に落ちて保存の入口が塞がる。
+ * パスフレーズの成否は preview の戻り値が持つ。
+ */
+export interface AuthVaultStatus {
+  state: 'empty' | 'ok' | 'unreadable'
+  meta: AuthVaultMeta | null
+  /** `unreadable` のときだけ、人に見せる理由。 */
+  reason: string | null
+  /**
+   * 新しい版の Nemo が書いたもの。**この間は削除の導線を出さない**
+   * （退避しないのは「古い Nemo が新しい方の保管庫を全件消さない」ため。
+   * UI が削除ボタンを出すと同じ結果への近道になる）。理由の**文字列一致で判定させない**。
+   */
+  isFutureVersion: boolean
+  hasConflictCopy: boolean
+  dir: string
+  kind: 'env' | 'icloud' | 'fallback'
+  /** この Mac の**有効な**ルールの件数。**renderer で数え直さない**。 */
+  localCount: number
+  /** パスフレーズを覚えているか（**値そのものは渡さない**）。 */
+  hasPassphrase: boolean
+  /** 端末鍵が使えるか。false なら「覚える」ができない。 */
+  encryptionAvailable: boolean
+  /**
+   * パスフレーズの最小長。
+   *
+   * **renderer に定数を持たせない。** `auth-vault-schema.js` を web の型検査に足すと
+   * 依存する `settings-schema.js` まで引き込むことになるので、値の方を運ぶ
+   * （規則の出どころは `validatePassphrase` の 1 本のまま）。
+   */
+  minPassphrase: number
+}
+
+/**
+ * 保管庫を開けなかった理由。
+ *
+ * **`bad-passphrase` を他と畳まない。** 畳むと打ち間違いに対して
+ * 「削除して作り直す」を提示することになる（undo が無い機能で最も戻れない選択肢）。
+ */
+export type AuthVaultFailure =
+  | 'empty'
+  | 'unreadable'
+  | 'bad-passphrase'
+  | 'tampered'
+  | 'malformed'
+  | 'no-passphrase'
+  | 'weak-passphrase'
+  | 'no-encryption'
+  | 'write-failed'
+
+/** 保存前の下見。 */
+export type AuthVaultSavePreview =
+  | {
+      ok: true
+      /** 保存すると保管庫から**消える**もの（保管庫にあって、この Mac の有効なルールに無い）。 */
+      disappearing: { pattern: string; username: string }[]
+      /** 保存される件数。 */
+      count: number
+      /** 復号できずに保存から外れる件数。 */
+      skipped: number
+      /** 保管庫がまだ無い（＝初回。パスフレーズを新しく決める）。 */
+      first: boolean
+    }
+  | { ok: false; reason: AuthVaultFailure; detail?: string }
+
+/** 差分の 1 件（この Mac に無いもの）。 */
+export interface AuthVaultMissing {
+  pattern: string
+  username: string
+}
+
+/** 差分の 1 件（内容が違うもの）。**パスワードそのものは含まない**。 */
+export interface AuthVaultDiffering {
+  pattern: string
+  /** 保管庫側のユーザー名。 */
+  fromUsername: string
+  /** この Mac 側のユーザー名。 */
+  toUsername: string
+  usernameDiffers: boolean
+  passwordDiffers: boolean
+  /** **両方に更新時刻があるときだけ**決まる。 */
+  newer: 'from' | 'to' | null
+  fromUpdatedAt?: number
+  toUpdatedAt?: number
+  /** この Mac で有効か（無効なら「読み込むと有効に戻ります」を出す）。 */
+  toEnabled: boolean
+  toDisabledReason?: string
+}
+
+/** 差分の 1 件（既にあるもの）。 */
+export interface AuthVaultSame {
+  pattern: string
+  username: string
+  toEnabled: boolean
+  toDisabledReason?: string
+}
+
+/** 読み込み前の下見。 */
+export type AuthVaultLoadPreview =
+  | {
+      ok: true
+      missing: AuthVaultMissing[]
+      differing: AuthVaultDiffering[]
+      same: AuthVaultSame[]
+      meta: AuthVaultMeta
+      /** 保管庫の中身のうち、検査で落ちた件数。 */
+      dropped: number
+    }
+  | { ok: false; reason: AuthVaultFailure; detail?: string }
+
+/** 保存の結果。 */
+export interface AuthVaultSaveResult {
+  ok: boolean
+  reason?: AuthVaultFailure
+  /** 実際に保存した件数。 */
+  saved: number
+  /** 復号できずに外した件数。 */
+  skipped: number
+}
+
+/** 読み込みの結果。 */
+export interface AuthVaultLoadResult {
+  ok: boolean
+  reason?: AuthVaultFailure
+  /** 実際に入った件数（**commit 後に数え直したもの**）。 */
+  imported: number
+  /**
+   * 下見のあとに保管庫から消えていて取り込めなかった件数。
+   * 別の Mac が間に書き換えた場合に出る。
+   */
+  stale: number
+  /** false なら「反映には再起動が必要」を出す（自動リトライはしない）。 */
+  authCacheCleared: boolean
+}
+
 /** `nemo:list-slots` の戻り。保存先は**ログに出さない**ので、ここでしか受け取れない。 */
 export interface SlotList {
   dir: string
@@ -482,6 +633,11 @@ export interface HttpAuthRule {
    * 有効トグルも効かない。原因のフィールドを直すと消える。
    */
   disabledReason?: 'pattern-timeout' | 'decrypt-failed'
+  /**
+   * 中身を最後に変えた時刻。**既存のルールには入っていない**ので `undefined` がありうる。
+   * 保管庫の差分で「どちらが新しいか」を出すのに使う。
+   */
+  updatedAt?: number
 }
 
 /** ルールの保存・削除の結果。**認証キャッシュの消去に失敗しても保存は成立する**。 */
@@ -812,6 +968,38 @@ export interface NemoUiApi {
   renameSlot(index: number, name: string): Promise<boolean>
   /** 保存先を Finder で開く（無ければ作ってから）。 */
   openSlotsFolder(): Promise<void>
+
+  /* Basic 認証の保管庫 */
+  /**
+   * カードに出す状態。**毎回ディスクから読み直す**（別の Mac が iCloud 経由で書き換えるため）。
+   * パスフレーズは要らない（平文メタだけ読む）。
+   */
+  authVaultStatus(): Promise<AuthVaultStatus>
+  /**
+   * 保存の下見。`passphrase` に `null` を渡すと**この Mac が覚えているもの**を使う。
+   * 覚えていなければ `no-passphrase` が返る（＝ダイアログの 1 段目を出す合図）。
+   */
+  authVaultPreviewSave(passphrase: string | null): Promise<AuthVaultSavePreview>
+  /** 保存を実行する。`remember` は**入力されたパスフレーズのときだけ**効く。 */
+  authVaultSave(passphrase: string | null, remember: boolean): Promise<AuthVaultSaveResult>
+  /** 読み込みの下見（3 グループ）。 */
+  authVaultPreviewLoad(passphrase: string | null): Promise<AuthVaultLoadPreview>
+  /**
+   * 選んだパターンだけ取り込む。
+   * **実行時に保管庫を読み直して分類し直す**ので、下見のあとに保管庫が変わっていても
+   * 見ていない中身は入らない（その件数は `stale` に出る）。
+   */
+  authVaultLoad(
+    passphrase: string | null,
+    patterns: string[],
+    remember: boolean
+  ): Promise<AuthVaultLoadResult>
+  /**
+   * 保管庫を消す（**覚えているパスフレーズも一緒に消える**）。
+   * 記憶だけを消す口は**作らない** —— 取り消しの導線を UI に出さないと決めたので、
+   * 呼び手の無い IPC が残るだけになる。
+   */
+  authVaultDelete(): Promise<boolean>
 
   /* Live Folder（GitHub の PR） */
   /** いま取得する（`transient` / `auth` のバックオフは上書きできる。`rate-limit` は不可）。 */

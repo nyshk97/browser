@@ -2457,3 +2457,147 @@ body[data-view='call'] {
   position: absolute;
   inset: 0;
 }
+
+/* ------------------------------------------------------------------ *
+ * Basic 認証の保管庫
+ *
+ * セーブスロットの `.slot` を借りるが、**枠は 1 つ**なので横に並べない。
+ * ダイアログは 2 段（パスフレーズ → 中身）で、中身の段だけ縦に伸びる。
+ * ------------------------------------------------------------------ */
+.vault {
+  display: block;
+}
+
+.vault-card {
+  max-width: 320px;
+  gap: 6px;
+}
+
+.vault-count {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.vault-meta {
+  display: flex;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--nemo-ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.vault-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.vault-actions .btn {
+  margin-top: 0;
+}
+
+.vault-local {
+  margin: 8px 0 0;
+  font-size: 11px;
+}
+
+.vault-notice {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--nemo-ink-dim);
+}
+
+/* 中身の段は件数次第で伸びるので、ダイアログ内でスクロールさせる */
+.vault-dlg .vault-groups {
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  margin: 10px 0 2px;
+}
+
+.vault-group {
+  margin-bottom: 12px;
+}
+
+.vault-group h5 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--nemo-ink-dim);
+}
+
+.vault-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 4px 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.vault-row input[type='checkbox'] {
+  margin-top: 2px;
+  flex: none;
+}
+
+.vault-row code {
+  word-break: break-all;
+}
+
+/* 選べない行（既にあるもの）は、チェックボックスの幅ぶん字下げを揃える */
+.vault-row.static {
+  padding-left: 20px;
+}
+
+.vault-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.vault-note {
+  font-size: 11px;
+  color: var(--nemo-ink-dim);
+}
+
+.vault-note.warn {
+  color: var(--nemo-warn);
+}
+
+.vault-input {
+  display: block;
+  width: 100%;
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--nemo-ink);
+  background: var(--nemo-surface);
+  border: 1px solid #3a3a44;
+  border-radius: var(--nemo-radius);
+}
+
+.vault-input:focus {
+  outline: none;
+  border-color: var(--nemo-accent);
+}
+
+.vault-remember {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.vault-list {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vault-list code {
+  word-break: break-all;
+}

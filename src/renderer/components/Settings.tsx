@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { HTTP_AUTH_LIMITS } from '../../shared/http-auth-rules.js'
 import { Slots } from './Slots.js'
+import { AuthVault } from './AuthVault.js'
 import type {
   DefaultBrowserStatus,
   GithubTokenStatus,
@@ -193,6 +194,8 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
             </section>
 
             <Slots />
+
+            <AuthVault />
 
             <section>
               <h3>データ</h3>

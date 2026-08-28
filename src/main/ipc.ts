@@ -62,6 +62,19 @@ import {
   MAX_SLOT_ICONS,
   SLOT_COUNT
 } from '../shared/slots-schema.js'
+import {
+  deleteVault,
+  forgetPassphrase,
+  hasRememberedPassphrase,
+  openVault,
+  recallPassphrase,
+  rememberPassphrase,
+  saveVault,
+  vaultStatus
+} from './store/auth-vault.js'
+import { diffAuthRules } from '../shared/auth-vault-diff.js'
+import type { ImportEntry } from '../shared/http-auth-rules.js'
+import { MAX_PASSPHRASE, MIN_PASSPHRASE, validatePassphrase } from '../shared/auth-vault-schema.js'
 import { cancelDownload, clearDownloads, revealDownload } from './downloads.js'
 import { clearHistory, getFavicons, queryHistory, removeHistory } from './store/history.js'
 import { clearArchive, queryArchive, removeArchived } from './store/archive.js'
@@ -84,6 +97,8 @@ import {
   httpAuthEncryptionAvailable,
   importHttpAuthRules,
   listHttpAuthRules,
+  readAllCredentials,
+  readAllForDiff,
   revealHttpAuthPassword,
   saveHttpAuthRule,
   setHttpAuthRuleEnabled
@@ -95,6 +110,12 @@ import { HTTP_AUTH_LIMITS, importMultipass, validateHttpAuthPattern } from '../s
 import { windowsById } from './registry.js'
 import type {
   AppStatus,
+  AuthVaultFailure,
+  AuthVaultLoadPreview,
+  AuthVaultLoadResult,
+  AuthVaultSavePreview,
+  AuthVaultSaveResult,
+  AuthVaultStatus,
   CallState,
   HttpAuthImportResult,
   HttpAuthRule,
@@ -718,6 +739,196 @@ export function registerIpcHandlers(): void {
     requireWindow(event)
     // 無ければ作ってから開く（初回は Finder が「存在しない」と言うだけになる）
     void shell.openPath(await ensureSlotsDir())
+  })
+
+  /* ---- Basic 認証の保管庫（別の Mac への持ち出し） ---- */
+
+  /**
+   * パスフレーズを決める。
+   *
+   * `null` は「覚えているものを使う」。**renderer に値を返す口は作らない**ので、
+   * 記憶を使いたいときは値ではなく `null` を渡してもらう。
+   */
+  function resolvePassphrase(
+    value: unknown
+  ): { ok: true; passphrase: string; entered: boolean } | { ok: false; reason: AuthVaultFailure } {
+    if (value === null || value === undefined) {
+      const remembered = recallPassphrase()
+      if (!remembered) return { ok: false, reason: 'no-passphrase' }
+      return { ok: true, passphrase: remembered, entered: false }
+    }
+    const passphrase = credential(value, MAX_PASSPHRASE)
+    // **長さの規則は `auth-vault-schema.js` の 1 本**（UI の入力欄と同じ値を使う）
+    if (!validatePassphrase(passphrase).ok) return { ok: false, reason: 'weak-passphrase' }
+    return { ok: true, passphrase, entered: true }
+  }
+
+  ipcMain.handle('nemo:auth-vault-status', async (event): Promise<AuthVaultStatus> => {
+    requireWindow(event)
+    const status = await vaultStatus()
+    return {
+      ...status,
+      // **renderer で数え直さない**（「有効なものだけ」の規則を二重に持たない）
+      localCount: readAllCredentials().rules.length,
+      hasPassphrase: hasRememberedPassphrase(),
+      encryptionAvailable: httpAuthEncryptionAvailable(),
+      minPassphrase: MIN_PASSPHRASE
+    }
+  })
+
+  ipcMain.handle(
+    'nemo:auth-vault-preview-save',
+    async (event, passphrase: unknown): Promise<AuthVaultSavePreview> => {
+      requireWindow(event)
+      const resolved = resolvePassphrase(passphrase)
+      if (!resolved.ok) return { ok: false, reason: resolved.reason }
+
+      const local = readAllCredentials()
+      const opened = await openVault(resolved.passphrase)
+      // まだ保管庫が無い＝初回。消えるものは無い
+      if (!opened.ok && opened.reason === 'empty') {
+        return { ok: true, disappearing: [], count: local.rules.length, skipped: local.skipped, first: true }
+      }
+      if (!opened.ok) return { ok: false, reason: opened.reason, detail: opened.detail }
+
+      /*
+       * **向きを間違えない。** 第 1 引数は常に保管庫。
+       * 逆にすると「これから追加されるもの」を「消えます」として出す。
+       */
+      const { missing } = diffAuthRules(
+        opened.rules,
+        local.rules.map((rule) => ({ ...rule, enabled: true }))
+      )
+      return {
+        ok: true,
+        disappearing: missing,
+        count: local.rules.length,
+        skipped: local.skipped,
+        first: false
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'nemo:auth-vault-save',
+    async (event, passphrase: unknown, remember: unknown): Promise<AuthVaultSaveResult> => {
+      requireWindow(event)
+      const resolved = resolvePassphrase(passphrase)
+      if (!resolved.ok) return { ok: false, reason: resolved.reason, saved: 0, skipped: 0 }
+      if (!httpAuthEncryptionAvailable()) {
+        return { ok: false, reason: 'no-encryption', saved: 0, skipped: 0 }
+      }
+
+      const local = readAllCredentials()
+      const written = await saveVault(local.rules, resolved.passphrase, {
+        savedAt: Date.now(),
+        host: hostName(),
+        appVersion: appVersion()
+      })
+      if (!written) return { ok: false, reason: 'write-failed', saved: 0, skipped: local.skipped }
+      // **書けたときだけ覚える**（開けない保管庫のパスフレーズを覚えても害しかない）
+      if (remember === true && resolved.entered) rememberPassphrase(resolved.passphrase)
+      return { ok: true, saved: local.rules.length, skipped: local.skipped }
+    }
+  )
+
+  ipcMain.handle(
+    'nemo:auth-vault-preview-load',
+    async (event, passphrase: unknown): Promise<AuthVaultLoadPreview> => {
+      requireWindow(event)
+      const resolved = resolvePassphrase(passphrase)
+      if (!resolved.ok) return { ok: false, reason: resolved.reason }
+
+      const opened = await openVault(resolved.passphrase)
+      if (!opened.ok) return { ok: false, reason: opened.reason, detail: opened.detail }
+
+      // **無効なルールも突き合わせる**（落とすと読み込みで黙って有効に戻る）
+      const diff = diffAuthRules(opened.rules, readAllForDiff())
+      return { ok: true, ...diff, meta: opened.meta, dropped: opened.dropped }
+    }
+  )
+
+  ipcMain.handle(
+    'nemo:auth-vault-load',
+    async (
+      event,
+      passphrase: unknown,
+      patterns: unknown,
+      remember: unknown
+    ): Promise<AuthVaultLoadResult> => {
+      requireWindow(event)
+      const base = { imported: 0, stale: 0, authCacheCleared: false }
+      const resolved = resolvePassphrase(passphrase)
+      if (!resolved.ok) return { ok: false, reason: resolved.reason, ...base }
+      if (!Array.isArray(patterns)) return { ok: false, reason: 'malformed', ...base }
+
+      const wanted = new Set(patterns.filter((value): value is string => typeof value === 'string'))
+      // **消していないのに消したと言わない**（UI では 0 件を押せないが、戻り値は嘘をつかない）
+      if (wanted.size === 0) return { ok: true, ...base }
+
+      /*
+       * **保管庫を読み直して分類し直す。** 下見と実行の間に別の Mac が書き換えたり、
+       * 手元のルールが変わったりしうる。再分類しないと、下見で見ていない中身が入る。
+       */
+      const opened = await openVault(resolved.passphrase)
+      if (!opened.ok) return { ok: false, reason: opened.reason, ...base }
+
+      const local = readAllForDiff()
+      const { missing, differing } = diffAuthRules(opened.rules, local)
+      const importable = new Set([...missing, ...differing].map((entry) => entry.pattern))
+      const inVault = new Set(opened.rules.map((rule) => rule.pattern))
+      const existing = new Map(listHttpAuthRules().map((rule) => [rule.pattern, rule.id]))
+
+      const entries: ImportEntry[] = []
+      for (const rule of opened.rules) {
+        if (!wanted.has(rule.pattern) || !importable.has(rule.pattern)) continue
+        entries.push({
+          // 同じパターンの既存ルールがあればその ID を使う（無ければ新規採番）
+          id: existing.get(rule.pattern) ?? null,
+          pattern: rule.pattern,
+          username: rule.username,
+          password: rule.password,
+          importedFrom: null,
+          ...(rule.updatedAt === undefined ? {} : { updatedAt: rule.updatedAt })
+        })
+      }
+      /*
+       * **`stale` は「保管庫から消えたもの」だけ数える。** 単純に
+       * `wanted.size - entries.length` にすると、下見のあとに**手元が保管庫と同じ内容に
+       * 追いついた**場合まで「保管庫が更新されていたため」に数えてしまい、文言と原因がずれる。
+       */
+      const stale = [...wanted].filter((pattern) => !inVault.has(pattern)).length
+
+      const before = listHttpAuthRules().length
+      const persisted = await importHttpAuthRules(entries)
+      if (!persisted) return { ok: false, reason: 'write-failed', ...base, stale }
+      if (remember === true && resolved.entered) rememberPassphrase(resolved.passphrase)
+
+      /*
+       * **入った件数は commit 後に数え直す。** `normalizeRules` が黙って落とす分
+       * （件数上限など）と食い違わせない。既存を置き換えた分は増えないので、
+       * 「entries のうち実際に残ったもの」を数える。
+       */
+      const after = listHttpAuthRules()
+      const landed = new Set(after.map((rule) => rule.pattern))
+      const imported = entries.filter((entry) => landed.has(entry.pattern)).length
+      log('auth_vault.loaded', { requested: wanted.size, imported, stale, before, after: after.length })
+
+      return {
+        ok: true,
+        imported,
+        stale,
+        authCacheCleared: await httpAuthCredentialsChanged('vault-loaded')
+      }
+    }
+  )
+
+  ipcMain.handle('nemo:auth-vault-delete', async (event): Promise<boolean> => {
+    requireWindow(event)
+    const ok = await deleteVault()
+    // **記憶も一緒に消す**（別のパスフレーズで作り直したときに古い記憶が初期値になる）
+    if (ok) forgetPassphrase()
+    return ok
   })
 
   /* ---- Live Folder（GitHub の PR） ---- */

@@ -361,6 +361,9 @@ function isRecord(value) {
  * @property {boolean} enabled
  * @property {string} [importedFrom] 変換元の MultiPass パターン
  * @property {string} [disabledReason] `'pattern-timeout'` / `'decrypt-failed'`
+ * @property {number} [updatedAt] 中身を最後に変えた時刻。**既存のルールには入っていない**ので
+ *   `undefined` がありうる（保管庫の差分で「どちらが新しいか」を出すのに使う。
+ *   片方でも欠けていたら向きを出さない）
  */
 
 /**
@@ -401,6 +404,12 @@ export function normalizeRules(raw) {
     }
     if (typeof disabledReason === 'string' && HTTP_AUTH_DISABLED_REASONS.includes(disabledReason)) {
       rule.disabledReason = disabledReason
+    }
+    const updatedAt = item['updatedAt']
+    // 不正な値は**フィールドごと落とす**（ルール自体は残す）。0 や負値を通すと
+    // 「1970 年に更新された」ことになり、差分の向きが必ず片側に倒れる
+    if (typeof updatedAt === 'number' && Number.isInteger(updatedAt) && updatedAt > 0) {
+      rule.updatedAt = updatedAt
     }
     seen.add(id)
     rules.push(rule)
@@ -445,6 +454,8 @@ export function convertMultipassPattern(pattern) {
  * @property {string} username
  * @property {string} password **平文**（暗号化はストアが行う）
  * @property {string | null} importedFrom 変換したときだけ変換元を残す
+ * @property {number} [updatedAt] 引き継ぎたい更新時刻。**保管庫から取り込むときに渡す**
+ *   （渡さないと「取り込んだ時刻」に化けて、運んできた編集時刻が消える）
  */
 
 /**

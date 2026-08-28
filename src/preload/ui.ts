@@ -3,6 +3,11 @@ import { injectBrowserAction } from 'electron-chrome-extensions/browser-action'
 import type {
   AppStatus,
   ArchivedTab,
+  AuthVaultLoadPreview,
+  AuthVaultLoadResult,
+  AuthVaultSavePreview,
+  AuthVaultSaveResult,
+  AuthVaultStatus,
   CallState,
   DefaultBrowserStatus,
   GithubTokenStatus,
@@ -124,6 +129,21 @@ const api: NemoUiApi = {
   deleteSlot: (index) => ipcRenderer.invoke('nemo:delete-slot', index) as Promise<boolean>,
   renameSlot: (index, name) => ipcRenderer.invoke('nemo:rename-slot', index, name) as Promise<boolean>,
   openSlotsFolder: () => ipcRenderer.invoke('nemo:open-slots-folder') as Promise<void>,
+  authVaultStatus: () => ipcRenderer.invoke('nemo:auth-vault-status') as Promise<AuthVaultStatus>,
+  authVaultPreviewSave: (passphrase) =>
+    ipcRenderer.invoke('nemo:auth-vault-preview-save', passphrase) as Promise<AuthVaultSavePreview>,
+  authVaultSave: (passphrase, remember) =>
+    ipcRenderer.invoke('nemo:auth-vault-save', passphrase, remember) as Promise<AuthVaultSaveResult>,
+  authVaultPreviewLoad: (passphrase) =>
+    ipcRenderer.invoke('nemo:auth-vault-preview-load', passphrase) as Promise<AuthVaultLoadPreview>,
+  authVaultLoad: (passphrase, patterns, remember) =>
+    ipcRenderer.invoke(
+      'nemo:auth-vault-load',
+      passphrase,
+      patterns,
+      remember
+    ) as Promise<AuthVaultLoadResult>,
+  authVaultDelete: () => ipcRenderer.invoke('nemo:auth-vault-delete') as Promise<boolean>,
   liveFolderRefresh: () => ipcRenderer.invoke('nemo:live-folder-refresh') as Promise<void>,
   liveFolderOpen: (url) => ipcRenderer.invoke('nemo:live-folder-open', url) as Promise<void>,
   saveGithubToken: (token) => ipcRenderer.invoke('nemo:github-token-save', token) as Promise<boolean>,

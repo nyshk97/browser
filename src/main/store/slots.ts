@@ -112,17 +112,20 @@ async function quarantine(file: string, reason: string, error: unknown): Promise
 /**
  * 時間内に読めないファイルを待ち続けない（evicted なファイルはダウンロードを伴う）。
  *
+ * **保管庫（`store/auth-vault.ts`）も同じものを使う。** 同じ iCloud のフォルダを読むので、
+ * 待ち方が違うと「スロットは諦めるのに保管庫は固まる」が起きる。
+ *
  * **`AbortSignal` だけでは足りない** —— Node は chunk の切れ目でしか signal を見ないので、
  * 最初の read がカーネルで止まっていると `abort()` しても戻ってこない。
  * `Promise.race` で**呼び出し側は必ず期限内に決着させ**、abort は後片付けとして残す。
  */
-async function readWithTimeout(file: string): Promise<string> {
+export async function readWithTimeout(file: string): Promise<string> {
   const controller = new AbortController()
   let timer: NodeJS.Timeout | undefined
   const expired = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       controller.abort()
-      const error: NodeJS.ErrnoException = new Error(`slot read timed out: ${path.basename(file)}`)
+      const error: NodeJS.ErrnoException = new Error(`read timed out: ${path.basename(file)}`)
       error.code = 'ABORT_ERR'
       reject(error)
     }, READ_TIMEOUT_MS)

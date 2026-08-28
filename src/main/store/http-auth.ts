@@ -56,7 +56,9 @@ function toPublic(rule: StoredRule): HttpAuthRule {
     ...(rule.importedFrom === undefined ? {} : { importedFrom: rule.importedFrom }),
     ...(rule.disabledReason === undefined
       ? {}
-      : { disabledReason: rule.disabledReason as HttpAuthRule['disabledReason'] })
+      : { disabledReason: rule.disabledReason as HttpAuthRule['disabledReason'] }),
+    // 秘密ではないメタ。**保管庫が運んだ更新時刻を外から確かめられる**ようにしておく
+    ...(rule.updatedAt === undefined ? {} : { updatedAt: rule.updatedAt })
   }
 }
 
@@ -126,6 +128,104 @@ export function matchableHttpAuthRules(): HttpAuthRule[] {
 export async function revealHttpAuthPassword(id: string): Promise<string | null> {
   const credential = await getHttpAuthCredential(id)
   return credential?.password ?? null
+}
+
+/**
+ * 保管庫へ書き出すための全件読み取り。
+ *
+ * **`getHttpAuthCredential` と違って副作用を持たない。** あちらは復号に失敗したルールを
+ * `disableHttpAuthRule` で無効化するが、それは「自動入力で当たったルールが壊れていた」
+ * ときの正しい挙動であって、ここは**「保存」という読み取り操作**。
+ * 副作用を通すと、保存を押しただけでこの Mac のルールの状態が変わる。
+ *
+ * 返すのは**有効なものだけ**（`enabled` かつ `disabledReason` なし）。
+ * 保管庫には有効なルールしか入れないと決めている。
+ *
+ * @returns `skipped` は復号できずに諦めた件数（画面に「N 件を除外しました」と出す）
+ */
+export function readAllCredentials(): {
+  rules: { pattern: string; username: string; password: string; updatedAt?: number }[]
+  skipped: number
+} {
+  const backend = getSecretBackend()
+  if (!backend.isAvailable()) return { rules: [], skipped: 0 }
+
+  const collected: { pattern: string; username: string; password: string; updatedAt?: number }[] = []
+  let skipped = 0
+  for (const rule of rules()) {
+    if (!rule.enabled || rule.disabledReason) continue
+    try {
+      const entry: { pattern: string; username: string; password: string; updatedAt?: number } = {
+        pattern: rule.pattern,
+        username: rule.username,
+        password: backend.decrypt(rule.password)
+      }
+      if (rule.updatedAt !== undefined) entry.updatedAt = rule.updatedAt
+      collected.push(entry)
+    } catch {
+      // **ここで無効化しない**（`logError` も id を載せない形にとどめる）
+      skipped += 1
+    }
+  }
+  if (skipped > 0) log('http_auth.read_all_skipped', { skipped })
+  return { rules: collected, skipped }
+}
+
+/**
+ * 差分の突き合わせに使う全件（**無効なものも含む**）。
+ *
+ * 無効なルールを落とすと、保管庫の同じパターンが「この Mac に無いもの」として現れ、
+ * 読み込むと `importHttpAuthRules` の `enabled: true` 固定で**黙って有効に戻る**。
+ */
+export function readAllForDiff(): {
+  pattern: string
+  username: string
+  password: string
+  updatedAt?: number
+  enabled: boolean
+  disabledReason?: string
+}[] {
+  const backend = getSecretBackend()
+  if (!backend.isAvailable()) return []
+
+  const collected: {
+    pattern: string
+    username: string
+    password: string
+    updatedAt?: number
+    enabled: boolean
+    disabledReason?: string
+  }[] = []
+  for (const rule of rules()) {
+    let password: string
+    try {
+      password = backend.decrypt(rule.password)
+    } catch {
+      /*
+       * 復号できないルールは**パスワードを空として突き合わせる**。
+       * 落とすと「この Mac に無いもの」に現れて、読み込みで上書きできてしまう
+       * （それ自体は壊れたルールの自己修復になるので、`differing` に出すのが正しい）。
+       */
+      password = ''
+    }
+    const entry: {
+      pattern: string
+      username: string
+      password: string
+      updatedAt?: number
+      enabled: boolean
+      disabledReason?: string
+    } = {
+      pattern: rule.pattern,
+      username: rule.username,
+      password,
+      enabled: rule.enabled
+    }
+    if (rule.updatedAt !== undefined) entry.updatedAt = rule.updatedAt
+    if (rule.disabledReason !== undefined) entry.disabledReason = rule.disabledReason
+    collected.push(entry)
+  }
+  return collected
 }
 
 /**
@@ -210,12 +310,24 @@ export async function saveHttpAuthRule(input: SaveRuleInput): Promise<SaveRuleRe
   if (encrypted.length > HTTP_AUTH_LIMITS.MAX_CIPHERTEXT) return { ok: false, reason: 'too-long' }
 
   const id = existing?.id ?? randomUUID()
+  /*
+   * **中身が変わっていなければ時刻を動かさない。** 何も変えずに「保存」を押しただけで
+   * 更新時刻が進むと、保管庫の差分の `newer`（どちらが新しいか）が嘘をつく。
+   * 有効トグルは IPC が `setHttpAuthRuleEnabled` へ分岐するのでここには来ない。
+   */
+  const unchanged =
+    existing !== undefined &&
+    existing.pattern === input.pattern &&
+    existing.username === input.username &&
+    !changesPassword
+  const updatedAt = unchanged ? existing.updatedAt : Date.now()
   const next: StoredRule = {
     id,
     pattern: input.pattern,
     username: input.username,
     password: encrypted,
-    enabled: input.enabled ?? existing?.enabled ?? true
+    enabled: input.enabled ?? existing?.enabled ?? true,
+    ...(updatedAt === undefined ? {} : { updatedAt })
   }
   const importedFrom =
     input.importedFrom === undefined ? existing?.importedFrom : (input.importedFrom ?? undefined)
@@ -288,7 +400,14 @@ export async function importHttpAuthRules(entries: ImportEntry[]): Promise<boole
         pattern: entry.pattern,
         username: entry.username,
         password: backend.encrypt(entry.password),
-        enabled: true
+        enabled: true,
+        /*
+         * **運んできた更新時刻をそのまま使う。** `Date.now()` に倒すと
+         * 「取り込んだ時刻」に化けて、保管庫が持っていた編集時刻が消える
+         * （3 台目や 2 巡目で「保管庫の方が新しい」が嘘をつく）。
+         * MultiPass 経路は `updatedAt` を持たないので今まで通り now になる。
+         */
+        updatedAt: entry.updatedAt ?? Date.now()
       }
       if (entry.importedFrom !== null) rule.importedFrom = entry.importedFrom
       return rule

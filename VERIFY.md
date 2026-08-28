@@ -55,7 +55,7 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 `verify:only split restart` では spike / phase1 / pins の write+read は走らない。
 
 指定できるのは `spike` / `phase1` / `phase2` / `pins` / `switcher` / `peek` / `split` / `call` /
-`live-folder` / `http-auth` / `vim-scroll` / `restart` / `migration` / `db`。
+`live-folder` / `http-auth` / `vim-scroll` / `restart` / `migration` / `db` / `slots`。
 
 **`vim-scroll`（ページの `gg` / `G`）はフルの既定から外れている**（`verify-targets.mjs` の
 `OPT_IN_ONLY`）。回るのは 3 経路 —— `mise run verify:only vim-scroll` で名指ししたとき、
@@ -65,6 +65,12 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 （増分は実測 +10s 程度）。**代償として「CDP の合成キーが後続スイートを壊す回帰」を
 フルで拾えない**ので、撃つスイートを増やすときは `OPT_IN_ONLY` から一時的に外して
 フルを 1 回通すこと（実行順は `http-auth` の後・`restart` の前）。
+
+**`slots`（ブックマークのセーブスロット）も同じ理由でフルの既定から外れている。**
+回る 3 経路は `vim-scroll` と同じ。外している理由はキーではなく**起動回数** ——
+このスイートは使い捨てプロファイルで**アプリを 4 回起動し直す**ので、フルに +1〜2 分乗る。
+`store/slots.ts` / `slots-schema.js` / `slot-apply.js` / `Slots.tsx` / `verify-slots.mjs` は
+`OWNERS` に載っているので、スロットを触ったときは `--changed` が必ず選ぶ（実行順は最後、`db` の後）。
 
 **待ち時間は `NEMO_VERIFY_TIMINGS` で縮めている**。`verify-all.mjs` が「見に行く周期 / デバウンス」の
 検証値（`sleepSweepMs` など）を決めて、**アプリと検証スクリプトの両方**に同じ JSON を env で渡す。
@@ -932,34 +938,40 @@ env にしない理由は、**起動から終了まで効きっぱなしにな�
    （照合ワーカーは `{ eval: true }` でソースを文字列から起こすので asar のパス解決には依存しないが、
    `worker_threads` そのものが動くかは配布形態でしか確かめられない）
 
-## 設定同期（Phase 2-1）
-
-ユニットテスト（`mise run check`）が **bare repo を origin にした push → pull の通し**まで見る。
-実リポジトリで確認するときは:
+## ブックマークのセーブスロット
 
 ```bash
-mise run config:status          # 常用データと staging の差分・競合の有無
-mise run config:pull --dry-run  # 検証だけして書かない
+mise run verify:only slots      # 保存 / 読み込み / 削除 / 移行の通し（自分で起動する）
 ```
 
-確認する点:
+**フルの既定からは外れている**（`OPT_IN_ONLY`）。`pnpm verify` を素で回しても走らないので、
+スロットまわりを触ったら上のコマンドか `mise run verify:changed` を使う。
 
-- `config:pull` は **Nemo が起動していると拒否される**（起動中だと次の保存で上書きされるため）
-- 競合を作ると push / pull の両方が止まる:
+**`NEMO_SLOTS_DIR` を必ず渡す**（スクリプトが渡している）。渡し忘れると**実 iCloud の
+常用スロットに書く**ので、最初の検査が「保存先が env で解決されているか」になっている。
 
-  ```bash
-  cd "$HOME/Library/Application Support/NemoConfigSync/repo"
-  # わざと競合させる → mise run config:push が「コンフリクトが残っている」で止まること
-  ```
+自走検証が見るもの:
 
-- pull の後に `~/Library/Application Support/NemoConfigSync/backups/<時刻>/` ができていること。
-  `mise run config:restore` で戻せること
-- **同期リポジトリに履歴・セッション・権限が入っていないこと**（入るのは
-  `settings.json` / `pins.json` / `extensions.lock.json` の写し / `manifest.json` だけ）
+- 保存 → `slot-1.json` が `{ version, data }` で書かれる / 埋まっている枠には書かない
+- **同じ枠を読み込む → 降格 0 件**（ID が一致するので定義もタブもそのまま）。
+  あわせて `pins.json` がスロットと一致することも見る
+  （降格 0 件だけだと、読み込みが丸ごと no-op でも PASS する）
+- **別 Mac 相当（ID を振り直した fixture）→ 所属タブが全部「今日のタブ」に降り、
+  定義に付けていた名前を保つ**。降格前に名前を付けてから読み込む
+  （付けずに見ると URL を見ているだけの検査になる）
+- 読めない枠（`chmod 000`）は**「空き」ではなく `unreadable`**で、保存もできない
+- **壊れた version の枠は退避され、カードの「再試行」で「空き」に戻る**。
+  未来の版（`version: 99`）は**退避せず** unreadable のまま
+  （新しい Nemo が書いたものを古い Nemo が捨てない）
+- 2 階層フォルダ・不正 URL 混じりの fixture を読み込んでも平坦化・除去が効き、
+  **2 回読み込んで結果が同じ**（冪等）
 
-  ```bash
-  ls "$HOME/Library/Application Support/NemoConfigSync/repo"
-  ```
+人が見る分:
+
+- **常用機で初めて読み込む前に、必ず空き枠へ今の状態を保存する**（undo は無い）
+- 2 台目で iCloud 経由のスロットが見えること。
+  初回に「Nemo が iCloud Drive 内のファイルへのアクセスを求めています」が出ることがある
+- 読み込み後のサイドバーで、降格したタブが 1 本も消えていないこと
 
 ## Arc からの移行（Phase 2-2）
 

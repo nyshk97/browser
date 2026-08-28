@@ -20,13 +20,7 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { mergeIntoPins, parseArcSidebar } from '../src/shared/arc-import.js'
 import { PINS_VERSION, normalizePins, readVersioned } from '../src/shared/settings-schema.js'
-import {
-  assertNotRunning,
-  backupLiveData,
-  stringify,
-  timestamp,
-  userDataDirFor
-} from './lib/nemo-data.mjs'
+import { assertNotRunning, backupLiveData, stringify, timestamp, userDataDirFor } from './lib/nemo-data.mjs'
 
 const args = process.argv.slice(2)
 const flag = (name) => args.includes(`--${name}`)

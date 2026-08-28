@@ -4,6 +4,7 @@ import { restartServiceWorkers } from './extensions.js'
 import { log } from './log.js'
 import {
   addFavoriteFromTab,
+  applySlot,
   createTab,
   createWindow,
   findWindowByUiWebContents,
@@ -33,9 +34,36 @@ import { answerPrompt, currentPrompt } from './prompts.js'
 import { advanceSwitcher, cancelSwitcher, currentSwitcherState, pickSwitcherTab } from './tab-switcher.js'
 import { suggest } from './suggest.js'
 import { getSettings, updateSettings } from './store/settings.js'
-import { createFolder, moveFavorite, movePinned, renameNode, toggleFolder } from './store/pins.js'
+import {
+  createFolder,
+  getFavorites,
+  getPinned,
+  moveFavorite,
+  movePinned,
+  renameNode,
+  toggleFolder
+} from './store/pins.js'
+import {
+  appVersion,
+  defaultSlotName,
+  deleteSlot,
+  ensureSlotsDir,
+  hostName,
+  listSlots,
+  readSlot,
+  renameSlot,
+  saveSlot
+} from './store/slots.js'
+import {
+  buildSlot,
+  collectIcons,
+  countPinnedLinks,
+  iconCandidates,
+  MAX_SLOT_ICONS,
+  SLOT_COUNT
+} from '../shared/slots-schema.js'
 import { cancelDownload, clearDownloads, revealDownload } from './downloads.js'
-import { clearHistory, queryHistory, removeHistory } from './store/history.js'
+import { clearHistory, getFavicons, queryHistory, removeHistory } from './store/history.js'
 import { clearArchive, queryArchive, removeArchived } from './store/archive.js'
 import { getDefaultBrowserStatus, requestDefaultBrowser } from './default-browser.js'
 import { getAppStatus } from './app-status.js'
@@ -74,6 +102,7 @@ import type {
   HttpAuthWriteResult,
   LoadedExtensionInfo,
   PromptAnswer,
+  SlotList,
   SharedState,
   SplitDiagnostics,
   WindowState
@@ -624,6 +653,71 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('nemo:open-log-folder', (event) => {
     requireWindow(event)
     void shell.openPath(userDataPath('logs'))
+  })
+
+  /* ---- ブックマークのセーブスロット ---- */
+
+  /** 枠の番号は 0〜2 だけ。範囲外を通すとファイル名を組み立てる層まで届く。 */
+  const isSlotIndex = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < SLOT_COUNT
+
+  ipcMain.handle('nemo:list-slots', async (event): Promise<SlotList> => {
+    requireWindow(event)
+    // 保存先はログに出さない（フルパスにユーザー名が載る）。UI と検証はここでだけ受け取る
+    const list = await listSlots()
+    return {
+      ...list,
+      current: { pins: countPinnedLinks(getPinned()), favs: getFavorites().length }
+    }
+  })
+
+  ipcMain.handle('nemo:save-slot', async (event, index: unknown, name: unknown): Promise<boolean> => {
+    requireWindow(event)
+    if (!isSlotIndex(index)) return false
+    const favorites = getFavorites()
+    const pinned = getPinned()
+    // favicon は履歴からまとめて引く（別の Mac には履歴が無いので焼き込む）。
+    // 並べる URL は `iconCandidates`（重複を落として打ち切る前）から取る
+    const urls = iconCandidates(favorites, pinned).slice(0, MAX_SLOT_ICONS)
+    const icons = collectIcons(favorites, pinned, getFavicons(urls))
+    return saveSlot(
+      index,
+      buildSlot({
+        name: typeof name === 'string' && name.trim() ? name : defaultSlotName(),
+        host: hostName(),
+        appVersion: appVersion(),
+        savedAt: Date.now(),
+        favorites,
+        pinned,
+        icons
+      })
+    )
+  })
+
+  ipcMain.handle('nemo:apply-slot', async (event, index: unknown): Promise<boolean> => {
+    requireWindow(event)
+    if (!isSlotIndex(index)) return false
+    const data = await readSlot(index)
+    if (!data) return false
+    return applySlot(index, data)
+  })
+
+  ipcMain.handle('nemo:delete-slot', (event, index: unknown): Promise<boolean> => {
+    requireWindow(event)
+    if (!isSlotIndex(index)) return Promise.resolve(false)
+    return deleteSlot(index)
+  })
+
+  ipcMain.handle('nemo:rename-slot', (event, index: unknown, name: unknown): Promise<boolean> => {
+    requireWindow(event)
+    if (!isSlotIndex(index) || typeof name !== 'string') return Promise.resolve(false)
+    return renameSlot(index, name)
+  })
+
+  ipcMain.handle('nemo:open-slots-folder', async (event) => {
+    requireWindow(event)
+    // 無ければ作ってから開く（初回は Finder が「存在しない」と言うだけになる）
+    void shell.openPath(await ensureSlotsDir())
   })
 
   /* ---- Live Folder（GitHub の PR） ---- */

@@ -43,6 +43,7 @@ import {
   pinUrl,
   removeFavorite as removeFavoriteDefinition,
   renameNode,
+  replaceAll as replacePinsDefinition,
   setPinnedTitle,
   unpin as unpinDefinition,
   updatePinnedUrl as updatePinnedUrlDefinition,
@@ -69,7 +70,9 @@ import {
 } from './live-folders/index.js'
 import { resolveReopen, resolveTabOwnership } from '../shared/tab-ownership.js'
 import type {
+  FavoriteItem,
   FindState,
+  PinnedNode,
   Prompt,
   RemovedDefinition,
   SharedState,
@@ -3148,10 +3151,16 @@ function assignDefinition(tab: NemoTab, kind: 'pinned' | 'favorite', definition:
   tab.favoriteId = kind === 'favorite' ? definition.id : null
 }
 
-/** 消えた定義に属していたタブを、**全ウィンドウ**で降格させる。 */
-function demoteEverywhere(removed: RemovedDefinition[], skip?: NemoTab): void {
-  if (removed.length === 0) return
+/**
+ * 消えた定義に属していたタブを、**全ウィンドウ**で降格させる。
+ *
+ * 戻りは**降格したタブの本数**（消えた定義の数ではない）。スロットの読み込みは
+ * 「何本のタブが今日のタブに移ったか」をログで追えないと後から誤診する。
+ */
+function demoteEverywhere(removed: RemovedDefinition[], skip?: NemoTab): number {
+  if (removed.length === 0) return 0
   const byId = new Map(removed.map((definition) => [definition.id, definition]))
+  let demoted = 0
   for (const win of windowsById.values()) {
     if (win.isDestroyed) continue
     let changed = false
@@ -3162,10 +3171,42 @@ function demoteEverywhere(removed: RemovedDefinition[], skip?: NemoTab): void {
       const definition = byId.get(owned)
       if (!definition) continue
       demoteTab(tab, definition)
+      demoted += 1
       changed = true
     }
     if (changed) win.pushState()
   }
+  return demoted
+}
+
+/**
+ * セーブスロットを読み込む（ピン留め + お気に入りを丸ごと差し替える）。
+ *
+ * **降格は `demoteEverywhere` に通す**（新しい降格経路を作らない）。
+ * どのタブを降格させるかは `replaceAll` が `definitionsRemovedBySlot` で決める
+ * ——「同じ ID・同じ種別・同じ URL」で残らなかった定義だけ。
+ * 全部降格させると、自分の Mac の枠を読み直したときに
+ * 定義はサイドバーに残ったまま同じ URL の一時タブが並ぶ。
+ *
+ * **書き込みに失敗したら何も変えずに false を返す**（`replaceAll` が
+ * 書けたときだけメモリへ反映するので、ここで巻き戻す必要はない）。
+ */
+export async function applySlot(
+  index: number,
+  data: { favorites: FavoriteItem[]; pinned: PinnedNode[] }
+): Promise<boolean> {
+  const removed = await replacePinsDefinition({ favorites: data.favorites, pinned: data.pinned })
+  if (removed === null) return false
+  const demoted = demoteEverywhere(removed)
+  log('slot.applied', {
+    index,
+    favorites: data.favorites.length,
+    pinned: data.pinned.length,
+    // **降格したタブの本数**と**消えた定義の数**は別物。名前を取り違えると後から誤診する
+    demoted,
+    definitions: removed.length
+  })
+  return true
 }
 
 /**

@@ -1730,6 +1730,318 @@ body[data-view='toolbar'] {
   opacity: 0.4;
 }
 
+/* ------------------------------------------------------------------ *
+ * ブックマークのセーブスロット
+ *
+ * 3 枠を横に並べる。埋まっている枠は「読み込む」1 ボタンで、
+ * 上書き / 削除は「···」メニューに隠す（うっかり潰せないように）。
+ * ------------------------------------------------------------------ */
+.slots {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  min-height: 152px;
+}
+
+.slot {
+  position: relative;
+  background: var(--nemo-surface);
+  border: 1px solid transparent;
+  border-radius: var(--nemo-radius);
+  padding: 11px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  transition: border-color 0.12s;
+}
+
+.slot:hover {
+  border-color: #45454f;
+}
+
+/* 空き枠と読めない枠は「まだ中身が無い」ことが形で分かるようにする */
+.slot.empty,
+.slot.broken {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px dashed #3a3a44;
+}
+
+.slot-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+}
+
+.slot-head .spacer {
+  flex: 1;
+}
+
+.slot-no {
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  color: var(--nemo-ink-dim);
+  flex: 0 0 auto;
+}
+
+.slot-name {
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  border-radius: 4px;
+  padding: 1px 4px;
+  margin: -1px -4px;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slot-name:hover {
+  background: var(--nemo-hover);
+}
+
+.slot-name.editing {
+  background: var(--nemo-surface-hi);
+}
+
+.slot-meta {
+  font-size: 11px;
+  color: var(--nemo-ink-dim);
+}
+
+.slot-counts {
+  font-size: 12px;
+}
+
+.slot-icons {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-height: 16px;
+}
+
+/* 一覧・操作の失敗。素の `.warn` はこの階層に効く規則が無く、本文と同じ見た目になる */
+.slots-error {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--nemo-danger);
+}
+
+/* 6 個で打ち切っていることを見せる。出さないと「これだけしか無い枠」に見える */
+.slot-icons-more {
+  font-size: 11px;
+  color: var(--nemo-ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 中身が無い枠の中央。地に溶けかける濃さ（空状態と同じ扱い） */
+.slot-blank {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: var(--nemo-ghost);
+  min-height: 56px;
+}
+
+.slot-blank.warn {
+  color: var(--nemo-danger);
+  text-align: center;
+  padding: 0 4px;
+}
+
+.slot-action {
+  margin-top: auto;
+  text-align: center;
+}
+
+.slot-conflict {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--nemo-warn);
+}
+
+.slot-conflict .link {
+  color: var(--nemo-accent);
+  text-decoration: underline;
+  padding: 0 2px;
+  font-size: 11px;
+}
+
+.slot-menu-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  flex: 0 0 auto;
+  color: var(--nemo-ink-dim);
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  transition:
+    opacity 0.12s,
+    background 0.12s;
+}
+
+.slot:hover .slot-menu-btn,
+.slot-menu-btn.on {
+  opacity: 1;
+}
+
+.slot-menu-btn:hover,
+.slot-menu-btn.on {
+  background: var(--nemo-hover);
+  color: var(--nemo-ink);
+}
+
+.slot-menu {
+  position: absolute;
+  z-index: 20;
+  top: 30px;
+  right: 8px;
+  min-width: 156px;
+  background: #2c2c34;
+  border: 1px solid #45454f;
+  border-radius: var(--nemo-radius);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* パネルの下端に収まらないときは上向きに出す */
+.slot-menu.up {
+  top: auto;
+  bottom: 30px;
+}
+
+.slot-menu button {
+  text-align: left;
+  padding: 6px 9px;
+  border-radius: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.slot-menu button:hover {
+  background: var(--nemo-hover);
+}
+
+.slot-menu button.danger {
+  color: var(--nemo-danger);
+}
+
+.slot-menu .sep {
+  height: 1px;
+  background: var(--nemo-border);
+  margin: 4px 2px;
+}
+
+.slots-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--nemo-ink-dim);
+  flex-wrap: wrap;
+}
+
+.slots-path .btn {
+  margin-top: 0;
+}
+
+/* 確認ダイアログ。undo が無いので、ここが最後の関門 */
+.slot-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+}
+
+.slot-dlg {
+  width: 420px;
+  max-width: calc(100% - 32px);
+  background: #232329;
+  border: 1px solid #3a3a44;
+  border-radius: var(--nemo-radius-lg);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+  padding: 16px 18px 14px;
+}
+
+.slot-dlg h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.slot-dlg p {
+  margin: 6px 0;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.slot-dlg p.dim {
+  color: var(--nemo-ink-dim);
+}
+
+.dlg-diff {
+  margin: 10px 0 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.dlg-diff .k {
+  display: inline-block;
+  width: 86px;
+  color: var(--nemo-ink-dim);
+  font-size: 11px;
+}
+
+.dlg-warn {
+  margin: 10px 0 4px;
+  padding: 8px 10px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  background: rgba(255, 107, 107, 0.09);
+  border: 1px solid rgba(255, 107, 107, 0.25);
+  border-radius: var(--nemo-radius);
+  color: #ffb3b3;
+}
+
+.dlg-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.dlg-foot .btn {
+  margin-top: 0;
+}
+
+.btn.primary {
+  background: #2f5da8;
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: #396dc0;
+}
+
+.btn.danger {
+  background: #6b2f2f;
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: #843838;
+}
+
 /* HTTP 認証の自動入力 */
 .http-auth textarea {
   background: var(--nemo-surface);

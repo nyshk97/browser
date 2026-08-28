@@ -54,6 +54,68 @@ export interface RemovedDefinition {
 }
 
 /* ------------------------------------------------------------------ *
+ * ブックマークのセーブスロット
+ * ------------------------------------------------------------------ */
+
+/** スロット1枚の中身（ピン留め + お気に入り + カードに出すメタ）。 */
+export interface SlotData {
+  name: string
+  /** 保存した時刻。 */
+  savedAt: number
+  /** 保存した端末の名前（カードの「どの Mac で保存したか」）。 */
+  host: string
+  appVersion: string
+  /**
+   * カードに並べるアイコン。**表示に使うぶんだけ**焼き込む。
+   * 別の Mac には履歴が無く `favicon_url` を引けないので、持たせないとアイコンが出ない。
+   */
+  icons: { url: string; faviconUrl: string | null }[]
+  favorites: FavoriteItem[]
+  pinned: PinnedNode[]
+}
+
+/**
+ * 設定画面に出す1枠ぶん。
+ *
+ * **`empty` と `unreadable` を分ける**のが肝。読めない枠を「空き」に倒すと
+ * ボタンが「保存」になり、押した瞬間に別の Mac のスロットを黙って潰す（undo が無い）。
+ */
+export interface SlotSummary {
+  index: number
+  state: 'empty' | 'ok' | 'unreadable'
+  /** `unreadable` のときだけ、人に見せる理由。 */
+  reason?: string
+  name: string
+  savedAt: number
+  host: string
+  /** ピン留めの件数（フォルダは数えず、中のリンクを数える）。 */
+  pins: number
+  favs: number
+  icons: { url: string; faviconUrl: string | null }[]
+  /**
+   * `icons` に載せきれなかった数（カードの `+N`）。
+   * **renderer では数え直さない** —— 重複と不正 URL を落とす規則を二重に持つと、
+   * 打ち切っていないのに `+N` が出る。
+   */
+  moreIcons: number
+  /** iCloud の競合コピー（`slot-1 2.json` の類）がこの枠にあるか。 */
+  hasConflictCopy: boolean
+}
+
+/** `nemo:list-slots` の戻り。保存先は**ログに出さない**ので、ここでしか受け取れない。 */
+export interface SlotList {
+  dir: string
+  kind: 'env' | 'icloud' | 'fallback'
+  slots: SlotSummary[]
+  /**
+   * いまのブラウザの件数（確認ダイアログの「現在 → 読み込み後」に使う）。
+   * **renderer 側で数え直さない** —— ピン留めの数え方（フォルダは数えない）を
+   * 二重に持つと、片方だけ直したときに静かに食い違う。
+   */
+  current: { pins: number; favs: number }
+}
+
+/* ------------------------------------------------------------------ *
  * タブ実体
  * ------------------------------------------------------------------ */
 
@@ -738,6 +800,18 @@ export interface NemoUiApi {
   restartServiceWorkers(): Promise<number>
   /** 診断ログのフォルダを Finder で開く。 */
   openLogFolder(): Promise<void>
+
+  /* ブックマークのセーブスロット */
+  /** 3 枠ぶんを**毎回ディスクから読み直す**（別の Mac が iCloud 経由で書き換えるため）。 */
+  listSlots(): Promise<SlotList>
+  /** 現在のピン留め + お気に入りを保存する。**埋まっている枠には書かない**（false が返る）。 */
+  saveSlot(index: number, name?: string): Promise<boolean>
+  /** 枠の中身で現在のピン留め + お気に入りを丸ごと置き換える。 */
+  applySlot(index: number): Promise<boolean>
+  deleteSlot(index: number): Promise<boolean>
+  renameSlot(index: number, name: string): Promise<boolean>
+  /** 保存先を Finder で開く（無ければ作ってから）。 */
+  openSlotsFolder(): Promise<void>
 
   /* Live Folder（GitHub の PR） */
   /** いま取得する（`transient` / `auth` のバックオフは上書きできる。`rate-limit` は不可）。 */

@@ -15,8 +15,9 @@ import type { HttpAuthRule } from '../../shared/types.js'
 /**
  * HTTP Basic 認証の資格情報を置く専用ストア（`http-auth.json`）。
  *
- * **`SYNCED_FILES`（`sync-schema.js`）には入れない。** `safeStorage` は端末鍵なので、
- * 暗号文を git で他端末へ配っても復号できない（`github-token.ts` と同じ理由）。
+ * **端末をまたいで持ち出さない。** `safeStorage` は端末鍵なので、
+ * 暗号文を他端末へ配っても復号できない（`github-token.ts` と同じ理由）。
+ * セーブスロット（ピン留め / お気に入り）にも含めない。
  *
  * 決めごと:
  * - `pattern` / `username` は平文、`password` だけ暗号化して持つ

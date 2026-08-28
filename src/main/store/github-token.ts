@@ -7,10 +7,9 @@ import { log, logError } from './../log.js'
 /**
  * GitHub の PAT を置く専用ストア。
  *
- * **`settings.json` には置かない。** `SYNCED_FILES`（`sync-schema.js`）に
- * `settings.json` が入っており、**git で他端末へ同期される**。
- * `safeStorage` は端末鍵なので、同期先では復号できない暗号文が配られるだけになる。
- * → 同期対象外の専用ファイル（`github-token.json`）に分ける。
+ * **`settings.json` には置かない。** 設定は端末をまたいで持ち出される可能性がある一方、
+ * `safeStorage` は端末鍵なので、持ち出し先では復号できない暗号文が配られるだけになる。
+ * → 持ち出しの対象外にできる専用ファイル（`github-token.json`）に分ける。
  *
  * 決めごと:
  * - `safeStorage.isEncryptionAvailable()` が false なら**保存を断る**（平文では置かない）

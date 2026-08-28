@@ -27,6 +27,8 @@ const CHANNEL_CONFIG = {
 
 export const APP_NAME = CHANNEL_CONFIG[channel].appName
 export const APP_ID = CHANNEL_CONFIG[channel].appId
+/** データディレクトリの名前（`Nemo` / `Nemo-dev`）。iCloud のスロット置き場にも使う。 */
+export const USER_DATA_DIR_NAME = CHANNEL_CONFIG[channel].userDataDirName
 
 /** Web ページ・拡張が同居するセッション。 */
 export const PAGE_PARTITION = 'persist:nemo'

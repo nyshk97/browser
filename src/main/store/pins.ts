@@ -8,6 +8,7 @@ import {
   normalizePins,
   normalizeStoredUrl
 } from '../../shared/settings-schema.js'
+import { definitionsRemovedBySlot } from '../../shared/slot-apply.js'
 import type {
   FavoriteItem,
   PinnedFolder,
@@ -23,7 +24,7 @@ import type {
  * 両者を同じ ID で扱うと、ピン留めタブを閉じた瞬間に定義まで消えてしまう。
  */
 
-interface PinsData {
+export interface PinsData {
   favorites: FavoriteItem[]
   pinned: PinnedNode[]
 }
@@ -391,6 +392,41 @@ export function moveFavorite(id: string, index: number): void {
   const [item] = favorites.splice(from, 1)
   favorites.splice(clampIndex(index, favorites.length), 0, item)
   commit({ ...current, favorites })
+}
+
+/**
+ * ピン留めとお気に入りを**丸ごと差し替える**（セーブスロットの読み込み）。
+ *
+ * - **`JsonStore.commit()` を使う。** `set()` は 400ms デバウンスで書き込み失敗を握り潰すので、
+ *   「元に戻せません」と言って実行する操作には向かない（IPC が成功を返したあとに落ちうる）
+ * - **旧定義のスナップショットは `commit(mutate)` の中で取る。** `commit()` はキューで
+ *   直列化され、常に直前の commit 済み値から次を作る。外で読んでから渡すと、
+ *   間に入った更新（ピン追加など）を降格判定が取りこぼす
+ * - **書けたときだけ `listeners` を叩く。** ここはローカルの `commit()` を通らないので、
+ *   忘れると `onPinsChanged` が発火せず、差し替えたのにサイドバーが古いまま残る
+ *   （`demoteEverywhere` はタブが変わったウィンドウしか `pushState()` しない）
+ *
+ * @returns 消えた定義（＝降格させるタブの名前の出どころ）。書き込みに失敗したら null
+ */
+export async function replaceAll(next: PinsData): Promise<RemovedDefinition[] | null> {
+  if (!store) return null
+  /** @see definitionsRemovedBySlot 「同じ ID・同じ種別・同じ URL」で残らないものが消えた扱い */
+  let removed: RemovedDefinition[] = []
+  const written = await store.commit((current) => {
+    removed = definitionsRemovedBySlot(current, next)
+    return next
+  })
+  if (!written) {
+    log('pins.replace_failed', {})
+    return null
+  }
+  for (const listener of listeners) listener()
+  log('pins.replaced', {
+    favorites: next.favorites.length,
+    pinned: next.pinned.length,
+    removed: removed.length
+  })
+  return removed
 }
 
 export function closePins(): void {

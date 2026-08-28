@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { HTTP_AUTH_LIMITS } from '../../shared/http-auth-rules.js'
+import { Slots } from './Slots.js'
 import type {
   DefaultBrowserStatus,
   GithubTokenStatus,
@@ -191,11 +192,12 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
               )}
             </section>
 
+            <Slots />
+
             <section>
               <h3>データ</h3>
               <p className="dim">
-                設定とピン留めは <code>mise run config:push</code> / <code>config:pull</code> で 2
-                台目と同期できる。履歴とアーカイブは端末ローカルで、同期には載せない。
+                履歴とアーカイブは端末ごとに持つので、スロットには含まれません。
               </p>
               <button type="button" className="btn" onClick={() => void window.nemo.openLogFolder()}>
                 診断ログのフォルダを開く
@@ -211,8 +213,8 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
 /**
  * GitHub の資格情報。
  *
- * **PAT は `settings.json` に置かない**（`SYNCED_FILES` に入っており git で他端末へ
- * 同期される。`safeStorage` は端末鍵なので、同期先では復号できない暗号文が配られるだけ）。
+ * **PAT は `settings.json` に置かない**（設定は端末をまたいで持ち出されうる一方、
+ * `safeStorage` は端末鍵なので、持ち出し先では復号できない暗号文が配られるだけ）。
  * 専用ストア（`github-token.json`）に暗号化して置く。
  *
  * ここに**トークンの値は出ない**。出せるのは「いま何が使われているか」だけ。

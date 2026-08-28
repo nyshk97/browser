@@ -164,37 +164,6 @@ fi
 node scripts/ext-fetch.mjs
 """
 
-[tasks."config:init"]
-description = "設定同期リポジトリ（nemo-config）の作業コピーを用意する"
-usage = 'arg "<repo>" default="" help="同期リポジトリの URL（省略時は既定 / 前回の設定）"'
-run = '''
-if [ -n "$usage_repo" ]; then
-  node scripts/config-sync.mjs init --repo "$usage_repo"
-else
-  node scripts/config-sync.mjs init
-fi
-'''
-
-[tasks."config:status"]
-description = "常用データと同期リポジトリの差分・競合状態を見る"
-usage = 'arg "<channel>" default="stable" help="stable または dev"'
-run = 'node scripts/config-sync.mjs status --channel "$usage_channel"'
-
-[tasks."config:push"]
-description = "常用データ（設定・ピン留め・Favorites）を同期リポジトリへ上げる"
-usage = 'arg "<channel>" default="stable" help="stable または dev"'
-run = 'node scripts/config-sync.mjs push --channel "$usage_channel"'
-
-[tasks."config:pull"]
-description = "同期リポジトリの内容を常用データへ取り込む（Nemo を終了してから実行する）"
-usage = 'arg "<channel>" default="stable" help="stable または dev"'
-run = 'node scripts/config-sync.mjs pull --channel "$usage_channel"'
-
-[tasks."config:restore"]
-description = "直近の config:pull の前の状態に常用データを戻す"
-usage = 'arg "<channel>" default="stable" help="stable または dev"'
-run = 'node scripts/config-sync.mjs restore --channel "$usage_channel"'
-
 [tasks."arc:import"]
 description = "Arc のサイドバー（Favorites・ピン留め・フォルダ）を Nemo に取り込む（冪等）"
 usage = '''

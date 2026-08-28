@@ -20,8 +20,13 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { mergeIntoPins, parseArcSidebar } from '../src/shared/arc-import.js'
 import { PINS_VERSION, normalizePins, readVersioned } from '../src/shared/settings-schema.js'
-import { stringify } from '../src/shared/sync-schema.js'
-import { assertNotRunning, backupLiveData, timestamp, userDataDirFor } from './lib/config-sync.mjs'
+import {
+  assertNotRunning,
+  backupLiveData,
+  stringify,
+  timestamp,
+  userDataDirFor
+} from './lib/nemo-data.mjs'
 
 const args = process.argv.slice(2)
 const flag = (name) => args.includes(`--${name}`)
@@ -146,7 +151,11 @@ try {
   fs.mkdirSync(userDataDir, { recursive: true })
   if (fs.existsSync(pinsPath)) {
     // バックアップは channel と用途で分ける（config:restore が拾わないように）
-    const backup = backupLiveData(userDataDir, timestamp(), { channel, kind: 'arc-import' })
+    const backup = backupLiveData(userDataDir, timestamp(), {
+      channel,
+      kind: 'arc-import',
+      files: ['pins.json']
+    })
     info(`バックアップ: ${backup.dir}`)
   }
 
@@ -157,7 +166,7 @@ try {
 
   info(`書き込み: ${pinsPath}`)
   info(`Favorites ${normalized.favorites.length} 件 / ピン留めの最上位 ${normalized.pinned.length} 件`)
-  info('Nemo を起動すると反映される。同期リポジトリにも上げるなら mise run config:push')
+  info('Nemo を起動すると反映される')
 } catch (error) {
   console.error(`[arc-import] ${describe(error)}`)
   process.exit(1)

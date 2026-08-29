@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SlotList, SlotSummary } from '../../shared/types.js'
 import { Favicon } from './Sidebar.js'
+import { SettingsSection } from './SettingsSection.js'
 
 /**
  * ブックマークのセーブスロット（設定 › ブックマークのセーブスロット）。
@@ -71,9 +72,10 @@ export function Slots(): React.JSX.Element {
   const current = list?.current ?? null
 
   return (
-    <section>
-      <h3>ブックマークのセーブスロット</h3>
-
+    <SettingsSection
+      title="ブックマークのセーブスロット"
+      sub="ピン留めとお気に入りを 3 枠に保存し、別の Mac で読み込む。保存先は iCloud Drive"
+    >
       <div className="slots" data-testid="slots">
         {list === null && !failed && <p className="dim">読み込み中…</p>}
         {(list?.slots ?? []).map((slot) => (
@@ -132,7 +134,7 @@ export function Slots(): React.JSX.Element {
           onDelete={(index) => void run(() => window.nemo.deleteSlot(index), '削除できませんでした。')}
         />
       )}
-    </section>
+    </SettingsSection>
   )
 }
 

@@ -1625,6 +1625,9 @@ body[data-view='toolbar'] {
 }
 
 .set-body section {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 28px;
   padding: 22px 0;
   border-bottom: 1px solid var(--nemo-border);
 }
@@ -1633,13 +1636,28 @@ body[data-view='toolbar'] {
   border-bottom: 0;
 }
 
-/* 見出しは本文（12px・グレー）と明確に差を付ける。同じ濃さだと節の切れ目が読めない */
+/* 見出しは左カラムに固定。本文との差は色でなく位置で付ける（SettingsSection.tsx） */
 .set-body h3 {
-  margin: 0 0 12px;
-  font-size: 15px;
+  margin: 0;
+  font-size: 14px;
   font-weight: 700;
   color: var(--nemo-ink);
   letter-spacing: 0;
+}
+
+.set-body .set-sub {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--nemo-ink-dim);
+}
+
+.set-content {
+  min-width: 0;
+}
+
+.set-content > :first-child {
+  margin-top: 0;
 }
 
 .set-body p {

@@ -1,3 +1,4 @@
+import { SettingsSection } from './SettingsSection.js'
 import { useCallback, useEffect, useState } from 'react'
 import type {
   AuthVaultFailure,
@@ -206,9 +207,7 @@ export function AuthVault(): React.JSX.Element {
   )
 
   return (
-    <section>
-      <h3>Basic 認証</h3>
-
+    <SettingsSection title="Basic 認証" sub="HTTP 認証のルールをパスフレーズで暗号化して別の Mac へ持ち出す">
       <div className="vault" data-testid="auth-vault">
         {status === null && !failed && <p className="dim">読み込み中…</p>}
         {status !== null && (
@@ -277,7 +276,7 @@ export function AuthVault(): React.JSX.Element {
           onDelete={onDelete}
         />
       )}
-    </section>
+    </SettingsSection>
   )
 }
 

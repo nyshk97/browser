@@ -278,7 +278,7 @@ try {
     const headings = JSON.parse(
       await evalInUi(
         cdp,
-        `JSON.stringify([...document.querySelectorAll('.settings section > h3')].map((h) => h.textContent))`,
+        `JSON.stringify([...document.querySelectorAll('.settings section h3')].map((h) => h.textContent))`,
         'overlay'
       )
     )

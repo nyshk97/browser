@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { HTTP_AUTH_LIMITS } from '../../shared/http-auth-rules.js'
 import { Slots } from './Slots.js'
 import { AuthVault } from './AuthVault.js'
+import { SettingsSection } from './SettingsSection.js'
 import type {
   GithubTokenStatus,
   HttpAuthImportResult,
@@ -42,18 +43,28 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
       </div>
 
       <div className="set-body">
-        <section>
-          <h3>GitHub の Pull Request（サイドバー）</h3>
+        <SettingsSection
+          title="GitHub の Pull Request（サイドバー）"
+          sub="サイドバーに自分の PR を出す。資格情報は上から順に探す"
+        >
           <GithubToken />
-        </section>
+        </SettingsSection>
 
-        <section>
-          <h3>HTTP 認証</h3>
+        <SettingsSection
+          title="HTTP 認証"
+          sub="Basic 認証の自動入力。認証ダイアログで「次回から自動で入力する」を選ぶと増える"
+        >
           <HttpAuthRules />
-        </section>
+        </SettingsSection>
 
-        <section>
-          <h3>Chrome 拡張</h3>
+        <SettingsSection
+          title="Chrome 拡張"
+          sub={
+            <>
+              <code>extensions.lock.json</code> に書いたものだけをロードする
+            </>
+          }
+        >
           {extensions.length === 0 ? (
             <p className="dim">ロードされている Chrome 拡張はない</p>
           ) : (
@@ -77,21 +88,19 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
             ))
           )}
           <p className="dim">
-            Chrome 拡張は <code>extensions.lock.json</code> に書いたものだけをロードする。追加・更新は{' '}
-            <code>mise run ext:outdated</code> / <code>ext:update</code> から行う。
+            追加・更新は <code>mise run ext:outdated</code> / <code>ext:update</code> から行う。
           </p>
-        </section>
+        </SettingsSection>
 
         <Slots />
 
         <AuthVault />
 
-        <section>
-          <h3>データ</h3>
+        <SettingsSection title="データ">
           <button type="button" className="btn" onClick={() => void window.nemo.openLogFolder()}>
             診断ログのフォルダを開く
           </button>
-        </section>
+        </SettingsSection>
       </div>
     </div>
   )
@@ -135,8 +144,6 @@ function GithubToken(): React.JSX.Element {
 
   return (
     <>
-      <p className="dim">資格情報は上から順に探す。</p>
-
       <div className={`gh-choice${source === 'pat' ? ' on' : ''}`} data-testid="gh-choice-pat">
         <span className="gh-radio" />
         <div className="gh-choice-body">

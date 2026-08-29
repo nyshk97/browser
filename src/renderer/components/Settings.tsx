@@ -110,6 +110,8 @@ function GithubToken(): React.JSX.Element {
   const [status, setStatus] = useState<GithubTokenStatus | null>(null)
   const [draft, setDraft] = useState('')
   const [message, setMessage] = useState<string | null>(null)
+  /** gh で動いているときは PAT の入力欄を畳む（普段は要らない）。「貼る…」で開く。 */
+  const [patOpen, setPatOpen] = useState(false)
 
   const reload = useCallback(() => {
     void window.nemo.getGithubTokenStatus().then(setStatus)
@@ -126,61 +128,104 @@ function GithubToken(): React.JSX.Element {
     })
   }
 
-  const label =
-    status === null
-      ? '確認中…'
-      : status.source === 'pat'
-        ? '設定した PAT を使っている'
-        : status.source === 'gh'
-          ? 'gh auth token を使っている'
-          : '未設定（サイドバーには Connect GitHub と出る）'
+  if (status === null) return <p className="dim">確認中…</p>
+
+  const source = status.source
+  const showPatInput = source !== 'gh' || patOpen
 
   return (
     <>
-      <p className={status?.source === 'none' ? 'dim' : 'ok'}>{label}</p>
-      {status !== null && !status.encryptionAvailable ? (
-        <p className="warn">
-          この端末では暗号化ストレージが使えないので、貼っても PAT は保存されない（平文では置かない）。
-          <code>gh auth login</code> の方を使う。
-        </p>
-      ) : null}
-      <Field
-        label="Personal Access Token"
-        hint="貼ると端末鍵で暗号化して保存する。gh より優先される。値はここには出ない"
-      >
-        <span className="set-input wide">
-          <input
-            type="password"
-            value={draft}
-            spellCheck={false}
-            placeholder={status?.hasStoredPat ? '（保存済み）' : 'ghp_… / github_pat_…'}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') save()
-            }}
-          />
-        </span>
-      </Field>
-      <div className="set-row">
-        <button type="button" className="btn" disabled={draft.trim().length === 0} onClick={save}>
-          保存する
-        </button>
-        <div className="spacer" />
-        <button
-          type="button"
-          className="btn"
-          disabled={status?.hasStoredPat !== true}
-          onClick={() => {
-            void window.nemo.clearGithubToken().then(() => {
-              setMessage('消した（gh があればそちらに戻る）')
-              reload()
-            })
-          }}
-        >
-          保存した PAT を消す
-        </button>
+      <p className="dim">資格情報は上から順に探す。</p>
+
+      <div className={`gh-choice${source === 'pat' ? ' on' : ''}`} data-testid="gh-choice-pat">
+        <span className="gh-radio" />
+        <div className="gh-choice-body">
+          <div className="gh-choice-title">
+            Personal Access Token
+            {source === 'pat' ? (
+              <span className="gh-tag ok">使用中</span>
+            ) : (
+              <span className="gh-tag">未設定</span>
+            )}
+          </div>
+          <p className="dim">貼ると端末鍵で暗号化して保存する。gh より優先される。値はここには出ない。</p>
+          {!status.encryptionAvailable ? (
+            <p className="warn">
+              この端末では暗号化ストレージが使えないので、貼っても PAT は保存されない（平文では置かない）。
+            </p>
+          ) : null}
+          {showPatInput ? (
+            <>
+              <span className="set-input wide">
+                <input
+                  type="password"
+                  value={draft}
+                  spellCheck={false}
+                  placeholder={status.hasStoredPat ? '（保存済み）' : 'ghp_… / github_pat_…'}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') save()
+                  }}
+                />
+              </span>
+              <div className="set-row">
+                <button type="button" className="btn" disabled={draft.trim().length === 0} onClick={save}>
+                  保存する
+                </button>
+                <div className="spacer" />
+                {status.hasStoredPat ? (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => {
+                      void window.nemo.clearGithubToken().then(() => {
+                        setMessage('消した（gh があればそちらに戻る）')
+                        reload()
+                      })
+                    }}
+                  >
+                    消す
+                  </button>
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <button type="button" className="btn link" onClick={() => setPatOpen(true)}>
+              貼る…
+            </button>
+          )}
+          {message ? <p className="dim">{message}</p> : null}
+        </div>
       </div>
-      {message ? <p className="dim">{message}</p> : null}
+
+      <div className={`gh-choice${source === 'gh' ? ' on' : ''}`} data-testid="gh-choice-gh">
+        <span className="gh-radio" />
+        <div className="gh-choice-body">
+          <div className="gh-choice-title">
+            <code>gh</code> CLI のログイン
+            {source === 'gh' ? (
+              <span className="gh-tag ok">使用中</span>
+            ) : source === 'pat' ? (
+              <span className="gh-tag">待機（PAT が優先）</span>
+            ) : (
+              <span className="gh-tag">見つからない</span>
+            )}
+          </div>
+          {source === 'none' ? (
+            <p className="dim">
+              ターミナルで <code>gh auth login</code> すると、次の取得から使われる。
+            </p>
+          ) : (
+            <p className="dim">
+              この Mac の <code>gh auth login</code> のアカウントをそのまま使う。設定は要らない。
+            </p>
+          )}
+        </div>
+      </div>
+
+      {source === 'none' ? (
+        <p className="warn">どちらも無いので、サイドバーには「Connect GitHub」と出る。</p>
+      ) : null}
       <p className="dim">
         必要な scope は <code>repo</code> / <code>read:org</code>。 取得は 60 秒ごと +
         ウィンドウをアクティブにしたときで、GraphQL を1リクエストだけ投げる。

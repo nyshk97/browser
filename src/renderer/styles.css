@@ -2148,6 +2148,11 @@ body[data-view='toolbar'] {
   gap: 4px;
 }
 
+/* ラベルは欄の上端に揃える（Field の縦中央だと、ボタン込みの高さの中央に来て欄より下に見える） */
+.set-field:has(.ha-paste) {
+  align-items: flex-start;
+}
+
 .ha-paste .btn {
   margin-top: 0;
 }

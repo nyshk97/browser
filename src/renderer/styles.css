@@ -1625,7 +1625,7 @@ body[data-view='toolbar'] {
 }
 
 .set-body section {
-  padding: 14px 0;
+  padding: 22px 0;
   border-bottom: 1px solid var(--nemo-border);
 }
 
@@ -1633,12 +1633,13 @@ body[data-view='toolbar'] {
   border-bottom: 0;
 }
 
+/* 見出しは本文（12px・グレー）と明確に差を付ける。同じ濃さだと節の切れ目が読めない */
 .set-body h3 {
-  margin: 0 0 10px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--nemo-ink-dim);
-  letter-spacing: 0.04em;
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--nemo-ink);
+  letter-spacing: 0;
 }
 
 .set-body p {

@@ -44,20 +44,6 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
 
       <div className="set-body">
         <SettingsSection
-          title="GitHub の PR"
-          sub="サイドバーに自分の Pull Request を出します。資格情報は上から順に探します"
-        >
-          <GithubToken />
-        </SettingsSection>
-
-        <SettingsSection
-          title="HTTP 認証"
-          sub="Basic 認証を自動で入力します。認証ダイアログで「次回から自動で入力する」を選ぶと増えます"
-        >
-          <HttpAuthRules />
-        </SettingsSection>
-
-        <SettingsSection
           title="Chrome 拡張"
           sub={
             <>
@@ -92,9 +78,23 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
           </p>
         </SettingsSection>
 
-        <Slots />
+        <SettingsSection
+          title="GitHub の PR"
+          sub="サイドバーに自分の Pull Request を出します。資格情報は上から順に探します"
+        >
+          <GithubToken />
+        </SettingsSection>
+
+        <SettingsSection
+          title="HTTP 認証"
+          sub="Basic 認証を自動で入力します。認証ダイアログで「次回から自動で入力する」を選ぶと増えます"
+        >
+          <HttpAuthRules />
+        </SettingsSection>
 
         <AuthVault />
+
+        <Slots />
 
         <SettingsSection title="データ">
           <button type="button" className="btn" onClick={() => void window.nemo.openLogFolder()}>

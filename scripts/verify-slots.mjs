@@ -283,11 +283,11 @@ try {
       )
     )
     const expectedHeadings = [
+      'Chrome 拡張',
       'GitHub の PR',
       'HTTP 認証',
-      'Chrome 拡張',
-      'ブックマークの持ち出し',
       'HTTP 認証の持ち出し',
+      'ブックマークの持ち出し',
       'データ'
     ]
     check(

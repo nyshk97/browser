@@ -44,7 +44,9 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
   `render-process-gone` → `tab.crashed`、`unresponsive`（`src/main/registry.ts:768,785`）
 - 定期処理の型: `startBackgroundWork()`（`src/main/registry.ts:3371`）が `setInterval` を張り、
   `before-quit` の `stopBackgroundWork()` で止める。今回のサンプラーもここに同居させる
-- `app.ready` / `app.quit` の行はすでにある（`src/main/index.ts:301,339`）。追記するだけ
+- `app.ready` / `app.quit` の行はすでにある（`src/main/index.ts:301,339`）。追記するだけ。
+  ただし **`app.ready` の時点ではタブの復元はまだ始まっていない**（`win.whenUiReady` のコールバック内で走る）ので、
+  復元タブ数は registry ではなく同じスコープの保存データ `restored` から数える。`readyMs` も「タブが揃う前」の値
 - 検証ハーネスに `readLogLines` / `countLogEvents` / `waitForLogEvent`（`scripts/lib/harness.mjs:258-286`）がある
 
 ### `/dig-lite` で確定した決定
@@ -73,6 +75,7 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
   "byType":  { "Browser": {"cpu":0.4,"memMb":210,"n":1}, "Tab": {...}, "GPU": {...}, "Utility": {...} },
   "top":     [ { "pid": 4321, "cpu": 1.8, "memMb": 420,
                  "keys": ["t-12","t-15"], "origins": ["https://github.com"], "private": 0 }, ... ] }
+  // シークレットのタブは keys には入れる（key は origin を含まない）。origins には入れず private の件数に足す
 ```
 
 - `memMb` は `ProcessMetric.memory.workingSetSize`（KB）を MB に丸めたもの（resident。`privateBytes` は macOS で取れない）。
@@ -108,8 +111,9 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
 - [ ] `NEMO_METRICS_INTERVAL_MS` はパッケージ版では無視して `console.error`（既存の型どおり）
 
 ### Phase 2: 起動・終了スナップショット [AI🤖]
-- [ ] `app.ready` に `readyMs`（`process.uptime()` ベースで ms）・`restoredTabs`・`extensions`
-      （直前の `loaded.length`。API 呼び出しを増やさない）を追記
+- [ ] `app.ready` に `readyMs`（`process.uptime()` ベースで ms。タブが揃う前の値）・`restoredTabs`
+      （`restored.windows` のタブ数の合計。registry から数えると常に 0）・`extensions`
+      （`loaded.length`。`try` の中の `const` なので手前の `let` に両分岐で代入して参照する。API 呼び出しを増やさない）を追記
 - [ ] `app.quit` に `uptimeMs` と `sampleMetrics()` の結果（`metrics.sample` と同じキー ＋ `source: "quit"`）を追記。
       `stopBackgroundWork()` より前に取る（止めてから取ると `getAppMetrics` は動くが意図が読みにくい）
 
@@ -121,8 +125,9 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
 - [ ] `src/renderer/main.tsx` で `window.addEventListener('error' | 'unhandledrejection')` → `reportError`。
       同じ message の連投は 1 分 1 回に間引く（無限ループの例外でログを埋めない）
 - [ ] `src/main/ipc.ts` で `ipcMain.handle` として受けて `logError('ui.error', ...)`（メッセージは `error` キーに入る）。
-      **送信元が Nemo の UI view であることを既存の `requireWindow` → 失敗なら `requireCallWindow` の二段で確かめる**
-      （会議の小窓は `windowsById` に居ない。ページの renderer から偽装して撃てない）
+      **送信元が Nemo の UI view であることを throw しない判定 1 つで確かめる**（既存の `requireWindow` →
+      `requireCallWindow` の二段だと、会議の小窓からの正常系で毎回 `ipc.rejected` が先に残る）。
+      両方外れたときだけ `ipc.rejected` を書く（ページの renderer から偽装して撃てない）
 - [ ] 「行途中の URL が落ちる」ことを上の純粋関数のテストで確認（`sanitizeDetail` 側には手を入れない）
 
 ### Phase 4: 集計スクリプト [AI🤖]
@@ -140,6 +145,8 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
       **いずれか**で `total.cpu > 0` かつ `byType` に 1 つ以上の型がある（初回空撃ちが効いている。全行に課すと flake る） (c) タブを 2 つ開いて
       `top` に `origins` が非空の要素が出る (d) UI で `window.nemo.reportError` を撃って
       `ui.error` が 1 行出る（`error` キーと `view` を見る） (e) 終了後の `app.quit` に `uptimeMs` と `total` と `source: "quit"` がある
+      (f) `app.ready` に `readyMs > 0` と数値の `extensions` がある（`restoredTabs` は使い捨てプロファイルでは
+      再起動をまたがないので 0 のまま。ここでは見ない）
 - [ ] `KNOWN_TARGETS` / `OPT_IN_ONLY` / `OWNERS` に登録（`NEEDS_APP` と `RESTART_COMPANIONS` には入れない）し、
       `verify-all.mjs` に `if (want('metrics'))` を配線。**配線を外した状態で 1 回回して検査 0 件を見てから戻す**
       （CLAUDE.md）。`OWNERS` は完全一致の Map なので実名で列挙する:

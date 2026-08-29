@@ -57,3 +57,25 @@ review session: 19b5642d-a166-4577-bee1-cfc889b6bd54
 ````
 
 **対応**: P0 反映（`top` の要素をフラットにし `keys` / `origins` / `private` の文字列配列＋件数にする。`MAX_DEPTH` の事実を前提に追記）。P1 全件反映（`sanitizeDetail` 素通り検査は P0 の修正に不可欠なので Phase 1 のテスト項目に含めた / preload に `.catch(() => {})` 必須・ipc は `requireWindow` → `requireCallWindow` の二段 / 拡張数は `loaded.length` / quit 行は `source: "quit"` を付けて集計に取り込む）。P2 全件反映（(b) は「いずれか」/ `tabs` `asleep` はシークレットを含める / `view` は `params.get('view')` の値）。
+
+## 3回目
+
+````text
+再読しました。前回の P0/P1/P2 の反映はすべて確認できました（`top` のフラット化と `MAX_DEPTH` の明記、`.catch` 必須と二段検査、`loaded.length`、`source: "quit"`、(b) の「いずれか」、`tabs`/`asleep` の定義、`view` の値）。今回の指摘は起動スナップショット周りです。
+
+## P0
+- **Phase 2 > 1** — `app.ready` の時点では復元タブがまだ 1 つも存在しない / タブの復元は `win.whenUiReady(() => …)` の中（非同期コールバック）で走り、`log('app.ready', …)` はその手前で同期的に流れる。registry や `win.tabs` から数えると **`restoredTabs` は常に 0** になり、自走検証は `app.ready` のフィールドを 1 つも見ないので気づけないまま常用版に乗る（見つかるのは人間の動作確認で 1 日後） / 数える先を保存データにする（`restored.windows.reduce((n, w) => n + w.tabs.length, 0)`。`restored` はこのログ行と同じスコープにある）。あわせて `readyMs` はこの行の時点＝「タブが揃う前」であることを plan に 1 行書く（起動時タブの materialize を含めたいなら `markReadyWhen(startupWindows)` の完了側で別イベントにする、という選択になる）
+
+## P1
+- **Phase 3 > 3** — `requireWindow` → 失敗なら `requireCallWindow` の二段は、**失敗側が throw する前に `ipc.rejected` をログに書く** / 会議の小窓からの `ui.error` は必ず `ipc.rejected{unknown_sender}` を 1 行先に残してから成功する。読みやすい診断ログを作るのが今回の目的なのに、正常系が「拒否された」ように見える行を毎回生む（`ipc.rejected` を検査しているスイートは無いので、テストは落ちず記録だけが濁る） / `ui.error` 用に非 throw の判定を 1 つ作る（`findWindowByUiWebContents(event.sender) ?? isCallWindowContents(event.sender)` を先に見て、`isUiUrl(senderFrameUrl(event))` は共通で 1 回。両方外れたときだけ `ipc.rejected` を書く）
+- **Phase 5 > 1** — `app.ready` の追記 3 つ（`readyMs` / `restoredTabs` / `extensions`）がどの検査にも入っていない / Phase 2 の半分が「人間が 1 日使うまで誰も見ない」状態になる。上の P0 もこれが理由で素通りする / 使い捨てプロファイルでは復元が起きないので、(f) として `app.ready` に `readyMs > 0` と `extensions` が数値であることだけ足す。`restoredTabs` は再起動をまたがないと 0 のままである旨を plan に明記する（`RESTART_COMPANIONS` には入れない判断は据え置き）
+
+## P2
+- **Phase 2 > 1** — `loaded` は `try { … } catch` ブロックの中の `const` なので、そのままでは `app.ready` の行から参照できない。手前で `let extensionCount = 0` を置いて両分岐で代入する形にする（`setExtensionCount` の呼び出しと同じ値）
+- **`metrics.sample` の形 > `top`** — シークレットタブの `key` を `keys` に入れるのか、`private` の件数だけにするのかが未記載。ユニットテストの fixture がここで決まるので 1 行足す（推奨は `keys` にも入れる。key 自体は origin を含まず、同居数と件数が合わなくなるほうが読みにくい）
+
+## Q
+
+````
+
+**対応**: P0 反映（`restoredTabs` は `restored.windows` から数える・`readyMs` はタブが揃う前の値と明記）。P1 反映（`ui.error` は throw しない判定 1 つで送信元を確かめ、両方外れたときだけ `ipc.rejected`。存在と目的だけ書き設計は書かない / 検査 (f) `app.ready` の `readyMs > 0`・`extensions` 数値を追加。`restoredTabs` は見ない旨を明記）。P2 反映（`loaded` の `let` 化 / シークレットの key は `keys` に入れる）。

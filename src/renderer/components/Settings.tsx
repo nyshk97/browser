@@ -433,9 +433,15 @@ function HttpAuthRules(): React.JSX.Element {
                     <code className="ha-password">
                       {revealed?.id === rule.id ? revealed.password : '••••••'}
                     </code>
-                    <button type="button" className="btn ha-reveal" onClick={() => reveal(rule)}>
-                      表示
-                    </button>
+                    {revealed?.id === rule.id ? (
+                      <button type="button" className="btn ha-hide" onClick={() => setRevealed(null)}>
+                        隠す
+                      </button>
+                    ) : (
+                      <button type="button" className="btn ha-reveal" onClick={() => reveal(rule)}>
+                        表示
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="btn ha-change-password"

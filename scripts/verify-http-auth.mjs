@@ -1177,6 +1177,16 @@ async function checkSettingsUi() {
   const shown = await revealOnce()
   check('「表示」でパスワードが 1 件だけ出る', shown === 'secret-pw', shown)
 
+  // ⓪ 「隠す」で手動で戻せる（表示したら戻せない、を踏んだ）
+  await overlay.ev(`(() => { document.querySelector('${rowSelector} .ha-hide').click(); return 'ok' })()`)
+  const hidden = await until(
+    async () =>
+      (await overlay.ev(`document.querySelector('${rowSelector} .ha-password')?.innerText ?? ''`)) ===
+      '••••••'
+  )
+  check('「隠す」で再マスクされる', hidden === true)
+  await revealOnce()
+
   // ① タイマー（`httpAuthRevealMs` を検証用に縮めてある）
   const remasked = await until(
     async () =>

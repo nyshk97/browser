@@ -23,7 +23,18 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
 
 - `src/main/log.ts`: JSON Lines、セッション単位 1 ファイル、20 世代ローテーション（件数のみ。サイズ上限なし）。
   出口で `sanitizeDetail` が通り、URL はパス以降が落ちる（`src/shared/log-redact.js`）
-- 常用版 `~/Library/Application Support/Nemo/logs/stable-*.log`、dev 版 `.../Nemo-dev/logs/dev-*.log`
+- 常用版 `~/Library/Application Support/Nemo/logs/stable-*.log`、dev 版 `.../Nemo-dev/logs/dev-*.log`。
+  ローテーションは**件数のみ**なので、起動回数が多い週は数日分しか残らない。集計はこの制約を
+  出力の先頭（読めた期間・セッション数・サンプル数）で必ず明示する
+- `sanitizeDetail` は**文字列の先頭が scheme のときだけ** URL と見なす（`looksLikeUrl`）。
+  `at foo (https://…)` のような行途中の URL は素通りし、文字列は 200 文字で切られる（`MAX_STRING`）。
+  スタックトレースはこの関数に任せず、送る前に行単位で `redactUrl` をかける（Phase 3）
+- `src/main/ipc.ts` は全部 `ipcMain.handle`（`invoke`）で、`requireWindow` / `senderFrameUrl` の
+  ガードは `IpcMainInvokeEvent` 前提。`ui.error` も `invoke` にして戻り値を捨てる（`ipcMain.on` を新設しない）
+- `logError(event, error, detail)` はメッセージを **`error` キー**に入れる（`message` ではない）。
+  検証の grep もそれに合わせる
+- `collectSession()` はシークレットウィンドウをディスクに残さない方針。メトリクスも同じ扱いにする
+- Chromium は同一サイトのタブを 1 つの renderer に同居させるので、**pid とタブは 1:1 ではない**
 - 異常系はすでに拾えている: `uncaughtException` / `unhandledRejection`（`src/main/index.ts:62`）、
   `render-process-gone` → `tab.crashed`、`unresponsive`（`src/main/registry.ts:768,785`）
 - 定期処理の型: `startBackgroundWork()`（`src/main/registry.ts:3371`）が `setInterval` を張り、
@@ -38,7 +49,12 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
   「パッケージ版では無視して `console.error`」の型）。自走検証はこれで数秒間隔にして行が出るのを待つ
 - **同じログファイルに書く**（別ファイルにしない）。`grep '"event":"metrics.sample"'` で取り出せる
 - **タブの識別子は `key` ＋ origin**（`redactUrl` を通した値。パス以降は出ない）。
-  休眠タブ（`tab.asleep`）は renderer を持たないので `asleep: true` だけ出す
+  休眠タブ（`tab.asleep`）は renderer を持たず pid も無いので `top` には現れない。件数だけトップレベルの `asleep` で出す。
+  **シークレットウィンドウのタブは `origin: null, private: true`**（origin をディスクに残さない。ユニットテストで固定）
+- **判断基準（何 MB を超えたら何をするか）は決めない**。今回は「記録して見返せる」まで。
+  集計は中央値と p95、タブ数は正規化せず並記する（1 回目で決定）
+- **保持期間は今の 20 セッションのまま**。集計が「読めた期間」を出すので、足りないと感じたときに
+  `KEEP_SESSIONS` を上げるか metrics を別ファイルにするかを決める（1 回目で決定。今回の範囲に入れない）
 - 起点は 1 → 3 → 2 の順（メトリクス → 起動終了 → UI 例外）。集計スクリプトは最後
 - グラフ・外部送信（Sentry 等）・電力・OS 側サンプラーは**やらない**
 
@@ -47,22 +63,24 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
 ```jsonc
 { "t": "...", "level": "info", "event": "metrics.sample",
   "uptimeMs": 123456,
-  "windows": 2, "tabs": 14, "asleep": 9,
+  "windows": 2, "tabs": 14, "asleep": 9,   // windows は windowsById（ブラウザウィンドウ）の数。設定・ピン・会議の小窓は含めない
   "total":   { "cpu": 3.2, "memMb": 1840, "processes": 11 },
   "byType":  { "Browser": {"cpu":0.4,"memMb":210,"n":1}, "Tab": {...}, "GPU": {...}, "Utility": {...} },
-  "top":     [ { "key": "t-12", "origin": "https://github.com", "cpu": 1.8, "memMb": 420 }, ... ] }
+  "top":     [ { "pid": 4321, "tabs": [ {"key":"t-12","origin":"https://github.com"}, {"key":"t-15","origin":"https://github.com"} ],
+                 "cpu": 1.8, "memMb": 420 }, ... ] }
 ```
 
-- `memMb` は `ProcessMetric.memory.workingSetSize`（KB）を MB に丸めたもの。
-  macOS ではこれがアクティビティモニタの「メモリ」列（physical footprint）にほぼ相当する。
-  `privateBytes` は macOS で取れないので使わない
+- `memMb` は `ProcessMetric.memory.workingSetSize`（KB）を MB に丸めたもの（resident。`privateBytes` は macOS で取れない）。
+  アクティビティモニタの「メモリ」列（圧縮分を含む phys_footprint）とは**常時ズレる**。
+  **絶対値の一致は狙わず、同じ指標の時系列比較に使う**。README / VERIFY.md の説明もこの文言にする
 - `cpu` は `ProcessMetric.cpu.percentCPUUsage`（前回 `getAppMetrics()` 呼び出しからの平均。
   1 コア = 100）。**初回呼び出しは 0 が返る**ので、`startBackgroundWork()` で一度空撃ちしておく
-- `top` は renderer をメモリ降順で **上位 5 件**に絞る（1 行の肥大化を防ぐ。5 分おき 1 行 ≒ 1 日 300 行なので
-  1 行 1KB なら 1 日 300KB）
+- `top` は renderer **プロセス**をメモリ降順で **上位 5 件**に絞る（1 行の肥大化を防ぐ。5 分おき 1 行 ≒ 1 日 300 行なので
+  1 行 1KB なら 1 日 300KB）。1 要素 = 1 pid で、`tabs` にそこに同居しているタブを全部並べる
+  （同一サイトのタブは 1 renderer にまとまるため。1 タブに誤配分しない）
 - タブとの紐づけは `webContents.getOSProcessId()` と `ProcessMetric.pid` の突き合わせ。
   分割ビュー・Peek・小窓の renderer も `Tab` 種別で来るので、**タブに紐づかない renderer は
-  `origin` 無しで `key: null`** として `top` に混ぜられるようにする（UI の view も同じ扱い）
+  `tabs: []`** として `top` に混ぜられるようにする（UI の view も同じ扱い）
 
 ## 実装計画
 
@@ -74,9 +92,10 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
       `src/shared/metrics-summary.js` に切り出して `scripts/metrics-summary.test.mjs` でユニットテスト）
       と `startMetricsSampling()` / `stopMetricsSampling()`（`setInterval`、初回空撃ち、
       `NEMO_METRICS_INTERVAL_MS` の扱い）
-- [ ] `startBackgroundWork()` / `stopBackgroundWork()` から呼ぶ（`registry.ts` に直接書かず import）
-- [ ] タブ ↔ pid の対応表は registry 側に `tabByOsPid(): Map<number, {key, origin, asleep}>` 相当の
-      小さな export を足して `metrics.ts` から使う（registry の内部構造を外に漏らさない）
+- [ ] `startBackgroundWork()` / `stopBackgroundWork()` から呼ぶ（`registry.ts` に直接書かず import）。
+      タイマーは `sleepTimer` と同じく `unref?.()` を付ける
+- [ ] タブ ↔ pid の対応表は registry 側に `Map<pid, TabRef[]>`（`{key, origin}`。private なら `origin: null`）を
+      返す小さな export を足して `metrics.ts` から使う（registry の内部構造を外に漏らさない）
 - [ ] `NEMO_METRICS_INTERVAL_MS` はパッケージ版では無視して `console.error`（既存の型どおり）
 
 ### Phase 2: 起動・終了スナップショット [AI🤖]
@@ -86,31 +105,37 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
       `stopBackgroundWork()` より前に取る（止めてから取ると `getAppMetrics` は動くが意図が読みにくい）
 
 ### Phase 3: `ui.error` [AI🤖]
-- [ ] `src/preload/ui.ts` に `reportError({message, stack, view})` を公開（`ipcRenderer.send('nemo:ui-error')`。
-      stack は先頭 20 行に切る）
+- [ ] `src/preload/ui.ts` に `reportError({message, frames, view})` を公開（`ipcRenderer.invoke` で戻り値を捨てる）。
+      stack は行配列にし、**各行を `redactUrl` で置換してから** 10 行程度・1 行 200 文字未満で渡す
+      （`sanitizeDetail` は行途中の URL を落とさない）。この変換は純粋関数にしてユニットテストする
 - [ ] `src/renderer/main.tsx` で `window.addEventListener('error' | 'unhandledrejection')` → `reportError`。
       同じ message の連投は 1 分 1 回に間引く（無限ループの例外でログを埋めない）
-- [ ] `src/main/ipc.ts` で受けて `logError('ui.error', ...)`。**送信元が Nemo の UI view であることを
-      既存の `ipc.rejected` と同じ検査で確かめる**（ページの renderer から偽装して撃てない）
-- [ ] `sanitizeDetail` が stack 中の URL を落とすことを `scripts/log-redact.test.mjs` に 1 ケース足して確認
+- [ ] `src/main/ipc.ts` で `ipcMain.handle` として受けて `logError('ui.error', ...)`（メッセージは `error` キーに入る）。
+      **送信元が Nemo の UI view であることを既存の `requireWindow` / `senderFrameUrl` で確かめる**
+      （ページの renderer から偽装して撃てない）
+- [ ] 「行途中の URL が落ちる」ことを上の純粋関数のテストで確認（`sanitizeDetail` 側には手を入れない）
 
 ### Phase 4: 集計スクリプト [AI🤖]
 - [ ] `scripts/metrics-report.mjs`: 引数なしで常用版・dev 版両方の `logs/` を読み、
+      **先頭に読めた期間・セッション数・サンプル数**を出してから、
       日別 × チャンネル別に `memMb` 中央値 / p95・`cpu` 平均・`tabs` 中央値・サンプル数を表で出す。
-      `--dir <logs>` で任意ディレクトリ、`--json` で機械可読
+      `--dir <logs>` で任意ディレクトリ、`--json` で機械可読（`--json` にはセッション別の行も含める）
 - [ ] `.mise.toml` に `[tasks."metrics:report"]`（日本語 `description`）
 - [ ] 集計の中身は `scripts/metrics-report.test.mjs` で固定の jsonl から検証（p95 の境界を含む）
 
 ### Phase 5: 自走検証と登録 [AI🤖]
-- [ ] `scripts/verify-metrics.mjs`: `NEMO_METRICS_INTERVAL_MS=2000` で使い捨てプロファイルの
-      Nemo を立て、(a) `metrics.sample` が 2 行以上出る（**件数を出力に出す**） (b) 2 行目以降の
-      `total.cpu` が数値（初回空撃ちが効いている） (c) タブを 2 つ開いて `top` に `origin` 付きの
-      行が出る (d) UI で `window.nemo.reportError` を撃って `ui.error` が 1 行出る
-      (e) 終了後の `app.quit` に `uptimeMs` と `total` がある
-- [ ] `KNOWN_TARGETS` / `NEEDS_APP` / `RESTART_COMPANIONS`（必要なら）/ `OWNERS` に登録し、
+- [ ] `scripts/verify-metrics.mjs`: **自分で** `NEMO_METRICS_INTERVAL_MS=2000` を渡して使い捨てプロファイルの
+      Nemo を立て（`slots` / `auth-vault` と同じ型。共有アプリでは env も終了も制御できない）、
+      (a) `metrics.sample` が 2 行以上出る（**件数を出力に出す**） (b) 2 行目以降の
+      `total.cpu > 0` かつ `byType` に 1 つ以上の型がある（初回空撃ちが効いている） (c) タブを 2 つ開いて
+      `top` に `origin` 付きの `tabs` 要素が出る (d) UI で `window.nemo.reportError` を撃って
+      `ui.error` が 1 行出る（`error` キーを見る） (e) 終了後の `app.quit` に `uptimeMs` と `total` がある
+- [ ] `KNOWN_TARGETS` / `OPT_IN_ONLY` / `OWNERS` に登録（`NEEDS_APP` と `RESTART_COMPANIONS` には入れない）し、
       `verify-all.mjs` に `if (want('metrics'))` を配線。**配線を外した状態で 1 回回して検査 0 件を見てから戻す**
-      （CLAUDE.md）。`OWNERS` は `src/main/metrics.ts` / `src/shared/metrics-summary.js` /
-      `scripts/metrics-*.mjs` だけ（`index.ts` / `registry.ts` / `ipc.ts` / `main.tsx` は載せない）
+      （CLAUDE.md）。`OWNERS` は完全一致の Map なので実名で列挙する:
+      `src/main/metrics.ts` / `src/shared/metrics-summary.js` / `scripts/verify-metrics.mjs` /
+      `scripts/metrics-report.mjs` / `scripts/metrics-report.test.mjs` / `scripts/metrics-summary.test.mjs`
+      （`index.ts` / `registry.ts` / `ipc.ts` / `main.tsx` は載せない）
 - [ ] `VERIFY.md` に「メトリクスの行を見る」「集計を出す」の手順を追記、`docs/CHANGELOG.md` の
       `[Unreleased]` に記入、`README.md` の `logs/` 行にイベント名を添える
 

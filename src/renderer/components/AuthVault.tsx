@@ -207,7 +207,10 @@ export function AuthVault(): React.JSX.Element {
   )
 
   return (
-    <SettingsSection title="Basic 認証" sub="HTTP 認証のルールをパスフレーズで暗号化して別の Mac へ持ち出す">
+    <SettingsSection
+      title="HTTP 認証の持ち出し"
+      sub="上の HTTP 認証のルールをパスフレーズで暗号化して保管庫に保存し、別の Mac で読み込みます"
+    >
       <div className="vault" data-testid="auth-vault">
         {status === null && !failed && <p className="dim">読み込み中…</p>}
         {status !== null && (

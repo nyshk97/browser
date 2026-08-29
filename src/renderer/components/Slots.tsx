@@ -73,8 +73,8 @@ export function Slots(): React.JSX.Element {
 
   return (
     <SettingsSection
-      title="ブックマークのセーブスロット"
-      sub="ピン留めとお気に入りを 3 枠に保存し、別の Mac で読み込む。保存先は iCloud Drive"
+      title="ブックマークの持ち出し"
+      sub="ピン留めとお気に入りを 3 つのスロットに保存し、別の Mac で読み込みます。保存先は iCloud Drive です"
     >
       <div className="slots" data-testid="slots">
         {list === null && !failed && <p className="dim">読み込み中…</p>}

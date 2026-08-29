@@ -44,15 +44,15 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
 
       <div className="set-body">
         <SettingsSection
-          title="GitHub の Pull Request（サイドバー）"
-          sub="サイドバーに自分の PR を出す。資格情報は上から順に探す"
+          title="GitHub の PR"
+          sub="サイドバーに自分の Pull Request を出します。資格情報は上から順に探します"
         >
           <GithubToken />
         </SettingsSection>
 
         <SettingsSection
           title="HTTP 認証"
-          sub="Basic 認証の自動入力。認証ダイアログで「次回から自動で入力する」を選ぶと増える"
+          sub="Basic 認証を自動で入力します。認証ダイアログで「次回から自動で入力する」を選ぶと増えます"
         >
           <HttpAuthRules />
         </SettingsSection>
@@ -61,12 +61,12 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
           title="Chrome 拡張"
           sub={
             <>
-              <code>extensions.lock.json</code> に書いたものだけをロードする
+              <code>extensions.lock.json</code> に書いたものだけをロードします
             </>
           }
         >
           {extensions.length === 0 ? (
-            <p className="dim">ロードされている Chrome 拡張はない</p>
+            <p className="dim">ロードされている Chrome 拡張はありません</p>
           ) : (
             extensions.map((extension) => (
               <div key={extension.id} className="set-row">
@@ -88,7 +88,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
             ))
           )}
           <p className="dim">
-            追加・更新は <code>mise run ext:outdated</code> / <code>ext:update</code> から行う。
+            追加・更新は <code>mise run ext:outdated</code> / <code>ext:update</code> から行います。
           </p>
         </SettingsSection>
 
@@ -132,7 +132,7 @@ function GithubToken(): React.JSX.Element {
     if (!token) return
     void window.nemo.saveGithubToken(token).then((saved) => {
       setDraft('')
-      setMessage(saved ? '保存した' : '保存できなかった（この端末では暗号化が使えない）')
+      setMessage(saved ? '保存しました。' : '保存できませんでした（この Mac では暗号化を利用できません）。')
       reload()
     })
   }
@@ -155,10 +155,13 @@ function GithubToken(): React.JSX.Element {
               <span className="gh-tag">未設定</span>
             )}
           </div>
-          <p className="dim">貼ると端末鍵で暗号化して保存する。gh より優先される。値はここには出ない。</p>
+          <p className="dim">
+            貼ると端末鍵で暗号化して保存します。gh より優先されます。値はここには出ません。
+          </p>
           {!status.encryptionAvailable ? (
             <p className="warn">
-              この端末では暗号化ストレージが使えないので、貼っても PAT は保存されない（平文では置かない）。
+              この Mac では暗号化ストレージを利用できないため、貼っても PAT
+              は保存されません（平文では置きません）。
             </p>
           ) : null}
           {showPatInput ? (
@@ -186,7 +189,7 @@ function GithubToken(): React.JSX.Element {
                     className="btn"
                     onClick={() => {
                       void window.nemo.clearGithubToken().then(() => {
-                        setMessage('消した（gh があればそちらに戻る）')
+                        setMessage('消しました。gh があればそちらに戻ります。')
                         reload()
                       })
                     }}
@@ -220,22 +223,22 @@ function GithubToken(): React.JSX.Element {
           </div>
           {source === 'none' ? (
             <p className="dim">
-              ターミナルで <code>gh auth login</code> すると、次の取得から使われる。
+              ターミナルで <code>gh auth login</code> すると、次の取得から使われます。
             </p>
           ) : (
             <p className="dim">
-              この Mac の <code>gh auth login</code> のアカウントをそのまま使う。設定は要らない。
+              この Mac の <code>gh auth login</code> のアカウントをそのまま使います。設定は不要です。
             </p>
           )}
         </div>
       </div>
 
       {source === 'none' ? (
-        <p className="warn">どちらも無いので、サイドバーには「Connect GitHub」と出る。</p>
+        <p className="warn">どちらも無いため、サイドバーには「Connect GitHub」と出ます。</p>
       ) : null}
       <p className="dim">
-        必要な scope は <code>repo</code> / <code>read:org</code>。 取得は 60 秒ごと +
-        ウィンドウをアクティブにしたときで、GraphQL を1リクエストだけ投げる。
+        必要な scope は <code>repo</code> / <code>read:org</code> です。 取得は 60 秒ごと +
+        ウィンドウをアクティブにしたときで、GraphQL を 1 リクエストだけ投げます。
       </p>
     </>
   )
@@ -307,11 +310,11 @@ function HttpAuthRules(): React.JSX.Element {
 
   const applyResult = (result: HttpAuthWriteResult, done: string): void => {
     if (!result.saved) {
-      setMessage(`保存できなかった（${result.reason ?? '不明'}）`)
+      setMessage(`保存できませんでした（${result.reason ?? '不明'}）。`)
       reload()
       return
     }
-    setMessage(result.authCacheCleared ? done : `${done}（反映には Nemo の再起動が必要）`)
+    setMessage(result.authCacheCleared ? done : `${done}反映には Nemo の再起動が必要です。`)
     reload()
   }
 
@@ -327,7 +330,7 @@ function HttpAuthRules(): React.JSX.Element {
       })
       .then((result) => {
         if (result.saved) clearDraft(rule.id)
-        applyResult(result, '保存した')
+        applyResult(result, '保存しました。')
       })
   }
 
@@ -340,8 +343,8 @@ function HttpAuthRules(): React.JSX.Element {
         // 同じ文言にすると事実と食い違う
         setMessage(
           encryptionAvailable
-            ? 'パスワードを復号できなかった（ルールを無効化した）'
-            : 'この端末では暗号化ストレージが使えないので、保存済みのパスワードを取り出せない'
+            ? 'パスワードを復号できなかったため、ルールを無効にしました。'
+            : 'この Mac では暗号化ストレージを利用できないため、保存済みのパスワードを取り出せません。'
         )
         reload()
         return
@@ -389,13 +392,13 @@ function HttpAuthRules(): React.JSX.Element {
     <div className="http-auth">
       {!encryptionAvailable ? (
         <p className="warn ha-no-encryption">
-          この端末では暗号化ストレージが使えないので、資格情報は保存できません（平文では置きません）。
+          この Mac では暗号化ストレージを利用できないため、資格情報は保存できません（平文では置きません）。
         </p>
       ) : null}
       {rules.length === 0 ? (
         <p className="dim">
-          保存された資格情報はない。認証ダイアログの「次回から自動で入力する」を選ぶと、
-          そのオリジンのルールがここに並ぶ。
+          保存された資格情報はありません。認証ダイアログの「次回から自動で入力する」を選ぶと、
+          そのオリジンのルールがここに並びます。
         </p>
       ) : (
         rules.map((rule) => {
@@ -467,7 +470,7 @@ function HttpAuthRules(): React.JSX.Element {
                           username: rule.username,
                           enabled: event.target.checked
                         })
-                        .then((result) => applyResult(result, '切り替えた'))
+                        .then((result) => applyResult(result, '切り替えました。'))
                     }}
                   />
                   有効
@@ -481,7 +484,7 @@ function HttpAuthRules(): React.JSX.Element {
                   onClick={() => {
                     void window.nemo
                       .deleteHttpAuthRule(rule.id)
-                      .then((result) => applyResult(result, '削除した'))
+                      .then((result) => applyResult(result, '削除しました。'))
                   }}
                 >
                   削除
@@ -490,8 +493,8 @@ function HttpAuthRules(): React.JSX.Element {
               {rule.disabledReason ? (
                 <p className="warn ha-reason">
                   {rule.disabledReason === 'pattern-timeout'
-                    ? '照合に時間がかかりすぎたので自動で無効にした。パターンを直すと再び有効にできる。'
-                    : 'パスワードを復号できなかったので自動で無効にした。パスワードを保存し直すと再び有効にできる。'}
+                    ? '照合に時間がかかりすぎたため自動で無効にしました。パターンを直すと再び有効にできます。'
+                    : 'パスワードを復号できなかったため自動で無効にしました。パスワードを保存し直すと再び有効にできます。'}
                 </p>
               ) : null}
               {rule.importedFrom ? (
@@ -505,7 +508,10 @@ function HttpAuthRules(): React.JSX.Element {
       )}
       {message ? <p className="dim ha-message">{message}</p> : null}
 
-      <Field label="正規表現テスター" hint="URL を1行に1つ。保存済みルール全体に当てて勝者を出す">
+      <Field
+        label="正規表現テスター"
+        hint="URL を 1 行に 1 つ。保存済みのルール全体に当てて、使われるルールを出します"
+      >
         <textarea
           className="ha-test-urls"
           rows={2}
@@ -517,20 +523,22 @@ function HttpAuthRules(): React.JSX.Element {
       <button type="button" className="btn ha-test-run" onClick={runTest}>
         試す
       </button>
-      {testError ? <p className="warn ha-test-error">照合できなかった: {testError}</p> : null}
+      {testError ? <p className="warn ha-test-error">照合できませんでした: {testError}</p> : null}
       {testResults?.map((result) => (
         <p key={result.url} className="dim ha-test-result">
           <code>{result.url}</code>{' '}
           {result.winnerId === null
-            ? '→ マッチなし'
+            ? '→ マッチするルールはありません'
             : result.matchedIds.length > 1
               ? `→ この URL には ${result.matchedIds.length} 件マッチします。${nameOf(result.winnerId)} が使われます`
               : `→ ${nameOf(result.winnerId)} が使われます`}
-          {result.timedOutIds.length > 0 ? `（${result.timedOutIds.length} 件は照合がタイムアウトした）` : ''}
+          {result.timedOutIds.length > 0
+            ? `（${result.timedOutIds.length} 件は照合がタイムアウトしました）`
+            : ''}
         </p>
       ))}
 
-      <Field label="MultiPass の JSON を取り込む" hint="エクスポートした内容をそのまま貼る">
+      <Field label="MultiPass の JSON を取り込む" hint="エクスポートした内容をそのまま貼ります">
         <textarea
           className="ha-import-text"
           rows={3}
@@ -550,8 +558,10 @@ function HttpAuthRules(): React.JSX.Element {
       {importResult ? (
         <div className="ha-import-result">
           <p className={importResult.failed ? 'warn' : 'dim'}>
-            {importResult.failed ? '取り込みに失敗した' : `${importResult.imported} 件を取り込んだ`}
-            {importResult.failed || importResult.authCacheCleared ? '' : '（反映には Nemo の再起動が必要）'}
+            {importResult.failed
+              ? '取り込みに失敗しました。'
+              : `${importResult.imported} 件を取り込みました。`}
+            {importResult.failed || importResult.authCacheCleared ? '' : '反映には Nemo の再起動が必要です。'}
           </p>
           {importResult.priorityWarning ? (
             <p className="warn ha-priority-warning">
@@ -560,7 +570,7 @@ function HttpAuthRules(): React.JSX.Element {
           ) : null}
           {importResult.rejected.map((item, index) => (
             <p key={`${item.pattern}-${index}`} className="warn ha-rejected">
-              取り込めなかった: <code>{item.pattern || '(不明)'}</code> — {item.reason}
+              取り込めませんでした: <code>{item.pattern || '(不明)'}</code> — {item.reason}
             </p>
           ))}
         </div>

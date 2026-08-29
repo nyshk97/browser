@@ -2140,6 +2140,18 @@ body[data-view='toolbar'] {
   resize: vertical;
 }
 
+/* 貼る欄とその実行ボタンを 1 組にする（ボタンは欄の右下。離れた左下だとどの欄のボタンか分からない） */
+.ha-paste {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.ha-paste .btn {
+  margin-top: 0;
+}
+
 .ha-row {
   border-top: 1px solid var(--nemo-surface);
   padding: 6px 0;

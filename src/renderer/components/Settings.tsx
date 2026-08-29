@@ -512,17 +512,19 @@ function HttpAuthRules(): React.JSX.Element {
         label="正規表現テスター"
         hint="URL を 1 行に 1 つ。保存済みのルール全体に当てて、使われるルールを出します"
       >
-        <textarea
-          className="ha-test-urls"
-          rows={2}
-          spellCheck={false}
-          value={testUrls}
-          onChange={(event) => setTestUrls(event.target.value)}
-        />
+        <span className="ha-paste">
+          <textarea
+            className="ha-test-urls"
+            rows={2}
+            spellCheck={false}
+            value={testUrls}
+            onChange={(event) => setTestUrls(event.target.value)}
+          />
+          <button type="button" className="btn ha-test-run" onClick={runTest}>
+            試す
+          </button>
+        </span>
       </Field>
-      <button type="button" className="btn ha-test-run" onClick={runTest}>
-        試す
-      </button>
       {testError ? <p className="warn ha-test-error">照合できませんでした: {testError}</p> : null}
       {testResults?.map((result) => (
         <p key={result.url} className="dim ha-test-result">
@@ -539,22 +541,24 @@ function HttpAuthRules(): React.JSX.Element {
       ))}
 
       <Field label="MultiPass の JSON を取り込む" hint="エクスポートした内容をそのまま貼ります">
-        <textarea
-          className="ha-import-text"
-          rows={3}
-          spellCheck={false}
-          value={importText}
-          onChange={(event) => setImportText(event.target.value)}
-        />
+        <span className="ha-paste">
+          <textarea
+            className="ha-import-text"
+            rows={3}
+            spellCheck={false}
+            value={importText}
+            onChange={(event) => setImportText(event.target.value)}
+          />
+          <button
+            type="button"
+            className="btn ha-import-run"
+            disabled={importText.trim().length === 0}
+            onClick={runImport}
+          >
+            取り込む
+          </button>
+        </span>
       </Field>
-      <button
-        type="button"
-        className="btn ha-import-run"
-        disabled={importText.trim().length === 0}
-        onClick={runImport}
-      >
-        取り込む
-      </button>
       {importResult ? (
         <div className="ha-import-result">
           <p className={importResult.failed ? 'warn' : 'dim'}>

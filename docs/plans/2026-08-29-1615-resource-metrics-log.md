@@ -35,6 +35,11 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
   検証の grep もそれに合わせる
 - `collectSession()` はシークレットウィンドウをディスクに残さない方針。メトリクスも同じ扱いにする
 - Chromium は同一サイトのタブを 1 つの renderer に同居させるので、**pid とタブは 1:1 ではない**
+- `sanitizeValue` は **`MAX_DEPTH = 4` を超えたオブジェクトを `"[deep]"` に潰す**（detail → 配列 → 要素 → 配列 → 要素 で 4）。
+  `metrics.sample` の `top` はオブジェクトの入れ子を 1 段に抑える（文字列配列なら深さ 4 でも通る）
+- 拡張は `pageSession` にロードされ、数は `app.ready` 直前の `loaded`（`setExtensionCount(loaded.length)` の引数）が持っている
+- 会議の小窓（`?view=call`）は `windowsById` に居ないので `requireWindow` が throw する。`ipc.ts` は
+  `requireCallWindow` を続けて試す二段の検査を使っている
 - 異常系はすでに拾えている: `uncaughtException` / `unhandledRejection`（`src/main/index.ts:62`）、
   `render-process-gone` → `tab.crashed`、`unresponsive`（`src/main/registry.ts:768,785`）
 - 定期処理の型: `startBackgroundWork()`（`src/main/registry.ts:3371`）が `setInterval` を張り、
@@ -50,7 +55,7 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
 - **同じログファイルに書く**（別ファイルにしない）。`grep '"event":"metrics.sample"'` で取り出せる
 - **タブの識別子は `key` ＋ origin**（`redactUrl` を通した値。パス以降は出ない）。
   休眠タブ（`tab.asleep`）は renderer を持たず pid も無いので `top` には現れない。件数だけトップレベルの `asleep` で出す。
-  **シークレットウィンドウのタブは `origin: null, private: true`**（origin をディスクに残さない。ユニットテストで固定）
+  **シークレットウィンドウのタブは `origins` に入れず `private` の件数に足すだけ**（origin をディスクに残さない。ユニットテストで固定）
 - **判断基準（何 MB を超えたら何をするか）は決めない**。今回は「記録して見返せる」まで。
   集計は中央値と p95、タブ数は正規化せず並記する（1 回目で決定）
 - **保持期間は今の 20 セッションのまま**。集計が「読めた期間」を出すので、足りないと感じたときに
@@ -63,11 +68,11 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
 ```jsonc
 { "t": "...", "level": "info", "event": "metrics.sample",
   "uptimeMs": 123456,
-  "windows": 2, "tabs": 14, "asleep": 9,   // windows は windowsById（ブラウザウィンドウ）の数。設定・ピン・会議の小窓は含めない
+  "windows": 2, "tabs": 14, "asleep": 9,   // windows は windowsById（ブラウザウィンドウ）の数。設定・ピン・会議の小窓は含めない。tabs / asleep はシークレットのタブも数に含める（負荷の説明が合わなくなるため）
   "total":   { "cpu": 3.2, "memMb": 1840, "processes": 11 },
   "byType":  { "Browser": {"cpu":0.4,"memMb":210,"n":1}, "Tab": {...}, "GPU": {...}, "Utility": {...} },
-  "top":     [ { "pid": 4321, "tabs": [ {"key":"t-12","origin":"https://github.com"}, {"key":"t-15","origin":"https://github.com"} ],
-                 "cpu": 1.8, "memMb": 420 }, ... ] }
+  "top":     [ { "pid": 4321, "cpu": 1.8, "memMb": 420,
+                 "keys": ["t-12","t-15"], "origins": ["https://github.com"], "private": 0 }, ... ] }
 ```
 
 - `memMb` は `ProcessMetric.memory.workingSetSize`（KB）を MB に丸めたもの（resident。`privateBytes` は macOS で取れない）。
@@ -76,11 +81,13 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
 - `cpu` は `ProcessMetric.cpu.percentCPUUsage`（前回 `getAppMetrics()` 呼び出しからの平均。
   1 コア = 100）。**初回呼び出しは 0 が返る**ので、`startBackgroundWork()` で一度空撃ちしておく
 - `top` は renderer **プロセス**をメモリ降順で **上位 5 件**に絞る（1 行の肥大化を防ぐ。5 分おき 1 行 ≒ 1 日 300 行なので
-  1 行 1KB なら 1 日 300KB）。1 要素 = 1 pid で、`tabs` にそこに同居しているタブを全部並べる
-  （同一サイトのタブは 1 renderer にまとまるため。1 タブに誤配分しない）
+  1 行 1KB なら 1 日 300KB）。1 要素 = 1 pid で、`keys` / `origins`（重複除去）にそこに同居しているタブを全部並べる
+  （同一サイトのタブは 1 renderer にまとまるため。1 タブに誤配分しない）。**要素の中にオブジェクトを入れない**（`[deep]` 潰れ）
 - タブとの紐づけは `webContents.getOSProcessId()` と `ProcessMetric.pid` の突き合わせ。
   分割ビュー・Peek・小窓の renderer も `Tab` 種別で来るので、**タブに紐づかない renderer は
-  `tabs: []`** として `top` に混ぜられるようにする（UI の view も同じ扱い）
+  `keys: []`** として `top` に混ぜられるようにする（UI の view も同じ扱い）
+- `app.quit` に添える終了時の値は同じキーに `source: "quit"` を付けて出す。集計は `metrics.sample` と
+  quit 行の両方を読み、先頭の内訳に `sample` / `quit` の件数を並べる（2 回目で決定）
 
 ## 実装計画
 
@@ -89,30 +96,33 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
 
 ### Phase 1: `metrics.sample` [AI🤖]
 - [ ] `src/main/metrics.ts` を新設: `sampleMetrics()`（`getAppMetrics()` → 上の形に整形。純粋関数部分は
-      `src/shared/metrics-summary.js` に切り出して `scripts/metrics-summary.test.mjs` でユニットテスト）
+      `src/shared/metrics-summary.js` に切り出して `scripts/metrics-summary.test.mjs` でユニットテスト。
+      **整形結果を `sanitizeDetail` に通しても `[deep]` / `[redacted]` / 200 文字切りが出ないケースを必ず入れる**。
+      `ui.error` の frames にも同じ検査を当てる）
       と `startMetricsSampling()` / `stopMetricsSampling()`（`setInterval`、初回空撃ち、
       `NEMO_METRICS_INTERVAL_MS` の扱い）
 - [ ] `startBackgroundWork()` / `stopBackgroundWork()` から呼ぶ（`registry.ts` に直接書かず import）。
       タイマーは `sleepTimer` と同じく `unref?.()` を付ける
-- [ ] タブ ↔ pid の対応表は registry 側に `Map<pid, TabRef[]>`（`{key, origin}`。private なら `origin: null`）を
+- [ ] タブ ↔ pid の対応表は registry 側に `Map<pid, TabRef[]>`（`{key, origin, private}`）を
       返す小さな export を足して `metrics.ts` から使う（registry の内部構造を外に漏らさない）
 - [ ] `NEMO_METRICS_INTERVAL_MS` はパッケージ版では無視して `console.error`（既存の型どおり）
 
 ### Phase 2: 起動・終了スナップショット [AI🤖]
 - [ ] `app.ready` に `readyMs`（`process.uptime()` ベースで ms）・`restoredTabs`・`extensions`
-      （`session.getAllExtensions().length`）を追記
-- [ ] `app.quit` に `uptimeMs` と `sampleMetrics()` の結果（`metrics.sample` と同じキー）を追記。
+      （直前の `loaded.length`。API 呼び出しを増やさない）を追記
+- [ ] `app.quit` に `uptimeMs` と `sampleMetrics()` の結果（`metrics.sample` と同じキー ＋ `source: "quit"`）を追記。
       `stopBackgroundWork()` より前に取る（止めてから取ると `getAppMetrics` は動くが意図が読みにくい）
 
 ### Phase 3: `ui.error` [AI🤖]
-- [ ] `src/preload/ui.ts` に `reportError({message, frames, view})` を公開（`ipcRenderer.invoke` で戻り値を捨てる）。
+- [ ] `src/preload/ui.ts` に `reportError({message, frames, view})` を公開（`ipcRenderer.invoke` に **必ず `.catch(() => {})`**。
+      reject が `unhandledrejection` に戻って自分を呼び返すのを断つ。`view` は `params.get('view')` の値そのまま）。
       stack は行配列にし、**各行を `redactUrl` で置換してから** 10 行程度・1 行 200 文字未満で渡す
       （`sanitizeDetail` は行途中の URL を落とさない）。この変換は純粋関数にしてユニットテストする
 - [ ] `src/renderer/main.tsx` で `window.addEventListener('error' | 'unhandledrejection')` → `reportError`。
       同じ message の連投は 1 分 1 回に間引く（無限ループの例外でログを埋めない）
 - [ ] `src/main/ipc.ts` で `ipcMain.handle` として受けて `logError('ui.error', ...)`（メッセージは `error` キーに入る）。
-      **送信元が Nemo の UI view であることを既存の `requireWindow` / `senderFrameUrl` で確かめる**
-      （ページの renderer から偽装して撃てない）
+      **送信元が Nemo の UI view であることを既存の `requireWindow` → 失敗なら `requireCallWindow` の二段で確かめる**
+      （会議の小窓は `windowsById` に居ない。ページの renderer から偽装して撃てない）
 - [ ] 「行途中の URL が落ちる」ことを上の純粋関数のテストで確認（`sanitizeDetail` 側には手を入れない）
 
 ### Phase 4: 集計スクリプト [AI🤖]
@@ -127,9 +137,9 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
 - [ ] `scripts/verify-metrics.mjs`: **自分で** `NEMO_METRICS_INTERVAL_MS=2000` を渡して使い捨てプロファイルの
       Nemo を立て（`slots` / `auth-vault` と同じ型。共有アプリでは env も終了も制御できない）、
       (a) `metrics.sample` が 2 行以上出る（**件数を出力に出す**） (b) 2 行目以降の
-      `total.cpu > 0` かつ `byType` に 1 つ以上の型がある（初回空撃ちが効いている） (c) タブを 2 つ開いて
-      `top` に `origin` 付きの `tabs` 要素が出る (d) UI で `window.nemo.reportError` を撃って
-      `ui.error` が 1 行出る（`error` キーを見る） (e) 終了後の `app.quit` に `uptimeMs` と `total` がある
+      **いずれか**で `total.cpu > 0` かつ `byType` に 1 つ以上の型がある（初回空撃ちが効いている。全行に課すと flake る） (c) タブを 2 つ開いて
+      `top` に `origins` が非空の要素が出る (d) UI で `window.nemo.reportError` を撃って
+      `ui.error` が 1 行出る（`error` キーと `view` を見る） (e) 終了後の `app.quit` に `uptimeMs` と `total` と `source: "quit"` がある
 - [ ] `KNOWN_TARGETS` / `OPT_IN_ONLY` / `OWNERS` に登録（`NEEDS_APP` と `RESTART_COMPANIONS` には入れない）し、
       `verify-all.mjs` に `if (want('metrics'))` を配線。**配線を外した状態で 1 回回して検査 0 件を見てから戻す**
       （CLAUDE.md）。`OWNERS` は完全一致の Map なので実名で列挙する:

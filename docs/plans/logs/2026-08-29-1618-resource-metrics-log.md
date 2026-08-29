@@ -32,3 +32,28 @@ review session: 19b5642d-a166-4577-bee1-cfc889b6bd54
 ````
 
 **対応**: P0 3 件すべて反映（stack は送信前に行単位で `redactUrl`・`sanitizeDetail` に頼らない / `top` を pid 単位にし同居タブを `tabs[]` で全部並べる / private タブは `origin: null, private: true`）。P1 全件反映（`invoke` で受けて `ipcMain.on` を作らない / `OPT_IN_ONLY` で自分で起動・`NEEDS_APP` と `RESTART_COMPANIONS` に入れない / `OWNERS` を実名列挙 / (b) は `total.cpu > 0` かつ `byType` 非空 / workingSetSize は phys_footprint と常時ズレる・時系列比較専用と明記 / 集計の先頭に読めた期間・セッション数・サンプル数 / `tabByOsPid` から `asleep` を外す）。P2 は書き換えで済むので全部反映（`windows` の意味 / `unref` / `error` キー / `--json` にセッション別行）。Q は両方自分で閉じた: 判断基準は決めない（ユーザーの要望は「なんとなく分かる」まで。集計は中央値・p95・タブ数並記） / 保持期間は 20 セッションのまま、集計が期間を出すので足りなければその時に決める（今回の範囲外）。
+
+## 2回目
+
+````text
+`docs/plans/2026-08-29-1615-resource-metrics-log.md` を再読し、前回指摘の反映と、新しい形（pid 単位の `top`・`invoke` 化・拡張数）を実コードに突き合わせました。前回の P0/P1/P2 はいずれも反映を確認。以下は今回の形で新たに出たものだけです。
+
+## P0
+- **`metrics.sample` の形 > `top`／Phase 1 > 1** — `top[].tabs[]` の入れ子が `sanitizeValue` の `MAX_DEPTH = 4` に当たる / 深さは detail(0) → `top` 配列(1) → 要素オブジェクト(2) → `tabs` 配列(3) → タブオブジェクト(4) で、`depth >= MAX_DEPTH` の分岐が配列・オブジェクトの分岐より前にあるため、**タブ 1 件ずつが `"[deep]"` という文字列に潰れて記録される**（数値・文字列は深さ判定より前に返るので、潰れるのはオブジェクトだけ）。ログを出してから気づくと schema と集計スクリプトを作り直す / `top` の要素をこれ以上ネストさせない。例: `{ "pid": 4321, "cpu": 1.8, "memMb": 420, "keys": ["t-12","t-15"], "origins": ["https://github.com"], "private": 1 }`（`keys` / `origins` は文字列配列なので深さ 4 でも通る。private タブは origin を入れず件数だけ `private` に足す）。`sanitizeDetail` 側は触らない方針のままで済む
+
+## P1
+- **Phase 1 > 1** — 整形結果が `sanitizeDetail` を素通りできることを誰も検査していない / 上の `[deep]` は「実装すると型は合うがログの中身だけが壊れる」種類なので、ユニットテストが無いと再発する（`private`・`origins` を足したときにまた深くなる） / `metrics-summary.test.mjs` に「整形結果を `sanitizeDetail` に通しても `[deep]` / `[redacted]` / 200 文字切りが 1 つも出ない」ケースを入れる。同じ検査を `ui.error` の frames にも当てる
+- **Phase 3 > 1,3** — `invoke` の戻り値を捨てると reject が `unhandledrejection` を焚き、`reportError` が自分を呼び返す / `main.tsx` は `?view=call` も同じ entry なので、**会議の小窓は `windowsById` に居らず `requireWindow` が必ず throw する**（`ipc.ts` のコメントどおり）。その reject が未処理 → 例外ハンドラ → また reject、で `ipc.rejected` を 1 分おきに永久に吐き、小窓の例外は 1 件も残らない / preload で `.catch(() => {})` を必ず付け、ipc 側は `requireWindow` に失敗したら `requireCallWindow` も試す（会議の小窓と同じ二段の検査）
+- **Phase 2 > 1** — `session.getAllExtensions()` は今の API 形ではないうえ、対象セッションも違う / 実際は `<Session>.extensions.getAllExtensions()`（`src/main/extensions.ts`）で、拡張は `pageSession` にロードされるので defaultSession を見ると常に 0 になる / `app.ready` の直前に既にある `loaded`（`setExtensionCount(loaded.length)` に渡している値）をそのまま使う。API 呼び出しを増やさない
+- **Phase 2 > 2／Phase 4 > 1** — `app.quit` の追記が集計の入力に入るのか未記載 / `metrics.sample` と同じキーを持つ行がもう 1 種類でき、短いセッションでは quit 行だけがサンプルという状況になる。読む側を決めないと「サンプル数」の意味が実装者次第になる / 推奨は取り込む側（quit 行にも `source: "quit"` を入れ、report は両方を読み、先頭の内訳に `sample` / `quit` の件数を並べる）。取り込まないなら plan にそう書く
+
+## P2
+- **Phase 5 > 1 (b)** — 「2 行目以降の `total.cpu > 0`」を全行に課すと、アイドルな 2 秒窓で 0 になったときに flake る。「2 行目以降のいずれかで > 0」にすると空撃ちの検査としては十分で安定する
+- **`metrics.sample` の形 > `windows`** — `windows` の定義は書けたが、`tabs` / `asleep` がシークレットウィンドウのタブを件数に含むかが未記載。origin を出さない話とは別なので 1 行足す（推奨は含める。負荷の説明が合わなくなるため）
+- **Phase 3 > 1** — `view` に入れる値を `params.get('view')`（`sidebar` / `toolbar` / `peek` / `mini` / `call`）と明記しておくと、検証 (d) の期待値がぶれない
+
+## Q
+
+````
+
+**対応**: P0 反映（`top` の要素をフラットにし `keys` / `origins` / `private` の文字列配列＋件数にする。`MAX_DEPTH` の事実を前提に追記）。P1 全件反映（`sanitizeDetail` 素通り検査は P0 の修正に不可欠なので Phase 1 のテスト項目に含めた / preload に `.catch(() => {})` 必須・ipc は `requireWindow` → `requireCallWindow` の二段 / 拡張数は `loaded.length` / quit 行は `source: "quit"` を付けて集計に取り込む）。P2 全件反映（(b) は「いずれか」/ `tabs` `asleep` はシークレットを含める / `view` は `params.get('view')` の値）。

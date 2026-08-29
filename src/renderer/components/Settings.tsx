@@ -91,7 +91,6 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
 
         <section>
           <h3>データ</h3>
-          <p className="dim">履歴とアーカイブは端末ごとに持つので、スロットには含まれません。</p>
           <button type="button" className="btn" onClick={() => void window.nemo.openLogFolder()}>
             診断ログのフォルダを開く
           </button>

@@ -65,7 +65,7 @@ run = "node scripts/verify-all.mjs"
 
 [tasks."verify:only"]
 description = "自走検証のうち指定したものだけ回す（例: mise run verify:only phase1 pins）"
-usage = 'arg "<targets>" var=#true help="spike / phase1 / phase2 / pins / switcher / peek / split / call / live-folder / http-auth / vim-scroll / restart / migration / db / slots"'
+usage = 'arg "<targets>" var=#true help="spike / phase1 / phase2 / pins / switcher / peek / split / call / live-folder / http-auth / vim-scroll / restart / migration / db / slots / auth-vault / metrics"'
 run = '''
 #!/usr/bin/env bash
 set -euo pipefail
@@ -120,6 +120,10 @@ run = "node scripts/package.mjs stable"
 description = "常用版をリリースする（ビルド→署名→notarize→GitHub Release→タグ。1コマンドで完結する唯一の経路）"
 usage = 'arg "<version>" default="patch" help="patch / minor / major / x.y.z"'
 run = 'node scripts/release.mjs "$usage_version"'
+
+[tasks."metrics:report"]
+description = "診断ログのメモリ・CPU（metrics.sample）を日別 × チャンネル別に集計して出す"
+run = "node scripts/metrics-report.mjs"
 
 [tasks.licenses]
 description = "依存ライブラリのライセンスを棚卸しする（GPL-3.0 と衝突しないことの確認）"

@@ -23,6 +23,7 @@ import {
   resolveNavigationTarget
 } from './security.js'
 import { log, logError } from './log.js'
+import { startMetricsSampling, stopMetricsSampling } from './metrics.js'
 import { createUiView, disposeUiView, type UiViewKind } from './ui-view.js'
 import { buildSwipeInjection } from '../shared/swipe-gesture.js'
 import { buildVimScrollInjection } from '../shared/vim-scroll.js'
@@ -3368,6 +3369,50 @@ export function updatePinnedUrlFromTab(tab: NemoTab): void {
 let sleepTimer: NodeJS.Timeout | null = null
 let sessionSaveTimer: NodeJS.Timeout | null = null
 
+/** ウィンドウ数・タブ数・休眠タブ数（`metrics.sample` 用）。 */
+export function countTabs(): { windows: number; tabs: number; asleep: number } {
+  let windows = 0
+  let tabs = 0
+  let asleep = 0
+  for (const win of windowsById.values()) {
+    if (win.isDestroyed) continue
+    windows += 1
+    for (const tab of win.tabs) {
+      tabs += 1
+      if (tab.asleep) asleep += 1
+    }
+  }
+  return { windows, tabs, asleep }
+}
+
+/**
+ * renderer の OS pid → そこに同居しているタブ。
+ *
+ * Chromium は同一サイトのタブを 1 つの renderer にまとめるので **pid とタブは 1:1 ではない**。
+ * origin は `redactUrl` を通した値（パス以降は出ない）。休眠タブは WebContents が無いので現れない。
+ * 中身の意味づけ（シークレットは origin を出さない等）は `metrics-summary.js` 側でやる。
+ */
+export function collectTabsByOsPid(): Map<number, { key: string; origin: string; private: boolean }[]> {
+  const result = new Map<number, { key: string; origin: string; private: boolean }[]>()
+  for (const win of windowsById.values()) {
+    if (win.isDestroyed) continue
+    for (const tab of win.tabs) {
+      const contents = tab.webContents
+      if (!contents) continue
+      let pid: number
+      try {
+        pid = contents.getOSProcessId()
+      } catch {
+        continue
+      }
+      const refs = result.get(pid) ?? []
+      refs.push({ key: tab.key, origin: redactUrl(tab.url), private: win.isPrivate })
+      result.set(pid, refs)
+    }
+  }
+  return result
+}
+
 export function startBackgroundWork(): void {
   /*
    * sleep 判定の間隔。既定は 5 秒（`src/shared/timings.js`）。
@@ -3382,6 +3427,7 @@ export function startBackgroundWork(): void {
     sweepArchive()
   }, getTimings().sleepSweepMs)
   sleepTimer.unref?.()
+  startMetricsSampling()
 
   // ピン留め定義が変わったら全ウィンドウのサイドバーを更新する
   onPinsChanged(() => {
@@ -3506,6 +3552,7 @@ function sweepArchive(): void {
 
 export function stopBackgroundWork(): void {
   stopLiveFolders()
+  stopMetricsSampling()
   if (sleepTimer) clearInterval(sleepTimer)
   sleepTimer = null
   if (sessionSaveTimer) clearTimeout(sessionSaveTimer)

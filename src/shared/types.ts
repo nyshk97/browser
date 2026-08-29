@@ -1035,6 +1035,12 @@ export interface NemoUiApi {
    */
   splitDiagnostics(): Promise<SplitDiagnostics | null>
   /**
+   * UI で起きた例外を診断ログ（`ui.error`）へ流す。常用版では DevTools を開かないので、
+   * ここを通さないと `console.error` で消える。**失敗しても reject しない**
+   * （reject が `unhandledrejection` に戻って自分を呼び返すのを断つ）。
+   */
+  reportError(error: { message: string; stack: string | null; view: string }): Promise<void>
+  /**
    * メニューのコマンドを名前で実行する。**本番では何もしない**。
    * ⌘W / ⌘数字 / ⌃Tab はアクセラレータを AppKit が食うので合成キーでは撃てず、
    * 自走検証はここを通す。対象は**呼び出し元のウィンドウ**。

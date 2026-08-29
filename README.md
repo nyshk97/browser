@@ -224,7 +224,7 @@ node scripts/ext-webstore-key.mjs <id>  # Web Store の CRX から公開鍵を�
 | `permissions.json` | origin 単位の権限と外部 protocol の許可 |
 | `session.json` | セッション復元用のタブ一覧（**一時タブだけ**。ピン / Favorites は枠から作り直す） |
 | `history.db` | 履歴（SQLite） |
-| `logs/` | 診断ログ（セッション単位・20 世代でローテーション） |
+| `logs/` | 診断ログ（セッション単位・20 世代でローテーション）。5 分おきの `metrics.sample`（メモリ・CPU。`mise run metrics:report` で集計）と UI の例外 `ui.error` もここ |
 
 ## ディレクトリ
 

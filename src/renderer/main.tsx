@@ -31,6 +31,42 @@ const pane = params.get('pane') === 'right' ? 'right' : 'left'
 document.body.dataset['view'] = view ?? 'sidebar'
 document.body.dataset['pane'] = pane
 
+/*
+ * UI の例外を main の診断ログ（`ui.error`）へ。
+ * 同じ message の連投は 1 分に 1 回に間引く（描画ループの例外でログを埋めない）。
+ */
+const reportedAt = new Map<string, number>()
+const REPORT_THROTTLE_MS = 60_000
+/** 1 セッションで送る上限。可変部分を持つ message（id 入り等）は message キーの間引きをすり抜けるので総量でも止める */
+const MAX_REPORTS_PER_SESSION = 50
+let reported = 0
+function reportUiError(message: string, stack: string | null): void {
+  if (reported >= MAX_REPORTS_PER_SESSION) return
+  const now = Date.now()
+  const last = reportedAt.get(message) ?? 0
+  if (now - last < REPORT_THROTTLE_MS) return
+  reportedAt.set(message, now)
+  reported += 1
+  if (reported === MAX_REPORTS_PER_SESSION) {
+    void window.nemo?.reportError?.({
+      message: `ui.error の上限（${MAX_REPORTS_PER_SESSION} 件）に達した。以後は送らない`,
+      stack: null,
+      view: view ?? 'sidebar'
+    })
+    return
+  }
+  void window.nemo?.reportError?.({ message, stack, view: view ?? 'sidebar' })
+}
+window.addEventListener('error', (event) => {
+  const error = event.error instanceof Error ? event.error : null
+  reportUiError(error?.message ?? event.message ?? 'unknown', error?.stack ?? null)
+})
+window.addEventListener('unhandledrejection', (event) => {
+  const reason: unknown = event.reason
+  const error = reason instanceof Error ? reason : null
+  reportUiError(error?.message ?? String(reason), error?.stack ?? null)
+})
+
 function Root(): React.JSX.Element | null {
   if (view === 'toolbar') return <Toolbar pane={pane} />
   if (view === 'overlay') return <Overlay />

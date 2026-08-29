@@ -98,48 +98,48 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
 - なし（依存の追加・鍵・アカウント不要）
 
 ### Phase 1: `metrics.sample` [AI🤖]
-- [ ] `src/main/metrics.ts` を新設: `sampleMetrics()`（`getAppMetrics()` → 上の形に整形。純粋関数部分は
+- [x] `src/main/metrics.ts` を新設: `sampleMetrics()`（`getAppMetrics()` → 上の形に整形。純粋関数部分は
       `src/shared/metrics-summary.js` に切り出して `scripts/metrics-summary.test.mjs` でユニットテスト。
       **整形結果を `sanitizeDetail` に通しても `[deep]` / `[redacted]` / 200 文字切りが出ないケースを必ず入れる**。
       `ui.error` の frames にも同じ検査を当てる）
       と `startMetricsSampling()` / `stopMetricsSampling()`（`setInterval`、初回空撃ち、
       `NEMO_METRICS_INTERVAL_MS` の扱い）
-- [ ] `startBackgroundWork()` / `stopBackgroundWork()` から呼ぶ（`registry.ts` に直接書かず import）。
+- [x] `startBackgroundWork()` / `stopBackgroundWork()` から呼ぶ（`registry.ts` に直接書かず import）。
       タイマーは `sleepTimer` と同じく `unref?.()` を付ける
-- [ ] タブ ↔ pid の対応表は registry 側に `Map<pid, TabRef[]>`（`{key, origin, private}`）を
+- [x] タブ ↔ pid の対応表は registry 側に `Map<pid, TabRef[]>`（`{key, origin, private}`）を
       返す小さな export を足して `metrics.ts` から使う（registry の内部構造を外に漏らさない）
-- [ ] `NEMO_METRICS_INTERVAL_MS` はパッケージ版では無視して `console.error`（既存の型どおり）
+- [x] `NEMO_METRICS_INTERVAL_MS` はパッケージ版では無視して `console.error`（既存の型どおり）
 
 ### Phase 2: 起動・終了スナップショット [AI🤖]
-- [ ] `app.ready` に `readyMs`（`process.uptime()` ベースで ms。タブが揃う前の値）・`restoredTabs`
+- [x] `app.ready` に `readyMs`（`process.uptime()` ベースで ms。タブが揃う前の値）・`restoredTabs`
       （`restored.windows` のタブ数の合計。registry から数えると常に 0）・`extensions`
       （`loaded.length`。`try` の中の `const` なので手前の `let` に両分岐で代入して参照する。API 呼び出しを増やさない）を追記
-- [ ] `app.quit` に `uptimeMs` と `sampleMetrics()` の結果（`metrics.sample` と同じキー ＋ `source: "quit"`）を追記。
+- [x] `app.quit` に `uptimeMs` と `sampleMetrics()` の結果（`metrics.sample` と同じキー ＋ `source: "quit"`）を追記。
       `stopBackgroundWork()` より前に取る（止めてから取ると `getAppMetrics` は動くが意図が読みにくい）
 
 ### Phase 3: `ui.error` [AI🤖]
-- [ ] `src/preload/ui.ts` に `reportError({message, frames, view})` を公開（`ipcRenderer.invoke` に **必ず `.catch(() => {})`**。
+- [x] `src/preload/ui.ts` に `reportError({message, frames, view})` を公開（`ipcRenderer.invoke` に **必ず `.catch(() => {})`**。
       reject が `unhandledrejection` に戻って自分を呼び返すのを断つ。`view` は `params.get('view')` の値そのまま）。
       stack は行配列にし、**各行を `redactUrl` で置換してから** 10 行程度・1 行 200 文字未満で渡す
       （`sanitizeDetail` は行途中の URL を落とさない）。この変換は純粋関数にしてユニットテストする
-- [ ] `src/renderer/main.tsx` で `window.addEventListener('error' | 'unhandledrejection')` → `reportError`。
+- [x] `src/renderer/main.tsx` で `window.addEventListener('error' | 'unhandledrejection')` → `reportError`。
       同じ message の連投は 1 分 1 回に間引く（無限ループの例外でログを埋めない）
-- [ ] `src/main/ipc.ts` で `ipcMain.handle` として受けて `logError('ui.error', ...)`（メッセージは `error` キーに入る）。
+- [x] `src/main/ipc.ts` で `ipcMain.handle` として受けて `logError('ui.error', ...)`（メッセージは `error` キーに入る）。
       **送信元が Nemo の UI view であることを throw しない判定 1 つで確かめる**（既存の `requireWindow` →
       `requireCallWindow` の二段だと、会議の小窓からの正常系で毎回 `ipc.rejected` が先に残る）。
       両方外れたときだけ `ipc.rejected` を書く（ページの renderer から偽装して撃てない）
-- [ ] 「行途中の URL が落ちる」ことを上の純粋関数のテストで確認（`sanitizeDetail` 側には手を入れない）
+- [x] 「行途中の URL が落ちる」ことを上の純粋関数のテストで確認（`sanitizeDetail` 側には手を入れない）
 
 ### Phase 4: 集計スクリプト [AI🤖]
-- [ ] `scripts/metrics-report.mjs`: 引数なしで常用版・dev 版両方の `logs/` を読み、
+- [x] `scripts/metrics-report.mjs`: 引数なしで常用版・dev 版両方の `logs/` を読み、
       **先頭に読めた期間・セッション数・サンプル数**を出してから、
       日別 × チャンネル別に `memMb` 中央値 / p95・`cpu` 平均・`tabs` 中央値・サンプル数を表で出す。
       `--dir <logs>` で任意ディレクトリ、`--json` で機械可読（`--json` にはセッション別の行も含める）
-- [ ] `.mise.toml` に `[tasks."metrics:report"]`（日本語 `description`）
-- [ ] 集計の中身は `scripts/metrics-report.test.mjs` で固定の jsonl から検証（p95 の境界を含む）
+- [x] `.mise.toml` に `[tasks."metrics:report"]`（日本語 `description`）
+- [x] 集計の中身は `scripts/metrics-report.test.mjs` で固定の jsonl から検証（p95 の境界を含む）
 
 ### Phase 5: 自走検証と登録 [AI🤖]
-- [ ] `scripts/verify-metrics.mjs`: **自分で** `NEMO_METRICS_INTERVAL_MS=2000` を渡して使い捨てプロファイルの
+- [x] `scripts/verify-metrics.mjs`: **自分で** `NEMO_METRICS_INTERVAL_MS=2000` を渡して使い捨てプロファイルの
       Nemo を立て（`slots` / `auth-vault` と同じ型。共有アプリでは env も終了も制御できない）、
       (a) `metrics.sample` が 2 行以上出る（**件数を出力に出す**） (b) 2 行目以降の
       **いずれか**で `total.cpu > 0` かつ `byType` に 1 つ以上の型がある（初回空撃ちが効いている。全行に課すと flake る） (c) 自前で `scripts/test-server.mjs` を空きポートで立て（`NEEDS_APP` でないので verify-all のサーバは無い。
@@ -148,13 +148,13 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
       `ui.error` が 1 行出る（`error` キーと `view` を見る） (e) 終了後の `app.quit` に `uptimeMs` と `total` と `source: "quit"` がある
       (f) `app.ready` に `readyMs > 0` と数値の `extensions` がある（`restoredTabs` は使い捨てプロファイルでは
       再起動をまたがないので 0 のまま。ここでは見ない）
-- [ ] `KNOWN_TARGETS` / `OPT_IN_ONLY` / `OWNERS` に登録（`NEEDS_APP` と `RESTART_COMPANIONS` には入れない）し、
+- [x] `KNOWN_TARGETS` / `OPT_IN_ONLY` / `OWNERS` に登録（`NEEDS_APP` と `RESTART_COMPANIONS` には入れない）し、
       `verify-all.mjs` に `if (want('metrics'))` を配線。**配線を外した状態で 1 回回して検査 0 件を見てから戻す**
       （CLAUDE.md）。`OWNERS` は完全一致の Map なので実名で列挙する:
       `src/main/metrics.ts` / `src/shared/metrics-summary.js` / `scripts/verify-metrics.mjs` /
       `scripts/metrics-report.mjs` / `scripts/metrics-report.test.mjs` / `scripts/metrics-summary.test.mjs`
       （`index.ts` / `registry.ts` / `ipc.ts` / `main.tsx` は載せない）
-- [ ] `VERIFY.md` に「メトリクスの行を見る」「集計を出す」の手順を追記、`docs/CHANGELOG.md` の
+- [x] `VERIFY.md` に「メトリクスの行を見る」「集計を出す」の手順を追記、`docs/CHANGELOG.md` の
       `[Unreleased]` に記入、`README.md` の `logs/` 行にイベント名を添える
 
 ### 動作確認 [人間👨‍💻]
@@ -163,7 +163,13 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
 
 ## ログ
 ### 試したこと・わかったこと
-（実装中に随時追記）
+- preload は DOM の型を持たない（`location` が使えない）ので、`view` は renderer 側から渡す形にした
+- スタックの URL 潰しは `src/shared/ui-error.js` に純粋関数として置き、preload で呼ぶ（`sanitizeDetail` は触っていない）
+- 集計の純粋関数は `scripts/lib/metrics-aggregate.mjs`（CLI の `metrics-report.mjs` を import するとメインが走るため分けた）
+- `verify:only metrics` は起動中の dev 版 Nemo（`mise run dev`）に阻まれた → ユーザーが終了して再実行、14 検査 PASS（2026-08-29）
+- 配線を外した状態で `--only metrics` → 検査 0 件で「すべて PASS」になることを確認してから戻した
+- 同じ origin（127.0.0.1）の 2 タブは**同居せず 2 renderer に分かれた**（`keys` 合計 2 の条件にしておいて正解）
+- `stopChildren`（SIGTERM）でも `before-quit` は走り、`app.quit` の行は残る
 
 ### 方針変更
 （実装中に随時追記）

@@ -973,6 +973,44 @@ mise run verify:only slots      # 保存 / 読み込み / 削除 / 移行の通�
   初回に「Nemo が iCloud Drive 内のファイルへのアクセスを求めています」が出ることがある
 - 読み込み後のサイドバーで、降格したタブが 1 本も消えていないこと
 
+## メモリ・CPU の定期記録と UI 例外
+
+```bash
+mise run verify:only metrics   # metrics.sample / ui.error / app.ready / app.quit の通し（自分で起動する）
+mise run metrics:report        # 常用版・dev 版の logs/ を日別 × チャンネル別に集計
+```
+
+**フルの既定からは外れている**（`OPT_IN_ONLY`）。`src/main/metrics.ts` /
+`src/shared/metrics-summary.js` / `src/shared/ui-error.js` を触ったら `mise run verify:changed` で回る。
+`index.ts` / `registry.ts` / `ipc.ts` / `main.tsx` の配線を触ったときはフルに倒れる。
+
+**間隔は `NEMO_METRICS_INTERVAL_MS` で縮める**（未パッケージのときだけ効く。スクリプトが 2000 を渡している）。
+常用版は 5 分固定。**共有アプリでは env を変えられないので自分で起動する**。
+短縮が効いたときは `metrics.interval_override` が 1 行出る（自走検証はこれを検査条件にしている）。
+
+自走検証が見るもの:
+
+- `metrics.sample` が 2 行以上出る（件数を出す）。2 行目以降の**いずれか**で `total.cpu > 0`
+  かつ `byType` が非空（初回の `getAppMetrics()` は 0 を返すので、空撃ちが効いていることの確認。
+  全行に課すとアイドルな 2 秒窓で flake る）
+- **同じ origin のタブを 2 つ**開くと `top` の `keys` に合計 2 件、`origins` にそのローカル origin がある
+  （同一サイトは 1 renderer にまとまる。`about:blank` は `origins` が `"about:"` で非空になるので使わない）。
+  パス以降（`index.html`）がログに無い
+- `window.nemo.reportError` → `ui.error` が 1 行。`error` / `view` が渡した値で、`frames` からクエリが消えている
+- 終了後の `app.quit` に `uptimeMs` / `total` / `source: "quit"`
+- `app.ready` に `readyMs > 0` と数値の `extensions`（`restoredTabs` は再起動をまたがないので 0 のまま。見ない）
+
+手で見るなら:
+
+```bash
+LOG=~/Library/Application\ Support/Nemo/logs
+grep -h '"event":"metrics.sample"' "$LOG"/*.log | tail -3 | jq -c '{t, tabs, asleep, total, top: [.top[] | {memMb, origins}]}'
+grep -h '"event":"ui.error"' "$LOG"/*.log | tail
+```
+
+`memMb` は `workingSetSize` の合計で、**アクティビティモニタの「メモリ」列とは一致しない**
+（あちらは圧縮分を含む phys_footprint）。同じ指標の時系列比較にだけ使う。
+
 ## Basic 認証の保管庫（別の Mac への持ち出し）
 
 ```bash

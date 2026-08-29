@@ -31,6 +31,7 @@ import { installRuntimeMarker } from './runtime-marker.js'
 import { flushOpenUrls, handleSecondInstance, hasPendingOpenUrls, installOpenUrlHandler } from './open-url.js'
 import { installDownloadHandler } from './downloads.js'
 import { closeLogFile, log, logError, openLogFile } from './log.js'
+import { sampleMetrics } from './metrics.js'
 import { initTimings } from './timings.js'
 import { closeSettings, getSettings, initSettings, updateSettings } from './store/settings.js'
 import { closePins, initPins } from './store/pins.js'
@@ -196,15 +197,16 @@ app
     }
     startCallCoordinator()
 
+    let extensionCount = 0
     try {
       const loaded = await loadLockedExtensions(pageSession)
       setLoadedExtensions(loaded)
-      setExtensionCount(loaded.length)
+      extensionCount = loaded.length
     } catch (error) {
       logError('extension.lock_read_failed', error)
       setLoadedExtensions([])
-      setExtensionCount(0)
     }
+    setExtensionCount(extensionCount)
 
     // セッション復元（正常終了後もクラッシュ後も同じ経路で戻す）
     //
@@ -298,11 +300,16 @@ app
       flushOpenUrls(openExternalUrl)
     }
 
+    // `readyMs` は**タブが揃う前**の値（復元は `whenUiReady` のコールバックで走る）。
+    // 復元タブ数も registry からでなく保存データから数える（この時点では常に 0 になる）
     log('app.ready', {
       channel,
       electron: process.versions.electron,
       chrome: process.versions.chrome,
-      restored: shouldRestore
+      restored: shouldRestore,
+      readyMs: Math.round(process.uptime() * 1000),
+      restoredTabs: shouldRestore ? restored.windows.reduce((n, w) => n + w.tabs.length, 0) : 0,
+      extensions: extensionCount
     })
   })
   .catch((error: unknown) => {
@@ -323,6 +330,14 @@ app.on('before-quit', () => {
   markQuitting()
   // 正常終了。ここで書き切っておくと、次の起動が確実に最新のタブから始まる。
   markCleanExit(collectSession())
+  // 終了時の負荷を 1 行残す（`metrics.sample` と同じ形。集計は両方を読む）。タイマーを止める前に取る。
+  // **診断の 1 行が終了処理を人質に取らない**（投げたら DB とログが閉じないまま落ちる）
+  let lastSample: ReturnType<typeof sampleMetrics> | null = null
+  try {
+    lastSample = sampleMetrics()
+  } catch {
+    /* 記録できなくても終了処理は続ける */
+  }
   stopBackgroundWork()
   stopUpdater()
   // 会議の小窓は復元しない。**ここで必ず破棄する**（webContents を残さない）
@@ -336,6 +351,6 @@ app.on('before-quit', () => {
   stopHttpAuthMatcher()
   closeCallWindowStore()
   closeDb()
-  log('app.quit', {})
+  log('app.quit', lastSample ? { source: 'quit', ...lastSample } : {})
   closeLogFile()
 })

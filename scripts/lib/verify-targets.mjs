@@ -39,7 +39,8 @@ export const KNOWN_TARGETS = [
   'migration', // 旧版セッションからの移行
   'db', // 旧スキーマの履歴 DB からの移行
   'slots', // セーブスロット（保存 / 読み込み / 移行。自分で起動する。OPT_IN_ONLY を見る）
-  'auth-vault' // Basic 認証の保管庫（持ち出し。自分で起動する。OPT_IN_ONLY を見る）
+  'auth-vault', // Basic 認証の保管庫（持ち出し。自分で起動する。OPT_IN_ONLY を見る）
+  'metrics' // メモリ・CPU の定期記録と UI 例外（自分で起動する。OPT_IN_ONLY を見る）
 ]
 
 /** アプリとページサーバを立てる必要があるもの（migration / db は自分で起動する）。 */
@@ -76,7 +77,7 @@ export const NEEDS_APP = [
  * `auth-vault` も同じ（アプリを 4 回起動し直す。**`NEEDS_APP` には入れない** ——
  * 入れると共有のアプリとページサーバまで立ち上がって、使わない起動が 1 つ増える）。
  */
-export const OPT_IN_ONLY = ['vim-scroll', 'slots', 'auth-vault']
+export const OPT_IN_ONLY = ['vim-scroll', 'slots', 'auth-vault', 'metrics']
 
 /**
  * `restart` に相乗りしているスイート。**選んだら `restart` を随伴させる**。
@@ -127,6 +128,7 @@ export const OWNERS = new Map([
   ['scripts/verify-db-migration.mjs', ['db']],
   ['scripts/verify-slots.mjs', ['slots']],
   ['scripts/verify-auth-vault.mjs', ['auth-vault']],
+  ['scripts/verify-metrics.mjs', ['metrics']],
   // セーブスロットだけが読むモジュール（他のスイートは触らない）。
   // `Slots.tsx` は `verify-slots.mjs` が設定画面を開いてカードの描画まで見ている
   // （IPC だけの検証だと描画例外を素通りするので、この割り当てが嘘になる）
@@ -158,6 +160,17 @@ export const OWNERS = new Map([
   ['scripts/auth-vault-schema.test.mjs', ['auth-vault']],
   ['scripts/auth-vault-crypto.test.mjs', ['auth-vault']],
   ['scripts/auth-vault-diff.test.mjs', ['auth-vault']],
+  // メモリ・CPU の定期記録と UI 例外だけが読むモジュール（他のスイートは触らない）。
+  // `index.ts` / `registry.ts` / `ipc.ts` / `main.tsx` に入れた配線はここに載せない（フルに倒す）
+  ['src/main/metrics.ts', ['metrics']],
+  ['src/shared/metrics-summary.js', ['metrics']],
+  // preload バンドルに載るが、`metrics` スイートがアプリを起動して `window.nemo` を触るので全損は拾える
+  ['src/shared/ui-error.js', ['metrics']],
+  ['scripts/metrics-summary.test.mjs', ['metrics']],
+  ['scripts/ui-error.test.mjs', ['metrics']],
+  ['scripts/metrics-report.mjs', ['metrics']],
+  ['scripts/lib/metrics-aggregate.mjs', ['metrics']],
+  ['scripts/metrics-report.test.mjs', ['metrics']],
   // gg / G だけが読む shared のモジュール（他のスイートは触らない）
   ['src/shared/vim-scroll.js', ['vim-scroll']],
   ['scripts/vim-scroll.test.mjs', ['vim-scroll']]

@@ -508,6 +508,14 @@ try {
     if (slotsCode !== 0) exitCode = slotsCode
   }
 
+  if (want('metrics')) {
+    // メモリ・CPU の定期記録。**間隔を環境変数で縮める**ので共有アプリでは回せない。自分で起動する
+    await stopAll()
+    console.log('\n=== メモリ・CPU の定期記録と UI 例外')
+    const metricsCode = await runToCompletion(process.execPath, ['scripts/verify-metrics.mjs'])
+    if (metricsCode !== 0) exitCode = metricsCode
+  }
+
   if (want('auth-vault')) {
     // 保管庫も別建て。**`NEMO_SLOTS_DIR` を自分で振る**必要があるうえ、
     // 「別の Mac」を模すのに `NEMO_USER_DATA_DIR` を 2 つ使うので、ここまでの起動は止めてから回す。

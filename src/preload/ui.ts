@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { injectBrowserAction } from 'electron-chrome-extensions/browser-action'
+import { buildUiErrorDetail } from '../shared/ui-error.js'
 import type {
   AppStatus,
   ArchivedTab,
@@ -79,6 +80,12 @@ const api: NemoUiApi = {
    */
   splitDiagnostics: () =>
     ipcRenderer.invoke('nemo:split-diagnostics').catch(() => null) as Promise<SplitDiagnostics | null>,
+  // URL は**送る前に**ここで潰す（`sanitizeDetail` は行途中の URL を見ない）。
+  // `.catch` は必須。会議の小窓など送信元の検査に落ちても reject を renderer に戻さない
+  reportError: (error) =>
+    ipcRenderer
+      .invoke('nemo:report-ui-error', buildUiErrorDetail(error, error.view))
+      .catch(() => undefined) as Promise<void>,
   runCommandForVerify: (command) =>
     ipcRenderer.invoke('nemo:run-command-for-verify', command).catch(() => false) as Promise<boolean>,
 

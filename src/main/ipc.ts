@@ -1,7 +1,7 @@
 import { app, clipboard, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { PAGE_PARTITION, userDataPath } from './paths.js'
 import { restartServiceWorkers } from './extensions.js'
-import { log } from './log.js'
+import { log, logError } from './log.js'
 import {
   addFavoriteFromTab,
   applySlot,
@@ -198,6 +198,23 @@ function requireCallWindow(event: IpcMainInvokeEvent): void {
   }
 }
 
+/**
+ * `ui.error` 用の送信元検査。**throw しない**。
+ *
+ * `requireWindow` → 失敗なら `requireCallWindow` の二段で書くと、会議の小窓からの正常系で
+ * 毎回 `ipc.rejected` が先に残る。診断ログを読みやすくするのが目的の経路なので、
+ * 両方外れたときだけ 1 行書く。origin の検査は共通で 1 回。
+ */
+function isUiSender(event: IpcMainInvokeEvent): boolean {
+  const known = findWindowByUiWebContents(event.sender) !== null || isCallWindowContents(event.sender)
+  if (known && isUiUrl(senderFrameUrl(event))) return true
+  log('ipc.rejected', {
+    reason: known ? 'sender_not_ui_origin' : 'unknown_sender',
+    senderId: event.sender.id
+  })
+  return false
+}
+
 function requireTab(event: IpcMainInvokeEvent, key: unknown): { win: NemoWindow; tab: NemoTab } {
   const win = requireWindow(event)
   const tab = win.findTab(requireString(key, 'tab key'))
@@ -245,6 +262,20 @@ function resolveInput(input: unknown): string {
 }
 
 export function registerIpcHandlers(): void {
+  /* ---- 診断 ---- */
+  // UI で起きた例外を診断ログへ。URL は preload 側で潰してから来る（`src/shared/ui-error.js`）
+  ipcMain.handle('nemo:report-ui-error', (event, detail: unknown): void => {
+    if (!isUiSender(event)) return
+    if (typeof detail !== 'object' || detail === null) return
+    const { error, frames, view } = detail as { error?: unknown; frames?: unknown; view?: unknown }
+    logError('ui.error', typeof error === 'string' ? error : 'unknown', {
+      view: typeof view === 'string' ? view.slice(0, 32) : 'unknown',
+      frames: Array.isArray(frames)
+        ? frames.filter((f): f is string => typeof f === 'string').slice(0, 10)
+        : []
+    })
+  })
+
   /* ---- 状態 ---- */
   // 起動時のタブは UI のロード完了後に作られるので、
   // 「UI が出た」だけでは registry が空に見える。外はこれを待ってから読む。

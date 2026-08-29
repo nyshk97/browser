@@ -2131,13 +2131,21 @@ body[data-view='toolbar'] {
 
 /* HTTP 認証の自動入力 */
 .http-auth textarea {
+  /* textarea は input と違って共通リセットが無い。色を継承しないと黒文字 + 既定の橙フォーカス枠になる */
+  color: var(--nemo-ink);
   background: var(--nemo-surface);
+  border: 1px solid var(--nemo-border);
   border-radius: var(--nemo-radius);
   padding: 6px 8px;
   width: 320px;
   font-family: inherit;
   font-size: 12px;
   resize: vertical;
+  outline: 0;
+}
+
+.http-auth textarea:focus {
+  border-color: var(--nemo-accent);
 }
 
 /* 貼る欄とその実行ボタンを 1 組にする（ボタンは欄の右下。離れた左下だとどの欄のボタンか分からない） */

@@ -285,8 +285,8 @@ try {
     const expectedHeadings = [
       'Chrome 拡張',
       'GitHub の PR',
-      'HTTP 認証',
-      'HTTP 認証の持ち出し',
+      'Basic 認証',
+      'Basic 認証の持ち出し',
       'ブックマークの持ち出し',
       'データ'
     ]

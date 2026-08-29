@@ -86,7 +86,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
         </SettingsSection>
 
         <SettingsSection
-          title="HTTP 認証"
+          title="Basic 認証"
           sub="Basic 認証を自動で入力します。認証ダイアログで「次回から自動で入力する」を選ぶと増えます"
         >
           <HttpAuthRules />

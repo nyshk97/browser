@@ -636,7 +636,7 @@ async function saveFromDialog(
     detail:
       result.reason === 'no-encryption'
         ? 'この端末では暗号化ストレージが使えないため、パスワードを保存しませんでした。'
-        : `保存に失敗しました（${result.reason}）。設定 > HTTP 認証 から登録し直せます。`
+        : `保存に失敗しました（${result.reason}）。設定 > Basic 認証 から登録し直せます。`
   })
 }
 

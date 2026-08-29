@@ -30,6 +30,8 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-30
+
 ### 追加
 
 - **拡張を端末ごとに ON/OFF できるようになった**。設定画面の「Chrome 拡張」に各拡張のチェックボックスが付き、再起動なしで切り替わる（`settings.json` の `extensions.disabled` に保存。新しい PC では全部 ON）。OFF にした拡張はサイドバーのフッターから消える。切り替えたあと、開いているページはリロードが必要（DevTools は開き直し）。OFF→ON は拡張の再起動にも使える（`chrome.storage.local` の設定は残る）

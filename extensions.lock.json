@@ -18,6 +18,18 @@
       "sha256": "867b5a671ae40f3122b79b580841de9dc37c84b83dd13d34e971fc986e36d6c0",
       "manifestKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmqKbvreshyXRuN2gikeR1idqR6KL0Di89JZcMyD4bjJRZVmQO7aznSGSALIHzSAUGYocUYBNDOP5QAhImxXyQ1qG8+goXs93v9GzrNJETdVuCEhqBggC4/DFabryJZDiKvZ2Jl0DM7MsWdoybZPwrj70V3aJ/nVNOMkf868scNTMliwitCqqjT5baTANsG0DkZWQExD4lSXzSZHH9MEO8q0iZ7RRlNuGRBAkZgNV8FwZRsPKm/rwQ9dy3VpgLcmLp5GiMt+kAEncqKAkuRYnhVXXBsKqIyYTMjHSLkLnpfFySyOPLBdS617i/PGNiP/MT6Xy6z//v5NozUgaAZ4gJQIDAQAB",
       "treeSha256": "5693fc5e9247e47995d8c0fa12f4144d602f15599fcfe1e390c0103ffea9aeb1"
+    },
+    {
+      "id": "neebplgakaahbhdphmkckjjcegoiijjo",
+      "name": "Keepa - Amazon Price Tracker",
+      "version": "5.64",
+      "source": {
+        "type": "chrome-web-store",
+        "url": "https://chromewebstore.google.com/detail/neebplgakaahbhdphmkckjjcegoiijjo"
+      },
+      "sha256": "35a3c6253cd0afce33004781cb7a0cf418d729b0576ebfff92920c8f1dbdead0",
+      "manifestKey": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDD1oAEkEvui5bB9DFRUZX/gxvpP6iHPPl6rcOuEfG0RGaJe3zbNhjVrX2cCRiCMwVI5utJxQ20+Nzsy0QlHWv4XLe2UWI7p1Yt+2jQuIFM4GhXpqofqem7Nlzm5bq9E7BKRQeg5N+ngwSIaZNHVOhB3CgEtrGXYOC9HuS8PV0XcQIDAQAB",
+      "treeSha256": "de4db2ff5510b13b5d6b4030181dcf17a1038c5a0f539e1a4f6a7f5ba005d8de"
     }
   ]
 }

@@ -152,9 +152,18 @@ description = "展開済み拡張が lock と一致しているか検証する�
 run = "node scripts/ext-verify.mjs"
 
 [tasks."ext:update"]
-description = "拡張を指定バージョンへ張り替えて lock を更新する"
-usage = 'arg "<version>" help="張り替え先のバージョン（例: 2026.8.0）"'
-run = 'node scripts/ext-fetch.mjs --update "$usage_version"'
+description = "拡張を指定バージョンへ張り替えて lock を更新する（--id で対象を絞る。省略時は全拡張）"
+usage = '''
+arg "<version>" help="張り替え先のバージョン（例: 2026.8.0）"
+flag "--id <id>" help="対象の拡張 ID（lock に複数あるときは必須級。省略すると全拡張に同じ版を当てる）"
+'''
+run = '''
+if [ -n "$usage_id" ]; then
+  node scripts/ext-fetch.mjs --update "$usage_version" --id "$usage_id"
+else
+  node scripts/ext-fetch.mjs --update "$usage_version"
+fi
+'''
 
 [tasks."ext:rollback"]
 description = "extensions.lock.json を git の状態に戻して拡張を再展開する（キャッシュから復元）"

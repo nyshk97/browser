@@ -15,6 +15,7 @@ Nemo は Electron と `electron-chrome-extensions` の組み合わせが壊れ�
 | `better-sqlite3` | **13.0.3** | prebuild が Node-API なので **Electron 向けの rebuild が不要**（下記） |
 | `electron-builder` | 26.15.3 | fuses の書き換えも任せる |
 | Bitwarden 拡張 | **2026.8.0** | `bitwarden/clients` の `dist-chrome-2026.8.0.zip` |
+| Keepa 拡張 | **5.64** | Chrome Web Store の CRX（`chrome-web-store` ソース）。Amazon 商品ページで価格推移グラフの iframe（`keepa.com/keepaBox.html`）が描画されるところまで確認（2026-08-29） |
 
 検証日: 2026-08-23 / 検証機: macOS 15（Darwin 25.5.0, arm64）
 
@@ -54,7 +55,7 @@ Electron を上げる PR では次を必ず通す（Phase 1-10 / Phase 2-6）:
 
 | API | 状態 |
 |---|---|
-| `chrome.declarativeNetRequest` | **名前空間ごと存在しない**。広告ブロックを内蔵するなら `webRequest` に寄せるか拡張に任せる（Phase 3） |
+| `chrome.declarativeNetRequest` | **manifest で `declarativeNetRequest*` の permission を宣言していない拡張からは名前空間ごと見えない**（Phase 0 の自作テスト拡張で「存在しない」と記録したのはこれ）。宣言していれば Chromium が生やし、Keepa（`declarativeNetRequestWithHostAccess`）は `getSessionRules` / `updateSessionRules` を呼んで動いている。`offscreen` / `alarms` / `cookies` / `contextMenus` も同様に permission 宣言があれば使えた（Keepa 5.64 で実測） |
 | `chrome.sidePanel` | 名前空間はあるが `setOptions` が無い |
 | `chrome.commands` | `getAll()` は返るが **shortcut がすべて空文字**。`electron-chrome-extensions` の `CommandsAPI` は manifest を一覧にするだけで、**アクセラレータを登録せず `onCommand` も dispatch しない**（`globalShortcut` / `commands.onCommand` の呼び出しがソースに1つも無い）。`onCommand.addListener` は呼べてしまうが**永久に発火しない** → 拡張のキーボードショートカット（Bitwarden の ⌘⇧L 自動入力・⌘⇧Y popup など）は動かない |
 
@@ -172,6 +173,17 @@ chrome.runtime.getURL('overlay/menu-button.html')
 `electron-chrome-extensions` は `transitionType` を埋めない。
 `details.transitionType === 'reload'` でリロードを見分ける実装（Bitwarden のバッジ更新の
 経路のひとつ）は**永久に一致しない**。
+
+## Web Store にしか無い拡張（`chrome-web-store` ソース）
+
+Web Store の CRX 取得 URL は**常に最新版**を返す（版の指定はできない）。Nemo は次の形で lock と両立させている:
+
+- `ext:fetch` は取った CRX の `manifest.version` が lock と違えば**止める**（黙って別の版を入れない）。
+  一致した CRX だけ `.ext-cache/<id>/<version>/<id>-<version>.crx` に残すので、以後は Web Store が先へ進んでも復元できる
+- 別の端末で lock の版が取れない（Web Store が先へ進んだ）ときは `mise run ext:update <新しい版> --id <id>` で張り替えるか、
+  `.ext-cache` を持っている端末から CRX を持ってくる
+- CRX ヘッダの公開鍵を `manifestKey` として lock に記録し、2 回目以降は**鍵が同じこと**まで見る（ID が同じでも鍵の差し替えを検知する）
+- `ext:outdated` は本体を落とさず、リダイレクト先のファイル名（`<ID>_5_64_0_0.crx`）から版を読む
 
 ## 更新のたびに要る作業
 

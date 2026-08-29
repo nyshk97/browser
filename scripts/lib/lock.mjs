@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { webStoreCrxUrl } from './crx.mjs'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { artifactDirFor, safeJoin, validateLock } from '../../src/shared/ext-lock.js'
@@ -36,9 +37,27 @@ export function artifactDir(entry) {
 }
 
 export function cachePath(entry) {
+  // Web Store の CRX は URL に版が無い（常に最新版を返す）ので、id と版から名前を決める
+  if (entry.source.type === 'chrome-web-store') {
+    return safeJoin(cacheDir, [entry.id, entry.version, `${entry.id}-${entry.version}.crx`], 'cachePath')
+  }
   // ファイル名は URL 由来なので、basename を取ったうえで cacheDir の中に収まることを必ず確認する
   const name = path.basename(new URL(entry.source.url).pathname) || `${entry.id}-${entry.version}`
   return safeJoin(cacheDir, [entry.id, entry.version, path.basename(name)], 'cachePath')
+}
+
+/**
+ * Web Store に伝える Chrome の版。`minimum_chrome_version` の絞り込みにしか使われないので、
+ * Nemo が積んでいる Chromium（docs/compat.md）に合わせておけばよい。
+ */
+export const WEB_STORE_PRODVERSION = '146.0.0.0'
+
+/**
+ * Web Store から CRX を取る URL。**常に最新版が返る**（版の指定はできない）。
+ * テストや検証で差し替えたいときは `NEMO_WEB_STORE_CRX_URL` を使う。
+ */
+export function webStoreDownloadUrl(entry) {
+  return process.env.NEMO_WEB_STORE_CRX_URL ?? webStoreCrxUrl(entry.id, WEB_STORE_PRODVERSION)
 }
 
 export function sha256File(filePath) {

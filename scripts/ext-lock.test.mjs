@@ -14,7 +14,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { generateKeyPairSync } from 'node:crypto'
+import { createHash, generateKeyPairSync } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -323,5 +323,166 @@ test('safeJoin は base より下の symlink を拒否し、base 上の symlink 
     assert.throws(() => safeJoin(root, ['a', '..', '..']), /想定ディレクトリの外/)
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
+/* ---- chrome-web-store（CRX） ---- */
+
+/** protobuf の length-delimited フィールドを 1 つ作る。 */
+function pbField(fieldNumber, payload) {
+  const tag = (fieldNumber << 3) | 2
+  const varint = (n) => {
+    const out = []
+    do {
+      let byte = n & 0x7f
+      n = Math.floor(n / 128)
+      if (n > 0) byte |= 0x80
+      out.push(byte)
+    } while (n > 0)
+    return Buffer.from(out)
+  }
+  return Buffer.concat([varint(tag), varint(payload.length), payload])
+}
+
+/** 偽の CRX3 を作る（署名は検証していないので中身はダミー）。 */
+function buildCrx3(zipBuffer, publicKeyBase64) {
+  const publicKey = Buffer.from(publicKeyBase64, 'base64')
+  const crxId = createHash('sha256').update(publicKey).digest().subarray(0, 16)
+  const proof = pbField(1, publicKey)
+  const header = Buffer.concat([
+    pbField(2, Buffer.concat([proof, pbField(2, Buffer.alloc(8))])),
+    pbField(10000, pbField(1, crxId))
+  ])
+  const head = Buffer.alloc(12)
+  head.write('Cr24', 0)
+  head.writeUInt32LE(3, 4)
+  head.writeUInt32LE(header.length, 8)
+  return Buffer.concat([head, header, zipBuffer])
+}
+
+function seedCrx(cacheDir, extensionId, version, key, body = '// crx\n') {
+  const zip = new AdmZip()
+  zip.addFile(
+    'manifest.json',
+    Buffer.from(JSON.stringify({ manifest_version: 3, name: 'FakeStore', version, background: {} }))
+  )
+  zip.addFile('background.js', Buffer.from(body))
+  const dest = path.join(cacheDir, extensionId, version, `${extensionId}-${version}.crx`)
+  fs.mkdirSync(path.dirname(dest), { recursive: true })
+  fs.writeFileSync(dest, buildCrx3(zip.toBuffer(), key))
+  return dest
+}
+
+function makeWebStoreWorkspace({ manifestKey = null, lockVersion = '1.0.0' } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nemo-extlock-ws-'))
+  const key = makeExtensionKey()
+  const extensionId = extensionIdFromPublicKey(key)
+  const dirs = {
+    root,
+    lock: path.join(root, 'extensions.lock.json'),
+    extensions: path.join(root, 'extensions'),
+    cache: path.join(root, 'cache')
+  }
+  const entry = {
+    id: extensionId,
+    name: 'FakeStore',
+    version: lockVersion,
+    source: { type: 'chrome-web-store', url: `https://chromewebstore.google.com/detail/${extensionId}` }
+  }
+  if (manifestKey) entry.manifestKey = manifestKey
+  fs.writeFileSync(dirs.lock, `${JSON.stringify({ lockfileVersion: 1, extensions: [entry] }, null, 2)}\n`)
+  return { ...dirs, extensionId, key }
+}
+
+test('chrome-web-store: CRX から公開鍵を取り出して manifestKey を埋め、ID を固定する', () => {
+  const ws = makeWebStoreWorkspace()
+  try {
+    seedCrx(ws.cache, ws.extensionId, '1.0.0', ws.key)
+    const result = run('ext-fetch.mjs', [], ws)
+    assert.equal(result.status, 0, result.stdout + result.stderr)
+    const entry = readLock(ws)
+    assert.equal(entry.manifestKey, ws.key)
+    assert.match(entry.sha256, /^[0-9a-f]{64}$/)
+    assert.match(entry.treeSha256, /^[0-9a-f]{64}$/)
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(ws.extensions, ws.extensionId, '1.0.0_0', 'manifest.json'), 'utf8')
+    )
+    assert.equal(manifest.key, ws.key)
+    assert.equal(run('ext-verify.mjs', [], ws).status, 0)
+  } finally {
+    fs.rmSync(ws.root, { recursive: true, force: true })
+  }
+})
+
+test('chrome-web-store: CRX の鍵が lock の manifestKey と違えば止まる', () => {
+  const ws = makeWebStoreWorkspace({ manifestKey: makeExtensionKey() })
+  try {
+    seedCrx(ws.cache, ws.extensionId, '1.0.0', ws.key)
+    const result = run('ext-fetch.mjs', [], ws)
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /公開鍵が lock の manifestKey と違う|CRX の ID が lock と違う/)
+    assert.equal(fs.existsSync(path.join(ws.extensions, ws.extensionId, '1.0.0_0')), false)
+  } finally {
+    fs.rmSync(ws.root, { recursive: true, force: true })
+  }
+})
+
+test('chrome-web-store: Web Store が別の版を返したら黙って入れずに止まる', async () => {
+  // ダウンロード経路を通す: ローカル HTTP で「最新版 = 2.0.0」の CRX を配る。
+  // **spawnSync は使えない**（イベントループが止まり、このプロセスのサーバーが応答できずデッドロックする）
+  const ws = makeWebStoreWorkspace({ lockVersion: '1.0.0' })
+  const { createServer } = await import('node:http')
+  const { execFile } = await import('node:child_process')
+  const zip = new AdmZip()
+  zip.addFile(
+    'manifest.json',
+    Buffer.from(JSON.stringify({ manifest_version: 3, name: 'FakeStore', version: '2.0.0' }))
+  )
+  const crx = buildCrx3(zip.toBuffer(), ws.key)
+  const server = createServer((_req, res) => res.end(crx))
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const url = `http://127.0.0.1:${server.address().port}/latest.crx`
+  const runAsync = (args) =>
+    new Promise((resolve) => {
+      execFile(
+        process.execPath,
+        [path.join('scripts', 'ext-fetch.mjs'), ...args],
+        {
+          cwd: projectRoot,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            NEMO_EXT_LOCK: ws.lock,
+            NEMO_EXT_DIR: ws.extensions,
+            NEMO_EXT_CACHE: ws.cache,
+            NEMO_WEB_STORE_CRX_URL: url
+          }
+        },
+        (error, stdout, stderr) => resolve({ status: error ? (error.code ?? 1) : 0, stdout, stderr })
+      )
+    })
+  try {
+    const result = await runAsync([])
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /Web Store が配っているのは 2\.0\.0（lock は 1\.0\.0）/)
+    assert.match(result.stderr, /ext:update 2\.0\.0 --id/)
+    // 違う版はキャッシュに残さない（lock の版の置き場所に別の版が居座らない）。
+    // ディレクトリ自体は download が作るので、中身が空であることを見る
+    const staleDir = path.join(ws.cache, ws.extensionId, '1.0.0')
+    assert.deepEqual(fs.existsSync(staleDir) ? fs.readdirSync(staleDir) : [], [])
+    assert.equal(fs.existsSync(path.join(ws.extensions, ws.extensionId, '1.0.0_0')), false)
+
+    // --update で Web Store の版に合わせれば通る
+    const updated = await runAsync(['--update', '2.0.0'])
+    assert.equal(updated.status, 0, updated.stdout + updated.stderr)
+    assert.equal(readLock(ws).version, '2.0.0')
+    assert.equal(
+      fs.existsSync(path.join(ws.cache, ws.extensionId, '2.0.0', `${ws.extensionId}-2.0.0.crx`)),
+      true
+    )
+  } finally {
+    server.closeAllConnections?.()
+    server.close()
+    fs.rmSync(ws.root, { recursive: true, force: true })
   }
 })

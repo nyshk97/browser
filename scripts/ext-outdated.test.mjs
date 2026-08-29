@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { compareVersions, versionsFromTags } from './lib/ext-version.mjs'
+import { compareVersions, versionFromCrxFilename, versionsFromTags } from './lib/ext-version.mjs'
 
 test('バージョンは桁ごとに数値で比べる', () => {
   assert.equal(compareVersions('2026.9.0', '2026.8.0'), 1)
@@ -38,4 +38,17 @@ test('オブジェクト形式のタグも読める / 版の形式でないも�
 test('接尾辞つきのテンプレートにも対応する', () => {
   const tags = ['v1.2.3-browser', 'v1.2.3-desktop']
   assert.deepEqual(versionsFromTags(tags, 'v{version}-browser'), ['1.2.3'])
+})
+
+test('Web Store のリダイレクト先ファイル名から版を読む', () => {
+  assert.equal(
+    versionFromCrxFilename(
+      'https://clients2.googleusercontent.com/crx/blobs/AbC-_x/NEEBPLGAKAAHBHDPHMKCKJJCEGOIIJJO_5_64_0_0.crx'
+    ),
+    '5.64.0.0'
+  )
+  // manifest の `5.64` と同じ版として比べられる（4 桁に揃えられても新しいと誤認しない）
+  assert.equal(compareVersions('5.64.0.0', '5.64'), 0)
+  assert.equal(versionFromCrxFilename('https://example.com/not-a-crx.zip'), null)
+  assert.equal(versionFromCrxFilename('https://example.com/ABC_1_2.crx'), null)
 })

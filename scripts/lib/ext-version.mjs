@@ -44,3 +44,17 @@ export function versionsFromTags(tags, tagTemplate) {
   }
   return versions
 }
+
+/**
+ * Web Store の CRX ダウンロードがリダイレクトする先のファイル名から版を読む。
+ * 形は `<ID 大文字>_5_64_0_0.crx`（Chrome 側で 4 桁に揃えられる）。
+ * `compareVersions` は足りない桁を 0 と見るので、manifest の `5.64` と同じ版として比べられる。
+ * @returns {string | null}
+ */
+export function versionFromCrxFilename(urlOrName) {
+  const name = decodeURIComponent(String(urlOrName).split('?')[0].split('/').at(-1) ?? '')
+  const matched = /^[A-Za-z]{32}_(\d+(?:_\d+)*)\.crx$/.exec(name)
+  if (!matched) return null
+  const version = matched[1].replaceAll('_', '.')
+  return VERSION_RE.test(version) ? version : null
+}

@@ -8,8 +8,8 @@
  * **何も書き換えない**。更新するかどうかは人が決めて `mise run ext:update <version>` を叩く。
  * 自動で最新を取りに行かないのが Nemo の拡張運用の前提（lock された不変 artifact だけをロードする）。
  */
-import { compareVersions, versionsFromTags } from './lib/ext-version.mjs'
-import { readLock } from './lib/lock.mjs'
+import { compareVersions, versionFromCrxFilename, versionsFromTags } from './lib/ext-version.mjs'
+import { readLock, webStoreDownloadUrl } from './lib/lock.mjs'
 
 const args = process.argv.slice(2)
 const asJson = args.includes('--json')
@@ -49,17 +49,36 @@ async function latestForGithubRelease(entry) {
   return found.sort(compareVersions).at(-1)
 }
 
+/**
+ * Web Store は「最新版の CRX へのリダイレクト」しか返さないが、
+ * リダイレクト先のファイル名に版が入っているので、本体を落とさずに版だけ読める。
+ */
+async function latestForWebStore(entry) {
+  const response = await fetch(webStoreDownloadUrl(entry), { redirect: 'manual' })
+  const location = response.headers.get('location')
+  if (!location) throw new Error(`Web Store がリダイレクトを返さない（${response.status}）`)
+  const version = versionFromCrxFilename(location)
+  if (!version) throw new Error(`リダイレクト先から版を読めない: ${location}`)
+  return version
+}
+
 const lock = readLock()
 const results = []
 let failed = false
 
 for (const entry of lock.extensions) {
-  if (entry.source.type !== 'github-release') {
+  const resolver =
+    entry.source.type === 'github-release'
+      ? latestForGithubRelease
+      : entry.source.type === 'chrome-web-store'
+        ? latestForWebStore
+        : null
+  if (!resolver) {
     results.push({ id: entry.id, name: entry.name, current: entry.version, latest: null, note: '確認先なし' })
     continue
   }
   try {
-    const latest = await latestForGithubRelease(entry)
+    const latest = await resolver(entry)
     results.push({
       id: entry.id,
       name: entry.name,

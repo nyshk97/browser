@@ -6,6 +6,10 @@
  * - Chrome Web Store の installExtension はバージョン指定ができず「常に最新版」しか取れない。
  *   よって lock からの再現インストールは Web Store 経由では成立しない。
  * - 代わりに「バージョン付き URL + sha256」を lock に持ち、そこから直接展開する。
+ * - Web Store にしか無い拡張（Keepa 等）は `chrome-web-store` ソースで扱う。取れるのは常に最新版なので、
+ *   **取った CRX の版が lock と違えば止める**（黙って別の版を入れない）。取れた CRX は
+ *   `.ext-cache` に版付きで残るので、それ以降は Web Store が先へ進んでも同じ版を復元できる。
+ *   CRX の公開鍵は lock の `manifestKey` と突き合わせ、ID が変わっていないことも見る。
  * - unpacked 拡張は ID がロード元パスから導出されるため、版が変わると ID も変わり
  *   chrome.storage（= 拡張の設定）が失われる。これを避けるため manifest.key を注入して
  *   ID を Web Store と同じ値に固定する。
@@ -15,8 +19,10 @@
  *
  * 使い方:
  *   node scripts/ext-fetch.mjs                    lock どおりに materialize する
- *   node scripts/ext-fetch.mjs --update <version> github-release の対象版へ lock を張り替える
+ *   node scripts/ext-fetch.mjs --update <version> 対象版へ lock を張り替える
  *   node scripts/ext-fetch.mjs --update <version> --id <extensionId>
+ *   （chrome-web-store は Web Store が今配っている版しか指定できない。
+ *     版は `mise run ext:outdated` で分かる）
  *
  * ロールバック:
  *   git checkout extensions.lock.json && node scripts/ext-fetch.mjs
@@ -25,11 +31,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import AdmZip from 'adm-zip'
-import { extensionIdFromPublicKey } from './lib/crx.mjs'
+import { extensionIdFromPublicKey, parseCrx3 } from './lib/crx.mjs'
 import {
   artifactDir,
   cachePath,
   download,
+  webStoreDownloadUrl,
   extensionRootFor,
   extensionsDir,
   hashExtensionTree,
@@ -97,15 +104,30 @@ function findManifestRoot(rootDir) {
 async function materialize(entry) {
   const target = artifactDir(entry)
   const cache = cachePath(entry)
+  const isWebStore = entry.source.type === 'chrome-web-store'
 
+  // Web Store は最新版しか返さないので、版を確かめるまではキャッシュに入れない
+  // （入れてしまうと「lock の版のキャッシュ」に別の版が居座る）
+  let archive = cache
   if (!fs.existsSync(cache)) {
-    info(`download ${entry.source.url}`)
-    await download(entry.source.url, cache)
+    const url = isWebStore ? webStoreDownloadUrl(entry) : entry.source.url
+    info(`download ${url}`)
+    archive = isWebStore ? `${cache}.download` : cache
+    await download(url, archive)
   } else {
     info(`cache hit ${path.relative(process.cwd(), cache)}`)
   }
 
-  const actualHash = sha256File(cache)
+  try {
+    await materializeArchive(entry, archive, cache, target)
+  } finally {
+    if (archive !== cache) fs.rmSync(archive, { force: true })
+  }
+}
+
+async function materializeArchive(entry, archive, cache, target) {
+  const isWebStore = entry.source.type === 'chrome-web-store'
+  const actualHash = sha256File(archive)
   if (entry.sha256 && entry.sha256 !== actualHash) {
     // キャッシュが壊れている / 上流が同じ URL で差し替えた可能性
     throw new Error(`${entry.id}: sha256 mismatch\n  expected ${entry.sha256}\n  actual   ${actualHash}`)
@@ -122,7 +144,20 @@ async function materialize(entry) {
   fs.mkdirSync(tmp, { recursive: true })
 
   try {
-    new AdmZip(cache).extractAllTo(tmp, true)
+    let crx = null
+    if (isWebStore) {
+      crx = parseCrx3(fs.readFileSync(archive))
+      if (crx.extensionId !== entry.id) {
+        throw new Error(`${entry.id}: CRX の ID が lock と違う (${crx.extensionId})`)
+      }
+      if (entry.manifestKey && entry.manifestKey !== crx.publicKey) {
+        throw new Error(
+          `${entry.id}: CRX の公開鍵が lock の manifestKey と違う（ID は同じでも鍵が差し替わっている）`
+        )
+      }
+      entry.manifestKey = crx.publicKey
+    }
+    new AdmZip(crx ? crx.zip : archive).extractAllTo(tmp, true)
     const manifestRoot = entry.unpackedRoot
       ? safeJoin(tmp, entry.unpackedRoot.split('/').filter(Boolean), 'unpackedRoot')
       : safeJoin(tmp, [path.relative(tmp, findManifestRoot(tmp))].filter(Boolean), 'manifestRoot')
@@ -130,10 +165,20 @@ async function materialize(entry) {
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
 
     if (manifest.version !== entry.version) {
+      if (isWebStore) {
+        throw new Error(
+          `${entry.id}: Web Store が配っているのは ${manifest.version}（lock は ${entry.version}）。\n` +
+            `  Web Store は最新版しか返さないので、この端末では lock の版を取れない。\n` +
+            `  更新するなら: mise run ext:update ${manifest.version} --id ${entry.id}\n` +
+            `  lock の版のまま使うなら: .ext-cache を持っている端末から ${path.relative(process.cwd(), cache)} を持ってくる`
+        )
+      }
       throw new Error(
         `${entry.id}: manifest version mismatch (lock ${entry.version} / artifact ${manifest.version})`
       )
     }
+    // 版が lock と一致した CRX だけをキャッシュに残す
+    if (archive !== cache) fs.renameSync(archive, cache)
 
     // 拡張 ID を版に依らず固定する
     if (entry.manifestKey) {
@@ -215,15 +260,17 @@ if (targets.length === 0) {
 async function run() {
   for (const entry of targets) {
     if (updateVersion) {
-      if (entry.source.type !== 'github-release') {
-        throw new Error(`${entry.id}: --update は github-release ソースのみ対応`)
+      if (entry.source.type === 'github-release') {
+        const { tag, asset, url } = githubAssetUrl(entry, updateVersion)
+        entry.source.tag = tag
+        entry.source.asset = asset
+        entry.source.url = url
+      } else if (entry.source.type !== 'chrome-web-store') {
+        throw new Error(`${entry.id}: --update は github-release / chrome-web-store ソースのみ対応`)
       }
-      const { tag, asset, url } = githubAssetUrl(entry, updateVersion)
+      // chrome-web-store は URL に版が無い。取った CRX の版が updateVersion と違えば materialize が止める
       info(`update ${entry.id}: ${entry.version} -> ${updateVersion}`)
       entry.version = updateVersion
-      entry.source.tag = tag
-      entry.source.asset = asset
-      entry.source.url = url
       clearDerivedFields(entry)
     }
     await materialize(entry)

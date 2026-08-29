@@ -30,6 +30,10 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 
 ## [Unreleased]
 
+### 追加
+
+- **Keepa（Amazon の価格推移グラフ）が入った**。Amazon の商品ページを開くと、商品画像の下に価格の推移と最安値の履歴が出る。Chrome Web Store にしか無い拡張を lock に載せられるようになった（`chrome-web-store` ソース）ので、今後も Web Store 配布の拡張を同じ手順で足せる
+
 ## [0.7.0] - 2026-08-29
 
 ### 追加

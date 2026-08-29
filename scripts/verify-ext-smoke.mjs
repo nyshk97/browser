@@ -131,7 +131,12 @@ try {
   const loaded = await ui.ev('window.nemo.getExtensions().then((e) => JSON.stringify(e))').then(JSON.parse)
   check(
     'lock どおりの ID / version でロードされる',
-    loaded.length === 1 && loaded[0].id === expected.id && loaded[0].version === expected.version,
+    // ロード失敗行も lock の id / version で一覧に残るので、`enabled && matchesLock`（= ロードできた）まで見る
+    loaded.length === 1 &&
+      loaded[0].id === expected.id &&
+      loaded[0].version === expected.version &&
+      loaded[0].enabled === true &&
+      loaded[0].matchesLock === true,
     JSON.stringify(loaded.map((e) => `${e.id} ${e.version}`))
   )
   check('オプションページが検出される', Boolean(loaded[0]?.optionsUrl), loaded[0]?.optionsUrl ?? '')
@@ -543,7 +548,110 @@ try {
       () => ''
     )
     check('拡張のオプションページを Nemo から開ける', ready === 'options-ready', ready)
+
+    /* ---- 6b. 拡張ページ向けの chrome.* 補完（chrome.debugger の空実装） ---- */
+    // Nemo の preload（extension-shim）は electron-chrome-extensions の preload より**先に登録**
+    // されている必要がある（後者が最後に `Object.freeze(chrome)` する）。登録順が崩れると
+    // ここが `undefined` になる。**同時に `chrome.runtime.id` が生きている**ことも見る
+    // （shim が別の `chrome` オブジェクトを作って ece の注入先がずれていないこと）。
+    const shim = await options
+      .ev(
+        `JSON.stringify({
+          debugger: typeof chrome.debugger,
+          addListener: typeof chrome.debugger?.onEvent?.addListener,
+          runtimeId: chrome.runtime?.id ?? null,
+          tabs: typeof chrome.tabs
+        })`
+      )
+      .then(JSON.parse)
+    check(
+      '拡張ページに chrome.debugger の空実装が生えている（ece の freeze より先）',
+      shim.debugger === 'object' && shim.addListener === 'function',
+      JSON.stringify(shim)
+    )
+    check(
+      'shim を入れても chrome.runtime.id / chrome.tabs は生きている（ece の注入先がずれていない）',
+      shim.runtimeId === expected.id && shim.tabs === 'object',
+      JSON.stringify(shim)
+    )
     options.close()
+
+    const leak = await page
+      .ev(`JSON.stringify({ chrome: typeof window.chrome, debugger: typeof window.chrome?.debugger })`)
+      .then(JSON.parse)
+    check(
+      '素のページには chrome.debugger が漏れていない',
+      leak.debugger === 'undefined',
+      JSON.stringify(leak)
+    )
+  }
+
+  /* ---- 6c. DevTools パネル（devtools_page）の frame にも補完が届く ---- */
+  // GraphQL Network Inspector が真っ白になった経路そのもの。パネルの iframe は
+  // DevTools がパネルを初めて表示したときに作られるので、⌘] でパネルを順送りして到達させる。
+  {
+    const devKey = await ui.ev(`window.nemo.createTab('${pages}/login.html').then((k) => k)`)
+    await sleep(2000)
+    await ui.ev(`window.nemo.toggleDevTools(${JSON.stringify(devKey)}).then(() => 'ok')`)
+    const devtoolsTarget = await (async () => {
+      const deadline = Date.now() + 15000
+      while (Date.now() < deadline) {
+        const found = (await listTargets(cdp)).find((t) => t.url.startsWith('devtools://'))
+        if (found) return found
+        await sleep(500)
+      }
+      return null
+    })()
+    check('DevTools が開く', Boolean(devtoolsTarget))
+    if (devtoolsTarget) {
+      const devtools = await connect(devtoolsTarget.webSocketDebuggerUrl)
+      await sleep(3000)
+      let panelTarget = null
+      for (let i = 0; i < 16 && !panelTarget; i += 1) {
+        const key = { key: ']', code: 'BracketRight', modifiers: 4, windowsVirtualKeyCode: 221 }
+        await devtools.send('Input.dispatchKeyEvent', { type: 'keyDown', ...key })
+        await devtools.send('Input.dispatchKeyEvent', { type: 'keyUp', ...key })
+        await sleep(800)
+        panelTarget =
+          (await listTargets(cdp)).find((t) => t.url.includes(`${expected.id}/panel.html`)) ?? null
+      }
+      check('devtools_page が足したパネルが DevTools に出る', Boolean(panelTarget), panelTarget?.url ?? '')
+      if (panelTarget) {
+        const panel = await connect(panelTarget.webSocketDebuggerUrl)
+        const apis = await waitFor(panel, `document.getElementById('panel-apis')?.textContent ?? ''`)
+          .then((text) => JSON.parse(text))
+          .catch((error) => ({ error: error.message }))
+        check(
+          'DevTools パネルの frame にも chrome.debugger の空実装が届く（CDP 経路: src/main/devtools-shim.ts）',
+          apis.debugger === 'object' && apis.onEvent === 'function' && apis.addListenerOk === true,
+          JSON.stringify(apis)
+        )
+        // webRequest の tabId フィルタ（Electron は tabId: -1 で流すので、外さないと一度も発火しない）
+        await ui.ev(`window.nemo.getWindowState().then(() => 'ok')`)
+        const pageForDevtools = await connectTo(cdp, '/login.html')
+        await pageForDevtools.ev(`fetch('${pages}/iframe.html?from-devtools-probe').then((r) => r.status)`)
+        const webRequestSeen = await waitFor(
+          panel,
+          `(document.getElementById('panel-webrequest')?.textContent ?? '').includes('from-devtools-probe') ? document.getElementById('panel-webrequest').textContent : ''`,
+          { timeoutMs: 10000 }
+        ).catch((error) => `TIMEOUT: ${error.message}`)
+        check(
+          'パネルの { tabId } 付き webRequest listener に inspected tab のリクエストが届く（tabId フィルタの補完）',
+          webRequestSeen.includes('from-devtools-probe'),
+          webRequestSeen.slice(0, 200)
+        )
+        pageForDevtools.close()
+        check(
+          'パネルの frame で chrome.runtime.id / chrome.devtools が生きている',
+          apis.runtimeId === expected.id && apis.devtools === 'object',
+          JSON.stringify(apis)
+        )
+        panel.close()
+      }
+      devtools.close()
+    }
+    await ui.ev(`window.nemo.closeTab(${JSON.stringify(devKey)}).then(() => 'ok')`)
+    await sleep(500)
   }
 
   /* ---- 7. service worker の idle 停止をまたぐ ---- */
@@ -598,18 +706,145 @@ try {
     }
   }
 
+  /* ---- 7b. 端末ごとの ON/OFF（再起動なし） ---- */
+  {
+    const idJson = JSON.stringify(expected.id)
+    const extTargets = async () =>
+      (await listTargets(cdp)).filter((t) => t.url.startsWith(`chrome-extension://${expected.id}/`))
+    const contentMark = async () => {
+      await page.send('Page.reload')
+      await sleep(2500)
+      return page.ev(`document.documentElement.getAttribute('data-nemo-ci')`)
+    }
+    // OFF の前に「動いている」ことを示す（0 件の検査は直前が 1 件以上あってこそ意味がある）
+    {
+      const sw = await swSession()
+      await sw.ev(`chrome.storage.local.set({ __nemo_toggle__: 'kept' }).then(() => 'ok')`)
+      sw.close()
+    }
+    check('OFF の前: service worker が動いている', Boolean(await swTarget()))
+    check('OFF の前: content script が入っている', (await contentMark()) === 'top')
+    // ページから拡張ページへのトップレベル遷移は ON でも拒否される方針（3c）なので、allowlist の
+    // 「OFF で外れる」は `openExtensionOptions` が開かないことで見る（chrome.tabs.create も同じ allowlist を通る）
+
+    // lock に無い ID は拒否される
+    const bogus = 'b'.repeat(32)
+    const rejected = await ui.ev(
+      `window.nemo.setExtensionEnabled('${bogus}', false).then(() => 'accepted', (e) => 'rejected: ' + e.message)`
+    )
+    check('lock に無い ID の ON/OFF は拒否される', rejected.startsWith('rejected'), rejected)
+
+    // OFF
+    const afterOff = await ui
+      .ev(`window.nemo.setExtensionEnabled(${idJson}, false).then((e) => JSON.stringify(e))`)
+      .then(JSON.parse)
+    check(
+      'OFF にすると一覧に enabled: false で残る（optionsUrl は null）',
+      afterOff.length === 1 && afterOff[0].enabled === false && afterOff[0].optionsUrl === null,
+      JSON.stringify(afterOff)
+    )
+    const swGone = await (async () => {
+      const deadline = Date.now() + 15000
+      while (Date.now() < deadline) {
+        if (!(await swTarget())) return true
+        await sleep(300)
+      }
+      return false
+    })()
+    check('OFF にすると service worker が消える', swGone)
+    check('OFF にするとリロード後に content script が入らない', (await contentMark()) === null)
+    const optionsCountBefore = (await extTargets()).length
+    await ui.ev(`window.nemo.openExtensionOptions(${idJson}).then(() => 'ok')`)
+    await sleep(1000)
+    check(
+      'OFF の間は「設定を開く」で拡張ページが開かない',
+      (await extTargets()).length === optionsCountBefore,
+      `${optionsCountBefore} → ${(await extTargets()).length}`
+    )
+    const shared = await ui
+      .ev('window.nemo.getSharedState().then((s) => JSON.stringify(s.extensions))')
+      .then(JSON.parse)
+    check(
+      'OFF が SharedState（サイドバー）にも届く',
+      shared.length === 1 && shared[0].enabled === false,
+      JSON.stringify(shared)
+    )
+    const settingsOff = JSON.parse(fs.readFileSync(path.join(userDataDir, 'settings.json'), 'utf8'))
+    check(
+      'settings.json の extensions.disabled に書かれる',
+      Array.isArray(settingsOff.data?.extensions?.disabled) &&
+        settingsOff.data.extensions.disabled.includes(expected.id),
+      JSON.stringify(settingsOff.data?.extensions)
+    )
+
+    // ON
+    const afterOn = await ui
+      .ev(`window.nemo.setExtensionEnabled(${idJson}, true).then((e) => JSON.stringify(e))`)
+      .then(JSON.parse)
+    check(
+      'ON に戻すと一覧が enabled: true に戻る（optionsUrl も戻る）',
+      afterOn.length === 1 && afterOn[0].enabled === true && Boolean(afterOn[0].optionsUrl),
+      JSON.stringify(afterOn)
+    )
+    const swBack = await (async () => {
+      const deadline = Date.now() + 20000
+      while (Date.now() < deadline) {
+        if (await swTarget()) return true
+        await sleep(500)
+      }
+      return false
+    })()
+    check('ON に戻すと service worker が起動する', swBack)
+    check('ON に戻すとリロード後に content script が入る', (await contentMark()) === 'top')
+    {
+      const sw = await swSession()
+      const value = await sw
+        .ev(`chrome.storage.local.get('__nemo_toggle__').then((v) => JSON.stringify(v))`)
+        .then(JSON.parse)
+      check(
+        'OFF→ON をまたいで chrome.storage.local が残る',
+        value['__nemo_toggle__'] === 'kept',
+        JSON.stringify(value)
+      )
+      sw.close()
+    }
+    const settingsOn = JSON.parse(fs.readFileSync(path.join(userDataDir, 'settings.json'), 'utf8'))
+    check(
+      'ON に戻すと settings.json の disabled から消える',
+      Array.isArray(settingsOn.data?.extensions?.disabled) &&
+        !settingsOn.data.extensions.disabled.includes(expected.id),
+      JSON.stringify(settingsOn.data?.extensions)
+    )
+  }
+
   /* ---- 8. 再起動をまたぐ chrome.storage ---- */
   {
     const sw = await swSession()
     await sw.ev(`chrome.storage.local.set({ __nemo_restart__: 'before' }).then(() => 'ok')`)
     sw.close()
   }
+  // OFF のまま再起動して、設定が効いていることも同じ枠で見る
+  await ui.ev(`window.nemo.setExtensionEnabled(${JSON.stringify(expected.id)}, false).then(() => 'ok')`)
   ui.close()
   page.close()
   await stopAll()
 
   await startPagesServer()
   await startApp()
+  {
+    const ui2 = await connectUi(cdp)
+    const afterRestart = await ui2
+      .ev('window.nemo.getExtensions().then((e) => JSON.stringify(e))')
+      .then(JSON.parse)
+    check(
+      '再起動後も OFF のまま（一覧に enabled: false で載る）',
+      afterRestart.length === 1 && afterRestart[0].enabled === false,
+      JSON.stringify(afterRestart)
+    )
+    check('再起動後も OFF なら service worker は起動しない', !(await swTarget()))
+    await ui2.ev(`window.nemo.setExtensionEnabled(${JSON.stringify(expected.id)}, true).then(() => 'ok')`)
+    ui2.close()
+  }
   {
     const sw = await swSession()
     const value = await sw

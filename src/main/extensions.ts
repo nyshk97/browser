@@ -3,11 +3,14 @@ import { ElectronChromeExtensions } from 'electron-chrome-extensions'
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { extensionsDir, extensionsLockPath } from './paths.js'
 import { log, logError } from './log.js'
 import { hashExtensionTree } from '../shared/tree-hash.js'
 import { artifactDirFor, validateLock } from '../shared/ext-lock.js'
 import { redactUrl, resolveNavigationTarget, setLoadedExtensionIds } from './security.js'
+import { getLoadedExtensions, setLoadedExtensions } from './extension-state.js'
+import { getSettings, updateSettings } from './store/settings.js'
 import type { LoadedExtensionInfo } from '../shared/types.js'
 import {
   createTab,
@@ -68,114 +71,225 @@ export function artifactPath(entry: LockedExtension): string {
  * Web Store の installExtension は「常に最新版」しか取れず lock から復元できないため、
  * ここでは Web Store 経路を一切通らない。lock に無い ID は構造上ロードされない
  * （= allowlist が実装として保証される）。
+ *
+ * 戻り値は **lock の全エントリ**（この端末で OFF のものも `enabled: false` で含む。
+ * 設定画面に出すため。ON なのにロードに失敗した行も `matchesLock: false` で残す）。
+ * ナビゲーション allowlist と起動ステータスの件数には **ON かつロードできたものだけ**を流す
+ * （`publish` / `extension-state.ts` の `getLoadedOkExtensions`）。
  */
 export async function loadLockedExtensions(session: Electron.Session): Promise<LoadedExtensionInfo[]> {
   const lock = readLock()
+  const disabled = new Set(getSettings().extensions.disabled)
   const results: LoadedExtensionInfo[] = []
 
   for (const entry of lock.extensions) {
-    const dir = artifactPath(entry)
-    if (!fs.existsSync(path.join(dir, 'manifest.json'))) {
-      logError('extension.load_failed', new Error('artifact not materialized'), {
-        id: entry.id,
-        version: entry.version,
-        path: dir,
-        hint: 'pnpm ext:fetch'
-      })
+    if (disabled.has(entry.id)) {
+      // OFF の間は整合性照合もしない（止めた分のコストを起動に残さない。検証は ON に戻すとき）
+      results.push(disabledInfo(entry))
+      log('extension.skipped_disabled', { id: entry.id, version: entry.version })
       continue
     }
+    results.push((await loadLockedEntry(session, entry)) ?? failedInfo(entry))
+  }
 
-    // ロードする前に「実際に実行されるコード」を照合する。
-    // ここを通らないものは loadExtension に渡さない。
-    if (!entry.treeSha256) {
-      logError('extension.integrity_failed', new Error('lock に treeSha256 が無い'), {
-        id: entry.id,
-        version: entry.version,
-        hint: 'pnpm ext:fetch'
+  publish(results)
+  return results
+}
+
+/**
+ * ON なのにロードできなかった行（artifact 欠落・treeSha256 不一致・id/version 不一致）。
+ * 一覧から落とすと設定画面では lock に無いのと区別が付かないので、`matchesLock: false` で残して
+ * 「lock 不一致」の表示に載せる。OFF→ON で再ロードを試せる（`setExtensionEnabled`）。
+ */
+function failedInfo(entry: LockedExtension): LoadedExtensionInfo {
+  return { ...disabledInfo(entry), enabled: true, matchesLock: false }
+}
+
+/** OFF の行。ロードしていないので name / version は lock から取る。 */
+function disabledInfo(entry: LockedExtension): LoadedExtensionInfo {
+  return {
+    id: entry.id,
+    name: entry.name,
+    version: entry.version,
+    enabled: false,
+    matchesLock: true,
+    path: artifactPath(entry),
+    optionsUrl: null
+  }
+}
+
+/** 一覧を差し替えて、allowlist と購読者（SharedState の push）に流す。 */
+function publish(results: LoadedExtensionInfo[]): void {
+  // chrome-extension:// のナビゲーションを許可する対象を、実際にロードできたものだけに絞る
+  // （ON だがロードに失敗した行 = `matchesLock: false` は含めない）
+  setLoadedExtensionIds(results.filter((r) => r.enabled && r.matchesLock).map((r) => r.id))
+  setLoadedExtensions(results)
+}
+
+/**
+ * lock の 1 エントリぶんをロードする: 整合性照合 → `loadExtension` → id/version 照合 → SW 起動。
+ * 起動時（`loadLockedExtensions`）とトグル（`setExtensionEnabled`）の**両方がここを通る**
+ * （分けると OFF→ON で service worker が起きず「再起動ボタン」にならない）。
+ * ロードできなければ null（理由はログに出している）。
+ */
+async function loadLockedEntry(
+  session: Electron.Session,
+  entry: LockedExtension
+): Promise<LoadedExtensionInfo | null> {
+  const dir = artifactPath(entry)
+  if (!fs.existsSync(path.join(dir, 'manifest.json'))) {
+    logError('extension.load_failed', new Error('artifact not materialized'), {
+      id: entry.id,
+      version: entry.version,
+      path: dir,
+      hint: 'pnpm ext:fetch'
+    })
+    return null
+  }
+
+  // ロードする前に「実際に実行されるコード」を照合する。
+  // ここを通らないものは loadExtension に渡さない。
+  if (!entry.treeSha256) {
+    logError('extension.integrity_failed', new Error('lock に treeSha256 が無い'), {
+      id: entry.id,
+      version: entry.version,
+      hint: 'pnpm ext:fetch'
+    })
+    return null
+  }
+  let treeHash: string
+  try {
+    treeHash = hashExtensionTree(dir)
+  } catch (error) {
+    logError('extension.integrity_failed', error, { id: entry.id, version: entry.version })
+    return null
+  }
+  if (treeHash !== entry.treeSha256) {
+    logError('extension.integrity_failed', new Error('展開済みツリーが lock と一致しない'), {
+      id: entry.id,
+      version: entry.version,
+      expected: entry.treeSha256,
+      actual: treeHash
+    })
+    return null
+  }
+
+  try {
+    const extension = await session.extensions.loadExtension(dir)
+    const matchesLock = extension.id === entry.id && extension.manifest.version === entry.version
+
+    if (!matchesLock) {
+      // ID が変わると chrome.storage が別物になり、拡張の設定が失われる。
+      // 検知だけでは不十分なので、ロードしたものを必ず外す。
+      logError('extension.lock_mismatch', new Error('id/version mismatch'), {
+        expectedId: entry.id,
+        actualId: extension.id,
+        expectedVersion: entry.version,
+        actualVersion: extension.manifest.version
       })
-      continue
-    }
-    let treeHash: string
-    try {
-      treeHash = hashExtensionTree(dir)
-    } catch (error) {
-      logError('extension.integrity_failed', error, { id: entry.id, version: entry.version })
-      continue
-    }
-    if (treeHash !== entry.treeSha256) {
-      logError('extension.integrity_failed', new Error('展開済みツリーが lock と一致しない'), {
-        id: entry.id,
-        version: entry.version,
-        expected: entry.treeSha256,
-        actual: treeHash
-      })
-      continue
+      session.extensions.removeExtension(extension.id)
+      return null
     }
 
-    try {
-      const extension = await session.extensions.loadExtension(dir)
-      const matchesLock = extension.id === entry.id && extension.manifest.version === entry.version
+    const info: LoadedExtensionInfo = {
+      id: extension.id,
+      name: extension.name,
+      version: extension.manifest.version,
+      enabled: true,
+      matchesLock,
+      path: dir,
+      optionsUrl: optionsPageUrl(extension)
+    }
+    log('extension.loaded', { id: extension.id, version: extension.manifest.version })
 
-      if (!matchesLock) {
-        // ID が変わると chrome.storage が別物になり、拡張の設定が失われる。
-        // 検知だけでは不十分なので、ロードしたものを必ず外す。
-        logError('extension.lock_mismatch', new Error('id/version mismatch'), {
-          expectedId: entry.id,
-          actualId: extension.id,
-          expectedVersion: entry.version,
-          actualVersion: extension.manifest.version
-        })
-        session.extensions.removeExtension(extension.id)
-        continue
-      }
-
-      results.push({
-        id: extension.id,
-        name: extension.name,
-        version: extension.manifest.version,
-        matchesLock,
-        path: dir,
-        optionsUrl: optionsPageUrl(extension)
-      })
-      log('extension.loaded', { id: extension.id, version: extension.manifest.version })
-
-      if (extension.manifest.manifest_version === 3 && extension.manifest.background?.service_worker) {
-        // ロード直後は Chromium 側の登録がまだ終わっておらず、1回目は失敗することがある。
-        // そのまま error として出すと**実際には動いているのにログが赤くなる**ので、
-        // 少し待って running を確認できたら失敗として扱わない。
-        // ロード直後は Chromium 側の登録がまだ終わっておらず、1回目は失敗することがある
-        // （CI の遅いマシンで実際に踏んだ）。少し待って running を確認し、
-        // それでもだめならもう一度だけ起動を頼む。error にするのは最後。
-        const scope = `chrome-extension://${extension.id}`
-        try {
-          await session.serviceWorkers.startWorkerForScope(scope)
-        } catch (firstError) {
-          if (await waitForServiceWorker(session, extension.id, 5000)) {
-            log('extension.service_worker_started_late', { id: extension.id })
-          } else {
-            try {
-              await session.serviceWorkers.startWorkerForScope(scope)
-              log('extension.service_worker_started_on_retry', { id: extension.id })
-            } catch (retryError) {
-              if (await waitForServiceWorker(session, extension.id, 5000)) {
-                log('extension.service_worker_started_late', { id: extension.id })
-              } else {
-                logError('extension.service_worker_start_failed', retryError ?? firstError, {
-                  id: extension.id
-                })
-              }
+    if (extension.manifest.manifest_version === 3 && extension.manifest.background?.service_worker) {
+      // ロード直後は Chromium 側の登録がまだ終わっておらず、1回目は失敗することがある
+      // （CI の遅いマシンで実際に踏んだ）。少し待って running を確認し、
+      // それでもだめならもう一度だけ起動を頼む。error にするのは最後。
+      const scope = `chrome-extension://${extension.id}`
+      try {
+        await session.serviceWorkers.startWorkerForScope(scope)
+      } catch (firstError) {
+        if (await waitForServiceWorker(session, extension.id, 5000)) {
+          log('extension.service_worker_started_late', { id: extension.id })
+        } else {
+          try {
+            await session.serviceWorkers.startWorkerForScope(scope)
+            log('extension.service_worker_started_on_retry', { id: extension.id })
+          } catch (retryError) {
+            if (await waitForServiceWorker(session, extension.id, 5000)) {
+              log('extension.service_worker_started_late', { id: extension.id })
+            } else {
+              logError('extension.service_worker_start_failed', retryError ?? firstError, {
+                id: extension.id
+              })
             }
           }
         }
       }
-    } catch (error) {
-      logError('extension.load_failed', error, { id: entry.id, version: entry.version, path: dir })
     }
+    return info
+  } catch (error) {
+    logError('extension.load_failed', error, { id: entry.id, version: entry.version, path: dir })
+    return null
+  }
+}
+
+/** トグルは直列に流す（並行して走ると後発が先発の一覧を上書きし、allowlist が再起動までズレる）。 */
+let toggleChain: Promise<unknown> = Promise.resolve()
+
+/**
+ * 拡張をこの端末で ON/OFF する（再起動なし）。
+ *
+ * - lock に無い ID は拒否する（allowlist の性質を崩さない）
+ * - OFF: `removeExtension`。service worker と `chrome.storage.session` は消えるが
+ *   `chrome.storage.local` は Chromium のプロファイルに残る（ON に戻せば元どおり）
+ * - ON: 起動時と同じ経路（整合性照合 → ロード → SW 起動）。照合に落ちれば例外にして OFF のまま
+ *
+ * どちらも `settings.extensions.disabled` を更新して保存する。
+ */
+export function setExtensionEnabled(
+  session: Electron.Session,
+  id: string,
+  enabled: boolean
+): Promise<LoadedExtensionInfo[]> {
+  const run = toggleChain.then(() => toggleExtension(session, id, enabled))
+  toggleChain = run.catch(() => {})
+  return run
+}
+
+async function toggleExtension(
+  session: Electron.Session,
+  id: string,
+  enabled: boolean
+): Promise<LoadedExtensionInfo[]> {
+  const entry = readLock().extensions.find((item) => item.id === id)
+  if (!entry) throw new Error(`lock に無い拡張: ${id}`)
+
+  const current = getLoadedExtensions()
+  const index = current.findIndex((item) => item.id === id)
+  const before = index >= 0 ? current[index] : null
+
+  let next: LoadedExtensionInfo
+  if (enabled) {
+    // ロード済みなら何もしない（ロードに失敗した行は enabled でも実体が無いので、再ロードを試す）
+    if (before?.enabled && session.extensions.getExtension(id)) return current
+    const info = await loadLockedEntry(session, entry)
+    if (!info) throw new Error(`拡張をロードできない: ${id}（診断ログ参照）`)
+    next = info
+  } else {
+    if (session.extensions.getExtension(id)) session.extensions.removeExtension(id)
+    next = disabledInfo(entry)
   }
 
-  // chrome-extension:// のナビゲーションを許可する対象を、実際にロードできたものだけに絞る
-  setLoadedExtensionIds(results.map((r) => r.id))
+  const disabled = new Set(getSettings().extensions.disabled)
+  if (enabled) disabled.delete(id)
+  else disabled.add(id)
+  updateSettings({ extensions: { disabled: [...disabled] } })
 
+  const results = index >= 0 ? current.map((item, i) => (i === index ? next : item)) : [...current, next]
+  publish(results)
+  log(enabled ? 'extension.enabled' : 'extension.disabled', { id, version: entry.version })
   return results
 }
 
@@ -346,6 +460,28 @@ export function watchExtensionPopups(extensions: ElectronChromeExtensions): void
       if (!contents.isDestroyed()) contents.openDevTools({ mode: 'detach' })
     })
   })
+}
+
+const extensionShimPath = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'preload',
+  'extension-shim.cjs'
+)
+
+/**
+ * 拡張ページ向けの `chrome.*` 補完（`src/preload/extension-shim.ts`）を pageSession に登録する。
+ * `createExtensions()` より**前**に呼ぶ（ece の preload の `Object.freeze(chrome)` より先に走らせる）。
+ * パッケージの同梱漏れは `exists: false` のログで捕まえる（`verify-packaged` が見る）。
+ */
+export function registerExtensionShim(session: Electron.Session): void {
+  const exists = fs.existsSync(extensionShimPath)
+  if (exists) {
+    session.registerPreloadScript({ id: 'nemo-extension-shim', type: 'frame', filePath: extensionShimPath })
+  } else {
+    logError('extension.shim_missing', new Error('extension-shim.cjs が無い'), { path: extensionShimPath })
+  }
+  log('extension.shim_registered', { exists })
 }
 
 /** Nemo のタブ / ウィンドウモデルと chrome.tabs / chrome.windows を接続する。 */

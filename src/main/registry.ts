@@ -29,6 +29,8 @@ import { buildSwipeInjection } from '../shared/swipe-gesture.js'
 import { buildVimScrollInjection } from '../shared/vim-scroll.js'
 import { cancelPrompts, currentPrompt, setPromptNotifier } from './prompts.js'
 import { getSettings } from './store/settings.js'
+import { getLoadedExtensions, onExtensionsChanged } from './extension-state.js'
+import { attachDevToolsExtensionShim } from './devtools-shim.js'
 import { getTimings } from './timings.js'
 import {
   addFavorite as addFavoriteDefinition,
@@ -174,7 +176,8 @@ const PAGE_WEB_PREFERENCES = {
   contextIsolation: true,
   nodeIntegration: false,
   webSecurity: true,
-  // ページ側 preload には特権 API を一切載せない（そもそも指定しない）
+  // ページ側 preload には**特権 API を**載せない。WebPreferences では指定せず、session に登録した
+  // preload（electron-chrome-extensions のもの・拡張ページ向けの `chrome.*` 補完）だけが走る
   safeDialogs: true
 } as const
 /** サイドバーを隠しているときに残す掴みしろ（macOS の信号機ボタンぶん）。 */
@@ -802,6 +805,8 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
 
   attachSwipeNavigation(tab, wc)
   attachVimScroll(tab, wc)
+  // DevTools の中の拡張パネルに `chrome.debugger` の空実装を配る（preload はサブフレームに届かない）
+  wc.on('devtools-opened', () => attachDevToolsExtensionShim(wc))
 
   // ページが自分で閉じた（`window.close()`）ときの後始末。
   //
@@ -949,7 +954,7 @@ function attachPopup(host: PopupHost, url: string, guest: WebContents | undefine
  *
  * そこで判定コードを**隔離ワールド**へ入れ、ページの `wheel` から判定する。
  * ワールドが分かれているのでページからは覗けず、特権 API も渡らない
- * （ページ側 preload を持たない方針は崩さない）。履歴を動かすのはページ内の
+ * （ページ側 preload に特権 API を載せない方針は崩さない）。履歴を動かすのはページ内の
  * `history.back()` で、Nemo 側の状態は既存の `did-navigate` が拾う。
  */
 const SWIPE_WORLD_ID = 1729
@@ -1872,7 +1877,8 @@ export class NemoWindow {
       downloads: listDownloads(this.downloadScope),
       version: app.getVersion(),
       update: getUpdateState(),
-      liveFolder: this.isPrivate ? null : getLiveFolderState()
+      liveFolder: this.isPrivate ? null : getLiveFolderState(),
+      extensions: getLoadedExtensions()
     }
   }
 
@@ -3442,6 +3448,10 @@ export function startBackgroundWork(): void {
   })
   // Live Folder（GitHub の PR）。**契機を足さないと、取得しても誰にも届かない**
   onLiveFolderChanged(() => {
+    for (const win of windowsById.values()) win.pushShared()
+  })
+  // 拡張の ON/OFF（設定画面のトグル）。invoke の戻り値だけだと他ウィンドウのフッターが直らない
+  onExtensionsChanged(() => {
     for (const win of windowsById.values()) win.pushShared()
   })
   // 未読の判定に「いま見られているタブ」が要るので、registry から借りる形で渡す

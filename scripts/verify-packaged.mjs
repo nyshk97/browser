@@ -26,6 +26,23 @@ import {
 } from './lib/harness.mjs'
 import { DEFAULT_TIMINGS } from '../src/shared/timings.js'
 
+/**
+ * 拡張ページ向けの preload（`preload/extension-shim.cjs`）がパッケージに同梱されているか。
+ * main は登録時に `extension.shim_registered` を `exists` 付きで出す。欠けていても起動は
+ * 成功するので（拡張の DevTools パネルが真っ白になるだけ）、ここで明示的に見る。
+ */
+function checkExtensionShim(userDataDir) {
+  // `readLogLines` は生の文字列行を返す（`timings.resolved` の検査と同じ扱い）
+  const events = readLogLines(userDataDir)
+    .filter((line) => line.includes('"event":"extension.shim_registered"'))
+    .map((line) => JSON.parse(line))
+  check(
+    '拡張ページ向けの preload（extension-shim.cjs）が同梱されている',
+    events.length > 0 && events.every((line) => line.exists === true),
+    JSON.stringify(events.map((line) => line.exists))
+  )
+}
+
 const channel = process.argv[2] === 'stable' ? 'stable' : 'dev'
 const productName = channel === 'stable' ? 'Nemo' : 'Nemo Dev'
 
@@ -124,6 +141,7 @@ try {
 
     const loaded = countLogEvents(userDataDir, 'extension.loaded')
     check('lock された拡張がパッケージ後もロードされる', loaded > 0, `${loaded} 件`)
+    checkExtensionShim(userDataDir)
 
     const logDir = path.join(userDataDir, 'logs')
     check('診断ログがデータディレクトリに出る', fs.existsSync(logDir) && fs.readdirSync(logDir).length > 0)
@@ -151,6 +169,7 @@ try {
       extensions.length > 0 && extensions.every((e) => e.matchesLock),
       extensions.map((e) => `${e.name} ${e.version}`).join(', ') || '（1つもロードされていない）'
     )
+    checkExtensionShim(userDataDir)
 
     // SQLite（better-sqlite3 のネイティブバイナリが asar の外に出ていないとここで落ちる）。
     // **タブを閉じてから**候補を引く。開いたままだと「タブ」候補で一致してしまい、

@@ -32,6 +32,8 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 
 ### 追加
 
+- **拡張を端末ごとに ON/OFF できるようになった**。設定画面の「Chrome 拡張」に各拡張のチェックボックスが付き、再起動なしで切り替わる（`settings.json` の `extensions.disabled` に保存。新しい PC では全部 ON）。OFF にした拡張はサイドバーのフッターから消える。切り替えたあと、開いているページはリロードが必要（DevTools は開き直し）。OFF→ON は拡張の再起動にも使える（`chrome.storage.local` の設定は残る）
+- **GraphQL Network Inspector が入った**。DevTools に「GraphQL Network」パネルが増え、HTTP 経由の GraphQL（Query / Mutation）が一覧になる。WebSocket（Subscriptions）タブは常に空（Electron に `chrome.debugger` が無いため。Nemo は空実装を拡張ページにだけ生やしている）
 - **Keepa（Amazon の価格推移グラフ）が入った**。Amazon の商品ページを開くと、商品画像の下に価格の推移と最安値の履歴が出る。Chrome Web Store にしか無い拡張を lock に載せられるようになった（`chrome-web-store` ソース）ので、今後も Web Store 配布の拡張を同じ手順で足せる
 
 ## [0.7.0] - 2026-08-29

@@ -1,4 +1,6 @@
 // @ts-check
+import { EXTENSION_ID_RE } from './ext-lock.js'
+
 /**
  * 設定 JSON のスキーマ・既定値・マイグレーション。
  *
@@ -19,7 +21,8 @@ export const DEFAULT_SETTINGS = {
   keybindings: {},
   restoreSession: true,
   askDownloadLocation: false,
-  liveFolderEnabled: true
+  liveFolderEnabled: true,
+  extensions: { disabled: [] }
 }
 
 /**
@@ -51,12 +54,29 @@ export function normalizeSettings(raw) {
         ? input['askDownloadLocation']
         : DEFAULT_SETTINGS.askDownloadLocation,
     // **`SETTINGS_VERSION` は上げない**。キーの追加はここが既定値で埋めるので、
-    // 既存の `settings.json` をそのまま読める（版を上げると同期先の古い Nemo が拒否する）
+    // 既存の `settings.json` をそのまま読める（版を上げると古い Nemo が読めなくなる）
     liveFolderEnabled:
       typeof input['liveFolderEnabled'] === 'boolean'
         ? input['liveFolderEnabled']
-        : DEFAULT_SETTINGS.liveFolderEnabled
+        : DEFAULT_SETTINGS.liveFolderEnabled,
+    // ネストしたオブジェクトは**毎回ここで組み立て直す**。`updateSettings` の浅いマージで
+    // `extensions` ごと置き換わっても、未指定のキーが既定値で埋まる
+    extensions: normalizeExtensionSettings(input['extensions'])
   }
+}
+
+/**
+ * 端末ごとの拡張の ON/OFF。lock は「何を同梱するか」、ここは「この端末で何を動かすか」。
+ * 拡張 ID の形をしていないものは捨てる（`setExtensionEnabled` 側で lock との照合をする）。
+ * @param {unknown} value
+ * @returns {import('./types.js').NemoSettings['extensions']}
+ */
+function normalizeExtensionSettings(value) {
+  const input = isRecord(value) ? value : {}
+  const disabled = Array.isArray(input['disabled'])
+    ? [...new Set(input['disabled'].filter((id) => typeof id === 'string' && EXTENSION_ID_RE.test(id)))]
+    : []
+  return { disabled }
 }
 
 /**

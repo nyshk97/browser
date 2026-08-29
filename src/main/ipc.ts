@@ -1,6 +1,7 @@
 import { app, clipboard, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { PAGE_PARTITION, userDataPath } from './paths.js'
-import { restartServiceWorkers } from './extensions.js'
+import { restartServiceWorkers, setExtensionEnabled } from './extensions.js'
+import { getLoadedExtensions } from './extension-state.js'
 import { log, logError } from './log.js'
 import {
   addFavoriteFromTab,
@@ -135,12 +136,6 @@ import type {
  *
  * 引数の型も1つずつ検査する（`unknown` で受けて narrow する）。
  */
-
-let loadedExtensions: LoadedExtensionInfo[] = []
-
-export function setLoadedExtensions(extensions: LoadedExtensionInfo[]): void {
-  loadedExtensions = extensions
-}
 
 function requireWindow(event: IpcMainInvokeEvent): NemoWindow {
   const win = findWindowByUiWebContents(event.sender)
@@ -294,7 +289,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('nemo:get-visible-tab-keys', (event): string[] => requireWindow(event).getVisibleTabKeys())
   ipcMain.handle('nemo:get-extensions', (event): LoadedExtensionInfo[] => {
     requireWindow(event)
-    return loadedExtensions
+    return getLoadedExtensions()
   })
 
   /* ---- タブ ---- */
@@ -679,12 +674,23 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('nemo:open-extension-options', (event, extensionId: unknown) => {
     const win = requireWindow(event)
     const id = requireString(extensionId, 'extensionId')
-    const extension = loadedExtensions.find((item) => item.id === id)
+    const extension = getLoadedExtensions().find((item) => item.id === id)
+    // OFF の行は optionsUrl が null なので、ここで自然に弾かれる
     if (!extension?.optionsUrl) return
     // 拡張ページなので通常のナビゲーション検証（http/https のみ）は通らない。
     // ロード済み拡張の自分のページに限って createTab 側の allowExtensionPages が通す。
     createTab(win, extension.optionsUrl)
   })
+
+  ipcMain.handle(
+    'nemo:set-extension-enabled',
+    (event, extensionId: unknown, enabled: unknown): Promise<LoadedExtensionInfo[]> => {
+      requireWindow(event)
+      const id = requireString(extensionId, 'extensionId')
+      if (typeof enabled !== 'boolean') throw new Error('enabled must be boolean')
+      return setExtensionEnabled(session.fromPartition(PAGE_PARTITION), id, enabled)
+    }
+  )
 
   ipcMain.handle('nemo:restart-service-workers', async (event) => {
     requireWindow(event)

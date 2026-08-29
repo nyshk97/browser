@@ -72,7 +72,11 @@ export default defineConfig(({ command }) => {
       plugins: [externalizeDepsPlugin({ exclude: ['electron-chrome-extensions'] })],
       build: {
         rollupOptions: {
-          input: { ui: resolve('src/preload/ui.ts') },
+          input: {
+            ui: resolve('src/preload/ui.ts'),
+            // 拡張ページ向けの chrome.* 補完（`src/main/index.ts` が pageSession に登録する）
+            'extension-shim': resolve('src/preload/extension-shim.ts')
+          },
           output: {
             // sandbox: true の preload は ESM をロードできないため CJS で出す
             format: 'cjs',

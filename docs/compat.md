@@ -16,8 +16,9 @@ Nemo は Electron と `electron-chrome-extensions` の組み合わせが壊れ�
 | `electron-builder` | 26.15.3 | fuses の書き換えも任せる |
 | Bitwarden 拡張 | **2026.8.0** | `bitwarden/clients` の `dist-chrome-2026.8.0.zip` |
 | Keepa 拡張 | **5.64** | Chrome Web Store の CRX（`chrome-web-store` ソース）。Amazon 商品ページで価格推移グラフの iframe（`keepa.com/keepaBox.html`）が描画されるところまで確認（2026-08-29） |
+| GraphQL Network Inspector 拡張 | **2.26.1** | Chrome Web Store の CRX。DevTools の「GraphQL Network」パネルに HTTP 経由の GraphQL（Query / Mutation）が並ぶところまで確認（2026-08-29）。**WebSocket（Subscriptions）タブは常に空**（`chrome.debugger` が Nemo のスタブなので） |
 
-検証日: 2026-08-23 / 検証機: macOS 15（Darwin 25.5.0, arm64）
+検証日: 2026-08-23（拡張の ON/OFF・`chrome.debugger` / `webRequest` の補完は 2026-08-29〜30）/ 検証機: macOS 15（Darwin 25.5.0, arm64）
 
 ## Electron 42 以降を避けている理由
 
@@ -57,6 +58,8 @@ Electron を上げる PR では次を必ず通す（Phase 1-10 / Phase 2-6）:
 |---|---|
 | `chrome.declarativeNetRequest` | **manifest で `declarativeNetRequest*` の permission を宣言していない拡張からは名前空間ごと見えない**（Phase 0 の自作テスト拡張で「存在しない」と記録したのはこれ）。宣言していれば Chromium が生やし、Keepa（`declarativeNetRequestWithHostAccess`）は `getSessionRules` / `updateSessionRules` を呼んで動いている。`offscreen` / `alarms` / `cookies` / `contextMenus` も同様に permission 宣言があれば使えた（Keepa 5.64 で実測） |
 | `chrome.sidePanel` | 名前空間はあるが `setOptions` が無い |
+| `chrome.debugger` | Electron は生やさない（service worker でも拡張ページでも `undefined`）。**Nemo が拡張ページ（`chrome-extension://`）にだけ空実装を生やしている**（`src/shared/chrome-debugger-stub.js`。`onEvent` / `onDetach` の `addListener` は呼べるが発火しない、`attach` / `detach` / `sendCommand` は callback を呼んで成功扱い、`getTargets` は `[]`）。GraphQL Network Inspector が起動時に `chrome.debugger.onEvent.addListener` を呼んで真っ白になるのを避けるためで、**`chrome.debugger` に依存する機能（WebSocket の捕捉など）は動かない**。Electron が実装したら shim は自動的に退く（既にあれば触らない）。配り方は 2 経路: 通常の拡張ページは preload（`src/preload/extension-shim.ts`）、**DevTools の中の拡張 frame（devtools_page / パネル）には preload が届かない**ので `src/main/devtools-shim.ts` が DevTools の webContents に CDP で付いて `Page.addScriptToEvaluateOnNewDocument` で入れる（`Page.enable` が無いとプロセスまたぎで消える） |
+| `chrome.webRequest` の `tabId` | イベント自体は来るが **`details.tabId` が常に `-1`**（Electron が webContents を拡張の tabId に対応付けない）。`{ tabId }` で filter した listener は一度も発火しない → Nemo のスタブが `addListener` の filter から `tabId` を外している（全タブぶんが来る。GraphQL Network Inspector は `devtools.network.onRequestFinished` と突き合わせるので inspected tab 以外は一覧に出ない） |
 | `chrome.commands` | `getAll()` は返るが **shortcut がすべて空文字**。`electron-chrome-extensions` の `CommandsAPI` は manifest を一覧にするだけで、**アクセラレータを登録せず `onCommand` も dispatch しない**（`globalShortcut` / `commands.onCommand` の呼び出しがソースに1つも無い）。`onCommand.addListener` は呼べてしまうが**永久に発火しない** → 拡張のキーボードショートカット（Bitwarden の ⌘⇧L 自動入力・⌘⇧Y popup など）は動かない |
 
 `chrome.storage` は `local` / `session` / `sync` のいずれも読み書きできた

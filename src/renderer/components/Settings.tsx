@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { HTTP_AUTH_LIMITS } from '../../shared/http-auth-rules.js'
+import { useSharedState } from '../useNemo.js'
 import { Slots } from './Slots.js'
 import { AuthVault } from './AuthVault.js'
 import { SettingsSection } from './SettingsSection.js'
@@ -26,11 +27,8 @@ import type {
  * パッケージ版はそこに出る。
  */
 export function Settings({ onClose }: { onClose: () => void }): React.JSX.Element {
-  const [extensions, setExtensions] = useState<LoadedExtensionInfo[]>([])
-
-  useEffect(() => {
-    void window.nemo.getExtensions().then(setExtensions)
-  }, [])
+  // 一覧は SharedState から（トグル後は main が全ウィンドウへ push する）
+  const { extensions } = useSharedState()
 
   return (
     <div className="panel settings">
@@ -52,26 +50,17 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
           }
         >
           {extensions.length === 0 ? (
-            <p className="dim">ロードされている Chrome 拡張はありません</p>
+            <p className="dim">lock にある Chrome 拡張はありません</p>
           ) : (
-            extensions.map((extension) => (
-              <div key={extension.id} className="set-row">
-                <span>
-                  {extension.name} <span className="dim">{extension.version}</span>
-                  {extension.matchesLock ? '' : <span className="warn"> lock 不一致</span>}
-                </span>
-                <div className="spacer" />
-                {extension.optionsUrl ? (
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={() => void window.nemo.openExtensionOptions(extension.id)}
-                  >
-                    設定を開く
-                  </button>
-                ) : null}
-              </div>
-            ))
+            <>
+              {extensions.map((extension) => (
+                <ExtensionRow key={extension.id} extension={extension} />
+              ))}
+              <p className="dim">
+                ON/OFF はこの端末だけに効きます。切り替えたあと、開いているページはリロードが必要です
+                （DevTools は開き直し）。OFF→ON は拡張の再起動にも使えます。
+              </p>
+            </>
           )}
           <p className="dim">
             追加・更新は <code>mise run ext:outdated</code> / <code>ext:update</code> から行います。
@@ -102,6 +91,56 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
           </button>
         </SettingsSection>
       </div>
+    </div>
+  )
+}
+
+/** 拡張 1 行ぶん（トグル・lock 不一致の警告・「設定を開く」）。 */
+function ExtensionRow({ extension }: { extension: LoadedExtensionInfo }): React.JSX.Element {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const toggle = useCallback(
+    async (enabled: boolean) => {
+      setBusy(true)
+      setError(null)
+      try {
+        await window.nemo.setExtensionEnabled(extension.id, enabled)
+      } catch (cause) {
+        // ON に戻せない（整合性照合に落ちた等）は行に出す。一覧自体は main の push で直る
+        // ipcMain.handle の例外は `Error invoking remote method '…': Error: <理由>` で来るので理由だけ出す
+        const message = cause instanceof Error ? cause.message : String(cause)
+        setError(message.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, ''))
+      } finally {
+        setBusy(false)
+      }
+    },
+    [extension.id]
+  )
+
+  return (
+    <div className="set-row" data-extension-id={extension.id} data-enabled={String(extension.enabled)}>
+      <label className={extension.enabled ? '' : 'dim'}>
+        <input
+          type="checkbox"
+          checked={extension.enabled}
+          disabled={busy}
+          onChange={(event) => void toggle(event.target.checked)}
+        />{' '}
+        {extension.name} <span className="dim">{extension.version}</span>
+        {extension.matchesLock ? '' : <span className="warn"> lock 不一致</span>}
+      </label>
+      {error ? <span className="warn">{error}</span> : null}
+      <div className="spacer" />
+      {extension.optionsUrl ? (
+        <button
+          type="button"
+          className="btn"
+          onClick={() => void window.nemo.openExtensionOptions(extension.id)}
+        >
+          設定を開く
+        </button>
+      ) : null}
     </div>
   )
 }

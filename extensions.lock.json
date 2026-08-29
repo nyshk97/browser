@@ -29,7 +29,19 @@
       },
       "sha256": "35a3c6253cd0afce33004781cb7a0cf418d729b0576ebfff92920c8f1dbdead0",
       "manifestKey": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDD1oAEkEvui5bB9DFRUZX/gxvpP6iHPPl6rcOuEfG0RGaJe3zbNhjVrX2cCRiCMwVI5utJxQ20+Nzsy0QlHWv4XLe2UWI7p1Yt+2jQuIFM4GhXpqofqem7Nlzm5bq9E7BKRQeg5N+ngwSIaZNHVOhB3CgEtrGXYOC9HuS8PV0XcQIDAQAB",
-      "treeSha256": "de4db2ff5510b13b5d6b4030181dcf17a1038c5a0f539e1a4f6a7f5ba005d8de"
+      "treeSha256": "812f6d0befcc66d336c806f6de25525ddedcbcfcc9a40df326d13677148a2424"
+    },
+    {
+      "id": "ndlbedplllcgconngcnfmkadhokfaaln",
+      "name": "GraphQL Network Inspector",
+      "version": "2.26.1",
+      "source": {
+        "type": "chrome-web-store",
+        "url": "https://chromewebstore.google.com/detail/ndlbedplllcgconngcnfmkadhokfaaln"
+      },
+      "sha256": "ea3e6888bff690373578f1de9d7482583667b96d7139a88762e456f992fa2206",
+      "manifestKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAkYtOEsNWHlDmcHQPrR2YqLYStZJ19EH7Cg05Gxw/gkvyR2DwGdKSp9rjzbi1WMjI8zeH9+M1PRyTK8chMzxj3U2TV4AQ4qBmMUSs4/V23NjzxfcC84JLVt1r6zn1eSdkY0zbiJL7uze5LRN7Y+njP2HVPVCxD586vzSTOEw+7TOWJLSC7btTvA22ExHoIxwz2B+u33BsDiFWstKljhDojWF3xuqNtt0DFe9hGEiUvZzPCWUAaMISd5geCtbgGEPQH6mYv3W6yxGeGml/2n4KB5dD790jC4shvQZETkUlHdOeGLgg8j03dJ/OOcazCdSohgw3g3p+rKm+zHLCj87KYwIDAQAB",
+      "treeSha256": "30a4b9154669db2c2544064b1922f3d74ae34a4582a7cf0b44ef73a217e36ad9"
     }
   ]
 }

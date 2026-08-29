@@ -382,6 +382,8 @@ export interface SharedState {
    * 設定で無効にしているときも `null`。
    */
   liveFolder: LiveFolderState | null
+  /** lock にある拡張の一覧（OFF も含む。`enabled` で見分ける）。 */
+  extensions: LoadedExtensionInfo[]
 }
 
 /**
@@ -767,6 +769,14 @@ export interface NemoSettings {
    * UI からは変えられない（常に出す）。`settings.json` に false を書いた場合だけ隠れる。
    */
   liveFolderEnabled: boolean
+  /**
+   * 拡張の端末ごとの ON/OFF。lock は「アプリに何を同梱するか」（全端末共通）、
+   * ここは「この端末で何を動かすか」。新規 PC では全部 ON（`disabled: []`）。
+   */
+  extensions: {
+    /** 無効化した拡張の ID（lock に無い ID は無視される）。 */
+    disabled: string[]
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -777,10 +787,20 @@ export interface LoadedExtensionInfo {
   id: string
   name: string
   version: string
-  /** lock で期待していた ID / version と一致したか。 */
+  /**
+   * この端末で有効か。OFF のものは lock にあるがロードしていない
+   * （設定画面に出すために一覧には含める。サイドバーのフッターは ON だけ出す）。
+   */
+  enabled: boolean
+  /**
+   * lock で期待していた ID / version と一致したか。
+   * **OFF の行は照合していないので常に `true`**（警告を出さない）。
+   * **ON なのにロードできなかった行は `false`**（`enabled: true` + `matchesLock: false` + `optionsUrl: null`）。
+   * 「実際にロードできた」は `enabled && matchesLock`（allowlist・起動ステータスの件数はこれで絞る）。
+   */
   matchesLock: boolean
   path: string
-  /** オプションページを持っているか。 */
+  /** オプションページの URL。**OFF の行は `null`**（「設定を開く」は ON のときだけ）。 */
   optionsUrl: string | null
 }
 
@@ -935,6 +955,12 @@ export interface NemoUiApi {
 
   /* 拡張 */
   openExtensionOptions(extensionId: string): Promise<void>
+  /**
+   * 拡張をこの端末で ON/OFF する（再起動なし）。lock に無い ID は拒否する。
+   * OFF→ON で service worker と `chrome.storage.session` は作り直されるが、
+   * 開いているページの content script はリロードしないと再注入されない。
+   */
+  setExtensionEnabled(extensionId: string, enabled: boolean): Promise<LoadedExtensionInfo[]>
   /** 拡張の service worker を起こし直す。画面には出さず、自走検証（verify-spike）だけが使う。 */
   restartServiceWorkers(): Promise<number>
   /** 診断ログのフォルダを Finder で開く。 */

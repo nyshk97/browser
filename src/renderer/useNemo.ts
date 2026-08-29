@@ -25,7 +25,8 @@ export function useSharedState(): SharedState {
     downloads: [],
     version: '',
     update: { status: 'idle', version: null, percent: null, error: null },
-    liveFolder: null
+    liveFolder: null,
+    extensions: []
   })
   useEffect(() => {
     void window.nemo.getSharedState().then(setState)

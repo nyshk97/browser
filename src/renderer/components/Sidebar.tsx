@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useCommand, useSharedState, useWindowState } from '../useNemo.js'
 import { PinnedTree } from './PinnedTree.js'
 import { TabRow, TAB_DRAG_TYPE, useDragEnd } from './TabRow.js'
@@ -17,10 +17,13 @@ import type { FavoriteItem, LoadedExtensionInfo, TabState, UpdateState } from '.
 export function Sidebar(): React.JSX.Element {
   const state = useWindowState()
   const shared = useSharedState()
-  const [extensions, setExtensions] = useState<LoadedExtensionInfo[]>([])
-  useEffect(() => {
-    void window.nemo.getExtensions().then(setExtensions)
-  }, [])
+  // フッターは ON の拡張だけ（OFF は設定画面にしか出ない）。
+  // **先に絞った配列を作り**、「拡張なし」判定も lock 不一致バッジもこれで出す
+  // （描画だけ絞ると全部 OFF の端末で空フッターになる）
+  const extensions = useMemo(
+    () => shared.extensions.filter((extension) => extension.enabled),
+    [shared.extensions]
+  )
 
   const activeTab = useMemo(() => state?.tabs.find((tab) => tab.key === state.activeTabKey) ?? null, [state])
 

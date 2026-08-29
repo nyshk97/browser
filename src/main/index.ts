@@ -5,11 +5,13 @@ import { applySessionSecurityDefaults, installAuthHandler, installCertificateHan
 import { registerUiScheme, handleUiScheme } from './protocol.js'
 import {
   createExtensions,
+  registerExtensionShim,
   loadLockedExtensions,
   watchExtensionPopups,
   watchServiceWorkerStatus
 } from './extensions.js'
-import { registerIpcHandlers, setLoadedExtensions } from './ipc.js'
+import { registerIpcHandlers } from './ipc.js'
+import { getLoadedOkExtensions, setLoadedExtensions } from './extension-state.js'
 import {
   collectSession,
   createTab,
@@ -151,6 +153,12 @@ app
     // crx:// は UI セッション側で扱う
     ElectronChromeExtensions.handleCRXProtocol(uiSession)
 
+    // 拡張ページ向けの `chrome.*` 補完（`chrome.debugger` の空実装）。
+    // **`createExtensions()` より前に登録する**: preload は登録順に走り、
+    // electron-chrome-extensions の preload が最後に `Object.freeze(chrome)` するので、
+    // 後から登録すると生やせない（Electron に順序の明示的な保証は無いので smoke で固定している）
+    registerExtensionShim(pageSession)
+
     // 拡張のロードより先に生成する（ロードイベントを取りこぼさないため）
     const extensions = createExtensions(pageSession)
     setExtensions(extensions)
@@ -199,9 +207,9 @@ app
 
     let extensionCount = 0
     try {
-      const loaded = await loadLockedExtensions(pageSession)
-      setLoadedExtensions(loaded)
-      extensionCount = loaded.length
+      await loadLockedExtensions(pageSession)
+      // 起動ステータスの件数はロードできたものだけ（OFF もロード失敗も含めない）
+      extensionCount = getLoadedOkExtensions().length
     } catch (error) {
       logError('extension.lock_read_failed', error)
       setLoadedExtensions([])

@@ -163,6 +163,10 @@ async function materializeArchive(entry, archive, cache, target) {
       : safeJoin(tmp, [path.relative(tmp, findManifestRoot(tmp))].filter(Boolean), 'manifestRoot')
     const manifestPath = path.join(manifestRoot, 'manifest.json')
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    // Web Store の CRX に入っている `_metadata/`（verified_contents.json）は Chromium が
+    // **初回ロード時に消す**。treeSha256 に含めると 2 回目以降の起動で整合性検証に落ちるので、
+    // 展開時に先に消しておく（Keepa / GraphQL Network Inspector で実際に踏んだ）
+    fs.rmSync(path.join(manifestRoot, '_metadata'), { recursive: true, force: true })
 
     if (manifest.version !== entry.version) {
       if (isWebStore) {

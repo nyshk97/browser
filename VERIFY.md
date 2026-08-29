@@ -138,7 +138,7 @@ mise run verify:only split
 | **会議の小窓（Meet の通話コントロール）**・`meet-adapter.ts`・sleep の除外 | `mise run verify:only call restart` + 下の「会議の小窓（実機）」 |
 | **Live Folder（GitHub の PR）**・取得のバックオフ・トークン | `mise run verify:only live-folder restart` + 下の「Live Folder（GitHub の PR）」 |
 | **拡張アイコンの popup の位置**（ツールバーの View オフセット） | `mise run verify:ext` |
-| 拡張まわり・Electron のバージョン | `mise run verify:ext`（+ 実機で Bitwarden） |
+| 拡張まわり・Electron のバージョン | `mise run verify:ext`（+ 実機で Bitwarden）。拡張の端末ごと ON/OFF・DevTools パネルへの `chrome.*` 補完（`chrome.debugger` / `webRequest` の tabId）もここ |
 | パッケージング・ネイティブ依存・fuses | `mise run package` → `mise run verify:packaged` |
 | 履歴 / アーカイブ・シークレット・設定画面 | `mise run verify`（`verify-phase2.mjs` が含まれる） |
 | **履歴 DB のスキーマ**（列追加・インデックス） | `mise run verify:db-migration` |

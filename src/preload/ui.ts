@@ -122,6 +122,8 @@ const api: NemoUiApi = {
 
   openExtensionOptions: (extensionId) =>
     ipcRenderer.invoke('nemo:open-extension-options', extensionId) as Promise<void>,
+  setExtensionEnabled: (extensionId, enabled) =>
+    ipcRenderer.invoke('nemo:set-extension-enabled', extensionId, enabled) as Promise<LoadedExtensionInfo[]>,
   restartServiceWorkers: () => ipcRenderer.invoke('nemo:restart-service-workers') as Promise<number>,
   openLogFolder: () => ipcRenderer.invoke('nemo:open-log-folder') as Promise<void>,
   listSlots: () => ipcRenderer.invoke('nemo:list-slots') as Promise<SlotList>,

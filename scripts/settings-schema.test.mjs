@@ -444,3 +444,16 @@ test('保存位置は workArea に収まるときだけ使う（画面外なら�
   // モニタが1枚も無い（起動直後の異常系）
   assert.equal(fitsAnyWorkArea({ x: 0, y: 0 }, size, []), false)
 })
+
+test('拡張の無効化リストは拡張 ID の形だけ残し、ネストを毎回組み立て直す', () => {
+  assert.deepEqual(normalizeSettings({}).extensions, { disabled: [] })
+  // 拡張 ID でないもの・重複は落ちる
+  const id = 'a'.repeat(32)
+  assert.deepEqual(
+    normalizeSettings({ extensions: { disabled: [id, id, 'nope', 42, 'z'.repeat(32)] } }).extensions,
+    { disabled: [id] }
+  )
+  // `extensions` が壊れていても既定で埋まる（浅いマージで消えない）
+  assert.deepEqual(normalizeSettings({ extensions: 'x' }).extensions, { disabled: [] })
+  assert.deepEqual(normalizeSettings({ extensions: {} }).extensions, { disabled: [] })
+})

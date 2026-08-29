@@ -1102,6 +1102,18 @@ async function checkSettingsUi() {
   const rows = await until(async () => (await overlay.ev(`document.querySelectorAll('.ha-row').length`)) || 0)
   check('Settings に保存済みルールが並ぶ', rows === 1, `行 ${rows} 件`)
 
+  /** 行は普段 1 行だけで、操作は開いた行にしか出ない。操作の前に開く */
+  const openRow = async (id) => {
+    await overlay.ev(
+      `(() => { const row = document.querySelector('[data-rule-id="${id}"]'); if (row && !row.querySelector('.ha-editor')) row.querySelector('.ha-summary').click(); return 'ok' })()`
+    )
+    return until(
+      async () => await overlay.ev(`!!document.querySelector('[data-rule-id="${id}"] .ha-editor')`)
+    )
+  }
+  // テスターと取り込みは <details> に畳んである。開いてから触る
+  await overlay.ev(`(() => { document.querySelector('.ha-tools').open = true; return 'ok' })()`)
+
   /* --- インポート --- */
   await overlay.ev(setInput('.ha-import-text', DUMMY_MULTIPASS))
   await overlay.ev(`(() => { document.querySelector('.ha-import-run').click(); return 'ok' })()`)
@@ -1111,7 +1123,7 @@ async function checkSettingsUi() {
   })
   check(
     'インポート結果に取り込み件数が出る',
-    importText.includes('2 件を取り込んだ'),
+    importText.includes('2 件を取り込みました'),
     importText.split('\n')[0]
   )
   check(
@@ -1127,12 +1139,14 @@ async function checkSettingsUi() {
   const cleared = await overlay.ev(`document.querySelector('.ha-import-text').value`)
   check('取り込んだら貼り付け欄を直ちに空にする', cleared === '', JSON.stringify(cleared))
   const importedFrom = await overlay.ev(
-    `JSON.stringify([...document.querySelectorAll('.ha-imported')].map(e => e.innerText))`
+    `JSON.stringify([...document.querySelectorAll('.ha-imported')].map(e => e.getAttribute('data-from')))`
   )
   check('変換したルールには変換元が出る', importedFrom.includes('imported.example.com'), importedFrom)
 
   const listedId = (await listRules()).rules.find((rule) => rule.username === 'listed')?.id ?? ''
   const rowSelector = `[data-rule-id="${listedId}"]`
+  const rowOpened = await openRow(listedId)
+  check('行を押すと編集欄が開く', rowOpened === true)
 
   /* --- テスター --- */
   await overlay.ev(
@@ -1222,6 +1236,7 @@ async function checkSettingsUi() {
     `(() => { const rows = [...document.querySelectorAll('.ha-row')].filter(r => r.getAttribute('data-rule-id') !== ${JSON.stringify(listedId)}); return rows.length > 0 ? rows[0].getAttribute('data-rule-id') : '' })()`
   )
   if (otherRow) {
+    await openRow(otherRow)
     await overlay.ev(
       `(() => { document.querySelector('[data-rule-id="${otherRow}"] .ha-reveal').click(); return 'ok' })()`
     )
@@ -1241,7 +1256,10 @@ async function checkSettingsUi() {
   await call(`setOverlay(null).then(() => 'ok')`)
   await sleep(300)
   await call(`setOverlay('settings').then(() => 'ok')`)
-  // **一覧が届くまで待つ**（`.http-auth` は空のまま先に出るので、待たないと空文字を読む）
+  // **一覧が届くまで待つ**（`.http-auth` は空のまま先に出るので、待たないと空文字を読む）。
+  // 開いていた行も閉じた状態に戻るので、開き直してから読む
+  await until(async () => await overlay.ev(`!!document.querySelector('${rowSelector}')`))
+  await openRow(listedId)
   const afterClose = await until(async () => {
     const text = await overlay.ev(`document.querySelector('${rowSelector} .ha-password')?.innerText ?? ''`)
     return text.length > 0 ? text : ''

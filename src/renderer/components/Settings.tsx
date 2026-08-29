@@ -258,6 +258,8 @@ function HttpAuthRules(): React.JSX.Element {
   const [rules, setRules] = useState<HttpAuthRule[]>([])
   const [encryptionAvailable, setEncryptionAvailable] = useState(true)
   const [drafts, setDrafts] = useState<Record<string, RuleDraft>>({})
+  /** 開いている行（編集欄を出す）。複数開けてよい。 */
+  const [openIds, setOpenIds] = useState<Set<string>>(() => new Set())
   const [revealed, setRevealed] = useState<{ id: string; password: string } | null>(null)
   const [revealMs, setRevealMs] = useState(30_000)
   const [message, setMessage] = useState<string | null>(null)
@@ -399,201 +401,241 @@ function HttpAuthRules(): React.JSX.Element {
           この Mac では暗号化ストレージを利用できないため、資格情報は保存できません（平文では置きません）。
         </p>
       ) : null}
+      <div className="ha-toolbar">
+        <span>ルール</span>
+        <span className="dim">{rules.length} 件・複数マッチしたときはパターンが長い方が使われます</span>
+      </div>
       {rules.length === 0 ? (
         <p className="dim">
           保存された資格情報はありません。認証ダイアログの「次回から自動で入力する」を選ぶと、
           そのオリジンのルールがここに並びます。
         </p>
       ) : (
-        rules.map((rule) => {
-          const draft = draftOf(rule)
-          const dirty =
-            draft.pattern !== rule.pattern || draft.username !== rule.username || draft.password !== null
-          return (
-            <div key={rule.id} className="ha-row" data-rule-id={rule.id}>
-              <div className="set-row">
-                <span className="set-input wide">
-                  <input
-                    className="ha-pattern"
-                    value={draft.pattern}
-                    spellCheck={false}
-                    maxLength={HTTP_AUTH_LIMITS.MAX_PATTERN}
-                    onChange={(event) => setDraft(rule, { pattern: event.target.value })}
-                  />
-                </span>
-                <span className="set-input">
-                  <input
-                    className="ha-username"
-                    value={draft.username}
-                    spellCheck={false}
-                    maxLength={HTTP_AUTH_LIMITS.MAX_USERNAME}
-                    onChange={(event) => setDraft(rule, { username: event.target.value })}
-                  />
-                </span>
-              </div>
-              <div className="set-row">
-                {draft.password === null ? (
-                  <>
-                    <code className="ha-password">
-                      {revealed?.id === rule.id ? revealed.password : '••••••'}
-                    </code>
-                    {revealed?.id === rule.id ? (
-                      <button type="button" className="btn ha-hide" onClick={() => setRevealed(null)}>
-                        隠す
-                      </button>
-                    ) : (
-                      <button type="button" className="btn ha-reveal" onClick={() => reveal(rule)}>
-                        表示
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="btn ha-change-password"
-                      onClick={() => setDraft(rule, { password: '' })}
+        <div className="ha-list">
+          {rules.map((rule) => {
+            const draft = draftOf(rule)
+            const dirty =
+              draft.pattern !== rule.pattern || draft.username !== rule.username || draft.password !== null
+            const open = openIds.has(rule.id)
+            const enabled = rule.enabled && !rule.disabledReason
+            const toggleOpen = (): void =>
+              setOpenIds((current) => {
+                const next = new Set(current)
+                if (next.has(rule.id)) next.delete(rule.id)
+                else next.add(rule.id)
+                return next
+              })
+            return (
+              <div
+                key={rule.id}
+                className={`ha-row${open ? ' open' : ''}${enabled ? '' : ' off'}`}
+                data-rule-id={rule.id}
+              >
+                {/* 普段は 1 行だけ。操作は開いた行にしか出さない（5 件でボタンの海にならない） */}
+                <div className="ha-summary" onClick={toggleOpen}>
+                  <span className="ha-pat">{rule.pattern}</span>
+                  <span className="ha-user">{rule.username}</span>
+                  {rule.importedFrom ? (
+                    <span
+                      className="ha-imported"
+                      data-from={rule.importedFrom}
+                      title={`MultiPass の ${rule.importedFrom} から変換`}
                     >
-                      パスワードを変更
-                    </button>
-                  </>
-                ) : (
-                  <span className="set-input">
+                      MultiPass
+                    </span>
+                  ) : null}
+                  <label className="ha-switch" onClick={(event) => event.stopPropagation()}>
                     <input
-                      className="ha-new-password"
-                      type="password"
-                      value={draft.password}
-                      maxLength={HTTP_AUTH_LIMITS.MAX_PASSWORD}
-                      placeholder="新しいパスワード（空も可）"
-                      onChange={(event) => setDraft(rule, { password: event.target.value })}
+                      type="checkbox"
+                      className="ha-toggle"
+                      checked={enabled}
+                      disabled={Boolean(rule.disabledReason)}
+                      onChange={(event) => {
+                        void window.nemo
+                          .saveHttpAuthRule({
+                            id: rule.id,
+                            username: rule.username,
+                            enabled: event.target.checked
+                          })
+                          .then((result) => applyResult(result, '切り替えました。'))
+                      }}
                     />
-                  </span>
-                )}
-                <div className="spacer" />
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    className="ha-toggle"
-                    checked={rule.enabled && !rule.disabledReason}
-                    disabled={Boolean(rule.disabledReason)}
-                    onChange={(event) => {
-                      void window.nemo
-                        .saveHttpAuthRule({
-                          id: rule.id,
-                          username: rule.username,
-                          enabled: event.target.checked
-                        })
-                        .then((result) => applyResult(result, '切り替えました。'))
-                    }}
-                  />
-                  有効
-                </label>
-                {dirty ? (
-                  <button type="button" className="btn ha-cancel" onClick={() => clearDraft(rule.id)}>
-                    取り消す
-                  </button>
+                    <span className="ha-sw" />
+                  </label>
+                  <span className="ha-chev">{open ? '▴' : '▾'}</span>
+                </div>
+                {open ? (
+                  <div className="ha-editor">
+                    <label>パターン</label>
+                    <input
+                      className="ha-pattern"
+                      value={draft.pattern}
+                      spellCheck={false}
+                      maxLength={HTTP_AUTH_LIMITS.MAX_PATTERN}
+                      onChange={(event) => setDraft(rule, { pattern: event.target.value })}
+                    />
+                    <label>ユーザー名</label>
+                    <input
+                      className="ha-username"
+                      value={draft.username}
+                      spellCheck={false}
+                      maxLength={HTTP_AUTH_LIMITS.MAX_USERNAME}
+                      onChange={(event) => setDraft(rule, { username: event.target.value })}
+                    />
+                    <label>パスワード</label>
+                    {draft.password === null ? (
+                      <div className="ha-pw">
+                        <code className="ha-password">
+                          {revealed?.id === rule.id ? revealed.password : '••••••'}
+                        </code>
+                        {revealed?.id === rule.id ? (
+                          <button type="button" className="btn ha-hide" onClick={() => setRevealed(null)}>
+                            隠す
+                          </button>
+                        ) : (
+                          <button type="button" className="btn ha-reveal" onClick={() => reveal(rule)}>
+                            表示
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="btn link ha-change-password"
+                          onClick={() => setDraft(rule, { password: '' })}
+                        >
+                          変更…
+                        </button>
+                      </div>
+                    ) : (
+                      <input
+                        className="ha-new-password"
+                        type="password"
+                        value={draft.password}
+                        maxLength={HTTP_AUTH_LIMITS.MAX_PASSWORD}
+                        placeholder="新しいパスワード（空も可）"
+                        onChange={(event) => setDraft(rule, { password: event.target.value })}
+                      />
+                    )}
+                    {rule.disabledReason ? (
+                      <p className="warn ha-reason ha-full">
+                        {rule.disabledReason === 'pattern-timeout'
+                          ? '照合に時間がかかりすぎたため自動で無効にしました。パターンを直すと再び有効にできます。'
+                          : 'パスワードを復号できなかったため自動で無効にしました。パスワードを保存し直すと再び有効にできます。'}
+                      </p>
+                    ) : null}
+                    <div className="ha-foot">
+                      <button
+                        type="button"
+                        className="btn primary ha-save"
+                        disabled={!dirty}
+                        onClick={() => save(rule)}
+                      >
+                        保存
+                      </button>
+                      {dirty ? (
+                        <button type="button" className="btn ha-cancel" onClick={() => clearDraft(rule.id)}>
+                          取り消す
+                        </button>
+                      ) : null}
+                      <div className="spacer" />
+                      <button
+                        type="button"
+                        className="btn danger ha-delete"
+                        onClick={() => {
+                          void window.nemo
+                            .deleteHttpAuthRule(rule.id)
+                            .then((result) => applyResult(result, '削除しました。'))
+                        }}
+                      >
+                        このルールを削除
+                      </button>
+                    </div>
+                  </div>
                 ) : null}
-                <button type="button" className="btn ha-save" disabled={!dirty} onClick={() => save(rule)}>
-                  保存
-                </button>
-                <button
-                  type="button"
-                  className="btn ha-delete"
-                  onClick={() => {
-                    void window.nemo
-                      .deleteHttpAuthRule(rule.id)
-                      .then((result) => applyResult(result, '削除しました。'))
-                  }}
-                >
-                  削除
-                </button>
               </div>
-              {rule.disabledReason ? (
-                <p className="warn ha-reason">
-                  {rule.disabledReason === 'pattern-timeout'
-                    ? '照合に時間がかかりすぎたため自動で無効にしました。パターンを直すと再び有効にできます。'
-                    : 'パスワードを復号できなかったため自動で無効にしました。パスワードを保存し直すと再び有効にできます。'}
-                </p>
-              ) : null}
-              {rule.importedFrom ? (
-                <p className="dim ha-imported">
-                  MultiPass の <code>{rule.importedFrom}</code> から変換
-                </p>
-              ) : null}
-            </div>
-          )
-        })
+            )
+          })}
+        </div>
       )}
       {message ? <p className="dim ha-message">{message}</p> : null}
 
-      <Field
-        label="正規表現テスター"
-        hint="URL を 1 行に 1 つ。保存済みのルール全体に当てて、使われるルールを出します"
-      >
-        <span className="ha-paste">
-          <textarea
-            className="ha-test-urls"
-            rows={2}
-            spellCheck={false}
-            value={testUrls}
-            onChange={(event) => setTestUrls(event.target.value)}
-          />
-          <button type="button" className="btn ha-test-run" onClick={runTest}>
-            試す
-          </button>
-        </span>
-      </Field>
-      {testError ? <p className="warn ha-test-error">照合できませんでした: {testError}</p> : null}
-      {testResults?.map((result) => (
-        <p key={result.url} className="dim ha-test-result">
-          <code>{result.url}</code>{' '}
-          {result.winnerId === null
-            ? '→ マッチするルールはありません'
-            : result.matchedIds.length > 1
-              ? `→ この URL には ${result.matchedIds.length} 件マッチします。${nameOf(result.winnerId)} が使われます`
-              : `→ ${nameOf(result.winnerId)} が使われます`}
-          {result.timedOutIds.length > 0
-            ? `（${result.timedOutIds.length} 件は照合がタイムアウトしました）`
-            : ''}
-        </p>
-      ))}
+      {/* 常用しない道具は畳む。取り込みは初回だけ、テスターは困ったときだけ */}
+      <details className="ha-tools">
+        <summary>ツール（正規表現テスター / MultiPass の取り込み）</summary>
 
-      <Field label="MultiPass の JSON を取り込む" hint="エクスポートした内容をそのまま貼ります">
-        <span className="ha-paste">
-          <textarea
-            className="ha-import-text"
-            rows={3}
-            spellCheck={false}
-            value={importText}
-            onChange={(event) => setImportText(event.target.value)}
-          />
-          <button
-            type="button"
-            className="btn ha-import-run"
-            disabled={importText.trim().length === 0}
-            onClick={runImport}
-          >
-            取り込む
-          </button>
-        </span>
-      </Field>
-      {importResult ? (
-        <div className="ha-import-result">
-          <p className={importResult.failed ? 'warn' : 'dim'}>
-            {importResult.failed
-              ? '取り込みに失敗しました。'
-              : `${importResult.imported} 件を取り込みました。`}
-            {importResult.failed || importResult.authCacheCleared ? '' : '反映には Nemo の再起動が必要です。'}
+        <Field
+          label="正規表現テスター"
+          hint="URL を 1 行に 1 つ。保存済みのルール全体に当てて、使われるルールを出します"
+        >
+          <span className="ha-paste">
+            <textarea
+              className="ha-test-urls"
+              rows={2}
+              spellCheck={false}
+              value={testUrls}
+              onChange={(event) => setTestUrls(event.target.value)}
+            />
+            <button type="button" className="btn ha-test-run" onClick={runTest}>
+              試す
+            </button>
+          </span>
+        </Field>
+        {testError ? <p className="warn ha-test-error">照合できませんでした: {testError}</p> : null}
+        {testResults?.map((result) => (
+          <p key={result.url} className="dim ha-test-result">
+            <code>{result.url}</code>{' '}
+            {result.winnerId === null
+              ? '→ マッチするルールはありません'
+              : result.matchedIds.length > 1
+                ? `→ この URL には ${result.matchedIds.length} 件マッチします。${nameOf(result.winnerId)} が使われます`
+                : `→ ${nameOf(result.winnerId)} が使われます`}
+            {result.timedOutIds.length > 0
+              ? `（${result.timedOutIds.length} 件は照合がタイムアウトしました）`
+              : ''}
           </p>
-          {importResult.priorityWarning ? (
-            <p className="warn ha-priority-warning">
-              MultiPass の優先度は取り込まれません。Nemo はパターンが長いほうを使います。
+        ))}
+
+        <Field label="MultiPass の JSON を取り込む" hint="エクスポートした内容をそのまま貼ります">
+          <span className="ha-paste">
+            <textarea
+              className="ha-import-text"
+              rows={3}
+              spellCheck={false}
+              value={importText}
+              onChange={(event) => setImportText(event.target.value)}
+            />
+            <button
+              type="button"
+              className="btn ha-import-run"
+              disabled={importText.trim().length === 0}
+              onClick={runImport}
+            >
+              取り込む
+            </button>
+          </span>
+        </Field>
+        {importResult ? (
+          <div className="ha-import-result">
+            <p className={importResult.failed ? 'warn' : 'dim'}>
+              {importResult.failed
+                ? '取り込みに失敗しました。'
+                : `${importResult.imported} 件を取り込みました。`}
+              {importResult.failed || importResult.authCacheCleared
+                ? ''
+                : '反映には Nemo の再起動が必要です。'}
             </p>
-          ) : null}
-          {importResult.rejected.map((item, index) => (
-            <p key={`${item.pattern}-${index}`} className="warn ha-rejected">
-              取り込めませんでした: <code>{item.pattern || '(不明)'}</code> — {item.reason}
-            </p>
-          ))}
-        </div>
-      ) : null}
+            {importResult.priorityWarning ? (
+              <p className="warn ha-priority-warning">
+                MultiPass の優先度は取り込まれません。Nemo はパターンが長いほうを使います。
+              </p>
+            ) : null}
+            {importResult.rejected.map((item, index) => (
+              <p key={`${item.pattern}-${index}`} className="warn ha-rejected">
+                取り込めませんでした: <code>{item.pattern || '(不明)'}</code> — {item.reason}
+              </p>
+            ))}
+          </div>
+        ) : null}
+      </details>
     </div>
   )
 }

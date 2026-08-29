@@ -2165,13 +2165,217 @@ body[data-view='toolbar'] {
   margin-top: 0;
 }
 
+.ha-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.ha-list {
+  border: 1px solid var(--nemo-border);
+  border-radius: var(--nemo-radius-lg);
+  overflow: hidden;
+}
+
 .ha-row {
-  border-top: 1px solid var(--nemo-surface);
-  padding: 6px 0;
+  border-top: 1px solid var(--nemo-border);
 }
 
 .ha-row:first-child {
   border-top: none;
+}
+
+.ha-row.open {
+  background: rgba(91, 157, 255, 0.05);
+}
+
+/* 1 行 = 1 ルール。パターン / ユーザー名 / 有効 / 開閉 */
+.ha-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px auto auto 16px;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.ha-summary:hover {
+  background: var(--nemo-hover);
+}
+
+.ha-pat {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ha-user {
+  color: var(--nemo-ink-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ha-row.off .ha-pat,
+.ha-row.off .ha-user {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+
+.ha-imported {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--nemo-surface-hi);
+  color: var(--nemo-ink-dim);
+}
+
+.ha-chev {
+  color: var(--nemo-ink-dim);
+  font-size: 10px;
+  text-align: right;
+}
+
+/* 有効スイッチ（checkbox を隠してトグルで描く） */
+.ha-switch {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.ha-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.ha-sw {
+  width: 28px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--nemo-surface-hi);
+  position: relative;
+  transition: background 0.15s;
+}
+
+.ha-sw::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.15s;
+}
+
+.ha-switch input:checked + .ha-sw {
+  background: var(--nemo-accent);
+}
+
+.ha-switch input:checked + .ha-sw::after {
+  left: 14px;
+}
+
+.ha-switch input:disabled + .ha-sw {
+  opacity: 0.4;
+}
+
+/* 開いた行の編集欄 */
+.ha-editor {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 8px 12px;
+  align-items: center;
+  padding: 10px 12px 12px 36px;
+  border-top: 1px solid var(--nemo-border);
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+}
+
+.ha-editor > label {
+  color: var(--nemo-ink-dim);
+}
+
+.ha-editor > input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--nemo-surface);
+  border: 1px solid var(--nemo-border);
+  border-radius: var(--nemo-radius);
+  padding: 5px 8px;
+}
+
+.ha-editor > input:focus {
+  border-color: var(--nemo-accent);
+}
+
+.ha-pw {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.ha-pw .btn,
+.ha-foot .btn {
+  margin-top: 0;
+}
+
+.ha-full {
+  grid-column: 1 / -1;
+}
+
+.ha-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.http-auth .btn.primary {
+  background: var(--nemo-accent);
+  color: #fff;
+}
+
+.http-auth .btn.danger {
+  color: var(--nemo-danger);
+}
+
+.http-auth .btn.link {
+  background: none;
+  color: var(--nemo-accent);
+  padding: 2px 0;
+}
+
+.ha-tools {
+  margin-top: 14px;
+}
+
+.ha-tools > summary {
+  cursor: pointer;
+  color: var(--nemo-ink-dim);
+  font-size: 12px;
+  list-style: none;
+}
+
+.ha-tools > summary::before {
+  content: '▸ ';
+  font-size: 10px;
+}
+
+.ha-tools[open] > summary::before {
+  content: '▾ ';
+}
+
+.ha-tools > summary::-webkit-details-marker {
+  display: none;
 }
 
 .ha-password {

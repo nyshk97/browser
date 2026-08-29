@@ -460,24 +460,5 @@ if (privateTarget) {
   privateUi.close()
 }
 
-/* ------------------------------------------------------------------ *
- * 既定ブラウザ
- * ------------------------------------------------------------------ */
-
-const browserStatus = await ui
-  .ev('window.nemo.getDefaultBrowserStatus().then((s) => JSON.stringify(s))')
-  .then(JSON.parse)
-check(
-  '開発起動では既定ブラウザにできないと分かる形で返る',
-  browserStatus.canRequest === false && typeof browserStatus.reason === 'string',
-  JSON.stringify(browserStatus)
-)
-
-// 呼んでも何も起きない（Electron 本体を既定ブラウザにしてしまわない）
-const afterRequest = await ui
-  .ev('window.nemo.requestDefaultBrowser().then((s) => JSON.stringify(s))')
-  .then(JSON.parse)
-check('開発起動での要求は無視される', afterRequest.isDefault === false)
-
 console.log(failures === 0 ? '\n=== Phase 2 検証: すべて PASS' : `\n=== Phase 2 検証: ${failures} 件 FAIL`)
 process.exit(failures === 0 ? 0 : 1)

@@ -185,10 +185,6 @@ export function LiveFolder({
       label: 'いま更新する',
       disabled: rateLimited,
       run: () => void window.nemo.liveFolderRefresh()
-    },
-    {
-      label: 'このセクションを隠す',
-      run: () => void window.nemo.updateSettings({ liveFolderEnabled: false })
     }
   ]
 

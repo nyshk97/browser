@@ -168,9 +168,9 @@ mise run arc:import --replace   # 既存のピン留めを捨てて Arc の内�
 
 ## 既定ブラウザにする
 
-設定画面（⌘,）の「Nemo を既定のブラウザにする」から。**パッケージ版でのみ設定できる**
-（開発起動で登録すると Electron 本体が既定ブラウザになってしまうため、
-`src/main/default-browser.ts` で弾いている）。
+macOS のシステム設定 → デスクトップとDock → デフォルトのWebブラウザ で Nemo を選ぶ。
+アプリ側には設定 UI を置かない（`electron-builder.yml` の `protocols` で http / https の
+ハンドラを宣言しているので、**パッケージ版**なら候補に出る。開発起動の Electron 本体は出ない）。
 
 外部アプリから渡された URL は `app.ready` より**前**に購読して queue し、
 起動時のウィンドウが揃ってから開く。未起動から開かれたときの URL を取りこぼさないため。

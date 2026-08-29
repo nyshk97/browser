@@ -78,7 +78,6 @@ import { MAX_PASSPHRASE, MIN_PASSPHRASE, validatePassphrase } from '../shared/au
 import { cancelDownload, clearDownloads, revealDownload } from './downloads.js'
 import { clearHistory, getFavicons, queryHistory, removeHistory } from './store/history.js'
 import { clearArchive, queryArchive, removeArchived } from './store/archive.js'
-import { getDefaultBrowserStatus, requestDefaultBrowser } from './default-browser.js'
 import { getAppStatus } from './app-status.js'
 import { isCallWindowContents } from './call-window.js'
 import { focusCallTarget, getCallState, toggleCallDevice } from './call-coordinator.js'
@@ -625,16 +624,6 @@ export function registerIpcHandlers(): void {
     requireWindow(event)
     clearArchive()
     log('archive.cleared', {})
-  })
-
-  /* ---- 既定ブラウザ ---- */
-  ipcMain.handle('nemo:get-default-browser-status', (event) => {
-    requireWindow(event)
-    return getDefaultBrowserStatus()
-  })
-  ipcMain.handle('nemo:request-default-browser', (event) => {
-    requireWindow(event)
-    return requestDefaultBrowser()
   })
 
   /* ---- ダイアログ ---- */

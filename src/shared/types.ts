@@ -737,19 +737,6 @@ export interface ArchivedTab {
 }
 
 /* ------------------------------------------------------------------ *
- * 既定ブラウザ
- * ------------------------------------------------------------------ */
-
-export interface DefaultBrowserStatus {
-  http: boolean
-  https: boolean
-  isDefault: boolean
-  /** この起動では設定できるか（開発起動では false）。 */
-  canRequest: boolean
-  reason: string | null
-}
-
-/* ------------------------------------------------------------------ *
  * 設定
  * ------------------------------------------------------------------ */
 
@@ -777,7 +764,7 @@ export interface NemoSettings {
   askDownloadLocation: boolean
   /**
    * サイドバーに GitHub の PR（Live Folder）を出す。
-   * 右クリックの「このセクションを隠す」で false になり、**復帰は設定画面のトグル**。
+   * UI からは変えられない（常に出す）。`settings.json` に false を書いた場合だけ隠れる。
    */
   liveFolderEnabled: boolean
 }
@@ -934,11 +921,6 @@ export interface NemoUiApi {
   queryArchive(query: string): Promise<ArchivedTab[]>
   removeArchived(url: string): Promise<void>
   clearArchive(): Promise<void>
-
-  /* 既定ブラウザ */
-  getDefaultBrowserStatus(): Promise<DefaultBrowserStatus>
-  /** 既定ブラウザにするよう OS に要求し、**確かめた結果**を返す。 */
-  requestDefaultBrowser(): Promise<DefaultBrowserStatus>
 
   /* ダウンロード */
   cancelDownload(id: string): Promise<void>

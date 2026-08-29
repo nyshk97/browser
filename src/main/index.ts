@@ -48,7 +48,6 @@ import { configureTestAuth } from './live-folders/token.js'
 import { startCallCoordinator, stopCallCoordinator } from './call-coordinator.js'
 import { markReadyWhen, setExtensionCount } from './app-status.js'
 import { initUpdater, stopUpdater } from './updater.js'
-import { getDefaultBrowserStatus } from './default-browser.js'
 
 applyUserDataDir()
 app.setAppUserModelId(APP_ID)
@@ -298,12 +297,6 @@ app
     } else {
       flushOpenUrls(openExternalUrl)
     }
-
-    const defaultBrowser = getDefaultBrowserStatus()
-    log('default_browser.state', {
-      isDefault: defaultBrowser.isDefault,
-      canRequest: defaultBrowser.canRequest
-    })
 
     log('app.ready', {
       channel,

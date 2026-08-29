@@ -67,8 +67,8 @@ asarUnpack:
 # システム設定の「デフォルトの Web ブラウザ」にも出てこない。
 #
 # dev 版もこの宣言を持つ（別 bundle id なので常用版と取り違えない）。
-# 実際に既定にするのは明示的な操作（設定画面のボタン）だけで、
-# **開発起動では登録できないようにしている**（`src/main/default-browser.ts`）。
+# 実際に既定にするのは macOS のシステム設定（デスクトップとDock → デフォルトのWebブラウザ）で、
+# アプリ側からは `setAsDefaultProtocolClient` を呼ばない。
 protocols:
   - name: HTTP URL
     schemes: [http]

@@ -274,6 +274,27 @@ try {
       cardText.includes('名前だけ変更'),
       JSON.stringify(cardText)
     )
+    // 設定画面の節は固定（タブ / 起動と検索 / 既定のブラウザ / キーバインド は画面に出さない）
+    const headings = JSON.parse(
+      await evalInUi(
+        cdp,
+        `JSON.stringify([...document.querySelectorAll('.settings section > h3')].map((h) => h.textContent))`,
+        'overlay'
+      )
+    )
+    const expectedHeadings = [
+      'GitHub の Pull Request（サイドバー）',
+      'HTTP 認証',
+      '拡張',
+      'ブックマークのセーブスロット',
+      'Basic 認証',
+      'データ'
+    ]
+    check(
+      `設定画面の節が ${expectedHeadings.length} つだけ描かれる`,
+      JSON.stringify(headings) === JSON.stringify(expectedHeadings),
+      JSON.stringify(headings)
+    )
     await evalInUi(cdp, `window.nemo.setOverlay(null).then(() => 'ok')`)
 
     await stopChildren(spawned.splice(0))

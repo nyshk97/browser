@@ -45,7 +45,7 @@ test('liveFolderEnabled は壊れた値・欠けた値とも既定 true に落�
   assert.equal(normalizeSettings({}).liveFolderEnabled, true)
   assert.equal(normalizeSettings({ liveFolderEnabled: 'yes' }).liveFolderEnabled, true)
   assert.equal(normalizeSettings({ liveFolderEnabled: null }).liveFolderEnabled, true)
-  // 明示的な false は残す（右クリックの「このセクションを隠す」）
+  // 明示的な false は残す（settings.json を直接編集した場合）
   assert.equal(normalizeSettings({ liveFolderEnabled: false }).liveFolderEnabled, false)
 })
 

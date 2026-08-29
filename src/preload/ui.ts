@@ -9,7 +9,6 @@ import type {
   AuthVaultSaveResult,
   AuthVaultStatus,
   CallState,
-  DefaultBrowserStatus,
   GithubTokenStatus,
   HttpAuthImportResult,
   HttpAuthRule,
@@ -104,11 +103,6 @@ const api: NemoUiApi = {
   queryArchive: (query) => ipcRenderer.invoke('nemo:query-archive', query) as Promise<ArchivedTab[]>,
   removeArchived: (url) => ipcRenderer.invoke('nemo:remove-archived', url) as Promise<void>,
   clearArchive: () => ipcRenderer.invoke('nemo:clear-archive') as Promise<void>,
-
-  getDefaultBrowserStatus: () =>
-    ipcRenderer.invoke('nemo:get-default-browser-status') as Promise<DefaultBrowserStatus>,
-  requestDefaultBrowser: () =>
-    ipcRenderer.invoke('nemo:request-default-browser') as Promise<DefaultBrowserStatus>,
 
   cancelDownload: (id) => ipcRenderer.invoke('nemo:cancel-download', id) as Promise<void>,
   revealDownload: (id) => ipcRenderer.invoke('nemo:reveal-download', id) as Promise<void>,

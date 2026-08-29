@@ -8,7 +8,7 @@ import type {
 } from '../../shared/types.js'
 
 /**
- * Basic 認証の保管庫（設定 › Basic 認証の持ち出し）。
+ * Basic 認証の保管庫（設定 › Basic 認証の引き継ぎ）。
  *
  * セーブスロットと違って**枠は 1 つ**。認証は「メイン / 実験用」と使い分けるものではなく
  * 積み上げるものなので、枠を増やすと「どの枠が最新か」を人間が覚える羽目になる。
@@ -208,7 +208,7 @@ export function AuthVault(): React.JSX.Element {
 
   return (
     <SettingsSection
-      title="Basic 認証の持ち出し"
+      title="Basic 認証の引き継ぎ"
       sub="上の Basic 認証のルールをパスフレーズで暗号化して保管庫に保存し、別の Mac で読み込みます"
     >
       <div className="vault" data-testid="auth-vault">

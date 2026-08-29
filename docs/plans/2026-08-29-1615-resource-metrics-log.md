@@ -84,7 +84,7 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
 - `cpu` は `ProcessMetric.cpu.percentCPUUsage`（前回 `getAppMetrics()` 呼び出しからの平均。
   1 コア = 100）。**初回呼び出しは 0 が返る**ので、`startBackgroundWork()` で一度空撃ちしておく
 - `top` は renderer **プロセス**をメモリ降順で **上位 5 件**に絞る（1 行の肥大化を防ぐ。5 分おき 1 行 ≒ 1 日 300 行なので
-  1 行 1KB なら 1 日 300KB）。1 要素 = 1 pid で、`keys` / `origins`（重複除去）にそこに同居しているタブを全部並べる
+  1 行 1KB なら 1 日 300KB。5 件の枠は `keys` が非空の要素から先に埋め、余りを UI の renderer で埋める）。1 要素 = 1 pid で、`keys` / `origins`（重複除去）にそこに同居しているタブを全部並べる
   （同一サイトのタブは 1 renderer にまとまるため。1 タブに誤配分しない）。**要素の中にオブジェクトを入れない**（`[deep]` 潰れ）
 - タブとの紐づけは `webContents.getOSProcessId()` と `ProcessMetric.pid` の突き合わせ。
   分割ビュー・Peek・小窓の renderer も `Tab` 種別で来るので、**タブに紐づかない renderer は
@@ -142,8 +142,9 @@ Arc（メイン）や Chrome と比べて Nemo の負荷がどう違うかを、
 - [ ] `scripts/verify-metrics.mjs`: **自分で** `NEMO_METRICS_INTERVAL_MS=2000` を渡して使い捨てプロファイルの
       Nemo を立て（`slots` / `auth-vault` と同じ型。共有アプリでは env も終了も制御できない）、
       (a) `metrics.sample` が 2 行以上出る（**件数を出力に出す**） (b) 2 行目以降の
-      **いずれか**で `total.cpu > 0` かつ `byType` に 1 つ以上の型がある（初回空撃ちが効いている。全行に課すと flake る） (c) タブを 2 つ開いて
-      `top` に `origins` が非空の要素が出る (d) UI で `window.nemo.reportError` を撃って
+      **いずれか**で `total.cpu > 0` かつ `byType` に 1 つ以上の型がある（初回空撃ちが効いている。全行に課すと flake る） (c) 自前で `scripts/test-server.mjs` を空きポートで立て（`NEEDS_APP` でないので verify-all のサーバは無い。
+      `about:blank` は `origins` が `"about:"` で非空になり素通りする）、**同じ origin のタブを 2 つ**開いて
+      `top` の `keys` の合計が 2 で `origins` にそのローカル origin がある（同居してもしなくても安定する条件） (d) UI で `window.nemo.reportError` を撃って
       `ui.error` が 1 行出る（`error` キーと `view` を見る） (e) 終了後の `app.quit` に `uptimeMs` と `total` と `source: "quit"` がある
       (f) `app.ready` に `readyMs > 0` と数値の `extensions` がある（`restoredTabs` は使い捨てプロファイルでは
       再起動をまたがないので 0 のまま。ここでは見ない）

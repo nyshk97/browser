@@ -73,7 +73,7 @@ export function Slots(): React.JSX.Element {
 
   return (
     <SettingsSection
-      title="ブックマークの持ち出し"
+      title="ブックマークの引き継ぎ"
       sub="ピン留めとお気に入りを 3 つのスロットに保存し、別の Mac で読み込みます。保存先は iCloud Drive です"
     >
       <div className="slots" data-testid="slots">

@@ -79,3 +79,23 @@ review session: 19b5642d-a166-4577-bee1-cfc889b6bd54
 ````
 
 **対応**: P0 反映（`restoredTabs` は `restored.windows` から数える・`readyMs` はタブが揃う前の値と明記）。P1 反映（`ui.error` は throw しない判定 1 つで送信元を確かめ、両方外れたときだけ `ipc.rejected`。存在と目的だけ書き設計は書かない / 検査 (f) `app.ready` の `readyMs > 0`・`extensions` 数値を追加。`restoredTabs` は見ない旨を明記）。P2 反映（`loaded` の `let` 化 / シークレットの key は `keys` に入れる）。
+
+## 4回目
+
+````text
+再読しました。前回の P0（`restoredTabs` の数え先・`readyMs` の意味）と P1（throw しない送信元判定・検査 (f)）、P2 の 2 件はすべて反映を確認。今回は Phase 5 の検査環境まわりだけです。
+
+## P0
+
+## P1
+- **Phase 5 > 1 (c)** — 「タブを 2 つ開く」の**ページの出どころが決まっていない** / `metrics` は `NEEDS_APP` に入れないので、`verify-all.mjs` が `NEEDS_APP` 向けに立てる `scripts/test-server.mjs` は動いていない（先行の opt-in スイート `slots` / `auth-vault` は UI しか触らないので、自前でページを配ったスイートはまだ 1 つも無い）。外部 URL に逃げると検証がネットワーク依存になり、`about:blank` に逃げると `redactUrl` が `"about:"` を返して `origins` が非空になるため、**中身を見ないまま (c) が通る** / 自分で `spawn(process.execPath, ['scripts/test-server.mjs'], { env: { PORT: <getFreePort()> } })` して、そのローカル URL を 2 タブに開く（アプリの spawn と同じ `spawned` に積んで `stopChildren` で落とす）
+- **Phase 5 > 1 (c)** — 検査が「`origins` が非空の要素がある」止まりで、今回いちばんの作り直し要因だった**同居タブの扱いを 1 つも踏んでいない** / `top` を pid 単位にして `keys` に全部並べる設計は、同一 origin の 2 タブが 1 renderer にまとまる経路でしか効かない。ここを見ないと、1 タブ 1 要素の実装に戻っても PASS する / 同じ origin（上のローカルサーバ）で 2 タブ開き、**`keys` に 2 件並ぶ要素が 1 つある**ことまで見る。同居しなかった場合に備えて「`keys` の合計が 2」を条件にすると Chromium の割り当てに依らず安定する
+
+## P2
+- **`metrics.sample` の形 > `top`** — UI の view（sidebar / toolbar / overlay / empty）はそれぞれ別 renderer なので、ウィンドウ 1 つでも `keys: []` の要素が 4 件前後あり、上位 5 件をこれらが埋める場面がある（タブが少ない起動直後ほど起きる）。「どのタブが重いか」を見る目的に寄せるなら、5 件の枠は `keys` が非空のものから先に埋める（残りを UI の renderer で埋める）ほうが読みやすい
+
+## Q
+
+````
+
+**対応**: P0 なし → 収束。P1 2 件反映（(c) は自前で `test-server.mjs` を立て、同じ origin のタブ 2 つで `keys` 合計 2 ＋ `origins` にローカル origin を見る）。P2 反映（`top` の 5 件は `keys` 非空を優先）。

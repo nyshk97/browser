@@ -80,9 +80,6 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
             Chrome 拡張は <code>extensions.lock.json</code> に書いたものだけをロードする。追加・更新は{' '}
             <code>mise run ext:outdated</code> / <code>ext:update</code> から行う。
           </p>
-          <button type="button" className="btn" onClick={() => void window.nemo.restartServiceWorkers()}>
-            拡張の service worker を再起動する
-          </button>
         </section>
 
         <Slots />

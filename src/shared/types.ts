@@ -935,6 +935,7 @@ export interface NemoUiApi {
 
   /* 拡張 */
   openExtensionOptions(extensionId: string): Promise<void>
+  /** 拡張の service worker を起こし直す。画面には出さず、自走検証（verify-spike）だけが使う。 */
   restartServiceWorkers(): Promise<number>
   /** 診断ログのフォルダを Finder で開く。 */
   openLogFolder(): Promise<void>

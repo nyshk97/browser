@@ -53,9 +53,9 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
         </section>
 
         <section>
-          <h3>拡張</h3>
+          <h3>Chrome 拡張</h3>
           {extensions.length === 0 ? (
-            <p className="dim">ロードされている拡張はない</p>
+            <p className="dim">ロードされている Chrome 拡張はない</p>
           ) : (
             extensions.map((extension) => (
               <div key={extension.id} className="set-row">
@@ -77,7 +77,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
             ))
           )}
           <p className="dim">
-            拡張は <code>extensions.lock.json</code> に書いたものだけをロードする。追加・更新は{' '}
+            Chrome 拡張は <code>extensions.lock.json</code> に書いたものだけをロードする。追加・更新は{' '}
             <code>mise run ext:outdated</code> / <code>ext:update</code> から行う。
           </p>
           <button type="button" className="btn" onClick={() => void window.nemo.restartServiceWorkers()}>

@@ -285,7 +285,7 @@ try {
     const expectedHeadings = [
       'GitHub の Pull Request（サイドバー）',
       'HTTP 認証',
-      '拡張',
+      'Chrome 拡張',
       'ブックマークのセーブスロット',
       'Basic 認証',
       'データ'

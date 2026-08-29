@@ -295,10 +295,14 @@ function HttpAuthRules(): React.JSX.Element {
   const draftOf = (rule: HttpAuthRule): RuleDraft =>
     drafts[rule.id] ?? { pattern: rule.pattern, username: rule.username, password: null }
 
-  const setDraft = (id: string, patch: Partial<RuleDraft>): void =>
+  /**
+   * 下書きを更新する。**初回はルールの現在値から作る**
+   * （空文字から作ると「パスワードを変更」を押しただけでパターンとユーザー名が消える）。
+   */
+  const setDraft = (rule: HttpAuthRule, patch: Partial<RuleDraft>): void =>
     setDrafts((current) => ({
       ...current,
-      [id]: { ...(current[id] ?? { pattern: '', username: '', password: null }), ...patch }
+      [rule.id]: { ...(current[rule.id] ?? draftOf(rule)), ...patch }
     }))
 
   /** 下書きを捨てる（キーごと消す。`undefined` を入れて型を偽らない）。 */
@@ -414,7 +418,7 @@ function HttpAuthRules(): React.JSX.Element {
                     value={draft.pattern}
                     spellCheck={false}
                     maxLength={HTTP_AUTH_LIMITS.MAX_PATTERN}
-                    onChange={(event) => setDraft(rule.id, { pattern: event.target.value })}
+                    onChange={(event) => setDraft(rule, { pattern: event.target.value })}
                   />
                 </span>
                 <span className="set-input">
@@ -423,7 +427,7 @@ function HttpAuthRules(): React.JSX.Element {
                     value={draft.username}
                     spellCheck={false}
                     maxLength={HTTP_AUTH_LIMITS.MAX_USERNAME}
-                    onChange={(event) => setDraft(rule.id, { username: event.target.value })}
+                    onChange={(event) => setDraft(rule, { username: event.target.value })}
                   />
                 </span>
               </div>
@@ -445,7 +449,7 @@ function HttpAuthRules(): React.JSX.Element {
                     <button
                       type="button"
                       className="btn ha-change-password"
-                      onClick={() => setDraft(rule.id, { password: '' })}
+                      onClick={() => setDraft(rule, { password: '' })}
                     >
                       パスワードを変更
                     </button>
@@ -458,7 +462,7 @@ function HttpAuthRules(): React.JSX.Element {
                       value={draft.password}
                       maxLength={HTTP_AUTH_LIMITS.MAX_PASSWORD}
                       placeholder="新しいパスワード（空も可）"
-                      onChange={(event) => setDraft(rule.id, { password: event.target.value })}
+                      onChange={(event) => setDraft(rule, { password: event.target.value })}
                     />
                   </span>
                 )}
@@ -481,6 +485,11 @@ function HttpAuthRules(): React.JSX.Element {
                   />
                   有効
                 </label>
+                {dirty ? (
+                  <button type="button" className="btn ha-cancel" onClick={() => clearDraft(rule.id)}>
+                    取り消す
+                  </button>
+                ) : null}
                 <button type="button" className="btn ha-save" disabled={!dirty} onClick={() => save(rule)}>
                   保存
                 </button>

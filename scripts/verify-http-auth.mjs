@@ -1150,9 +1150,29 @@ async function checkSettingsUi() {
   })
   check(
     'テスターが勝者とマッチなしを出す',
-    testText.includes('が使われます') && testText.includes('マッチなし'),
+    testText.includes('が使われます') && testText.includes('マッチするルールはありません'),
     testText
   )
+
+  /* --- 「パスワードを変更」を押しても他の欄は消えず、「取り消す」で戻れる --- */
+  const patternBefore = await overlay.ev(`document.querySelector('${rowSelector} .ha-pattern').value`)
+  await overlay.ev(
+    `(() => { document.querySelector('${rowSelector} .ha-change-password').click(); return 'ok' })()`
+  )
+  const passwordInputShown = await until(
+    async () => await overlay.ev(`!!document.querySelector('${rowSelector} .ha-new-password')`)
+  )
+  const patternAfter = await overlay.ev(`document.querySelector('${rowSelector} .ha-pattern').value`)
+  check(
+    '「パスワードを変更」を押してもパターンは消えない',
+    passwordInputShown === true && patternAfter === patternBefore && patternBefore.length > 0,
+    `before=${patternBefore} after=${patternAfter}`
+  )
+  await overlay.ev(`(() => { document.querySelector('${rowSelector} .ha-cancel').click(); return 'ok' })()`)
+  const cancelled = await until(
+    async () => await overlay.ev(`!document.querySelector('${rowSelector} .ha-new-password')`)
+  )
+  check('「取り消す」でパスワード欄が閉じて元に戻る', cancelled === true)
 
   /* --- validator に弾かれるパターン ---
    * **テスターより後に置く。** 壊れた下書きが残っている間はテスター自体が弾かれるので、

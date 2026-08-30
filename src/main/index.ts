@@ -91,6 +91,30 @@ if (remoteDebuggingPort && isDevChannel) {
   console.error('[nemo] 常用版では remote debugging を開かない（NEMO_REMOTE_DEBUGGING_PORT を無視した）')
 }
 
+/**
+ * ブラウザの言語を OS の言語に合わせる。
+ *
+ * Electron は起動時に自分の locale を bundle のローカライズから解決するので、
+ * OS が日本語でも `app.getLocale()` が `en-US` になり、`navigator.language` と
+ * `Accept-Language` が `en-US,ja-JP` の順で送られる（サイトが英語で出る）。
+ * `--lang` は ready より前に積まないと効かない。外から明示されたときはそれを尊重する。
+ */
+if (!app.commandLine.hasSwitch('lang')) {
+  const preferred = app.getPreferredSystemLanguages()[0]
+  if (preferred) app.commandLine.appendSwitch('lang', toChromiumLocale(preferred))
+}
+
+/**
+ * OS の言語タグ（`ja-JP`）を Chromium が持つ UI locale に丸める。
+ * Chromium は `ja-JP` を知らず、知らない値は黙って `en-US` に倒す（実測）。
+ * 地域付きで区別している locale だけそのまま通し、それ以外は言語サブタグにする。
+ */
+function toChromiumLocale(tag: string): string {
+  const regional = new Set(['en-GB', 'en-US', 'es-419', 'pt-BR', 'pt-PT', 'zh-CN', 'zh-TW', 'zh-HK', 'fr-CA'])
+  if (regional.has(tag)) return tag
+  return tag.split('-')[0] ?? tag
+}
+
 // 単一インスタンス（Phase 2-5 の既定ブラウザ対応の前提でもある）
 if (!app.requestSingleInstanceLock()) {
   app.quit()
@@ -286,7 +310,9 @@ app
         })
       }
     } else if (!wokenByUrl) {
-      startupWindows.push(createWindow())
+      // 復元するものが無くても空タブは作らない。起動直後は「タブなし」の
+      // 空状態（EmptyState）で待ち、最初のタブは ⌘T やサイドバーから作る。
+      startupWindows.push(createWindow(undefined, { noInitialTab: true }))
     } else {
       // 復元するセッションが無いなら、空の通常ウィンドウを前に出さない。
       // 小窓だけを出して、通常ウィンドウは必要になったときに作る。

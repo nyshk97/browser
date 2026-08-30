@@ -320,8 +320,8 @@ async function openMeet(id, { joined = true, background = true } = {}) {
   }
 }
 
-/** park 用の非会議タブ（起動時の空タブを使う）。 */
-const parkKey = (await windowState()).tabs[0].key
+/** park 用の非会議タブ（起動直後はタブが無いので空タブを 1 つ作る）。 */
+const parkKey = await ui.ev("window.nemo.createTab().then((k) => k)")
 
 /* ------------------------------------------------------------------ *
  * 1. 出る / 出ない の基本

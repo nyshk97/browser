@@ -182,12 +182,16 @@ if (mode === '--storage-read') {
 
 const ui = await uiSession()
 
-// 1. registry の初期状態
+// 1. registry の初期状態（起動直後はタブなし。最初のタブは自分で作る）
 let state = await ui.ev('window.nemo.getWindowState()')
-check('registry が初期タブを1つ持つ', state.tabs.length === 1, JSON.stringify(state.tabs.map((t) => t.key)))
+check('起動直後は registry にタブが無い', state.tabs.length === 0, JSON.stringify(state.tabs.map((t) => t.key)))
+await ui.ev("window.nemo.createTab().then(() => 'ok')")
+await sleep(300)
+state = await ui.ev('window.nemo.getWindowState()')
+check('createTab で初期タブが 1 つできる', state.tabs.length === 1, JSON.stringify(state.tabs.map((t) => t.key)))
 if (state.tabs.length === 0) {
   // ここから先はタブが前提なので、例外で落ちるのではなく理由を出して終わる
-  console.log('\n初期タブが1つも無いので以降の検証を打ち切る（アプリの初期化を待てていない）')
+  console.log('\n初期タブを作れなかったので以降の検証を打ち切る（アプリの初期化を待てていない）')
   process.exit(1)
 }
 const tabKey = JSON.stringify(state.tabs[0].key)

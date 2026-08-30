@@ -88,6 +88,17 @@ mac:
   extendInfo:
     NSMicrophoneUsageDescription: 開いているページがマイクを使うときに必要です。ページごとに Nemo が確認します。
     NSCameraUsageDescription: 開いているページがカメラを使うときに必要です。ページごとに Nemo が確認します。
+    # システム設定の「デフォルトの Web ブラウザ」候補に出るには、上の `protocols`
+    # （http / https）だけでは足りず、**HTML 書類を開ける宣言**も要る
+    # （Arc / Chrome / Firefox はいずれも `public.html` を持つ。v1.0.0 は
+    # http / https だけだったので LaunchServices には登録されつつ候補に出なかった）。
+    CFBundleDocumentTypes:
+      - CFBundleTypeName: HTML document
+        CFBundleTypeRole: Viewer
+        LSHandlerRank: Alternate
+        LSItemContentTypes: [public.html, public.xhtml]
+        CFBundleTypeExtensions: [html, htm, xhtml]
+        CFBundleTypeMIMETypes: [text/html, application/xhtml+xml]
   # dmg は人が入れるため、zip は electron-updater が差分更新に使うため
   # （macOS の自動更新は zip でしか適用できない）。dev 版は dmg だけに絞る。
   target:

@@ -32,6 +32,7 @@ import { isUiUrl, normalizeNavigationInput } from './security.js'
 import { runCommandForWindow, selectFavoriteByIndexIn } from './menu.js'
 import { isShortcutHintVisible, shortcutHintDown, shortcutHintHide } from './shortcut-hint.js'
 import { COMMANDS, SELECT_FAVORITE_ACCELERATORS } from '../shared/keybindings.js'
+import { MAX_CUSTOM_ICON_LENGTH } from '../shared/favorites.js'
 import { answerPrompt, currentPrompt } from './prompts.js'
 import { advanceSwitcher, cancelSwitcher, currentSwitcherState, pickSwitcherTab } from './tab-switcher.js'
 import { suggest } from './suggest.js'
@@ -43,6 +44,7 @@ import {
   moveFavorite,
   movePinned,
   renameNode,
+  setCustomIcon,
   toggleFolder
 } from './store/pins.js'
 import {
@@ -239,6 +241,19 @@ function optionalString(value: unknown, what: string): string | undefined {
 function optionalSection(value: unknown): FavoriteSection | undefined {
   if (value === undefined || value === null) return undefined
   if (value !== 'messages' && value !== 'tools') throw new Error('invalid section')
+  return value
+}
+
+/**
+ * カスタムアイコンの引数。**型と暴走止めだけ**見る（`null` は解除なので通す）。
+ * 長さ・形式の判定は `normalizeCustomIcon` に集約し、不正値は `setCustomIcon` が false で返す
+ * （ここで throw すると「上限超えは拒否して既存を残す」が invoke の reject になり観測できない）。
+ * 正規の renderer は段階縮小で上限内に収めるので、数倍を超える文字列だけプロトコル違反として弾く。
+ * `undefined` を `null`（解除）に倒すのは `optionalTitle` に揃えた（preload は常に引数を渡す）。
+ */
+function optionalIcon(value: unknown): string | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'string' || value.length > MAX_CUSTOM_ICON_LENGTH * 4) throw new Error('invalid icon')
   return value
 }
 
@@ -494,6 +509,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('nemo:rename-node', (event, id: unknown, title: unknown) => {
     requireWindow(event)
     renameNode(requireString(id, 'id'), optionalTitle(title))
+  })
+
+  ipcMain.handle('nemo:set-custom-icon', (event, id: unknown, icon: unknown): boolean => {
+    requireWindow(event)
+    return setCustomIcon(requireString(id, 'id'), optionalIcon(icon))
   })
 
   ipcMain.handle('nemo:rename-tab', (event, key: unknown, title: unknown) => {

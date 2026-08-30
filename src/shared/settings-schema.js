@@ -1,8 +1,15 @@
 // @ts-check
 import { EXTENSION_ID_RE } from './ext-lock.js'
-import { normalizeFavoriteSection } from './favorites.js'
+import { normalizeCustomIcon, normalizeFavoriteSection } from './favorites.js'
 
-export { FAVORITE_SECTIONS, favoritesInShortcutOrder, normalizeFavoriteSection } from './favorites.js'
+export {
+  FAVORITE_SECTIONS,
+  MAX_CUSTOM_ICON_LENGTH,
+  favoritesInShortcutOrder,
+  isImageIcon,
+  normalizeCustomIcon,
+  normalizeFavoriteSection
+} from './favorites.js'
 
 /**
  * 設定 JSON のスキーマ・既定値・マイグレーション。
@@ -160,7 +167,7 @@ function clampNumber(value, fallback, min, max) {
  * ピン留め / Favorites のスキーマ版。
  * - 1 … `title` だけ
  * - 2 … `customTitle`（ユーザーが付けた名前）を持ち、フォルダは1階層まで。
- *        **`section` / `faviconUrl` は版を上げずに足した**（欠損は既定値に倒すだけで、
+ *        **`section` / `faviconUrl` / `customIcon` は版を上げずに足した**（欠損は既定値に倒すだけで、
  *        旧データを読む側の分岐が要らない）
  */
 export const PINS_VERSION = 2
@@ -250,7 +257,8 @@ function normalizeFavorite(raw, seen) {
     title: normalizeTitle(raw['title'], url),
     customTitle: normalizeCustomTitle(raw['customTitle']),
     section: normalizeFavoriteSection(raw['section']),
-    faviconUrl: normalizeDefinitionFaviconUrl(raw['faviconUrl'])
+    faviconUrl: normalizeDefinitionFaviconUrl(raw['faviconUrl']),
+    customIcon: normalizeCustomIcon(raw['customIcon'])
   }
 }
 
@@ -295,7 +303,8 @@ function normalizePinnedList(raw, seen, depth) {
       title: normalizeTitle(item['title'], url),
       customTitle: normalizeCustomTitle(item['customTitle']),
       url,
-      faviconUrl: normalizeDefinitionFaviconUrl(item['faviconUrl'])
+      faviconUrl: normalizeDefinitionFaviconUrl(item['faviconUrl']),
+      customIcon: normalizeCustomIcon(item['customIcon'])
     })
   }
   return result

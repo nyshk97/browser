@@ -2878,3 +2878,119 @@ body[data-view='call'] {
 .vault-list code {
   word-break: break-all;
 }
+
+/* カスタムアイコン（絵文字）。画像（`.fi`）と同じ矩形に収めて中央に出す */
+.def-emoji {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* タイルの `.fi` は 18px 角。絵文字もその箱に収まる大きさにする */
+.fav .def-emoji {
+  font-size: 16px;
+}
+
+/* アイコン編集の枠（Favorites はグリッドの下、ピン留めは行の直下） */
+.pin-icon-edit {
+  padding: 2px 6px 6px;
+}
+
+.icon-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 今のアイコン。設定済みなら角に × が乗る */
+.icon-edit-prev {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  background: var(--nemo-surface-hi);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.icon-edit-prev .fi {
+  width: 18px;
+  height: 18px;
+}
+
+.icon-edit-prev .def-emoji {
+  font-size: 15px;
+}
+
+.icon-edit-clear {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border-radius: 7px;
+  background: #6a6a76;
+  color: #fff;
+  font-size: 9px;
+  line-height: 11px;
+  text-align: center;
+  border: 1px solid var(--nemo-surface);
+  cursor: pointer;
+}
+
+.icon-edit-clear:hover {
+  background: #ff8a80;
+}
+
+.icon-edit-btn {
+  height: 24px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--nemo-ink);
+  background: var(--nemo-surface-hi);
+  border: 1px solid var(--nemo-border);
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.icon-edit-btn:hover {
+  border-color: var(--nemo-accent);
+}
+
+.icon-edit-glyph {
+  font-size: 13px;
+}
+
+/*
+ * 絵文字 1 個ぶんの狭い入力欄。placeholder の 😀 は薄くせず「ここに絵文字」と読めるようにする。
+ * `.fav-edit .rename { width: 100% }`（名前の編集用）より詳細度を上げないと横幅いっぱいに伸びる
+ */
+.icon-edit .icon-edit-input,
+.fav-edit .icon-edit .icon-edit-input {
+  flex: 0 0 auto;
+  width: 40px;
+  min-width: 40px;
+  height: 24px;
+  padding: 0;
+  text-align: center;
+  font-size: 15px;
+}
+
+.icon-edit .icon-edit-input::placeholder {
+  opacity: 0.45;
+}
+
+.icon-edit-error {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #ff8a80;
+}

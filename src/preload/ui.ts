@@ -64,6 +64,7 @@ const api: NemoUiApi = {
   openFavorite: (favoriteId) => ipcRenderer.invoke('nemo:open-favorite', favoriteId) as Promise<void>,
   createFolder: (title) => ipcRenderer.invoke('nemo:create-folder', title) as Promise<void>,
   renameNode: (id, title) => ipcRenderer.invoke('nemo:rename-node', id, title) as Promise<void>,
+  setCustomIcon: (id, icon) => ipcRenderer.invoke('nemo:set-custom-icon', id, icon) as Promise<boolean>,
   renameTab: (key, title) => ipcRenderer.invoke('nemo:rename-tab', key, title) as Promise<void>,
   updatePinnedUrl: (key) => ipcRenderer.invoke('nemo:update-pinned-url', key) as Promise<void>,
   toggleFolder: (id) => ipcRenderer.invoke('nemo:toggle-folder', id) as Promise<void>,

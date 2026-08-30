@@ -29,6 +29,11 @@ export interface FavoriteItem {
    * （履歴 DB は Mac ごとで、消すこともできる）。無ければ頭文字で描く。
    */
   faviconUrl: string | null
+  /**
+   * ユーザーが上書きしたアイコン。絵文字 1 個か PNG の data URL（`normalizeCustomIcon`）。
+   * null なら未設定で、表示は `faviconUrl` に戻る（`customTitle` と同じ型の層）。
+   */
+  customIcon: string | null
 }
 
 /** ピン留め（フォルダで入れ子にできる）。全ウィンドウ共有。 */
@@ -44,6 +49,8 @@ export interface PinnedLink {
   url: string
   /** `FavoriteItem.faviconUrl` と同じ。 */
   faviconUrl: string | null
+  /** `FavoriteItem.customIcon` と同じ。 */
+  customIcon: string | null
 }
 
 export interface PinnedFolder {
@@ -901,6 +908,11 @@ export interface NemoUiApi {
   createFolder(title: string): Promise<void>
   /** 定義（ピン / フォルダ / Favorite）の名前を変える。`null` で解除して既定名に戻す。 */
   renameNode(id: string, title: string | null): Promise<void>
+  /**
+   * 定義（ピン / Favorite）のアイコンを上書きする。絵文字 1 個か PNG の data URL。
+   * `null` で解除。不正値（上限超え等）は**既存を消さずに** false を返す。
+   */
+  setCustomIcon(id: string, icon: string | null): Promise<boolean>
   /** タブの名前を変える（専用タブなら所属定義を、一時タブならタブ自身を）。`null` で解除。 */
   renameTab(key: string, title: string | null): Promise<void>
   /**

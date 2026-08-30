@@ -49,9 +49,11 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 それは「この差分は検証の対象外」と言っているだけで、フルが通った証明ではない。
 コミット前のフル（`mise run verify`）は別に 1 回通す。
 
-**`restart` は随伴する**。`split` / `call` / `live-folder` / `http-auth` / `spike` / `phase1` / `pins` を
-選ぶと `restart` も自動で付く（片方だけだと `--restart-write` / `--restart-read` が
-丸ごと落ちたまま PASS するため）。逆に `restart` の中身も `--only` / `--changed` で絞られるので、
+**`restart` は `--changed` では随伴する**。`split` / `call` / `live-folder` / `http-auth` / `spike` / `phase1` / `pins` が
+選ばれると `restart` も自動で付く（片方だけだと `--restart-write` / `--restart-read` が
+丸ごと落ちたまま PASS するため）。**`verify:only` は名指しした分しか回らない**ので、
+`--lazy-write` / `--lazy-read` のような再起動をまたぐ検査まで見るなら `verify:only pins restart` と両方書く
+（`verify:only pins` だけだと出力の冒頭に「回さない: … restart …」と出て、再起動系の check が 1 件も走らない）。逆に `restart` の中身も `--only` / `--changed` で絞られるので、
 `verify:only split restart` では spike / phase1 / pins の write+read は走らない。
 
 指定できるのは `spike` / `phase1` / `phase2` / `pins` / `switcher` / `peek` / `split` / `call` /

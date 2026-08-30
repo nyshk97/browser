@@ -1,5 +1,6 @@
-import { useCallback, useState } from 'react'
-import { Favicon } from './Sidebar.js'
+import { Fragment, useCallback, useState } from 'react'
+import { DefinitionIcon } from './Sidebar.js'
+import { IconEdit } from './IconEdit.js'
 import { InlineRename, useDelayedClick } from './InlineRename.js'
 import { RowMenu, type RowMenuState } from './RowMenu.js'
 import { TAB_DRAG_TYPE, useDragEnd } from './TabRow.js'
@@ -56,6 +57,7 @@ export function PinnedTree({
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropHint, setDropHint] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [iconEditingId, setIconEditingId] = useState<string | null>(null)
   const [menu, setMenu] = useState<RowMenuState | null>(null)
   const { schedule, cancel } = useDelayedClick()
 
@@ -207,59 +209,92 @@ export function PinnedTree({
       }
 
       return (
-        <div
-          key={node.id}
-          className={classes.join(' ')}
-          style={depth ? { marginLeft: depth * 14 } : undefined}
-          title={name}
-          // 自走検証がピン留め行を引くための手がかり（一時タブ行の `data-key` と同じ理由）。
-          // ピン留め行はタブ key ではなく**定義の ID**で並ぶので、こちらを出す。
-          data-pin={node.id}
-          onClick={() => {
-            if (editing) return
-            // **閉じている行のクリックだけ**を遅らせる。ここを遅らせないと、
-            // リネームしようとしただけでタブが生まれて読み込みが走る。
-            // 既に開いている行の選択は即時（遅らせると通常操作が重くなるだけ）。
-            if (isOpen) void window.nemo.openPinned(node.id)
-            else schedule(() => void window.nemo.openPinned(node.id))
-          }}
-          onDoubleClick={onDoubleClick}
-          onContextMenu={(event) =>
-            openMenu(event, node.id, [
-              { label: '名前を変更', run: () => setEditingId(node.id) },
-              // 「このページに更新」は**開いているときだけ**出す（閉じていたら対象タブが無い）
-              ...(tab
-                ? [{ label: 'このページに更新', run: () => void window.nemo.updatePinnedUrl(tab.key) }]
-                : []),
-              { label: 'ピン留めを解除', danger: true, run: () => void window.nemo.unpin(node.id) }
-            ])
-          }
-          {...dragProps}
-        >
-          {tab?.loading ? (
-            <span className="spin" />
-          ) : (
-            <Favicon url={node.url} title={name} src={tab?.faviconUrl ?? node.faviconUrl} />
-          )}
-          <InlineRename
+        <Fragment key={node.id}>
+          <div
+            className={classes.join(' ')}
+            style={depth ? { marginLeft: depth * 14 } : undefined}
             title={name}
-            editing={editing}
-            onSubmit={rename(node.id)}
-            onCancel={() => setEditingId(null)}
-          />
-          {tab?.audible ? <span className="mark">♪</span> : null}
-          <button
-            type="button"
-            className="x"
-            title="ピン留めを解除"
-            onClick={(event) => {
-              event.stopPropagation()
-              void window.nemo.unpin(node.id)
+            // 自走検証がピン留め行を引くための手がかり（一時タブ行の `data-key` と同じ理由）。
+            // ピン留め行はタブ key ではなく**定義の ID**で並ぶので、こちらを出す。
+            data-pin={node.id}
+            onClick={() => {
+              if (editing) return
+              // **閉じている行のクリックだけ**を遅らせる。ここを遅らせないと、
+              // リネームしようとしただけでタブが生まれて読み込みが走る。
+              // 既に開いている行の選択は即時（遅らせると通常操作が重くなるだけ）。
+              if (isOpen) void window.nemo.openPinned(node.id)
+              else schedule(() => void window.nemo.openPinned(node.id))
             }}
+            onDoubleClick={onDoubleClick}
+            onContextMenu={(event) =>
+              openMenu(event, node.id, [
+                // 名前とアイコンの編集は排他（両方開くとフォーカスを取り合う）
+                {
+                  label: '名前を変更',
+                  run: () => {
+                    setIconEditingId(null)
+                    setEditingId(node.id)
+                  }
+                },
+                {
+                  label: 'アイコンを変更…',
+                  run: () => {
+                    setEditingId(null)
+                    setIconEditingId(node.id)
+                  }
+                },
+                // 「このページに更新」は**開いているときだけ**出す（閉じていたら対象タブが無い）
+                ...(tab
+                  ? [{ label: 'このページに更新', run: () => void window.nemo.updatePinnedUrl(tab.key) }]
+                  : []),
+                { label: 'ピン留めを解除', danger: true, run: () => void window.nemo.unpin(node.id) }
+              ])
+            }
+            {...dragProps}
           >
-            ×
-          </button>
-        </div>
+            {tab?.loading ? (
+              <span className="spin" />
+            ) : (
+              <DefinitionIcon
+                url={node.url}
+                title={name}
+                customIcon={node.customIcon}
+                src={tab?.faviconUrl ?? node.faviconUrl}
+              />
+            )}
+            <InlineRename
+              title={name}
+              editing={editing}
+              onSubmit={rename(node.id)}
+              onCancel={() => setEditingId(null)}
+            />
+            {tab?.audible ? <span className="mark">♪</span> : null}
+            <button
+              type="button"
+              className="x"
+              title="ピン留めを解除"
+              onClick={(event) => {
+                event.stopPropagation()
+                void window.nemo.unpin(node.id)
+              }}
+            >
+              ×
+            </button>
+          </div>
+          {/* アイコン編集は行内に収まらないので、対象行の直下に枠を出す */}
+          {iconEditingId === node.id ? (
+            <div className="pin-icon-edit" style={depth ? { marginLeft: depth * 14 } : undefined}>
+              <IconEdit
+                url={node.url}
+                title={name}
+                current={node.customIcon}
+                fallback={tab?.faviconUrl ?? node.faviconUrl}
+                onSubmit={(icon) => window.nemo.setCustomIcon(node.id, icon)}
+                onClose={() => setIconEditingId(null)}
+              />
+            </div>
+          ) : null}
+        </Fragment>
       )
     })
 

@@ -3,7 +3,10 @@ import { JsonStore } from './json-store.js'
 import { userDataPath } from '../paths.js'
 import { log } from '../log.js'
 import {
+  MAX_CUSTOM_ICON_LENGTH,
   PINS_VERSION,
+  isImageIcon,
+  normalizeCustomIcon,
   normalizeCustomTitle,
   normalizeDefinitionFaviconUrl,
   normalizeFavoriteSection,
@@ -181,7 +184,8 @@ export function pinUrl(url: string, title: string, customTitle?: string | null):
     title: title || normalized,
     customTitle: normalizeCustomTitle(customTitle),
     url: normalized,
-    faviconUrl: null
+    faviconUrl: null,
+    customIcon: null
   }
   commit({ ...data(), pinned: [...data().pinned, node] })
   log('pin.added', { id: node.id })
@@ -244,6 +248,46 @@ export function renameNode(id: string, title: string | null): void {
   const favorites = data().favorites.map((item) => (item.id === id ? { ...item, customTitle: custom } : item))
   commit({ favorites, pinned: rename(data().pinned) })
   log('definition.renamed', { id, cleared: custom === null })
+}
+
+/**
+ * ユーザーが上書きするアイコンを書き換える（ピン / Favorite。フォルダには付かない）。
+ *
+ * **明示的な `null` だけが解除**。それ以外で `normalizeCustomIcon` を通らない値
+ * （上限超え・PNG 以外・2 文字以上）は**既存のアイコンを消さずに** false を返す。
+ * 不正値を null に倒して書くと「消えた」と「拒否した」が区別できず、
+ * 上限を超えた画像を落としただけで前のアイコンが消える。
+ */
+export function setCustomIcon(id: string, icon: string | null): boolean {
+  const custom = icon === null ? null : normalizeCustomIcon(icon)
+  if (icon !== null && custom === null) {
+    log('definition.icon_rejected', {
+      id,
+      reason: icon.length > MAX_CUSTOM_ICON_LENGTH ? 'too_long' : 'invalid'
+    })
+    return false
+  }
+  let found = false
+  const apply = (nodes: PinnedNode[]): PinnedNode[] =>
+    nodes.map((node) => {
+      if (node.kind === 'folder') return { ...node, children: apply(node.children) }
+      if (node.id !== id) return node
+      found = true
+      return { ...node, customIcon: custom }
+    })
+  const pinned = apply(data().pinned)
+  const favorites = data().favorites.map((item) => {
+    if (item.id !== id) return item
+    found = true
+    return { ...item, customIcon: custom }
+  })
+  if (!found) return false
+  commit({ favorites, pinned })
+  log('definition.icon_changed', {
+    id,
+    kind: custom === null ? null : isImageIcon(custom) ? 'image' : 'emoji'
+  })
+  return true
 }
 
 /**
@@ -370,7 +414,8 @@ export function addFavorite(url: string, title: string, customTitle?: string | n
     customTitle: normalizeCustomTitle(customTitle),
     // 追加経路は全部 `tools`（グリッドへの明示的なドロップだけ `moveFavorite` で落とした側へ）
     section: 'tools',
-    faviconUrl: null
+    faviconUrl: null,
+    customIcon: null
   }
   commit({ ...current, favorites: [...current.favorites, item] })
   log('favorite.added', { id: item.id })
@@ -601,7 +646,8 @@ export function convertPinToFavorite(id: string): ConversionResult | null {
     customTitle: node.customTitle,
     section: 'tools',
     // アイコンも名前と同じく移す（`null` で埋めると右クリック 1 回で頭文字に戻り、次の起動まで直らない）
-    faviconUrl: node.faviconUrl
+    faviconUrl: node.faviconUrl,
+    customIcon: node.customIcon
   }
   const favorites = existing ? current.favorites : [...current.favorites, target]
   commit({ favorites, pinned: removal.nodes })
@@ -629,7 +675,8 @@ export function convertFavoriteToPin(id: string): ConversionResult | null {
           title: item.title,
           customTitle: item.customTitle,
           url: item.url,
-          faviconUrl: item.faviconUrl
+          faviconUrl: item.faviconUrl,
+          customIcon: item.customIcon
         }
   const reused = existing?.kind === 'link'
   const pinned = reused ? current.pinned : [...current.pinned, target]

@@ -5,9 +5,16 @@ import { TabRow, TAB_DRAG_TYPE, useDragEnd } from './TabRow.js'
 import { SplitRow } from './SplitRow.js'
 import { RenameInput, useDelayedClick } from './InlineRename.js'
 import { RowMenu, type RowMenuState } from './RowMenu.js'
+import {
+  IconEdit,
+  REJECTED_MESSAGE,
+  TOO_LARGE_MESSAGE,
+  fileToIconDataUrl,
+  isImageFileDrag
+} from './IconEdit.js'
 import { LiveFolder } from './LiveFolder.js'
 import { normalizePrUrl } from '../../shared/live-folder-schema.js'
-import { FAVORITE_SECTIONS } from '../../shared/favorites.js'
+import { FAVORITE_SECTIONS, isImageIcon } from '../../shared/favorites.js'
 import type { FavoriteItem, FavoriteSection, TabState, UpdateState } from '../../shared/types.js'
 
 /**
@@ -266,12 +273,39 @@ function FavoriteGrid({
 }): React.JSX.Element {
   const [dropping, setDropping] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  /** アイコン編集中の Favorite。`error` はドロップで拒否されたときに枠へ持ち越す文言。 */
+  const [iconEdit, setIconEdit] = useState<{ id: string; error?: string } | null>(null)
   const [menu, setMenu] = useState<RowMenuState | null>(null)
   const { schedule, cancel } = useDelayedClick()
 
   useDragEnd(useCallback(() => setDropping(false), []))
 
   const editing = favorites.find((favorite) => favorite.id === editingId) ?? null
+  const iconEditing = favorites.find((favorite) => favorite.id === iconEdit?.id) ?? null
+
+  // 名前とアイコンの編集枠は同じ場所（グリッドの下）に出すので排他にする
+  // （両方開くと枠が 2 つ並び、どちらもマウント時にフォーカスを取り合う）
+  const editName = (id: string | null): void => {
+    setIconEdit(null)
+    setEditingId(id)
+  }
+  const editIcon = (next: { id: string; error?: string } | null): void => {
+    setEditingId(null)
+    setIconEdit(next)
+  }
+
+  /** セルに落とされた画像ファイルをアイコンにする。拒否されたら編集枠を開いて理由を出す。 */
+  const dropImage = (favoriteId: string, file: File): void => {
+    void (async () => {
+      try {
+        const icon = await fileToIconDataUrl(file)
+        const ok = icon ? await window.nemo.setCustomIcon(favoriteId, icon) : false
+        if (!ok) editIcon({ id: favoriteId, error: TOO_LARGE_MESSAGE })
+      } catch {
+        editIcon({ id: favoriteId, error: REJECTED_MESSAGE })
+      }
+    })()
+  }
 
   /** 一時タブをグリッドへ落として、**このセクション**の Favorites に足す。 */
   const dropTab = (event: React.DragEvent): boolean => {
@@ -282,7 +316,8 @@ function FavoriteGrid({
   }
 
   const isTabDrag = (event: React.DragEvent): boolean => event.dataTransfer.types.includes(TAB_DRAG_TYPE)
-  const acceptsDrag = (event: React.DragEvent): boolean => isTabDrag(event) || dragId !== null
+  const acceptsDrag = (event: React.DragEvent): boolean =>
+    isTabDrag(event) || dragId !== null || isImageFileDrag(event)
 
   const other: FavoriteSection = section === 'messages' ? 'tools' : 'messages'
   const label = <div className="label">{section}</div>
@@ -304,6 +339,8 @@ function FavoriteGrid({
           onDrop={(event) => {
             event.preventDefault()
             setDropping(false)
+            // 画像ファイルは受け皿には落とせない（付ける先の定義が無い）。ページ遷移にしない
+            if (event.dataTransfer.files.length > 0) return
             if (dropTab(event)) return
             if (dragId) void window.nemo.moveFavorite(dragId, section)
             setDragId(null)
@@ -331,6 +368,8 @@ function FavoriteGrid({
           // 個々のセルで処理されなかったぶん（隙間へのドロップ）を拾う → 末尾へ
           event.preventDefault()
           setDropping(false)
+          // 隙間に落ちた画像ファイルは飲み込むだけ（既定動作のファイル遷移を `will-navigate` に弾かせない）
+          if (event.dataTransfer.files.length > 0) return
           if (dropTab(event)) return
           if (dragId) void window.nemo.moveFavorite(dragId, section)
           setDragId(null)
@@ -357,6 +396,11 @@ function FavoriteGrid({
                 event.preventDefault()
                 event.stopPropagation()
                 setDropping(false)
+                const file = event.dataTransfer.files[0]
+                if (file) {
+                  if (file.type.startsWith('image/')) dropImage(favorite.id, file)
+                  return
+                }
                 if (dropTab(event)) return
                 if (dragId && dragId !== favorite.id) void window.nemo.moveFavorite(dragId, section, index)
                 setDragId(null)
@@ -370,7 +414,7 @@ function FavoriteGrid({
               onDoubleClick={(event) => {
                 event.preventDefault()
                 cancel()
-                setEditingId(favorite.id)
+                editName(favorite.id)
               }}
               onContextMenu={(event) => {
                 // 右クリックで即削除はしない（取り消せない操作を1クリックに置かない）
@@ -381,7 +425,8 @@ function FavoriteGrid({
                   x: event.clientX,
                   y: event.clientY,
                   items: [
-                    { label: '名前を変更', run: () => setEditingId(favorite.id) },
+                    { label: '名前を変更', run: () => editName(favorite.id) },
+                    { label: 'アイコンを変更…', run: () => editIcon({ id: favorite.id }) },
                     {
                       label: `${other === 'messages' ? 'Messages' : 'Tools'} へ移動`,
                       run: () => void window.nemo.moveFavorite(favorite.id, other)
@@ -398,7 +443,12 @@ function FavoriteGrid({
               {tab?.loading ? (
                 <span className="spin" />
               ) : (
-                <Favicon url={favorite.url} title={name} src={tab?.faviconUrl ?? favorite.faviconUrl} />
+                <DefinitionIcon
+                  url={favorite.url}
+                  title={name}
+                  customIcon={favorite.customIcon}
+                  src={tab?.faviconUrl ?? favorite.faviconUrl}
+                />
               )}
               {tab?.audible ? <span className="fav-mark">♪</span> : null}
               {showKeys && shortcut <= MAX_SHORTCUT ? <span className="kb">{shortcut}</span> : null}
@@ -407,9 +457,23 @@ function FavoriteGrid({
         })}
       </div>
       {/*
-        グリッドのセルは小さすぎて中で名前を編集できないので、
-        編集中だけグリッドの下に入力欄を出す。
+        グリッドのセルは小さすぎて中で名前やアイコンを編集できないので、
+        編集中だけグリッドの下に入力欄を出す（名前 / アイコンの 2 モード）。
       */}
+      {iconEditing ? (
+        <div className="fav-edit">
+          <IconEdit
+            key={iconEditing.id}
+            url={iconEditing.url}
+            title={iconEditing.customTitle ?? iconEditing.title}
+            current={iconEditing.customIcon}
+            fallback={tabs.get(iconEditing.id)?.faviconUrl ?? iconEditing.faviconUrl}
+            error={iconEdit?.error ?? null}
+            onSubmit={(icon) => window.nemo.setCustomIcon(iconEditing.id, icon)}
+            onClose={() => editIcon(null)}
+          />
+        </div>
+      ) : null}
       {editing ? (
         <div className="fav-edit">
           <RenameInput
@@ -425,6 +489,29 @@ function FavoriteGrid({
       {menu ? <RowMenu state={menu} onClose={() => setMenu(null)} /> : null}
     </>
   )
+}
+
+/**
+ * 定義のアイコン。ユーザーの上書き（`customIcon`）があればそれ、無ければ favicon → 頭文字。
+ *
+ * 画像の customIcon は `Favicon` の `src` に**畳んで**渡す（`Favicon` は読み込み失敗で
+ * 頭文字へ落ちるので、別に渡すと壊れた customIcon が favicon の段を飛ばす）。
+ */
+export function DefinitionIcon({
+  url,
+  title,
+  customIcon,
+  src
+}: {
+  url: string
+  title: string
+  customIcon: string | null
+  src: string | null
+}): React.JSX.Element {
+  if (customIcon && !isImageIcon(customIcon)) {
+    return <span className="fi def-emoji">{customIcon}</span>
+  }
+  return <Favicon url={url} title={title} src={customIcon ?? src} />
 }
 
 /**

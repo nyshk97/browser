@@ -194,7 +194,19 @@ try {
       cdp,
       `window.nemo.getSharedState().then((s) => window.nemo.moveFavorite(s.favorites[0].id, 'messages'))`
     )
+    // カスタムアイコン（絵文字 / 画像）もスロットに残る（`normalizeSlot` → `normalizePins` 経由）
+    const PNG =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+    await evalInUi(
+      cdp,
+      `window.nemo.getSharedState().then((s) => Promise.all([window.nemo.setCustomIcon(s.favorites[0].id, '🏢'), window.nemo.setCustomIcon(s.pinned[0].id, ${JSON.stringify(PNG)})]))`
+    )
     const before = await json(cdp, 'window.nemo.getSharedState().then(JSON.stringify)')
+    check(
+      '保存前に customIcon が付いている（絵文字 / 画像）',
+      before.favorites[0]?.customIcon === '🏢' && before.pinned[0]?.customIcon === PNG,
+      JSON.stringify([before.favorites[0]?.customIcon, before.pinned[0]?.customIcon?.slice(0, 22)])
+    )
     check(
       '定義を作れた（ピン留め 1・お気に入り 1）',
       before.pinned.length === 1 && before.favorites.length === 1,
@@ -226,6 +238,25 @@ try {
       JSON.stringify(file.data.favorites[0])
     )
 
+    check(
+      'スロットに customIcon が焼き込まれている',
+      file.data.favorites[0]?.customIcon === '🏢' && file.data.pinned[0]?.customIcon === PNG,
+      JSON.stringify([file.data.favorites[0]?.customIcon, file.data.pinned[0]?.customIcon?.slice(0, 22)])
+    )
+    // 読み込みで戻ることを見るために、いったん外しておく（外さないと no-op でも通る）
+    await evalInUi(
+      cdp,
+      `window.nemo.getSharedState().then((s) => Promise.all([window.nemo.setCustomIcon(s.favorites[0].id, null), window.nemo.setCustomIcon(s.pinned[0].id, null)]))`
+    )
+    {
+      const cleared = await json(cdp, 'window.nemo.getSharedState().then(JSON.stringify)')
+      check(
+        '読み込む前に customIcon を外した（外れていないと復元の検査が空振りする）',
+        cleared.favorites[0]?.customIcon === null && cleared.pinned[0]?.customIcon === null,
+        JSON.stringify([cleared.favorites[0]?.customIcon, cleared.pinned[0]?.customIcon])
+      )
+    }
+
     // 埋まっている枠には書かない（別の Mac のスロットを潰さない）
     const twice = await evalInUi(cdp, 'window.nemo.saveSlot(0, "二度目")')
     check('埋まっている枠には保存しない', twice === false, String(twice))
@@ -241,6 +272,14 @@ try {
       stillOwned === 2,
       `所属タブ ${stillOwned} 本`
     )
+    {
+      const restored = await json(cdp, 'window.nemo.getSharedState().then(JSON.stringify)')
+      check(
+        'スロットの読み込みで customIcon（絵文字 / 画像）が戻る',
+        restored.favorites[0]?.customIcon === '🏢' && restored.pinned[0]?.customIcon === PNG,
+        JSON.stringify([restored.favorites[0]?.customIcon, restored.pinned[0]?.customIcon?.slice(0, 22)])
+      )
+    }
     // 降格 0 件だけだと no-op でも通る。**中身の一致まで見る**
     const pins = readPins(userDataDir)
     check(

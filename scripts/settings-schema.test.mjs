@@ -2,9 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   DEFAULT_SETTINGS,
+  MAX_CUSTOM_ICON_LENGTH,
   MAX_DEFINITION_DATA_FAVICON_LENGTH,
   MAX_PIN_DEPTH,
   favoritesInShortcutOrder,
+  normalizeCustomIcon,
   normalizeDefinitionFaviconUrl,
   normalizePins,
   normalizeSettings,
@@ -537,4 +539,87 @@ test('favoritesInShortcutOrder は messages → tools の順で、各セクシ�
     favoritesInShortcutOrder(items).map((item) => item.id),
     ['m1', 'm2', 't1', 't2']
   )
+})
+
+test('customIcon は絵文字 1 個か 16KB までの PNG data: だけ。欠損・不正は null', () => {
+  const png = `data:image/png;base64,${'A'.repeat(MAX_CUSTOM_ICON_LENGTH - 'data:image/png;base64,'.length)}`
+  const cases = [
+    ['🏢', '🏢'],
+    ['👨‍👩‍👧', '👨‍👩‍👧'], // ZWJ 結合（Cf を落とすと消える）
+    ['🏳️‍🌈', '🏳️‍🌈'], // ZWJ + VS16
+    ['🇯🇵', '🇯🇵'], // regional indicator ×2 で 1 grapheme
+    [' 🏢 ', '🏢'], // trim
+    ['🏢🏠', null], // 2 grapheme
+    ['W1', null],
+    [' ', null], // 空白 1 文字は「消えたように見える」ので落とす
+    ['　', null],
+    ['\u0007', null], // 制御文字
+    ['\u0000', null],
+    [png, png],
+    [`${png}A`, null], // 上限超え
+    ['data:image/svg+xml;base64,AAAA', null], // PNG 以外
+    ['https://a.example/i.png', null],
+    [42, null]
+  ]
+  for (const [input, expected] of cases) {
+    assert.equal(normalizeCustomIcon(input), expected, JSON.stringify(input).slice(0, 40))
+  }
+  assert.equal(MAX_CUSTOM_ICON_LENGTH, 16 * 1024)
+
+  const { favorites, pinned } = normalizePins({
+    favorites: [
+      { id: 'f1', url: 'https://a.example/', title: 'A', customTitle: null, customIcon: '🏢' },
+      { id: 'f2', url: 'https://b.example/', title: 'B', customTitle: null, customIcon: '🏢🏠' },
+      { id: 'f3', url: 'https://c.example/', title: 'C', customTitle: null }
+    ],
+    pinned: [
+      { id: 'p1', kind: 'link', url: 'https://d.example/', title: 'D', customTitle: null, customIcon: png },
+      { id: 'p2', kind: 'link', url: 'https://e.example/', title: 'E', customTitle: null }
+    ]
+  })
+  assert.deepEqual(
+    favorites.map((item) => item.customIcon),
+    ['🏢', null, null]
+  )
+  assert.deepEqual(
+    pinned.map((node) => node.customIcon),
+    [png, null]
+  )
+})
+
+test('normalizePins は冪等（customIcon 込みで 2 回通しても変わらない）', () => {
+  const raw = {
+    favorites: [
+      {
+        id: 'f1',
+        url: 'https://a.example/',
+        title: 'A',
+        customTitle: 'a',
+        section: 'messages',
+        customIcon: ' 🏢 '
+      }
+    ],
+    pinned: [
+      {
+        id: 'd1',
+        kind: 'folder',
+        title: 'F',
+        customTitle: null,
+        collapsed: false,
+        children: [
+          {
+            id: 'p1',
+            kind: 'link',
+            url: 'https://b.example/',
+            title: 'B',
+            customTitle: null,
+            customIcon: '👨‍👩‍👧'
+          }
+        ]
+      }
+    ]
+  }
+  const once = normalizePins(raw)
+  assert.deepEqual(normalizePins(once), once)
+  assert.equal(once.favorites[0].customIcon, '🏢')
 })

@@ -111,6 +111,13 @@ if (mode === '--lazy-write') {
   await ui.ev(`window.nemo.pinTab(${json(pinTab)}).then(() => 'ok')`)
   const favTab = await ui.ev(`window.nemo.createTab('${PAGES}/login.html').then(k => k)`)
   await ui.ev(`window.nemo.addFavorite(${json(favTab)}).then(() => 'ok')`)
+  // Favorite にカスタムアイコン（絵文字）を付ける（再起動をまたいで残ることを見る。
+  // ピンには付けない: 下の「ピン行が favicon の <img>」の検査が絵文字に変わってしまう）
+  {
+    const fav = (await shared()).favorites[0]
+    const ok = await ui.ev(`window.nemo.setCustomIcon(${json(fav.id)}, '🏠').then(v => String(v))`)
+    check('Favorite に絵文字のカスタムアイコンを付けられる', ok === 'true', ok)
+  }
   // 一時タブにリネームを付ける（再起動をまたいで残ることを見る）
   const tmpTab = await ui.ev(`window.nemo.createTab('${PAGES}/iframe.html').then(k => k)`)
   await ui.ev(`window.nemo.renameTab(${json(tmpTab)}, '作業用').then(() => 'ok')`)
@@ -163,6 +170,18 @@ if (mode === '--lazy-read') {
     sh.pinned.length > 0 && sh.favorites.length > 0,
     `pinned=${sh.pinned.length} favorites=${sh.favorites.length}`
   )
+
+  check(
+    '再起動後も Favorite のカスタムアイコン（絵文字）が残る',
+    sh.favorites[0]?.customIcon === '🏠',
+    json(sh.favorites[0]?.customIcon)
+  )
+  {
+    const drawn = await windows[0].session.ev(
+      `(() => { const el = document.querySelector('.fav .def-emoji'); return el ? el.textContent : 'none' })()`
+    )
+    check('再起動後もグリッドのセルが絵文字で描かれる', drawn === '🏠', drawn)
+  }
 
   check(
     '一時タブに付けた名前が再起動をまたいで残る',
@@ -1305,6 +1324,135 @@ const settle = () => sleep(250)
 
   await resetDefinitions()
   await closeEphemeralTabs()
+}
+
+/* ------------------------------------------------------------------ *
+ * カスタムアイコン（`customIcon`）: 絵文字 / PNG、拒否時は既存を残す、変換で引き継ぐ
+ * ------------------------------------------------------------------ */
+{
+  await resetDefinitions()
+  const setIcon = (id, icon) =>
+    ui.ev(`window.nemo.setCustomIcon(${json(id)}, ${json(icon)}).then(v => String(v))`)
+  const key = await ui.ev(`window.nemo.createTab('${PAGES}/index.html').then(k => k)`)
+  await ui.ev(`window.nemo.pinTab(${json(key)}).then(() => 'ok')`)
+  const pin = flatten((await shared()).pinned).find((n) => n.kind === 'link')
+
+  check('ピン留めに絵文字を付けると true', (await setIcon(pin.id, '👨‍👩‍👧')) === 'true')
+  {
+    const after = flatten((await shared()).pinned).find((n) => n.id === pin.id)
+    check('ピン定義が customIcon（ZWJ 絵文字）を持つ', after?.customIcon === '👨‍👩‍👧', json(after?.customIcon))
+    await sleep(250)
+    const drawn = await ui.ev(
+      `(() => { const row = document.querySelector('.row.pin[data-pin=${JSON.stringify(pin.id)}]'); if (!row) return 'no-row'; const el = row.querySelector('.def-emoji'); return el ? el.textContent : 'none' })()`
+    )
+    check('ピン行が絵文字で描かれる（favicon より優先）', drawn === '👨‍👩‍👧', drawn)
+  }
+
+  // 拒否: 上限超え / 2 grapheme / 絵文字以外。**既存のアイコンは残る**
+  {
+    const tooLong = await ui.ev(
+      `window.nemo.setCustomIcon(${json(pin.id)}, 'data:image/png;base64,' + 'A'.repeat(20000)).then(v => String(v))`
+    )
+    check('上限超えの画像は false（reject にならない）', tooLong === 'false', tooLong)
+    check('2 grapheme は false', (await setIcon(pin.id, '🏢🏠')) === 'false')
+    check('PNG 以外の data: は false', (await setIcon(pin.id, 'data:image/svg+xml;base64,AAAA')) === 'false')
+    const after = flatten((await shared()).pinned).find((n) => n.id === pin.id)
+    check('拒否されても既存のアイコンは消えない', after?.customIcon === '👨‍👩‍👧', json(after?.customIcon))
+    check('存在しない ID は false', (await setIcon('no-such-id', '🏢')) === 'false')
+  }
+
+  // ピン → Favorite の変換でアイコンが引き継がれる
+  await ui.ev(`window.nemo.addFavorite(${json(key)}).then(() => 'ok')`)
+  await sleep(400)
+  const fav = (await shared()).favorites[0]
+  check(
+    'ピン → Favorite の変換でカスタムアイコンが引き継がれる',
+    fav?.customIcon === '👨‍👩‍👧',
+    json(fav?.customIcon)
+  )
+  {
+    const drawn = await ui.ev(
+      `(() => { const cell = document.querySelector('.fav[data-id=${JSON.stringify(fav?.id)}]'); if (!cell) return 'no-cell'; const el = cell.querySelector('.def-emoji'); return el ? el.textContent : 'none' })()`
+    )
+    check('グリッドのセルが絵文字で描かれる', drawn === '👨‍👩‍👧', drawn)
+  }
+
+  // 右クリック「アイコンを変更…」で枠が開き、プレビューの × で favicon に戻る
+  {
+    await ui.ev(`(() => {
+      const cell = document.querySelector('.fav[data-id=${JSON.stringify(fav?.id)}]')
+      cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 100 }))
+      return 'ok'
+    })()`)
+    await sleep(250)
+    await ui.ev(`(() => {
+      const item = [...document.querySelectorAll('.row-menu button')].find((b) => b.textContent === 'アイコンを変更…')
+      if (item) item.click()
+      return item ? 'ok' : 'no-item'
+    })()`)
+    await sleep(250)
+    const shape = await ui
+      .ev(
+        `JSON.stringify((() => { const box = document.querySelector('.icon-edit'); if (!box) return null; return { prev: box.querySelector('.icon-edit-prev .def-emoji')?.textContent ?? null, buttons: [...box.querySelectorAll('.icon-edit-btn')].map((b) => b.textContent), clear: Boolean(box.querySelector('.icon-edit-clear')), placeholder: box.querySelector('.icon-edit-input')?.placeholder ?? null } })())`
+      )
+      .then(JSON.parse)
+    check(
+      '「アイコンを変更…」で枠が開き、プレビュー・絵文字欄（placeholder 😀）・🖼 ボタン・× がある',
+      shape?.prev === '👨‍👩‍👧' &&
+        shape?.buttons?.length === 1 &&
+        shape?.clear === true &&
+        shape?.placeholder === '😀',
+      json(shape)
+    )
+    await ui.ev(`(() => { document.querySelector('.icon-edit-clear')?.click(); return 'ok' })()`)
+    await sleep(250)
+    const cleared = (await shared()).favorites.find((f) => f.id === fav?.id)
+    check(
+      'プレビューの × で favicon に戻る（customIcon が null）',
+      cleared?.customIcon === null,
+      json(cleared?.customIcon)
+    )
+    const closed = await ui.ev(
+      `(() => { document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); return 'ok' })()`
+    )
+    await sleep(150)
+    const still = await ui.ev(`document.querySelector('.icon-edit') ? 'open' : 'closed'`)
+    check('枠外クリックで枠が閉じる', closed === 'ok' && still === 'closed', still)
+    // 次の検査（PNG）のためにアイコンを戻しておく
+    await setIcon(fav.id, '👨‍👩‍👧')
+  }
+
+  // PNG の data URL（1×1 の透明 PNG）は通り、セルは <img> で描かれる
+  const png =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+  check('PNG の data URL は true', (await setIcon(fav.id, png)) === 'true')
+  {
+    const after = (await shared()).favorites.find((f) => f.id === fav.id)
+    check('Favorite 定義が PNG を持つ', after?.customIcon === png)
+    await sleep(250)
+    const drawn = await ui.ev(
+      `(() => { const cell = document.querySelector('.fav[data-id=${JSON.stringify(fav.id)}]'); if (!cell) return 'no-cell'; const img = cell.querySelector('img.fi'); return img ? img.getAttribute('src').slice(0, 22) : 'none' })()`
+    )
+    check('画像アイコンはセルが <img> で描かれる', drawn === 'data:image/png;base64,', drawn)
+  }
+
+  // Favorite → ピンの変換でも引き継がれる（既に同 URL のピンは無い）
+  await ui.ev(`window.nemo.pinTab(${json(key)}).then(() => 'ok')`)
+  await sleep(400)
+  {
+    const back = flatten((await shared()).pinned).find((n) => n.kind === 'link')
+    check(
+      'Favorite → ピンの変換でもカスタムアイコンが引き継がれる',
+      back?.customIcon === png,
+      json(back?.customIcon?.slice(0, 30))
+    )
+    check('null で解除すると true', (await setIcon(back.id, null)) === 'true')
+    const cleared = flatten((await shared()).pinned).find((n) => n.id === back.id)
+    check('解除後は customIcon が null', cleared?.customIcon === null, json(cleared?.customIcon))
+  }
+
+  await resetDefinitions()
+  await ui.ev(`window.nemo.closeTab(${json(key)}).then(() => 'ok')`)
 }
 
 await resetDefinitions()

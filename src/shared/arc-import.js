@@ -134,7 +134,8 @@ export function parseArcSidebar(raw) {
           title: titleOf(item) || url,
           customTitle: null,
           url,
-          faviconUrl: null
+          faviconUrl: null,
+          customIcon: null
         })
         continue
       }
@@ -190,7 +191,8 @@ export function parseArcSidebar(raw) {
         title: child.title,
         customTitle: null,
         section: 'tools',
-        faviconUrl: null
+        faviconUrl: null,
+        customIcon: null
       })
     }
   }

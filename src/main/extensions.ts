@@ -470,26 +470,35 @@ export function watchExtensionPopups(extensions: ElectronChromeExtensions): void
   })
 }
 
-const extensionShimPath = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '..',
-  'preload',
-  'extension-shim.cjs'
-)
+const preloadDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'preload')
 
 /**
- * 拡張ページ向けの `chrome.*` 補完（`src/preload/extension-shim.ts`）を pageSession に登録する。
+ * 拡張コンテキスト向けの `chrome.*` 補完を pageSession に登録する。
+ * `src/preload/extension-shim.ts` を frame（popup / options 等）と service worker の両方に配る
+ * （chrome.debugger の空実装は frame だけ、`chrome.storage.*.onChanged` の補完は両方）。
  * `createExtensions()` より**前**に呼ぶ（ece の preload の `Object.freeze(chrome)` より先に走らせる）。
  * パッケージの同梱漏れは `exists: false` のログで捕まえる（`verify-packaged` が見る）。
  */
 export function registerExtensionShim(session: Electron.Session): void {
-  const exists = fs.existsSync(extensionShimPath)
-  if (exists) {
-    session.registerPreloadScript({ id: 'nemo-extension-shim', type: 'frame', filePath: extensionShimPath })
-  } else {
-    logError('extension.shim_missing', new Error('extension-shim.cjs が無い'), { path: extensionShimPath })
+  // **同じファイルを frame と service worker の両方に登録する**（preload 側で process.type を見て分岐する）
+  // 同梱の有無は 1 回だけ見て、ログは登録ごと（id 付き）に出す
+  const filePath = path.join(preloadDir, 'extension-shim.cjs')
+  const exists = fs.existsSync(filePath)
+  const shims: { id: string; type: 'frame' | 'service-worker' }[] = [
+    { id: 'nemo-extension-shim', type: 'frame' },
+    { id: 'nemo-extension-sw-shim', type: 'service-worker' }
+  ]
+  for (const shim of shims) {
+    if (exists) {
+      session.registerPreloadScript({ id: shim.id, type: shim.type, filePath })
+    } else {
+      logError('extension.shim_missing', new Error('extension-shim.cjs が無い'), {
+        id: shim.id,
+        path: filePath
+      })
+    }
+    log('extension.shim_registered', { id: shim.id, exists })
   }
-  log('extension.shim_registered', { exists })
 }
 
 /** Nemo のタブ / ウィンドウモデルと chrome.tabs / chrome.windows を接続する。 */

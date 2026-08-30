@@ -10,6 +10,7 @@ import {
   watchExtensionPopups,
   watchServiceWorkerStatus
 } from './extensions.js'
+import { watchExtensionConsole } from './extension-console.js'
 import { registerIpcHandlers } from './ipc.js'
 import { getLoadedOkExtensions, setLoadedExtensions } from './extension-state.js'
 import {
@@ -163,6 +164,7 @@ app
     const extensions = createExtensions(pageSession)
     setExtensions(extensions)
     watchServiceWorkerStatus(pageSession)
+    watchExtensionConsole(pageSession)
     watchExtensionPopups(extensions)
 
     registerIpcHandlers()

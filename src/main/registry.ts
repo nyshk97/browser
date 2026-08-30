@@ -22,6 +22,7 @@ import {
   redactUrl,
   resolveNavigationTarget
 } from './security.js'
+import { watchPageExtensionConsole } from './extension-console.js'
 import { log, logError } from './log.js'
 import { startMetricsSampling, stopMetricsSampling } from './metrics.js'
 import { createUiView, disposeUiView, type UiViewKind } from './ui-view.js'
@@ -619,6 +620,7 @@ export class NemoTab {
     // シークレットウィンドウのタブは拡張のタブモデルに載せない
     // （拡張がロードされていないセッションなので、載せても対応する tab が作れない）
     if (!this.window.isPrivate) extensions?.addTab(wc, this.window.baseWindow)
+    watchPageExtensionConsole(wc)
     if (this.zoomFactor !== 1) wc.setZoomFactor(this.zoomFactor)
     return view
   }

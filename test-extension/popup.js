@@ -9,6 +9,20 @@
  */
 const results = {}
 
+/** 受けた storage の変更（`window.__nemoStorageEvents`）。SW 側と同じ形で積む。最上位で登録する。 */
+window.__nemoStorageEvents = []
+chrome.storage.onChanged.addListener((changes, area) => {
+  window.__nemoStorageEvents.push({
+    via: 'storage.onChanged',
+    area,
+    keys: Object.keys(changes),
+    saved: Object.keys(changes).filter((key) => 'newValue' in changes[key])
+  })
+})
+chrome.storage.session.onChanged.addListener((changes) => {
+  window.__nemoStorageEvents.push({ via: 'session.onChanged', area: 'session', keys: Object.keys(changes) })
+})
+
 /** 指定時間で諦める（通らない経路を「待ちっぱなし」にしない）。 */
 function within(ms, promise) {
   return Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve('timeout'), ms))]).catch(

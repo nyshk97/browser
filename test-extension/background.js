@@ -10,6 +10,25 @@
 
 const MARKER_KEY = '__nemo_ci_marker__'
 
+/**
+ * `chrome.storage.onChanged` / `chrome.storage.session.onChanged` で受けた変更を積む。
+ * 検証側は `sw.ev('self.__nemoStorageEvents')` で読む
+ * （`chrome.storage.local` に記録すると、その書き込み自体が onChanged を起こして件数が合わなくなる）。
+ * **リスナーは最上位で登録する**（Bitwarden も同じ形で、他コンテキストの書き込みをここで知る）。
+ */
+self.__nemoStorageEvents = []
+chrome.storage.onChanged.addListener((changes, area) => {
+  self.__nemoStorageEvents.push({
+    via: 'storage.onChanged',
+    area,
+    keys: Object.keys(changes),
+    saved: Object.keys(changes).filter((key) => 'newValue' in changes[key])
+  })
+})
+chrome.storage.session.onChanged.addListener((changes) => {
+  self.__nemoStorageEvents.push({ via: 'session.onChanged', area: 'session', keys: Object.keys(changes) })
+})
+
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.storage.local.set({ [MARKER_KEY]: 'installed' })
 })

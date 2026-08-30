@@ -67,7 +67,9 @@ const appEnv = () => ({
   NEMO_EXT_DIR: path.join(extRoot, 'extensions'),
   NEMO_EXT_LOCK: path.join(extRoot, 'extensions.lock.json'),
   // 分割中の popup 位置を見るのに、ペインの実 bounds を main から出してもらう
-  NEMO_VERIFY_DIAGNOSTICS: '1'
+  NEMO_VERIFY_DIAGNOSTICS: '1',
+  // 拡張の SW / content script の console を診断ログに落とす（dev 用スイッチ。5c で見る）
+  NEMO_EXT_CONSOLE: '1'
 })
 
 async function startPagesServer() {
@@ -393,6 +395,170 @@ try {
     await popup?.ev('window.close()').catch(() => {})
     popup?.close()
     await sleep(500)
+    sw.close()
+  }
+
+  /* ---- 5c. chrome.storage.onChanged（コンテキストをまたぐ通知） ---- */
+  {
+    /*
+     * Bitwarden の状態管理は `storageArea.onChanged` で「他コンテキストでの変更」を知る。
+     * Electron 41 は **service worker 側で onChanged を鳴らさない**（popup で受ける側は鳴る）ので、
+     * popup で Vault を解除しても SW が知らず、アイコンがロックのまま・インラインメニューが
+     * 「Unlock」のままになる（2026-08-30 に実測）。Nemo の preload が polyfill で補う。
+     *
+     * 送り手 {SW, popup} × area {local, session} × 受け手 {SW, popup} を別々に見る。
+     * **受け手が SW の check は「今ネイティブで落ちている経路」**なので名前に [SW受信] を付け、
+     * polyfill が丸ごと外れた回帰をここで拾う。件数は「ちょうど N 回」で見る（二重配信も落とす）。
+     */
+    const sw = await swSession()
+    let popup = null
+    for (let attempt = 0; attempt < 3 && !popup; attempt += 1) {
+      await sw.ev(`chrome.action.openPopup().then(() => 'ok', (e) => 'error: ' + (e && e.message))`)
+      popup = await connectTo(cdp, 'popup.html', { timeoutMs: 5000 }).catch(() => null)
+    }
+    check('[storage] popup を開けた', popup !== null)
+    // popup.js の初期化（自分の storage 書き込み・SW への touch）が**終わってから**記録を空にする。
+    // target ができた直後に繋ぐと、まだ popup.js が走っておらずリスナーも無い（最初の check だけ 0 件になる）
+    if (popup) {
+      // popup.js の probe は within(3000) × 7 本で最悪 21 秒かかるので、待ちはそれより長く取る
+      const initialized = await waitFor(
+        popup,
+        `document.getElementById('messaging')?.textContent ? 'ready' : ''`,
+        { timeoutMs: 25000 }
+      ).catch(() => '')
+      check('[storage] popup の初期化（#messaging）が終わった', initialized === 'ready')
+    }
+    const reset = async () => {
+      await sw.ev(`(self.__nemoStorageEvents = []).length`)
+      await popup?.ev(`(window.__nemoStorageEvents = []).length`)
+    }
+    /** 受け手の記録から、area と via が一致するものだけ取り出す（少し待って落ち着かせる）。 */
+    let lastRaw = ''
+    const eventsOf = async (side, area, via = 'storage.onChanged') => {
+      await sleep(700)
+      const raw =
+        side === 'sw'
+          ? await sw.ev(`JSON.stringify(self.__nemoStorageEvents)`)
+          : await popup?.ev(`JSON.stringify(window.__nemoStorageEvents)`)
+      lastRaw = raw ?? ''
+      return (raw ? JSON.parse(raw) : []).filter((e) => e.area === area && e.via === via)
+    }
+    // 件数が合わないときは受け手の記録を**絞る前の形**で出す（area / via の取り違えをその場で見分ける）
+    const exactly = (name, events, n, extra = () => true) =>
+      check(
+        name,
+        events.length === n && events.every(extra),
+        `${events.length} 件: ${JSON.stringify(events)}${
+          events.length === n && events.every(extra) ? '' : ` / 全記録: ${lastRaw}`
+        }`
+      )
+
+    if (popup) {
+      // popup → session
+      await reset()
+      await popup.ev(`chrome.storage.session.set({ __nemo_s1__: 1 }).then(() => 'ok')`)
+      exactly(
+        '[SW受信] popup の session.set が SW の storage.onChanged に 1 回届く',
+        await eventsOf('sw', 'session'),
+        1
+      )
+      exactly(
+        '[SW受信] popup の session.set が SW の session.onChanged に 1 回届く',
+        await eventsOf('sw', 'session', 'session.onChanged'),
+        1
+      )
+      exactly(
+        '[popup受信] popup 自身の session.set が popup に 1 回届く',
+        await eventsOf('popup', 'session'),
+        1
+      )
+
+      // popup → local（複数キーは 1 イベント）
+      await reset()
+      await popup.ev(`chrome.storage.local.set({ __nemo_a__: 1, __nemo_b__: 2 }).then(() => 'ok')`)
+      exactly(
+        '[SW受信] popup の local.set({a,b}) が SW に 1 イベント（changes に 2 キー）で届く',
+        await eventsOf('sw', 'local'),
+        1,
+        (e) => e.keys.length === 2 && e.saved.length === 2
+      )
+      exactly('[popup受信] popup 自身の local.set が popup に 1 回届く', await eventsOf('popup', 'local'), 1)
+
+      // SW → local remove（実在キー）
+      await reset()
+      await sw.ev(`chrome.storage.local.remove('__nemo_a__').then(() => 'ok')`)
+      exactly(
+        '[popup受信] SW の local.remove が popup に 1 回届く（newValue 無し）',
+        await eventsOf('popup', 'local'),
+        1,
+        (e) => e.keys.includes('__nemo_a__') && e.saved.length === 0
+      )
+      exactly('[SW受信] SW 自身の local.remove が SW に 1 回届く', await eventsOf('sw', 'local'), 1)
+
+      // SW → session
+      await reset()
+      await sw.ev(`chrome.storage.session.set({ __nemo_s2__: 1 }).then(() => 'ok')`)
+      exactly('[popup受信] SW の session.set が popup に 1 回届く', await eventsOf('popup', 'session'), 1)
+      exactly('[SW受信] SW 自身の session.set が SW に 1 回届く', await eventsOf('sw', 'session'), 1)
+
+      // 同じ値を 2 回（同値でも通知する。台帳が「内容一致で捨てる」形になっていないこと）
+      await reset()
+      await popup.ev(
+        `chrome.storage.local.set({ __nemo_same__: 'x' }).then(() => chrome.storage.local.set({ __nemo_same__: 'x' })).then(() => 'ok')`
+      )
+      exactly('[SW受信] popup が同じ値を 2 回書くと SW で 2 回鳴る', await eventsOf('sw', 'local'), 2)
+      exactly(
+        '[popup受信] popup が同じ値を 2 回書くと popup で 2 回鳴る',
+        await eventsOf('popup', 'local'),
+        2
+      )
+
+      // 存在しないキーを混ぜた remove（実在するキーだけで、ちょうど 1 回）
+      await reset()
+      await sw.ev(`chrome.storage.local.remove(['__nemo_b__', '__nemo_missing__']).then(() => 'ok')`)
+      exactly(
+        '[popup受信] 存在しないキーを混ぜた SW の remove が popup に 1 回、実在キーだけで届く',
+        await eventsOf('popup', 'local'),
+        1,
+        (e) => e.keys.length === 1 && e.keys[0] === '__nemo_b__'
+      )
+
+      // 配送メッセージの形を受けても拡張のハンドラが壊れない（polyfill 前は飛ばないので手で 1 回送る）
+      await sw.ev(
+        `chrome.runtime.sendMessage({ __nemo: 'storage-changed', area: 'local', keys: ['__nemo_x__'], type: 'save' }, () => void chrome.runtime.lastError); 1`
+      )
+      const echo = await popup.ev(
+        `chrome.runtime.sendMessage({ type: 'echo', value: 'still-ok' }).then((r) => r?.echo ?? 'no')`
+      )
+      check(
+        '配送メッセージの形を受けても popup ↔ SW のメッセージングが壊れない',
+        echo === 'still-ok',
+        String(echo)
+      )
+
+      await popup.ev('window.close()').catch(() => {})
+      popup.close()
+      await sleep(500)
+    }
+
+    // 診断ログ: NEMO_EXT_CONSOLE=1 で SW の console.error が URL を伏せて載る（CDP から直接吐かせる。
+    // 拡張自身の sendMessage は送信元には配られないので「メッセージで起こす」形にはしない）
+    await sw.ev(`console.error('nemo ci error https://example.com/secret?token=1'); 1`)
+    await sleep(700)
+    const lines = readLogLines(userDataDir)
+    check(
+      'NEMO_EXT_CONSOLE=1 で console の取り込みが有効になる（extension.console_watch_enabled）',
+      lines.some((l) => l.includes('"event":"extension.console_watch_enabled"'))
+    )
+    const swConsole = lines.filter(
+      (l) => l.includes('"event":"extension.sw_console"') && l.includes('nemo ci error')
+    )
+    check(
+      'SW の console.error が extension.sw_console に URL を伏せて載る',
+      swConsole.length >= 1 &&
+        swConsole.every((l) => !l.includes('secret') && l.includes('https://example.com')),
+      swConsole.map((l) => l.slice(0, 200)).join(' / ')
+    )
     sw.close()
   }
 

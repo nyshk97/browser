@@ -761,6 +761,11 @@ popup が開いて `chrome.*` が使える / オプションページを Nemo �
 - 終わったら popup の Settings → Log out でログアウトする
 - dev 版のデータを消すなら `rm -rf ~/Library/Application\ Support/Nemo-dev`
   （常用版の `Nemo/` とは別のディレクトリなので、消しても常用環境には影響しない）
+- **Bitwarden の内部で何が止まっているかを見るなら `NEMO_EXT_CONSOLE=1 mise run dev:nodebug`**。
+  拡張の service worker / content script の console（warning / error）が診断ログに
+  `extension.sw_console` / `extension.page_console` として残る（URL はオリジンまで伏せる。
+  本文にメール等が載りうるので常用版では出ない dev 用スイッチ）。CDP を開かずに実 Vault で使える。
+  読むのは `~/Library/Application Support/Nemo-dev/logs/` の最新ファイル
 
 ### popup がおかしいとき
 

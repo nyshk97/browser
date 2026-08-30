@@ -75,6 +75,7 @@ export default defineConfig(({ command }) => {
           input: {
             ui: resolve('src/preload/ui.ts'),
             // 拡張ページ向けの chrome.* 補完（`src/main/index.ts` が pageSession に登録する）
+            // frame と service worker の両方に同じファイルを配る（分けると共有 chunk を require できない）
             'extension-shim': resolve('src/preload/extension-shim.ts')
           },
           output: {

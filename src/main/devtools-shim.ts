@@ -1,5 +1,6 @@
 import type { WebContents } from 'electron'
 import { CHROME_DEBUGGER_STUB_SOURCE } from '../shared/chrome-debugger-stub.js'
+import { CHROME_STORAGE_ONCHANGED_SOURCE } from '../shared/chrome-storage-onchanged.js'
 import { log, logError } from './log.js'
 
 /**
@@ -57,7 +58,7 @@ export function attachDevToolsExtensionShim(pageContents: WebContents): void {
       .then(() =>
         dbg.sendCommand(
           'Page.addScriptToEvaluateOnNewDocument',
-          { source: CHROME_DEBUGGER_STUB_SOURCE },
+          { source: `${CHROME_DEBUGGER_STUB_SOURCE}\n${CHROME_STORAGE_ONCHANGED_SOURCE}` },
           sessionId
         )
       )

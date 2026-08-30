@@ -59,6 +59,11 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 指定できるのは `spike` / `phase1` / `phase2` / `pins` / `switcher` / `peek` / `split` / `call` /
 `live-folder` / `http-auth` / `vim-scroll` / `restart` / `migration` / `db` / `slots`。
 
+**足した check が全部走ったかは check 名で突き合わせる**（PASS の総数だけだと、分岐で走らない check や
+既存 check の詳細文字列への誤マッチで数が合わない）。`git show HEAD:scripts/verify-x.mjs` と今の
+`check('…')` の名前を diff して追加分を出し、ログに `^(PASS|FAIL)  <名前>` があるかを 1 件ずつ見る
+（python の `re.findall(r"check\(\s*'([^']+)'", …)` で名前を取る）。報告には「追加 N 件 / 実行 N 件」を出す。
+
 **`vim-scroll`（ページの `gg` / `G`）はフルの既定から外れている**（`verify-targets.mjs` の
 `OPT_IN_ONLY`）。回るのは 3 経路 —— `mise run verify:only vim-scroll` で名指ししたとき、
 `src/shared/vim-scroll.js` などを触って `--changed` が担当スイートとして選んだとき、

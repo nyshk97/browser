@@ -30,6 +30,8 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-08-30
+
 ### 修正
 
 - **Bitwarden を popup で解除した直後から、ツールバーのアイコンとログイン欄の候補（インラインメニュー）が解除状態になる**。Electron が拡張の service worker で `chrome.storage` の変更通知（`onChanged`）を鳴らさないため、解除しても SW が再起動するまで「ロック中」のままだった。Nemo 側で通知を補うようにした

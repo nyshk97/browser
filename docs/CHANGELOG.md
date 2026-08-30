@@ -30,6 +30,8 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-08-30
+
 ### 追加
 
 - **Homebrew で入れられるようになった**（`brew install --cask nyshk97/tap/nemo`）。リリースのたびに cask も自動で更新される

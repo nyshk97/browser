@@ -7,7 +7,7 @@ import { RenameInput, useDelayedClick } from './InlineRename.js'
 import { RowMenu, type RowMenuState } from './RowMenu.js'
 import { LiveFolder } from './LiveFolder.js'
 import { normalizePrUrl } from '../../shared/live-folder-schema.js'
-import type { FavoriteItem, LoadedExtensionInfo, TabState, UpdateState } from '../../shared/types.js'
+import type { FavoriteItem, TabState, UpdateState } from '../../shared/types.js'
 
 /**
  * サイドバー（DESIGN.md「3層の並び」）。
@@ -17,13 +17,6 @@ import type { FavoriteItem, LoadedExtensionInfo, TabState, UpdateState } from '.
 export function Sidebar(): React.JSX.Element {
   const state = useWindowState()
   const shared = useSharedState()
-  // フッターは ON の拡張だけ（OFF は設定画面にしか出ない）。
-  // **先に絞った配列を作り**、「拡張なし」判定も lock 不一致バッジもこれで出す
-  // （描画だけ絞ると全部 OFF の端末で空フッターになる）
-  const extensions = useMemo(
-    () => shared.extensions.filter((extension) => extension.enabled),
-    [shared.extensions]
-  )
 
   const activeTab = useMemo(() => state?.tabs.find((tab) => tab.key === state.activeTabKey) ?? null, [state])
 
@@ -189,12 +182,7 @@ export function Sidebar(): React.JSX.Element {
         })}
       </div>
 
-      <ExtensionFooter
-        extensions={isPrivate ? [] : extensions}
-        version={shared.version}
-        update={shared.update}
-        isPrivate={isPrivate}
-      />
+      <Footer version={shared.version} update={shared.update} />
     </div>
   )
 }
@@ -412,37 +400,15 @@ export function Favicon({
   return <span className="fi letter">{initial || '·'}</span>
 }
 
-function ExtensionFooter({
-  extensions,
-  version,
-  update,
-  isPrivate = false
-}: {
-  extensions: LoadedExtensionInfo[]
-  version: string
-  update: UpdateState
-  isPrivate?: boolean
-}): React.JSX.Element {
-  const mismatched = extensions.filter((extension) => !extension.matchesLock)
+/**
+ * サイドバーの足元。設定への導線とバージョン表示だけ。
+ *
+ * 拡張の一覧はここには出さない（設定画面に ON/OFF 付きの一覧がある。
+ * 「lock 不一致」の警告もそちらに出る）。
+ */
+function Footer({ version, update }: { version: string; update: UpdateState }): React.JSX.Element {
   return (
     <div className="footer">
-      {extensions.length === 0 ? (
-        <span className="dim">{isPrivate ? '拡張なし（シークレット）' : '拡張なし'}</span>
-      ) : (
-        extensions.map((extension) => (
-          <button
-            key={extension.id}
-            type="button"
-            className="ext"
-            title={`${extension.name} ${extension.version}${extension.optionsUrl ? '（クリックで設定）' : ''}`}
-            disabled={!extension.optionsUrl}
-            onClick={() => void window.nemo.openExtensionOptions(extension.id)}
-          >
-            {extension.name}
-          </button>
-        ))
-      )}
-      {mismatched.length > 0 ? <span className="warn">lock 不一致</span> : null}
       <div className="spacer" />
       <button
         type="button"

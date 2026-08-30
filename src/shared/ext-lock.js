@@ -154,6 +154,11 @@ export function validateEntry(entry, index) {
     throw new Error(`${where}: manifestKey が文字列でない`)
   }
 
+  // ツールバーにアイコン（browser action）を出すか。省略時は出さない
+  if (entry.showInToolbar !== undefined && typeof entry.showInToolbar !== 'boolean') {
+    throw new Error(`${where}: showInToolbar が boolean でない`)
+  }
+
   if (entry.unpackedRoot !== undefined) {
     if (typeof entry.unpackedRoot !== 'string') {
       throw new Error(`${where}: unpackedRoot が文字列でない`)

@@ -84,6 +84,8 @@ const lock = {
       name: manifest.name,
       version,
       source: { type: 'local', path: 'test-extension' },
+      // smoke はツールバーのボタンをクリックして popup の位置を見るので、隠さない
+      showInToolbar: true,
       treeSha256: hashExtensionTree(artifactDir)
     }
   ]

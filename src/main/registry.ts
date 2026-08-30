@@ -3450,7 +3450,8 @@ export function startBackgroundWork(): void {
   onLiveFolderChanged(() => {
     for (const win of windowsById.values()) win.pushShared()
   })
-  // 拡張の ON/OFF（設定画面のトグル）。invoke の戻り値だけだと他ウィンドウのフッターが直らない
+  // 拡張の ON/OFF（設定画面のトグル）。invoke の戻り値だけだと他ウィンドウの設定画面と
+  // ツールバーのアイコン絞り込み（`Toolbar.tsx` が `shared.extensions` から CSS を作る）が追随しない
   onExtensionsChanged(() => {
     for (const win of windowsById.values()) win.pushShared()
   })

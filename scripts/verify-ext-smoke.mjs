@@ -415,6 +415,51 @@ try {
     ).windowId
     // **ウィンドウ ID まで指定して繋ぐ**（破棄したウィンドウの UI ターゲットも一覧に残る）
     const toolbar = await connectUi(cdp, `toolbar&window=${windowId}`)
+
+    /*
+     * ツールバーに出すのは lock で `showInToolbar` にした拡張だけ（`Toolbar.tsx` が
+     * shadowRoot に style を差し込んで残りを隠す）。テスト拡張は 1 つしか無く、
+     * フラグ無しの拡張を実際にロードするのは重いので、**別 ID の `.action` を
+     * shadowRoot に複製して境界を作り**、`getComputedStyle` で隠れることを見る。
+     * テスト拡張のボタン自身（フラグあり）は隠れないことも同時に確認する。
+     */
+    const visibility = await toolbar
+      .ev(
+        `(() => {
+          const list = document.querySelector('browser-action-list')
+          const root = list && list.shadowRoot
+          const btn = root && root.querySelector('.action')
+          if (!btn) return JSON.stringify({ ok: false })
+          const other = btn.cloneNode(false)
+          other.id = 'a'.repeat(32)
+          root.appendChild(other)
+          const result = {
+            ok: true,
+            shown: getComputedStyle(btn).display,
+            hiddenOther: getComputedStyle(other).display,
+            styleCount: root.querySelectorAll('style[data-nemo-action-filter]').length
+          }
+          other.remove()
+          return JSON.stringify(result)
+        })()`
+      )
+      .then(JSON.parse)
+    check(
+      'showInToolbar の拡張のボタンは表示される',
+      visibility.ok && visibility.shown !== 'none',
+      JSON.stringify(visibility)
+    )
+    check(
+      'showInToolbar でない拡張のボタンは隠れる',
+      visibility.ok && visibility.hiddenOther === 'none',
+      JSON.stringify(visibility)
+    )
+    check(
+      '表示フィルタの style は 1 枚だけ',
+      visibility.ok && visibility.styleCount === 1,
+      JSON.stringify(visibility)
+    )
+
     const sidebarWidth = JSON.parse(await ui.ev('JSON.stringify(innerWidth)'))
     const anchor = await toolbar
       .ev(

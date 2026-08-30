@@ -6,6 +6,7 @@
       "id": "nngceckbapebfimnlniiiahkandclblb",
       "name": "Bitwarden Password Manager",
       "version": "2026.8.0",
+      "showInToolbar": true,
       "source": {
         "type": "github-release",
         "repo": "bitwarden/clients",

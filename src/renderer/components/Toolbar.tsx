@@ -1,8 +1,66 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { hostOf, prettyUrl, useSharedState, useWindowState } from '../useNemo.js'
-import type { TabState } from '../../shared/types.js'
+import type { LoadedExtensionInfo, TabState } from '../../shared/types.js'
 
 const PAGE_PARTITION = 'persist:nemo'
+
+/**
+ * `<browser-action-list>` の中で**表示する**ボタンを絞る CSS。
+ *
+ * electron-chrome-extensions はロード済みの拡張の action を全部並べ、絞る API は無い
+ * （`browserAction.getState` は全件を返す）。ボタンは open な shadowRoot に
+ * `<button id="<拡張ID>" class="action">` で入るので、こちらから `<style>` を 1 枚差し込み、
+ * lock で `showInToolbar` にしたもの以外を `display: none` にする。
+ * ライブラリは `.action` の追加・削除しかしないので、差し込んだ style は消えない。
+ * popup の位置はボタンの rect 基準なので、隣を隠しても位置はずれない。
+ */
+function toolbarActionFilterCss(extensions: readonly LoadedExtensionInfo[]): string {
+  const shown = extensions.filter((extension) => extension.enabled && extension.showInToolbar)
+  // 対象が 0 件（Bitwarden を OFF にした端末など）は要素ごと畳む（幅 0 の要素が gap を 1 つぶん食う）
+  if (shown.length === 0) return ':host { display: none !important; }'
+  const keep = shown.map((extension) => `:not(#${extension.id})`).join('')
+  return `.action${keep} { display: none !important; }`
+}
+
+/** shadowRoot に 1 枚だけ持つ `<style>` を作る／更新する。 */
+function applyToolbarActionFilter(list: HTMLElement, css: string): boolean {
+  const root = list.shadowRoot
+  if (!root) return false
+  let style = root.querySelector<HTMLStyleElement>('style[data-nemo-action-filter]')
+  if (!style) {
+    style = document.createElement('style')
+    style.dataset['nemoActionFilter'] = ''
+    root.appendChild(style)
+  }
+  if (style.textContent !== css) style.textContent = css
+  return true
+}
+
+/**
+ * `<browser-action-list>` に表示フィルタを当て続ける。
+ * shadowRoot はカスタム要素が定義（upgrade）されてから付くので、`whenDefined` を待つ。
+ */
+function useToolbarActionFilter(
+  listRef: React.RefObject<HTMLElement | null>,
+  extensions: readonly LoadedExtensionInfo[]
+): void {
+  const css = useMemo(() => toolbarActionFilterCss(extensions), [extensions])
+  useEffect(() => {
+    let cancelled = false
+    const apply = (): void => {
+      const list = listRef.current
+      if (cancelled || !list) return
+      if (!applyToolbarActionFilter(list, css)) {
+        // 定義済みなのに shadowRoot が無い = まだ upgrade されていない。次のフレームで再試行
+        requestAnimationFrame(apply)
+      }
+    }
+    void customElements.whenDefined('browser-action-list').then(apply)
+    return () => {
+      cancelled = true
+    }
+  }, [listRef, css])
+}
 
 /**
  * ページ領域の上端に敷くツールバー（DESIGN.md「ツールバー」）。
@@ -23,6 +81,8 @@ export function Toolbar({ pane = 'left' }: { pane?: 'left' | 'right' }): React.J
    */
   const [draft, setDraft] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const actionListRef = useRef<HTMLElement>(null)
+  useToolbarActionFilter(actionListRef, shared.extensions)
 
   /**
    * このツールバーが担当するタブ。
@@ -190,7 +250,7 @@ export function Toolbar({ pane = 'left' }: { pane?: 'left' | 'right' }): React.J
       */}
       {pane === 'left' ? (
         <>
-          {isPrivate ? null : <browser-action-list partition={PAGE_PARTITION} />}
+          {isPrivate ? null : <browser-action-list ref={actionListRef} partition={PAGE_PARTITION} />}
           <button
             type="button"
             className="icon"

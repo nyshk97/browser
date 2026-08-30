@@ -229,6 +229,7 @@ test('壊れた lock は読み込み時に弾かれる', async () => {
     ['unpackedRoot が絶対パス', (l) => (l.extensions[0].unpackedRoot = '/etc')],
     ['unpackedRoot が親を指す', (l) => (l.extensions[0].unpackedRoot = '../..')],
     ['sha256 が hex でない', (l) => (l.extensions[0].sha256 = 'ZZZZ')],
+    ['showInToolbar が boolean でない', (l) => (l.extensions[0].showInToolbar = 'yes')],
     ['lockfileVersion が違う', (l) => (l.lockfileVersion = 2)],
     ['extensions が配列でない', (l) => (l.extensions = {})]
   ]

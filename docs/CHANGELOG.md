@@ -30,6 +30,11 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 
 ## [Unreleased]
 
+### 変更
+
+- **ツールバー右上の拡張アイコンを Bitwarden だけにした**。Keepa や GraphQL Network Inspector のようにページ側で勝手に働く拡張は、有効でもアイコンを出さない（拡張自体は動いている）。どれを出すかは `extensions.lock.json` の `showInToolbar` で決める
+- **サイドバー左下の拡張一覧を無くした**。⚙ とバージョン表示だけになる。拡張の一覧・ON/OFF・「lock 不一致」の警告は設定画面（⌘,）の「Chrome 拡張」で見る
+
 ## [0.8.0] - 2026-08-30
 
 ### 追加

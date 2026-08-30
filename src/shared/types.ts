@@ -789,9 +789,14 @@ export interface LoadedExtensionInfo {
   version: string
   /**
    * この端末で有効か。OFF のものは lock にあるがロードしていない
-   * （設定画面に出すために一覧には含める。サイドバーのフッターは ON だけ出す）。
+   * （設定画面に出すために一覧には含める）。
    */
   enabled: boolean
+  /**
+   * ツールバーにアイコン（browser action）を出すか（lock の `showInToolbar`。省略時 `false`）。
+   * `<browser-action-list>` は ON の拡張を全部並べるので、renderer 側でこれ以外を隠す。
+   */
+  showInToolbar: boolean
   /**
    * lock で期待していた ID / version と一致したか。
    * **OFF の行は照合していないので常に `true`**（警告を出さない）。

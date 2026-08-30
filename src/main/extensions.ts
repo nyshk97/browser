@@ -48,6 +48,12 @@ export interface LockedExtension {
   manifestKey?: string
   /** zip 内で manifest.json があるディレクトリ。既定はルート。 */
   unpackedRoot?: string
+  /**
+   * ツールバーにアイコン（browser action）を出すか。省略時は出さない。
+   * クリックして使う拡張（Bitwarden）だけ true にする。ページ側で勝手に働く拡張
+   * （Keepa 等）はアイコンが要らないので出さない。ロードの可否には関係しない。
+   */
+  showInToolbar?: boolean
 }
 
 export interface ExtensionsLock {
@@ -113,6 +119,7 @@ function disabledInfo(entry: LockedExtension): LoadedExtensionInfo {
     version: entry.version,
     enabled: false,
     matchesLock: true,
+    showInToolbar: entry.showInToolbar === true,
     path: artifactPath(entry),
     optionsUrl: null
   }
@@ -197,6 +204,7 @@ async function loadLockedEntry(
       version: extension.manifest.version,
       enabled: true,
       matchesLock,
+      showInToolbar: entry.showInToolbar === true,
       path: dir,
       optionsUrl: optionsPageUrl(extension)
     }

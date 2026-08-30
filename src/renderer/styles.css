@@ -1053,28 +1053,12 @@ body[data-view='toolbar'] {
 
 .footer {
   display: flex;
-  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
   padding: 6px 10px 8px;
   border-top: 1px solid var(--nemo-border);
   font-size: 10.5px;
   color: var(--nemo-ink-dim);
-}
-
-.footer .ext {
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: var(--nemo-surface);
-}
-
-.footer .ext:not(:disabled):hover {
-  background: var(--nemo-surface-hi);
-  color: #fff;
-}
-
-.footer .warn {
-  color: var(--nemo-danger);
 }
 
 /* バージョン表示。ふだんは沈めておき、更新の準備ができたときだけ主張させる */

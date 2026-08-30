@@ -308,6 +308,9 @@ mise run verify:only split
     空のときは受け皿そのものが別の要素）
   - ピン行をフォルダ行へドロップして中に入る / **フォルダをフォルダへのドロップは弾かれる**
   - Favorites のセルに状態（アクティブ / 閉じている）が出る
+- **節を足すときは末尾（`ui.close()` の手前）に置く**。合成イベントのヘルパ `window.__nemoVerify` は
+  「UI 操作」節の先頭で注入されるので、それより前の節では `drag` が undefined になる。
+  見出しラベルの `textContent` は右端の「＋」ボタンを含むので、文字列比較は `childNodes[0].textContent` で行う
 
 `mise run verify` が見ているタブスイッチャーの項目（`scripts/verify-switcher.mjs`）:
 

@@ -48,3 +48,17 @@ target ができた直後に繋がり、popup.js のトップレベル（リス�
 ## `docs/CHANGELOG.md`
 
 `mise run release` が機械的に切り出す唯一の源。書き方はファイル冒頭の「書き方」節に従う。
+
+## 定義（Favorite / ピン留め）にフィールドを足すとき
+
+**正規化は `src/shared/settings-schema.js` の `normalizePins`（`normalizeFavorite` / `normalizePinnedList`）に足す。**
+`pins.ts` は `JsonStore(..., normalizePins)` で読むので、ここに無いフィールドは**型が通っていても次回起動で黙って消える**。
+スロット（`normalizeSlot`）も同じ関数を通るので、slots-schema 側には書かない。
+
+**タブの状態を定義へ写す（title / favicon 等）ときは、イベント時だけでなく `assignDefinition` の時点で
+タブが既に持っている値も写す。** `page-favicon-updated` は所属より前に来るのが普通（開いてから ⌘D / ドロップ）で、
+イベント側だけだと「開いているのに頭文字」になる（自走検証で踏んだ）。
+
+**renderer から shared を import するなら `tsconfig.web.json` の `include` に列挙する。** `settings-schema.js` は
+`ext-lock.js` → `node:fs` に触るので入れられない。両方で使う純粋関数は Node 非依存の別ファイル
+（`src/shared/favorites.js` が例）に切り出し、settings-schema から re-export する。

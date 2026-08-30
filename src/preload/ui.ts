@@ -59,7 +59,7 @@ const api: NemoUiApi = {
   pinTabAt: (key, parentId, index) =>
     ipcRenderer.invoke('nemo:pin-tab-at', key, parentId, index) as Promise<void>,
   unpin: (pinnedId) => ipcRenderer.invoke('nemo:unpin', pinnedId) as Promise<void>,
-  addFavorite: (key) => ipcRenderer.invoke('nemo:add-favorite', key) as Promise<void>,
+  addFavorite: (key, section) => ipcRenderer.invoke('nemo:add-favorite', key, section) as Promise<void>,
   removeFavorite: (favoriteId) => ipcRenderer.invoke('nemo:remove-favorite', favoriteId) as Promise<void>,
   openFavorite: (favoriteId) => ipcRenderer.invoke('nemo:open-favorite', favoriteId) as Promise<void>,
   createFolder: (title) => ipcRenderer.invoke('nemo:create-folder', title) as Promise<void>,
@@ -69,7 +69,8 @@ const api: NemoUiApi = {
   toggleFolder: (id) => ipcRenderer.invoke('nemo:toggle-folder', id) as Promise<void>,
   movePinned: (id, parentId, index) =>
     ipcRenderer.invoke('nemo:move-pinned', id, parentId, index) as Promise<void>,
-  moveFavorite: (id, index) => ipcRenderer.invoke('nemo:move-favorite', id, index) as Promise<void>,
+  moveFavorite: (id, section, index) =>
+    ipcRenderer.invoke('nemo:move-favorite', id, section, index) as Promise<void>,
 
   splitTabs: (leftKey, rightKey) => ipcRenderer.invoke('nemo:split-tabs', leftKey, rightKey) as Promise<void>,
   separateSplit: (key) => ipcRenderer.invoke('nemo:separate-split', key) as Promise<void>,
@@ -88,6 +89,8 @@ const api: NemoUiApi = {
       .catch(() => undefined) as Promise<void>,
   runCommandForVerify: (command) =>
     ipcRenderer.invoke('nemo:run-command-for-verify', command).catch(() => false) as Promise<boolean>,
+  shortcutHintForVerify: (action) =>
+    ipcRenderer.invoke('nemo:shortcut-hint-for-verify', action).catch(() => false) as Promise<boolean>,
 
   promoteForegroundView: () => ipcRenderer.invoke('nemo:promote-foreground-view') as Promise<void>,
   closePeek: () => ipcRenderer.invoke('nemo:close-peek') as Promise<void>,
@@ -197,7 +200,8 @@ const api: NemoUiApi = {
   onPrompt: (listener) => subscribe<Prompt | null>('nemo:prompt', listener),
   onCommand: (listener) => subscribe<string>('nemo:command', listener),
   onOverlay: (listener) => subscribe<string | null>('nemo:overlay', listener),
-  onSwitcher: (listener) => subscribe<SwitcherState | null>('nemo:switcher', listener)
+  onSwitcher: (listener) => subscribe<SwitcherState | null>('nemo:switcher', listener),
+  onShortcutHint: (listener) => subscribe<boolean>('nemo:shortcut-hint', listener)
 }
 
 function subscribe<T>(eventName: string, listener: (payload: T) => void): () => void {

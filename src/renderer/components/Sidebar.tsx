@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { useCommand, useSharedState, useWindowState } from '../useNemo.js'
+import { useCommand, useSharedState, useShortcutHint, useWindowState } from '../useNemo.js'
 import { PinnedTree } from './PinnedTree.js'
 import { TabRow, TAB_DRAG_TYPE, useDragEnd } from './TabRow.js'
 import { SplitRow } from './SplitRow.js'
@@ -7,11 +7,12 @@ import { RenameInput, useDelayedClick } from './InlineRename.js'
 import { RowMenu, type RowMenuState } from './RowMenu.js'
 import { LiveFolder } from './LiveFolder.js'
 import { normalizePrUrl } from '../../shared/live-folder-schema.js'
-import type { FavoriteItem, TabState, UpdateState } from '../../shared/types.js'
+import { FAVORITE_SECTIONS } from '../../shared/favorites.js'
+import type { FavoriteItem, FavoriteSection, TabState, UpdateState } from '../../shared/types.js'
 
 /**
  * サイドバー（DESIGN.md「3層の並び」）。
- * Favorites → ピン留め → 一時タブ の順で固定する。
+ * Live Folder → Favorites（messages / tools）→ ピン留め → 一時タブ の順で固定する。
  * **アドレスバーとナビゲーションはここには無い**（ページ領域の上端の `Toolbar`）。
  */
 export function Sidebar(): React.JSX.Element {
@@ -110,14 +111,10 @@ export function Sidebar(): React.JSX.Element {
         </div>
       ) : null}
 
-      <FavoriteGrid favorites={shared.favorites} tabs={favoriteTabs} />
-
-      <div className="sep" />
-
       <div className="scroll">
         {/*
-          Live Folder は DESIGN.md の3層に**4層目として割り込む**
-          （Favorites の直下・ピン留めの見出しより上）。
+          Live Folder は最上段（Favorites より上）。定義を持たない自動生成の層なので、
+          手で並べる層（Favorites / ピン留め）の上にまとめて置く。
           シークレットウィンドウと設定で無効のときは `liveFolder` が null で来る。
         */}
         {shared.liveFolder ? (
@@ -127,8 +124,11 @@ export function Sidebar(): React.JSX.Element {
           </>
         ) : null}
 
+        <FavoriteSections favorites={shared.favorites} tabs={favoriteTabs} />
+
+        {/* tools と bookmarks の間に線は引かない（ラベルだけで区切る） */}
         <div className="label">
-          <PinIcon />
+          <span>bookmarks</span>
           <button
             type="button"
             className="mini"
@@ -188,13 +188,15 @@ export function Sidebar(): React.JSX.Element {
 }
 
 /**
- * Favorites（サイドバー上部のアイコングリッド）。
+ * Favorites の 2 セクション（messages → tools）。
  *
- * ピン留めと同じ**専用枠**として描く。押すと Favorite 定義に属するタブが開き、
- * 下の一時タブ一覧には出ない。閉じてもグリッドからは消えない。
- * 状態（読み込み中 / アクティブ / 音）もピン留め行と同じ規則で重ねる。
+ * ドラッグ中の Favorite の ID を**ここで**持つ。グリッドごとに持つと、
+ * messages のタイルを tools へ落としたときに受け側が「何が落ちてきたか」を知らない。
+ *
+ * **tools が空ならラベルごと畳む**（空になるのは実質初回だけで、上段を空箱 2 つで重くしない）。
+ * messages は空でも受け皿を出す（振り分けはここへドロップするのが入口）。
  */
-function FavoriteGrid({
+function FavoriteSections({
   favorites,
   tabs
 }: {
@@ -202,68 +204,136 @@ function FavoriteGrid({
   tabs: Map<string, TabState>
 }): React.JSX.Element {
   const [dragId, setDragId] = useState<string | null>(null)
+  // タブ行を掴んだドラッグは、グリッド側では `dragend` を受け取れない
+  useDragEnd(useCallback(() => setDragId(null), []))
+  const keys = useShortcutHint()
+
+  // ⌘N は messages → tools の通し番号なので、tools の番号は messages の件数ぶんずれる
+  const sections = FAVORITE_SECTIONS.map((section) => ({
+    section,
+    items: favorites.filter((item) => item.section === section)
+  }))
+  return (
+    <>
+      {sections.map(({ section, items }, position) => {
+        if (section === 'tools' && items.length === 0) return null
+        const shortcutOffset = sections.slice(0, position).reduce((sum, prior) => sum + prior.items.length, 0)
+        return (
+          <FavoriteGrid
+            key={section}
+            section={section}
+            favorites={items}
+            tabs={tabs}
+            dragId={dragId}
+            setDragId={setDragId}
+            shortcutOffset={shortcutOffset}
+            showKeys={keys}
+          />
+        )
+      })}
+    </>
+  )
+}
+
+/** ⌘1〜9 の対象。messages → tools の通し番号で、10 個目からは番号が付かない。 */
+const MAX_SHORTCUT = 9
+
+/**
+ * Favorites の 1 セクション（アイコングリッド）。
+ *
+ * ピン留めと同じ**専用枠**として描く。押すと Favorite 定義に属するタブが開き、
+ * 下の一時タブ一覧には出ない。閉じてもグリッドからは消えない。
+ * 状態（読み込み中 / アクティブ / 音）もピン留め行と同じ規則で重ねる。
+ *
+ * ドロップの `index` は**このセクション内の相対位置**（main がフラット配列の位置へ解く）。
+ */
+function FavoriteGrid({
+  section,
+  favorites,
+  tabs,
+  dragId,
+  setDragId,
+  shortcutOffset,
+  showKeys
+}: {
+  section: FavoriteSection
+  favorites: FavoriteItem[]
+  tabs: Map<string, TabState>
+  dragId: string | null
+  setDragId: (id: string | null) => void
+  shortcutOffset: number
+  showKeys: boolean
+}): React.JSX.Element {
   const [dropping, setDropping] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [menu, setMenu] = useState<RowMenuState | null>(null)
   const { schedule, cancel } = useDelayedClick()
 
-  // タブ行を掴んだドラッグは、グリッド側では `dragend` を受け取れない
-  useDragEnd(
-    useCallback(() => {
-      setDragId(null)
-      setDropping(false)
-    }, [])
-  )
+  useDragEnd(useCallback(() => setDropping(false), []))
 
   const editing = favorites.find((favorite) => favorite.id === editingId) ?? null
 
-  /** 一時タブをグリッドへ落として Favorites に足す。 */
+  /** 一時タブをグリッドへ落として、**このセクション**の Favorites に足す。 */
   const dropTab = (event: React.DragEvent): boolean => {
     const tabKey = event.dataTransfer.getData(TAB_DRAG_TYPE)
     if (!tabKey) return false
-    void window.nemo.addFavorite(tabKey)
+    void window.nemo.addFavorite(tabKey, section)
     return true
   }
 
   const isTabDrag = (event: React.DragEvent): boolean => event.dataTransfer.types.includes(TAB_DRAG_TYPE)
+  const acceptsDrag = (event: React.DragEvent): boolean => isTabDrag(event) || dragId !== null
+
+  const other: FavoriteSection = section === 'messages' ? 'tools' : 'messages'
+  const label = <div className="label">{section}</div>
 
   // 空のときも受け皿を出す（出さないと最初の1件を D&D で作れない）
   if (favorites.length === 0) {
     return (
-      <div
-        className={`fav-empty droppable${dropping ? ' drop' : ''}`}
-        onDragOver={(event) => {
-          if (!isTabDrag(event)) return
-          event.preventDefault()
-          setDropping(true)
-        }}
-        onDragLeave={() => setDropping(false)}
-        onDrop={(event) => {
-          event.preventDefault()
-          setDropping(false)
-          dropTab(event)
-        }}
-      >
-        タブをここへドラッグして Favorites に追加
-      </div>
+      <>
+        {label}
+        <div
+          className={`fav-empty droppable${dropping ? ' drop' : ''}`}
+          data-section={section}
+          onDragOver={(event) => {
+            if (!acceptsDrag(event)) return
+            event.preventDefault()
+            setDropping(true)
+          }}
+          onDragLeave={() => setDropping(false)}
+          onDrop={(event) => {
+            event.preventDefault()
+            setDropping(false)
+            if (dropTab(event)) return
+            if (dragId) void window.nemo.moveFavorite(dragId, section)
+            setDragId(null)
+          }}
+        >
+          タブをここへドラッグ
+        </div>
+      </>
     )
   }
 
   return (
     <>
+      {label}
       <div
         className={`fav-grid${dropping ? ' drop' : ''}`}
+        data-section={section}
         onDragOver={(event) => {
-          if (!isTabDrag(event)) return
+          if (!acceptsDrag(event)) return
           event.preventDefault()
           setDropping(true)
         }}
         onDragLeave={() => setDropping(false)}
         onDrop={(event) => {
-          // 個々のセルで処理されなかったぶん（隙間へのドロップ）を拾う
+          // 個々のセルで処理されなかったぶん（隙間へのドロップ）を拾う → 末尾へ
           event.preventDefault()
           setDropping(false)
-          dropTab(event)
+          if (dropTab(event)) return
+          if (dragId) void window.nemo.moveFavorite(dragId, section)
+          setDragId(null)
         }}
       >
         {favorites.map((favorite, index) => {
@@ -272,12 +342,14 @@ function FavoriteGrid({
           const classes = ['fav']
           if (tab?.visible) classes.push('active')
           if (!tab) classes.push('closed')
+          const shortcut = shortcutOffset + index + 1
           return (
             <button
               key={favorite.id}
               type="button"
               className={classes.join(' ')}
-              title={name}
+              title={shortcut <= MAX_SHORTCUT ? `${name}（⌘${shortcut}）` : name}
+              data-id={favorite.id}
               draggable
               onDragStart={() => setDragId(favorite.id)}
               onDragOver={(event) => event.preventDefault()}
@@ -286,7 +358,7 @@ function FavoriteGrid({
                 event.stopPropagation()
                 setDropping(false)
                 if (dropTab(event)) return
-                if (dragId && dragId !== favorite.id) void window.nemo.moveFavorite(dragId, index)
+                if (dragId && dragId !== favorite.id) void window.nemo.moveFavorite(dragId, section, index)
                 setDragId(null)
               }}
               onClick={() => {
@@ -311,6 +383,10 @@ function FavoriteGrid({
                   items: [
                     { label: '名前を変更', run: () => setEditingId(favorite.id) },
                     {
+                      label: `${other === 'messages' ? 'Messages' : 'Tools'} へ移動`,
+                      run: () => void window.nemo.moveFavorite(favorite.id, other)
+                    },
+                    {
                       label: 'Favorites から外す',
                       danger: true,
                       run: () => void window.nemo.removeFavorite(favorite.id)
@@ -322,9 +398,10 @@ function FavoriteGrid({
               {tab?.loading ? (
                 <span className="spin" />
               ) : (
-                <Favicon url={favorite.url} title={name} src={tab?.faviconUrl ?? null} />
+                <Favicon url={favorite.url} title={name} src={tab?.faviconUrl ?? favorite.faviconUrl} />
               )}
               {tab?.audible ? <span className="fav-mark">♪</span> : null}
+              {showKeys && shortcut <= MAX_SHORTCUT ? <span className="kb">{shortcut}</span> : null}
             </button>
           )
         })}
@@ -347,22 +424,6 @@ function FavoriteGrid({
       ) : null}
       {menu ? <RowMenu state={menu} onClose={() => setMenu(null)} /> : null}
     </>
-  )
-}
-
-/**
- * ピン留めの見出しに出すピンのアイコン。
- *
- * 文字（"ピン留め"）より視線の邪魔にならず、Favorites との層の区別も付く。
- * 絵文字ではなく **`currentColor` を継ぐ SVG** にして、見出しの色（`--nemo-ink-dim`）と
- * 揃うようにする（絵文字だとここだけ極彩色になる）。
- */
-function PinIcon(): React.JSX.Element {
-  return (
-    <svg className="label-icon" viewBox="0 0 24 24" role="img" aria-label="ピン留め">
-      <title>ピン留め</title>
-      <path d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z" />
-    </svg>
   )
 }
 

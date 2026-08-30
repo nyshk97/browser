@@ -8,6 +8,12 @@
  * - タブ実体（TabState）は**必ず1つの windowId に所属**し、揮発する
  * ------------------------------------------------------------------ */
 
+/**
+ * Favorites のセクション。サイドバーでは `messages` → `tools` の順に別のグリッドで描き、
+ * ⌘1〜9 もこの順で通し番号を振る。**既定は `tools`**（Arc からの取り込み・新規追加・欠損）。
+ */
+export type FavoriteSection = 'messages' | 'tools'
+
 /** サイドバー上部のアイコングリッド。全ウィンドウ共有。 */
 export interface FavoriteItem {
   id: string
@@ -16,6 +22,13 @@ export interface FavoriteItem {
   title: string
   /** ユーザーが付けた名前。null なら未設定で、表示は `title` に戻る。 */
   customTitle: string | null
+  section: FavoriteSection
+  /**
+   * ページが申告した favicon の URL（https / data: のみ）。
+   * タブを開いていなくてもアイコンで見分けられるように**定義に持つ**
+   * （履歴 DB は Mac ごとで、消すこともできる）。無ければ頭文字で描く。
+   */
+  faviconUrl: string | null
 }
 
 /** ピン留め（フォルダで入れ子にできる）。全ウィンドウ共有。 */
@@ -29,6 +42,8 @@ export interface PinnedLink {
   /** ユーザーが付けた名前。null なら未設定で、表示は `title` に戻る。 */
   customTitle: string | null
   url: string
+  /** `FavoriteItem.faviconUrl` と同じ。 */
+  faviconUrl: string | null
 }
 
 export interface PinnedFolder {
@@ -879,7 +894,8 @@ export interface NemoUiApi {
   /** タブをピン留めツリーの指定位置へ置く（サイドバーへのドラッグ & ドロップ）。 */
   pinTabAt(key: string, parentId: string | null, index: number): Promise<void>
   unpin(pinnedId: string): Promise<void>
-  addFavorite(key: string): Promise<void>
+  /** `section` を渡すとそのセクションへ（グリッドへのドロップ）。省略時は `tools`。 */
+  addFavorite(key: string, section?: FavoriteSection): Promise<void>
   removeFavorite(favoriteId: string): Promise<void>
   openFavorite(favoriteId: string): Promise<void>
   createFolder(title: string): Promise<void>
@@ -895,7 +911,11 @@ export interface NemoUiApi {
   toggleFolder(id: string): Promise<void>
   /** ドラッグ & ドロップの結果を反映する。 */
   movePinned(id: string, parentId: string | null, index: number): Promise<void>
-  moveFavorite(id: string, index: number): Promise<void>
+  /**
+   * Favorite を `section` の `index` 番目（**セクション内の相対位置**）へ置く。
+   * `index` を省くとそのセクションの末尾（右クリックの「◯◯ へ移動」）。
+   */
+  moveFavorite(id: string, section: FavoriteSection, index?: number): Promise<void>
 
   /* 分割ビュー（2 ペイン） */
   /**
@@ -1073,6 +1093,11 @@ export interface NemoUiApi {
    * 自走検証はここを通す。対象は**呼び出し元のウィンドウ**。
    */
   runCommandForVerify(command: string): Promise<boolean>
+  /**
+   * ⌘ 長押しバッジの状態機械を直接叩く（**本番では何もしない**）。
+   * 合成キーでは Meta の `before-input-event` を起こせない。戻り値は「今バッジが出ているか」。
+   */
+  shortcutHintForVerify(action: 'down' | 'up' | 'blur' | 'query'): Promise<boolean>
 
   /** オーバーレイの現在の状態（購読より前に起きた分を取りこぼさないため）。 */
   getOverlayState(): Promise<{
@@ -1112,6 +1137,8 @@ export interface NemoUiApi {
   onCommand(listener: (command: string) => void): () => void
   onOverlay(listener: (kind: string | null) => void): () => void
   onSwitcher(listener: (state: SwitcherState | null) => void): () => void
+  /** ⌘ の長押し（Favorites の番号バッジ）。`true` で出す、`false` で消す。 */
+  onShortcutHint(listener: (visible: boolean) => void): () => void
 }
 
 /** 矩形。診断で返す値は**全部ウィンドウ座標**（`contentBounds` 基準）。 */

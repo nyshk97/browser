@@ -29,8 +29,9 @@ import {
   type OverlayKind
 } from './registry.js'
 import { isUiUrl, normalizeNavigationInput } from './security.js'
-import { runCommandForWindow, selectTabByIndexIn } from './menu.js'
-import { COMMANDS, SELECT_TAB_ACCELERATORS } from '../shared/keybindings.js'
+import { runCommandForWindow, selectFavoriteByIndexIn } from './menu.js'
+import { isShortcutHintVisible, shortcutHintDown, shortcutHintHide } from './shortcut-hint.js'
+import { COMMANDS, SELECT_FAVORITE_ACCELERATORS } from '../shared/keybindings.js'
 import { answerPrompt, currentPrompt } from './prompts.js'
 import { advanceSwitcher, cancelSwitcher, currentSwitcherState, pickSwitcherTab } from './tab-switcher.js'
 import { suggest } from './suggest.js'
@@ -121,7 +122,9 @@ import type {
   HttpAuthRule,
   HttpAuthTestResult,
   HttpAuthWriteResult,
+  FavoriteSection,
   LoadedExtensionInfo,
+  PinnedNode,
   PromptAnswer,
   SlotList,
   SharedState,
@@ -230,6 +233,13 @@ function requireString(value: unknown, what: string): string {
 function optionalString(value: unknown, what: string): string | undefined {
   if (value === undefined || value === null) return undefined
   return requireString(value, what)
+}
+
+/** Favorites のセクション。`null` / `undefined` は「未指定」。それ以外の不正値は弾く。 */
+function optionalSection(value: unknown): FavoriteSection | undefined {
+  if (value === undefined || value === null) return undefined
+  if (value !== 'messages' && value !== 'tools') throw new Error('invalid section')
+  return value
 }
 
 /** リネームの引数。`null` / 空文字は「解除」なので通す。 */
@@ -351,15 +361,27 @@ export function registerIpcHandlers(): void {
       const win = requireWindow(event)
       if (typeof command !== 'string') return false
       // ⌘1〜9 は別経路（コマンド表に載っていない）
-      const numbered = SELECT_TAB_ACCELERATORS.find((entry) => entry.id === command)
+      const numbered = SELECT_FAVORITE_ACCELERATORS.find((entry) => entry.id === command)
       if (numbered) {
-        selectTabByIndexIn(win, numbered.index)
+        selectFavoriteByIndexIn(win, numbered.index)
         return true
       }
       // **知らない名前は実行しない**（任意の文字列で main を動かせないようにする）
       if (!COMMANDS.some((entry) => entry.id === command)) return false
       runCommandForWindow(win, command)
       return true
+    })
+    /**
+     * ⌘ 長押しバッジの状態機械を直接叩く。合成キーでは Meta の `before-input-event` を
+     * 起こせないので、down / up / blur を名前で撃ち、戻り値で「今出ているか」を見る
+     */
+    ipcMain.handle('nemo:shortcut-hint-for-verify', (event, action: unknown): boolean => {
+      const win = requireWindow(event)
+      if (action === 'down') shortcutHintDown(win)
+      else if (action === 'up') shortcutHintHide(win, 'keyup')
+      else if (action === 'blur') shortcutHintHide(win, 'blur')
+      else if (action !== 'query') throw new Error('invalid action')
+      return isShortcutHintVisible(win)
     })
   }
 
@@ -446,10 +468,10 @@ export function registerIpcHandlers(): void {
     unpinEverywhere(requireString(pinnedId, 'pinnedId'))
   })
 
-  ipcMain.handle('nemo:add-favorite', (event, key: unknown) => {
+  ipcMain.handle('nemo:add-favorite', (event, key: unknown, section: unknown) => {
     const { tab } = requireTab(event, key)
     // ピン留めとの排他（定義ごと移す）を registry の1経路に寄せる
-    addFavoriteFromTab(tab)
+    addFavoriteFromTab(tab, optionalSection(section))
   })
 
   ipcMain.handle('nemo:remove-favorite', (event, favoriteId: unknown) => {
@@ -497,10 +519,15 @@ export function registerIpcHandlers(): void {
     movePinned(requireString(id, 'id'), optionalString(parentId, 'parentId') ?? null, index)
   })
 
-  ipcMain.handle('nemo:move-favorite', (event, id: unknown, index: unknown) => {
+  ipcMain.handle('nemo:move-favorite', (event, id: unknown, section: unknown, index: unknown) => {
     requireWindow(event)
-    if (typeof index !== 'number' || !Number.isInteger(index)) throw new Error('invalid index')
-    moveFavorite(requireString(id, 'id'), index)
+    const target = optionalSection(section)
+    if (!target) throw new Error('invalid section')
+    // `index` は省略可（`null` / `undefined` は「末尾」。`optionalString` と同じ規則）
+    if (index != null && (typeof index !== 'number' || !Number.isInteger(index) || index < 0)) {
+      throw new Error('invalid index')
+    }
+    moveFavorite(requireString(id, 'id'), target, index ?? undefined)
   })
 
   /* ---- ウィンドウ / オーバーレイ ---- */
@@ -723,10 +750,22 @@ export function registerIpcHandlers(): void {
     if (!isSlotIndex(index)) return false
     const favorites = getFavorites()
     const pinned = getPinned()
-    // favicon は履歴からまとめて引く（別の Mac には履歴が無いので焼き込む）。
-    // 並べる URL は `iconCandidates`（重複を落として打ち切る前）から取る
+    // favicon は**定義が持っている値を優先**し、無いものだけ履歴から補う
+    // （別の Mac には履歴が無いので焼き込む）。並べる URL は `iconCandidates`（重複を落として打ち切る前）から取る
     const urls = iconCandidates(favorites, pinned).slice(0, MAX_SLOT_ICONS)
-    const icons = collectIcons(favorites, pinned, getFavicons(urls))
+    const favicons = new Map<string, string>()
+    const fromDefinitions = (nodes: PinnedNode[]): void => {
+      for (const node of nodes) {
+        if (node.kind === 'folder') fromDefinitions(node.children)
+        else if (node.faviconUrl) favicons.set(node.url, node.faviconUrl)
+      }
+    }
+    fromDefinitions(pinned)
+    for (const item of favorites) if (item.faviconUrl) favicons.set(item.url, item.faviconUrl)
+    for (const [url, favicon] of getFavicons(urls.filter((url) => !favicons.has(url)))) {
+      favicons.set(url, favicon)
+    }
+    const icons = collectIcons(favorites, pinned, favicons)
     return saveSlot(
       index,
       buildSlot({
@@ -744,9 +783,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('nemo:apply-slot', async (event, index: unknown): Promise<boolean> => {
     requireWindow(event)
     if (!isSlotIndex(index)) return false
-    const data = await readSlot(index)
-    if (!data) return false
-    return applySlot(index, data)
+    const read = await readSlot(index)
+    if (!read) return false
+    return applySlot(index, read.data, { sectioned: read.sectioned })
   })
 
   ipcMain.handle('nemo:delete-slot', (event, index: unknown): Promise<boolean> => {

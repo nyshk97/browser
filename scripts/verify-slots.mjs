@@ -189,11 +189,21 @@ try {
     )
 
     await seedDefinitions(cdp)
+    // お気に入りを messages に振り分けてから保存する（section がスロットに残ることを見る）
+    await evalInUi(
+      cdp,
+      `window.nemo.getSharedState().then((s) => window.nemo.moveFavorite(s.favorites[0].id, 'messages'))`
+    )
     const before = await json(cdp, 'window.nemo.getSharedState().then(JSON.stringify)')
     check(
       '定義を作れた（ピン留め 1・お気に入り 1）',
       before.pinned.length === 1 && before.favorites.length === 1,
       `pinned=${before.pinned.length} favorites=${before.favorites.length}`
+    )
+    check(
+      'お気に入りを messages に振り分けた',
+      before.favorites[0]?.section === 'messages',
+      before.favorites[0]?.section
     )
 
     const saved = await evalInUi(cdp, 'window.nemo.saveSlot(0, "検証用")')
@@ -209,6 +219,11 @@ try {
     check(
       'スロットにピン留めとお気に入りが入っている',
       file.data.pinned.length === 1 && file.data.favorites.length === 1
+    )
+    check(
+      'スロットのお気に入りに section / faviconUrl のフィールドが残る',
+      file.data.favorites[0]?.section === 'messages' && 'faviconUrl' in (file.data.favorites[0] ?? {}),
+      JSON.stringify(file.data.favorites[0])
     )
 
     // 埋まっている枠には書かない（別の Mac のスロットを潰さない）
@@ -501,9 +516,30 @@ try {
     )
 
     const { cdp } = await bootApp(migData, migSlots)
+    // **適用先で同じ URL を messages に振り分けておく**。旧形式（section 無し）の適用で
+    // 黙って tools に戻らないこと（引き継ぎ）を見る
+    await evalInUi(
+      cdp,
+      `(async () => {
+        const key = await window.nemo.createTab('https://ok.example/', {})
+        await window.nemo.addFavorite(key, 'messages')
+        await window.nemo.closeTab(key)
+      })()`
+    )
+    const seeded = await json(cdp, 'window.nemo.getSharedState().then(JSON.stringify)')
+    check(
+      '前提: 適用先に同じ URL の messages のお気に入りがある',
+      seeded.favorites.some((f) => f.url === 'https://ok.example/' && f.section === 'messages'),
+      JSON.stringify(seeded.favorites.map((f) => [f.url, f.section]))
+    )
     await evalInUi(cdp, 'window.nemo.applySlot(0)')
     const first = await json(cdp, 'window.nemo.getSharedState().then(JSON.stringify)')
     check('不正 URL のお気に入りは落ちる', first.favorites.length === 1, `${first.favorites.length} 件`)
+    check(
+      '旧形式スロット（section 無し）を適用しても messages の振り分けが残る',
+      first.favorites[0]?.section === 'messages',
+      first.favorites[0]?.section
+    )
     check('不正 URL のピン留めは落ちる', first.pinned.length === 1, `${first.pinned.length} 件`)
     const outer = first.pinned[0]
     check(
@@ -519,6 +555,67 @@ try {
       '同じ fixture を 2 回読み込んでも結果が同じ（冪等）',
       JSON.stringify(second.pinned) === JSON.stringify(first.pinned) &&
         JSON.stringify(second.favorites) === JSON.stringify(first.favorites)
+    )
+    // リネームは raw の name だけ差し替える → 旧形式のまま（section が焼き込まれない）
+    await evalInUi(cdp, 'window.nemo.renameSlot(0, "改名した旧形式")')
+    const renamedRaw = readSlotFile(migSlots)
+    check(
+      'リネームしても旧形式スロットに section が焼き込まれない',
+      renamedRaw.data.name === '改名した旧形式' &&
+        renamedRaw.data.favorites.every((f) => !('section' in f)) &&
+        renamedRaw.data.favorites.length === 2,
+      JSON.stringify(renamedRaw.data.favorites.map((f) => Object.keys(f)))
+    )
+    // 適用先を tools に戻してから、改名済みの旧スロットを適用 → 今の振り分け（tools）を引き継ぐ
+    await evalInUi(
+      cdp,
+      `window.nemo.getSharedState().then((s) => window.nemo.moveFavorite(s.favorites[0].id, 'tools'))`
+    )
+    await evalInUi(cdp, 'window.nemo.applySlot(0)')
+    const afterRename = await json(cdp, 'window.nemo.getSharedState().then(JSON.stringify)')
+    check(
+      '改名済みの旧形式スロットを適用しても、今の振り分け（tools）を引き継ぐ',
+      afterRename.favorites[0]?.section === 'tools',
+      afterRename.favorites[0]?.section
+    )
+    // 新形式（section あり）のスロットは**スロット側が勝つ**
+    fs.writeFileSync(
+      path.join(migSlots, 'slot-2.json'),
+      `${JSON.stringify(
+        {
+          version: 1,
+          data: {
+            name: '新形式',
+            savedAt: 1_700_000_000_000,
+            host: 'New-Mac',
+            favorites: [
+              {
+                id: 'f1',
+                url: 'https://ok.example/',
+                title: 'ok',
+                customTitle: null,
+                section: 'messages',
+                faviconUrl: 'https://ok.example/favicon.png'
+              }
+            ],
+            pinned: []
+          }
+        },
+        null,
+        2
+      )}\n`
+    )
+    await evalInUi(cdp, 'window.nemo.applySlot(1)')
+    const sectioned = await json(cdp, 'window.nemo.getSharedState().then(JSON.stringify)')
+    check(
+      '新形式スロットの section はスロット側で上書きされる（tools → messages）',
+      sectioned.favorites[0]?.section === 'messages',
+      sectioned.favorites[0]?.section
+    )
+    check(
+      '新形式スロットの faviconUrl も定義に入る',
+      sectioned.favorites[0]?.faviconUrl === 'https://ok.example/favicon.png',
+      String(sectioned.favorites[0]?.faviconUrl)
     )
     check('移行の経路で未捕捉例外が出ていない', findUncaughtExceptions(migData).length === 0)
     await stopChildren(spawned.splice(0))

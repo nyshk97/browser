@@ -1,5 +1,7 @@
 import { Menu, app, type MenuItemConstructorOptions } from 'electron'
-import { COMMANDS, SELECT_TAB_ACCELERATORS, resolveKeybindings } from '../shared/keybindings.js'
+import { COMMANDS, SELECT_FAVORITE_ACCELERATORS, resolveKeybindings } from '../shared/keybindings.js'
+import { favoritesInShortcutOrder } from '../shared/favorites.js'
+import { getFavorites } from './store/pins.js'
 import { getSettings, onSettingsChanged } from './store/settings.js'
 import { log } from './log.js'
 import {
@@ -8,6 +10,7 @@ import {
   createWindow,
   focusedOrFirstWindow,
   moveTabToWindow,
+  openFavorite,
   openPrivateWindow,
   removeTab,
   removeWindow,
@@ -295,11 +298,11 @@ export function installApplicationMenu(): void {
         ...itemsFor('tab'),
         { type: 'separator' },
         // ⌘1〜⌘9 はメニューに出さず、アクセラレータだけ効かせる
-        ...SELECT_TAB_ACCELERATORS.map((entry) => ({
-          label: `${entry.index} 番目のタブ`,
+        ...SELECT_FAVORITE_ACCELERATORS.map((entry) => ({
+          label: `${entry.index} 番目のお気に入り`,
           accelerator: entry.accelerator,
           visible: false,
-          click: () => selectTabByIndex(entry.index)
+          click: () => selectFavoriteByIndex(entry.index)
         }))
       ]
     },
@@ -321,23 +324,31 @@ export function installApplicationMenu(): void {
   log('menu.installed', { commands: Object.keys(bindings).length })
 }
 
-function selectTabByIndex(index: number): void {
+function selectFavoriteByIndex(index: number): void {
   const win = focusedOrFirstWindow()
   if (!win) return
-  selectTabByIndexIn(win, index)
+  selectFavoriteByIndexIn(win, index)
 }
 
-/** ⌘1〜9 の中身。**対象のウィンドウを指定して**呼べるようにしてある（`runCommandForWindow` と同じ理由）。 */
-export function selectTabByIndexIn(win: NemoWindow, index: number): void {
-  // 小窓はタブ1つなので番号で選ぶ意味がない
+/**
+ * ⌘1〜9 の中身。**対象のウィンドウを指定して**呼べるようにしてある（`runCommandForWindow` と同じ理由）。
+ *
+ * N 番目は `messages` → `tools` の通し番号（サイドバーのグリッドと同じ順）。
+ * **すでにその Favorite のタブがアクティブなら直前のタブへ戻る**
+ * （「Slack を見てすぐ作業に戻る」が同じキー 2 回で済む）。直前のタブが無ければ何もしない。
+ */
+export function selectFavoriteByIndexIn(win: NemoWindow, index: number): void {
+  // 小窓はタブ 1 つ。`openFavorite` は無ければ `createTab` するので、ここで止める
   if (!canHostAdditionalTabs(win)) return
-  // ⌘1〜9 はタブの並びで数える（Peek は一覧に出ていないので数えない）。
-  // **分割は 2 つのタブのまま数える** —— サイドバーでは結合行 1 行に見えるが、
-  // 左右それぞれに番号が当たる（ペイン間のフォーカス移動にも使える。DESIGN.md 参照）
-  const list = win.normalTabs
-  // 9 は「最後のタブ」（Chrome / Arc と同じ）
-  const tab = index === 9 ? list[list.length - 1] : list[index - 1]
-  if (tab) selectTab(win, tab.key)
+  const item = favoritesInShortcutOrder(getFavorites())[index - 1]
+  if (!item) return
+  const open = win.normalTabs.find((tab) => tab.favoriteId === item.id)
+  if (open && win.activeTabKey === open.key) {
+    const previous = win.previousTabKey
+    if (previous && win.findTab(previous)) selectTab(win, previous)
+    return
+  }
+  openFavorite(win, item.id)
 }
 
 /** 設定でキーバインドが変わったらメニューを作り直す。 */

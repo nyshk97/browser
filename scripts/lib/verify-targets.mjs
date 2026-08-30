@@ -133,7 +133,9 @@ export const OWNERS = new Map([
   // `Slots.tsx` は `verify-slots.mjs` が設定画面を開いてカードの描画まで見ている
   // （IPC だけの検証だと描画例外を素通りするので、この割り当てが嘘になる）
   ['src/main/store/slots.ts', ['slots']],
-  ['src/shared/slots-schema.js', ['slots']],
+  // `slots-schema.js` は `normalizeFaviconUrl` を `settings-schema.js` へ、`slotHasSections` を適用経路へ
+  // 出しており、Favorites の section / favicon（`pins`）にも効く
+  ['src/shared/slots-schema.js', ['slots', 'pins']],
   ['src/shared/slot-apply.js', ['slots']],
   ['src/renderer/components/Slots.tsx', ['slots']],
   // 単一の画面にしか出ないリーフのコンポーネント（親は 1 か所からしか import していない）

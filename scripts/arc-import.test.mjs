@@ -193,3 +193,11 @@ test('Arc の JSON でなければ分かる形で失敗する', () => {
   assert.throws(() => parseArcSidebar({}), /sidebar\.containers/)
   assert.throws(() => parseArcSidebar({ sidebar: { containers: [{ global: {} }] } }), /items \/ spaces/)
 })
+
+test('取り込んだ Favorites は全部 tools に入り、faviconUrl は空', () => {
+  const { favorites, pinned } = parseArcSidebar(fixture())
+  assert.ok(favorites.length > 0)
+  assert.ok(favorites.every((item) => item.section === 'tools' && item.faviconUrl === null))
+  const links = pinned.flatMap((node) => (node.kind === 'folder' ? node.children : [node]))
+  assert.ok(links.every((node) => node.faviconUrl === null))
+})

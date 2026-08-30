@@ -239,7 +239,7 @@ export function PinnedTree({
           {tab?.loading ? (
             <span className="spin" />
           ) : (
-            <Favicon url={node.url} title={name} src={tab?.faviconUrl ?? null} />
+            <Favicon url={node.url} title={name} src={tab?.faviconUrl ?? node.faviconUrl} />
           )}
           <InlineRename
             title={name}

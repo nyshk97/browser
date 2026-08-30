@@ -1,5 +1,8 @@
 // @ts-check
 import { EXTENSION_ID_RE } from './ext-lock.js'
+import { normalizeFavoriteSection } from './favorites.js'
+
+export { FAVORITE_SECTIONS, favoritesInShortcutOrder, normalizeFavoriteSection } from './favorites.js'
 
 /**
  * 設定 JSON のスキーマ・既定値・マイグレーション。
@@ -156,9 +159,50 @@ function clampNumber(value, fallback, min, max) {
 /**
  * ピン留め / Favorites のスキーマ版。
  * - 1 … `title` だけ
- * - 2 … `customTitle`（ユーザーが付けた名前）を持ち、フォルダは1階層まで
+ * - 2 … `customTitle`（ユーザーが付けた名前）を持ち、フォルダは1階層まで。
+ *        **`section` / `faviconUrl` は版を上げずに足した**（欠損は既定値に倒すだけで、
+ *        旧データを読む側の分岐が要らない）
  */
 export const PINS_VERSION = 2
+
+/**
+ * 定義（Favorite / ピン留め）に持たせる favicon の `data:` の上限。
+ *
+ * スロットのカード用（`MAX_FAVICON_LENGTH` = 8KB × 6 件）とは別に小さく持つ。
+ * pins.json はタイトル更新のたびに**全体を書き直す**ストアで、こちらは全件に付くため。
+ * `https:` は URL なので `normalizeStoredUrl` と同じ 4096 文字まで。
+ */
+export const MAX_DEFINITION_DATA_FAVICON_LENGTH = 2048
+
+/**
+ * favicon の URL。**https と data:image/ だけ**許す（UI の CSP が `img-src 'self' crx: data: https:`）。
+ * ここを緩めると、設定ファイル1つで任意 scheme の読み込みが作れる。
+ *
+ * @param {unknown} value
+ * @param {{ maxDataLength: number, maxUrlLength?: number }} limits
+ * @returns {string | null}
+ */
+export function normalizeFaviconUrl(value, limits) {
+  if (typeof value !== 'string') return null
+  if (value.startsWith('data:image/')) {
+    return value.length <= limits.maxDataLength ? value : null
+  }
+  if (value.length > (limits.maxUrlLength ?? 4096)) return null
+  try {
+    return new URL(value).protocol === 'https:' ? value : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 定義に持たせる favicon（上限は定義用）。
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+export function normalizeDefinitionFaviconUrl(value) {
+  return normalizeFaviconUrl(value, { maxDataLength: MAX_DEFINITION_DATA_FAVICON_LENGTH })
+}
 
 /**
  * ピン留めツリーの入れ子の上限。
@@ -204,7 +248,9 @@ function normalizeFavorite(raw, seen) {
     id,
     url,
     title: normalizeTitle(raw['title'], url),
-    customTitle: normalizeCustomTitle(raw['customTitle'])
+    customTitle: normalizeCustomTitle(raw['customTitle']),
+    section: normalizeFavoriteSection(raw['section']),
+    faviconUrl: normalizeDefinitionFaviconUrl(raw['faviconUrl'])
   }
 }
 
@@ -248,7 +294,8 @@ function normalizePinnedList(raw, seen, depth) {
       kind: 'link',
       title: normalizeTitle(item['title'], url),
       customTitle: normalizeCustomTitle(item['customTitle']),
-      url
+      url,
+      faviconUrl: normalizeDefinitionFaviconUrl(item['faviconUrl'])
     })
   }
   return result

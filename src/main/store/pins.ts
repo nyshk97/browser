@@ -5,12 +5,15 @@ import { log } from '../log.js'
 import {
   PINS_VERSION,
   normalizeCustomTitle,
+  normalizeDefinitionFaviconUrl,
+  normalizeFavoriteSection,
   normalizePins,
   normalizeStoredUrl
 } from '../../shared/settings-schema.js'
 import { definitionsRemovedBySlot } from '../../shared/slot-apply.js'
 import type {
   FavoriteItem,
+  FavoriteSection,
   PinnedFolder,
   PinnedLink,
   PinnedNode,
@@ -177,7 +180,8 @@ export function pinUrl(url: string, title: string, customTitle?: string | null):
     kind: 'link',
     title: title || normalized,
     customTitle: normalizeCustomTitle(customTitle),
-    url: normalized
+    url: normalized,
+    faviconUrl: null
   }
   commit({ ...data(), pinned: [...data().pinned, node] })
   log('pin.added', { id: node.id })
@@ -363,7 +367,10 @@ export function addFavorite(url: string, title: string, customTitle?: string | n
     id: randomUUID(),
     url: normalized,
     title: title || normalized,
-    customTitle: normalizeCustomTitle(customTitle)
+    customTitle: normalizeCustomTitle(customTitle),
+    // 追加経路は全部 `tools`（グリッドへの明示的なドロップだけ `moveFavorite` で落とした側へ）
+    section: 'tools',
+    faviconUrl: null
   }
   commit({ ...current, favorites: [...current.favorites, item] })
   log('favorite.added', { id: item.id })
@@ -384,14 +391,136 @@ export function findFavorite(id: string): FavoriteItem | null {
   return data().favorites.find((item) => item.id === id) ?? null
 }
 
-export function moveFavorite(id: string, index: number): void {
+/**
+ * Favorite を `section` の `index` 番目へ置く（グリッド間の D&D と右クリックの「◯◯ へ移動」）。
+ *
+ * `index` は**セクション内の相対位置**（グリッドが数えられるのはそれだけ）。
+ * `favorites` はセクション混在のフラット配列なので、ここで実位置に解く。
+ * 規則は「抜いてから、そのセクションの `index` 番目の要素の手前に挿す」。
+ * 手前に置く相手が無ければ（末尾・省略・そのセクションが空）そのセクションの最後の要素の直後、
+ * セクションが空なら配列の末尾。**他のセクションの並びは動かさない**。
+ */
+export function moveFavorite(id: string, section: FavoriteSection, index?: number): void {
   const current = data()
   const from = current.favorites.findIndex((item) => item.id === id)
   if (from === -1) return
-  const favorites = [...current.favorites]
-  const [item] = favorites.splice(from, 1)
-  favorites.splice(clampIndex(index, favorites.length), 0, item)
+  const rest = current.favorites.filter((item) => item.id !== id)
+  const item = current.favorites[from]
+  if (!item) return
+  const moved: FavoriteItem = { ...item, section: normalizeFavoriteSection(section) }
+  const peers = rest.filter((item) => item.section === moved.section)
+  const target = index !== undefined && Number.isInteger(index) && index >= 0 ? peers[index] : undefined
+  let insertAt: number
+  if (target) insertAt = rest.indexOf(target)
+  else if (peers.length > 0) insertAt = rest.lastIndexOf(peers[peers.length - 1]) + 1
+  else insertAt = rest.length
+  const favorites = [...rest]
+  favorites.splice(insertAt, 0, moved)
   commit({ ...current, favorites })
+  // `at` はフラット配列の位置（引数の `index` はセクション内相対。混同しないよう名前を分ける）
+  log('favorite.moved', { id, section: moved.section, at: insertAt })
+}
+
+/**
+ * ページが申告した favicon を、そのタブが属する定義（Favorite / ピン留め）へ写す。
+ *
+ * **ページの host が定義の host と違うときは書かない**。ピン留めのタブで別サイトへ
+ * 遷移しただけで、ブックマークのアイコンが別サイトのものに化けるのを防ぐ
+ * （タイトルの `setPinnedTitle` は追従させているが、アイコンは「どのサイトか」の目印なので別扱い）。
+ *
+ * 値が同じなら書かない（`page-favicon-updated` はタブを開くたびに何度も飛ぶ）。
+ */
+export function setFaviconForDefinition(id: string, faviconUrl: string, pageUrl: string): void {
+  const next = normalizeDefinitionFaviconUrl(faviconUrl)
+  if (!next) return
+  const pageHost = hostOf(pageUrl)
+  if (!pageHost) return
+  let changed = false
+  const apply = (nodes: PinnedNode[]): PinnedNode[] =>
+    nodes.map((node) => {
+      if (node.kind === 'folder') return { ...node, children: apply(node.children) }
+      if (node.id !== id || node.faviconUrl === next || hostOf(node.url) !== pageHost) return node
+      changed = true
+      return { ...node, faviconUrl: next }
+    })
+  const pinned = apply(data().pinned)
+  const favorites = data().favorites.map((item) => {
+    if (item.id !== id || item.faviconUrl === next || hostOf(item.url) !== pageHost) return item
+    changed = true
+    return { ...item, faviconUrl: next }
+  })
+  if (!changed) return
+  commit({ favorites, pinned })
+}
+
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).host || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * favicon を持たない定義を履歴から埋める（起動時に 1 回）。
+ *
+ * `section` / `faviconUrl` を足す前から使っていたデータは全部 null で来る。タブを開けば
+ * `setFaviconForDefinition` で入るが、「開くまで頭文字」を直したいのがそもそもの動機なので、
+ * 履歴 DB に残っている favicon で先に埋める。`lookup` は URL → favicon（完全一致か同 host）。
+ *
+ * @returns 埋めた件数
+ */
+export function backfillFavicons(lookup: (urls: string[]) => Map<string, string>): number {
+  const current = data()
+  const urls: string[] = []
+  current.favorites.forEach((item) => {
+    if (!item.faviconUrl) urls.push(item.url)
+  })
+  const collect = (nodes: PinnedNode[]): void => {
+    for (const node of nodes) {
+      if (node.kind === 'folder') collect(node.children)
+      else if (!node.faviconUrl) urls.push(node.url)
+    }
+  }
+  collect(current.pinned)
+  if (urls.length === 0) return 0
+  const found = lookup([...new Set(urls)])
+  if (found.size === 0) return 0
+  let filled = 0
+  const pick = (url: string): string | null => {
+    const value = normalizeDefinitionFaviconUrl(found.get(url))
+    if (value) filled += 1
+    return value
+  }
+  const apply = (nodes: PinnedNode[]): PinnedNode[] =>
+    nodes.map((node) => {
+      if (node.kind === 'folder') return { ...node, children: apply(node.children) }
+      if (node.faviconUrl) return node
+      const faviconUrl = pick(node.url)
+      return faviconUrl ? { ...node, faviconUrl } : node
+    })
+  const pinned = apply(current.pinned)
+  const favorites = current.favorites.map((item) => {
+    if (item.faviconUrl) return item
+    const faviconUrl = pick(item.url)
+    return faviconUrl ? { ...item, faviconUrl } : item
+  })
+  if (filled === 0) return 0
+  commit({ favorites, pinned })
+  log('pins.favicons_backfilled', { filled, missing: urls.length - filled })
+  return filled
+}
+
+/**
+ * 旧形式（`section` を持たない）スロットの Favorites に、**今の振り分けを引き継ぐ**。
+ * 同じ URL の Favorite が今あればその section、無ければ `tools`（正規化の既定のまま）。
+ */
+export function inheritSections(favorites: FavoriteItem[]): FavoriteItem[] {
+  const current = new Map(data().favorites.map((item) => [item.url, item.section] as const))
+  return favorites.map((item) => {
+    const section = current.get(item.url)
+    return section && section !== item.section ? { ...item, section } : item
+  })
 }
 
 /**
@@ -469,7 +598,10 @@ export function convertPinToFavorite(id: string): ConversionResult | null {
     id: randomUUID(),
     url: node.url,
     title: node.title,
-    customTitle: node.customTitle
+    customTitle: node.customTitle,
+    section: 'tools',
+    // アイコンも名前と同じく移す（`null` で埋めると右クリック 1 回で頭文字に戻り、次の起動まで直らない）
+    faviconUrl: node.faviconUrl
   }
   const favorites = existing ? current.favorites : [...current.favorites, target]
   commit({ favorites, pinned: removal.nodes })
@@ -496,7 +628,8 @@ export function convertFavoriteToPin(id: string): ConversionResult | null {
           kind: 'link',
           title: item.title,
           customTitle: item.customTitle,
-          url: item.url
+          url: item.url,
+          faviconUrl: item.faviconUrl
         }
   const reused = existing?.kind === 'link'
   const pinned = reused ? current.pinned : [...current.pinned, target]

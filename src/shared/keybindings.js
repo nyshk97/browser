@@ -110,9 +110,13 @@ export const COMMANDS = [
   }
 ]
 
-/** `⌘1`〜`⌘9` はコマンド表に載せず、番号でまとめて扱う。 */
-export const SELECT_TAB_ACCELERATORS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((n) => ({
-  id: `select-tab-${n}`,
+/**
+ * `⌘1`〜`⌘9` = Favorites の N 番目（`messages` → `tools` の通し番号）。
+ * コマンド表には載せず、番号でまとめて扱う（ユーザーの再割り当ては不可）。
+ * 旧 `select-tab-N`（一時タブの N 番目）は廃止。設定に残っていても `unknown_command` で弾かれる。
+ */
+export const SELECT_FAVORITE_ACCELERATORS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((n) => ({
+  id: `select-favorite-${n}`,
   accelerator: `CmdOrCtrl+${n}`,
   index: Number(n)
 }))

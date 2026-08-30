@@ -9,6 +9,7 @@ import {
   collectIcons,
   countPinnedLinks,
   normalizeSlot,
+  slotHasSections,
   normalizeSlotName
 } from '../src/shared/slots-schema.js'
 
@@ -200,4 +201,46 @@ test('countPinnedLinks はフォルダを数えず、中のリンクを数える
   ]
   assert.equal(countPinnedLinks(pinned), 3)
   assert.equal(countPinnedLinks([]), 0)
+})
+
+test('slotHasSections は raw の Favorites に section キーがあるかで判定する（正規化の前）', () => {
+  const fav = (extra = {}) => ({
+    id: 'f',
+    url: 'https://a.example/',
+    title: 'A',
+    customTitle: null,
+    ...extra
+  })
+  assert.equal(slotHasSections({ favorites: [fav()] }), false, '旧形式')
+  assert.equal(slotHasSections({ favorites: [fav({ section: 'tools' })] }), true, '明示的な tools も新形式')
+  assert.equal(
+    slotHasSections({ favorites: [fav(), fav({ section: 'messages' })] }),
+    true,
+    '1 件でもあれば新形式'
+  )
+  assert.equal(slotHasSections({ favorites: [] }), true, '0 件は引き継ぐ相手が無いので新形式扱い')
+  assert.equal(slotHasSections({}), true)
+  assert.equal(slotHasSections(null), true)
+  // 正規化を通すと欠損が tools に倒れ、区別が消える（raw で見る理由）
+  assert.equal(normalizeSlot({ favorites: [fav()] }, NOW).favorites[0].section, 'tools')
+})
+
+test('スロットの Favorites は section / faviconUrl を保持する（normalizePins 経由）', () => {
+  const result = normalizeSlot(
+    {
+      favorites: [
+        {
+          id: 'f',
+          url: 'https://a.example/',
+          title: 'A',
+          customTitle: null,
+          section: 'messages',
+          faviconUrl: 'https://a.example/i.png'
+        }
+      ]
+    },
+    NOW
+  )
+  assert.equal(result.favorites[0].section, 'messages')
+  assert.equal(result.favorites[0].faviconUrl, 'https://a.example/i.png')
 })

@@ -35,6 +35,16 @@ export function useSharedState(): SharedState {
   return state
 }
 
+/**
+ * ⌘ を押し続けている間だけ true（Favorites のタイルに ⌘1〜9 の番号を重ねる）。
+ * 判定は main（ページ側にフォーカスがあると renderer には keydown が来ない）。
+ */
+export function useShortcutHint(): boolean {
+  const [visible, setVisible] = useState(false)
+  useEffect(() => window.nemo.onShortcutHint(setVisible), [])
+  return visible
+}
+
 /** main のメニューから飛んでくるコマンド。 */
 export function useCommand(handler: (command: string) => void): void {
   useEffect(() => window.nemo.onCommand(handler))

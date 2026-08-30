@@ -283,7 +283,20 @@ mise run verify:only split
 - **変換（ピン ⇄ Favorites）**（操作中のタブが変換先に属し、元の定義が消えること）
 - **ピンの URL は固定**（遷移しても変わらない / 「このページに更新」で差し替わる /
   **別のピンが既に持つ URL への更新は拒否される**）
-- **シークレットで開いたページのタイトルを `pins.json` に書かない**
+- **シークレットで開いたページのタイトル・favicon を `pins.json` に書かない**
+  （ピンは favicon の無いページから作り、シークレット側で favicon のある同 host のページへ遷移させる。
+  シークレット側のタブに favicon が届いたことを先に確かめる＝空振りで PASS しない）
+- **Favorites のセクション（messages / tools）**: 追加の既定は `tools` / `moveFavorite(id, section, index)` の
+  **セクション内相対 index → フラット配列の位置**の解決（Messages 2 件・Tools 3 件で Tools の 2 番目へ移すと
+  Tools 内で 2 番目になり Messages は動かない）/ ラベルが messages → tools → bookmarks の順・tools と bookmarks の
+  間に線が無い / messages のグリッドへ落とすと messages に入る
+- **⌘1〜9 = Favorites の通し番号**（`select-favorite-N` を `runCommandForVerify` で撃つ）: ⌘1 で messages の
+  1 件目・⌘2 で tools の 1 件目 / **同じ ⌘N をもう一度で直前のタブへ戻る** / 対象の無い番号は何もしない /
+  旧 `select-tab-N` は拒否される
+- **⌘ 長押しの番号バッジ**: `window.nemo.shortcutHintForVerify('down' | 'up' | 'blur' | 'query')` で main の
+  状態機械を直接叩く（合成キーでは Meta の `before-input-event` を起こせない）。350ms 未満では出ない /
+  出たら `.fav .kb` が 1〜N / keyUp・blur で消える / **表示から 5 秒で自動解除**（5.2 秒待つ）
+- **favicon が定義に写り、タブを閉じても `<img class="fi">` で描かれる**（頭文字に落ちない）
 - UI 操作（合成イベント）:
   - **閉じているピン行をダブルクリックしてもタブが増えず、編集だけが始まる**
     （単クリックの遅延が効いているかの決定打。`click` → `click` → `dblclick` の順で撃ち、
@@ -328,6 +341,8 @@ mise run verify:only split
 再起動をまたぐぶん（`--lazy-write` → 再起動 → `--lazy-read`）:
 
 - **再起動後、ピン / Favorites のタブ実体が1つも無い**（遅延ロード。定義は残る）
+- **再起動後、タブを開いていなくてもピン行が favicon の `<img>` で描かれる**（定義に `faviconUrl` を持つ。
+  `--lazy-write` 側で「定義に写った」ことを先に確かめておく）
 - **枠をクリックすると初めてタブが生まれ、登録 URL が開く**
 - **一時タブに付けた名前が再起動をまたいで残る**
 
@@ -348,6 +363,12 @@ mise run verify:only split
 - `history.db` を**読み取り専用にして起動しても履歴候補が返る**こと。
   列を足せない環境では `NULL AS favicon_url` に落ちる作りなので、ここが崩れると
   SELECT が例外 → `catch` で空配列となり、**履歴機能が黙って死ぬ**
+- **`faviconUrl` を持たない旧データの pins.json が、履歴の favicon で起動時に埋まる**
+  （favicon 入りの `history.db` を先に作ってから pins.json を置いて起動する）:
+  完全一致の行が同 host のより新しい行より優先される / 完全一致が無ければ同 host の最近の行 /
+  **`_` を含む host を LIKE のワイルドカードにしない**（定義側に `https://example_org/` を置く）/
+  履歴に無いものは null のまま（フォルダの中も辿る）/ pins.json に書かれる /
+  **2 回目の起動では走らない**（`pins.favicons_backfilled` のログが増えない＝冪等）
 
 > 合成ドラッグは **dragstart と drop の間を空ける**。ピン留めツリーは「何を掴んでいるか」を
 > React の state に持つので、続けて撃つと drop の時点でまだ state が入っておらず、
@@ -979,6 +1000,10 @@ mise run verify:only slots      # 保存 / 読み込み / 削除 / 移行の通�
 - 保存 → `slot-1.json` が `{ version, data }` で書かれる / 埋まっている枠には書かない
 - **同じ枠を読み込む → 降格 0 件**（ID が一致するので定義もタブもそのまま）。
   あわせて `pins.json` がスロットと一致することも見る
+- **Favorites の `section` / `faviconUrl` がスロットに残る**（保存前に messages へ振り分けておく）
+- **旧形式（`section` 無し）のスロットを適用しても、適用先の振り分け（messages）を引き継ぐ** /
+  **リネームしても旧形式のまま**（raw の `name` だけ書き戻す。`section` が焼き込まれない）/
+  **新形式のスロットは `section` をスロット側で上書きする**
   （降格 0 件だけだと、読み込みが丸ごと no-op でも PASS する）
 - **別 Mac 相当（ID を振り直した fixture）→ 所属タブが全部「今日のタブ」に降り、
   定義に付けていた名前を保つ**。降格前に名前を付けてから読み込む

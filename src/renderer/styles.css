@@ -312,6 +312,20 @@ body[data-view='toolbar'] {
   box-shadow: inset 0 0 0 1.5px var(--nemo-accent);
 }
 
+/* ⌘ を押している間だけ出す番号（⌘1〜9）。セルの右上に重ねる */
+.fav .kb {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  pointer-events: none;
+}
+
 /* 音符はセルの角に重ねる（行と違って横に並べる余白が無い） */
 .fav .fav-mark {
   position: absolute;
@@ -364,21 +378,19 @@ body[data-view='toolbar'] {
   border-radius: 3px;
 }
 
+/*
+ * 層の見出し（messages / tools / bookmarks）。**薄い小さなラベル**（`uppercase` で大文字化）で、
+ * Live Folder の小見出しより一段軽くする。線は引かず、ラベルと余白だけで区切る
+ */
 .label {
   display: flex;
   align-items: center;
   font-size: 10px;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--nemo-ink-dim);
+  opacity: 0.7;
   padding: 10px 8px 4px;
-}
-
-/* 見出しのアイコン（"ピン留め" の代わり）。色は見出しの文字色を継ぐ */
-.label .label-icon {
-  width: 13px;
-  height: 13px;
-  fill: currentColor;
 }
 
 .label .mini {

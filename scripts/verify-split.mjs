@@ -1185,46 +1185,23 @@ await resetTabs()
   )
 }
 
-/* ---- ⌘数字 / ⌃Tab は「2 つのタブのまま」数える ---- */
+/* ---- ⌃Tab は「2 つのタブのまま」数える ---- */
 {
   await resetTabs()
   const [a, b] = await makeTabs(2, 'nav')
   await makeSplit(a, b)
 
-  // ⌘1〜9 はサイドバーの並び（Peek を除いた `normalTabs`）に対応する
+  // ⌃Tab / セッション保存はサイドバーの並び（Peek を除いた `normalTabs`）に対応する。
+  // （⌘1〜9 は Favorites 用に付け替えたので、ここでは並びだけ見る）
   const s = await state()
   const order = s.tabs.filter((tab) => tab.peekParentKey === null).map((tab) => tab.key)
   const leftIndex = order.indexOf(a)
   const rightIndex = order.indexOf(b)
   check(
-    '⌘数字: 左右がタブの並びで隣接している',
+    '並び: 左右がタブの並びで隣接している',
     leftIndex >= 0 && rightIndex === leftIndex + 1,
     `left=${leftIndex} right=${rightIndex} / ${order.length} 本`
   )
-  // **9 は「最後のタブ」**という別扱いなので、そこに当たる番号は撃たない
-  if (leftIndex >= 0 && leftIndex + 1 <= 8 && rightIndex + 1 <= 8) {
-    await call(`window.nemo.selectTab(${JSON.stringify(a)})`)
-    await runCommand(`select-tab-${rightIndex + 1}`)
-    await sleep(250)
-    check(
-      '⌘数字: 右ペインを直接選べる',
-      (await state()).activeTabKey === b,
-      `active=${(await state()).activeTabKey === a ? 'left' : 'other'}`
-    )
-    await runCommand(`select-tab-${leftIndex + 1}`)
-    await sleep(250)
-    check(
-      '⌘数字: 左ペインを直接選べる',
-      (await state()).activeTabKey === a,
-      `active=${(await state()).activeTabKey === b ? 'right' : 'other'}`
-    )
-  } else {
-    check(
-      `⌘数字: 撃てる番号に収まっている（left=${leftIndex + 1} right=${rightIndex + 1}）`,
-      false,
-      '9 番＝末尾の別扱いに当たるので撃てなかった'
-    )
-  }
 
   // ⌃Tab / ⌃⇧Tab は**両方向**見る（片方向だけだとペアを飛ばす実装が通る）
   await call(`window.nemo.selectTab(${JSON.stringify(a)})`)

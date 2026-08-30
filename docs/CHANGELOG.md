@@ -30,6 +30,16 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 
 ## [Unreleased]
 
+### 変更
+
+- **サイドバーの並びを Pull Request → Favorites → ブックマーク → タブ にした**（Favorites が Live Folder の下に来る）。見出しは `messages` / `tools` / `bookmarks` の薄いラベルで揃え、ピンのアイコンは無くした
+- **Favorites を `messages` と `tools` の 2 セクションに分けた**。既存の Favorites・Arc からの取り込み・新規追加はすべて `tools` に入る。`messages` へはタイルのドラッグか右クリックの「Messages へ移動」で振り分ける
+- **⌘1〜9 の意味が変わった**。一時タブの N 番目ではなく **Favorites の N 番目**（`messages` → `tools` の通し番号）を開く。すでにそのタブを見ているときにもう一度押すと直前のタブへ戻る。⌘ を押し続けるとタイルに番号が出る
+
+### 修正
+
+- **ピン留め・Favorites のアイコンが、タブを開くまで頭文字のままだった**。favicon をブックマーク側に覚えるようにし、起動直後から（履歴を消しても）アイコンで見分けられる。既存のブックマークは履歴に残っている favicon で埋める
+
 ## [0.8.2] - 2026-08-30
 
 ### 修正

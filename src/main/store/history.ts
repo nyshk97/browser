@@ -79,6 +79,52 @@ export function recordFavicon(url: string, faviconUrl: string | null): void {
 }
 
 /**
+ * 定義の穴埋め用: URL → favicon を「完全一致 → 同 host の最近の行」の順で引く。
+ *
+ * ブックマークの URL は入口（`https://x/`）で、履歴に残っているのはログイン後の
+ * 深い URL だけ、がよくある。完全一致で無ければ同 host で最後に見たページの favicon を使う。
+ * host の絞り込みは **`url >= origin AND url < origin の次`** の範囲比較にする。`LIKE` は `ESCAPE` を
+ * 付けると索引の前方一致最適化が外れ、`pages(url)` の主キーが使われず全表走査になる
+ * （起動のたびに・ウィンドウ復元の前に・同期で走る場所なので効く）。範囲比較なら `_` / `%` の
+ * エスケープも要らない。**列が無い環境では何もしない**（`recordFavicon` と同じ）。
+ */
+export function getFaviconsByUrlOrHost(urls: string[]): Map<string, string> {
+  const found = getFavicons(urls)
+  const db = getDb()
+  if (!db || !hasFaviconColumn()) return found
+  const missing = [...new Set(urls)].filter((url) => !found.has(url))
+  if (missing.length === 0) return found
+  try {
+    const byHost = db.prepare(
+      `SELECT favicon_url FROM pages
+       WHERE url >= ? AND url < ? AND favicon_url IS NOT NULL
+       ORDER BY last_visited_at DESC LIMIT 1`
+    )
+    const cache = new Map<string, string | null>()
+    for (const url of missing) {
+      let origin: string
+      try {
+        const parsed = new URL(url)
+        origin = `${parsed.protocol}//${parsed.host}/`
+      } catch {
+        continue
+      }
+      if (!cache.has(origin)) {
+        // `origin` は `/` で終わるので、上限は末尾を `/` の次の文字（`0`）に置き換えたもの
+        const upper = `${origin.slice(0, -1)}0`
+        const row = byHost.get(origin, upper) as { favicon_url: string } | undefined
+        cache.set(origin, row?.favicon_url ?? null)
+      }
+      const favicon = cache.get(origin)
+      if (favicon) found.set(url, favicon)
+    }
+  } catch (error) {
+    logError('history.query_failed', error)
+  }
+  return found
+}
+
+/**
  * URL → favicon をまとめて引く（コマンドバーの候補用）。
  *
  * 1件ずつ引かない。候補は最大 12 件で、入力1文字ごとに走る場所なので

@@ -37,8 +37,9 @@ import { closeLogFile, log, logError, openLogFile } from './log.js'
 import { sampleMetrics } from './metrics.js'
 import { initTimings } from './timings.js'
 import { closeSettings, getSettings, initSettings, updateSettings } from './store/settings.js'
-import { closePins, initPins } from './store/pins.js'
+import { backfillFavicons, closePins, initPins } from './store/pins.js'
 import { closeDb, initDb } from './store/db.js'
+import { getFaviconsByUrlOrHost } from './store/history.js'
 import { pruneArchive } from './store/archive.js'
 import { closePermissionStore, initPermissionStore } from './store/permissions.js'
 import { closeSession, initSession, markCleanExit } from './store/session.js'
@@ -131,6 +132,9 @@ app
     initSecretBackend()
     initHttpAuthStore()
     initDb()
+    // 定義の favicon を履歴から埋める（**DB を開いた後・ウィンドウ復元の前**に 1 回。
+    // 開く前だと列の有無が分からず黙って no-op になる）
+    backfillFavicons(getFaviconsByUrlOrHost)
     pruneArchive()
     const restored = initSession()
 

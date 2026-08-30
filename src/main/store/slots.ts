@@ -12,7 +12,8 @@ import {
   countPinnedLinks,
   iconCandidates,
   normalizeSlot,
-  normalizeSlotName
+  normalizeSlotName,
+  slotHasSections
 } from '../../shared/slots-schema.js'
 import type { SlotData, SlotList, SlotSummary } from '../../shared/types.js'
 
@@ -239,14 +240,25 @@ export async function listSlots(): Promise<Omit<SlotList, 'current'>> {
   return { dir, kind, slots }
 }
 
-/** 1 枠の中身を読む（読み込み＝適用の前段）。読めなければ null。 */
-export async function readSlot(index: number): Promise<SlotData | null> {
+/** `readSlot` の戻り。`sectioned` は「Favorites が `section` を持つ形式か」（`slotHasSections`）。 */
+export interface SlotRead {
+  data: SlotData
+  sectioned: boolean
+}
+
+/**
+ * 1 枠の中身を読む（読み込み＝適用の前段）。読めなければ null。
+ *
+ * `sectioned` は**正規化の前の raw で判定する**（正規化後は欠損が `tools` に倒れて見分けが付かない）。
+ */
+export async function readSlot(index: number): Promise<SlotRead | null> {
   if (!isValidIndex(index)) return null
   const { dir } = slotsDir()
   const file = slotPath(dir, index)
   try {
     const versioned = readVersioned(JSON.parse(await readWithTimeout(file)), SLOTS_VERSION)
-    return versioned ? normalizeSlot(versioned.data) : null
+    if (!versioned) return null
+    return { data: normalizeSlot(versioned.data), sectioned: slotHasSections(versioned.data) }
   } catch (error) {
     logError('slots.read_failed', error, { index })
     return null
@@ -301,17 +313,22 @@ export async function deleteSlot(index: number): Promise<boolean> {
  * 名前だけ変える。
  *
  * read-modify-write なので、**読めない枠では実行できない**（UI 側でも「削除」だけ出す）。
+ *
+ * **raw の `name` だけ差し替えて書き戻す**（`normalizeSlot` で全体を作り直さない）。
+ * 作り直すと旧形式（`section` 無し）のスロットに `section: 'tools'` が焼き込まれ、
+ * 以後「新形式」に見えて、適用時に手作業の振り分けを黙って `tools` に戻す。
  */
 export async function renameSlot(index: number, name: string): Promise<boolean> {
   if (!isValidIndex(index)) return false
-  const current = await readSlot(index)
-  if (!current) return false
   const { dir } = slotsDir()
   const file = slotPath(dir, index)
   const tmp = `${file}.tmp-${process.pid}`
   try {
-    const next: SlotData = { ...current, name: normalizeSlotName(name) }
-    await fsp.writeFile(tmp, `${JSON.stringify(writeVersioned(SLOTS_VERSION, next), null, 2)}\n`)
+    const raw: unknown = JSON.parse(await readWithTimeout(file))
+    const versioned = readVersioned(raw, SLOTS_VERSION)
+    if (!versioned || !isRecord(raw) || !isRecord(versioned.data)) return false
+    const next = { ...raw, data: { ...versioned.data, name: normalizeSlotName(name) } }
+    await fsp.writeFile(tmp, `${JSON.stringify(next, null, 2)}\n`)
     await fsp.rename(tmp, file)
     log('slots.renamed', { index })
     return true

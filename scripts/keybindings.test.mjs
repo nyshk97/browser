@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   COMMANDS,
+  SELECT_FAVORITE_ACCELERATORS,
   holdModifiersFor,
   isValidAccelerator,
   resolveKeybindings
@@ -66,4 +67,17 @@ test('Shift は押しっぱなしの土台に数えない', () => {
 test('修飾キーの無い割り当ては押しっぱなしにできない', () => {
   assert.deepEqual(holdModifiersFor('F5'), [])
   assert.deepEqual(holdModifiersFor(''), [])
+})
+
+test('⌘1〜9 は Favorites の N 番目で、id / index / accelerator が揃っている（コマンド表には載せない）', () => {
+  assert.equal(SELECT_FAVORITE_ACCELERATORS.length, 9)
+  for (const [i, entry] of SELECT_FAVORITE_ACCELERATORS.entries()) {
+    assert.equal(entry.index, i + 1)
+    assert.equal(entry.id, `select-favorite-${i + 1}`)
+    assert.equal(entry.accelerator, `CmdOrCtrl+${i + 1}`)
+  }
+  const ids = new Set(COMMANDS.map((c) => c.id))
+  assert.ok(SELECT_FAVORITE_ACCELERATORS.every((entry) => !ids.has(entry.id)))
+  // 旧 select-tab-N は知らないコマンドとして弾かれる（設定に残っていても効かない）
+  assert.equal(resolveKeybindings({ 'select-tab-1': 'CmdOrCtrl+1' }).problems[0]?.reason, 'unknown_command')
 })

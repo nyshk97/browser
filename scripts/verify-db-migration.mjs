@@ -11,6 +11,8 @@
  *   2. もう一度起動しても壊れない（冪等）
  *   3. `window.nemo.suggest` が履歴候補を返す（capability の分岐が SQL を壊していない）
  *   4. **列を足せない DB でも履歴が生きている**（`NULL AS favicon_url` の縮退経路）
+ *   5. **`faviconUrl` を持たない旧データの pins.json が、履歴の favicon で起動時に埋まる**
+ *      （完全一致 → 同 host の最近の行。2 回目の起動では埋め直しが走らない＝冪等）
  *
  * 使い方:
  *   node scripts/verify-db-migration.mjs        （事前に out/ がビルドされていること）
@@ -288,6 +290,129 @@ try {
     !readonlyAfter.columns.includes('favicon_url'),
     readonlyAfter.columns.join(', ')
   )
+
+  /* ---- 5. 旧データ（faviconUrl 無し）の pins.json を履歴の favicon で埋める ---- */
+  {
+    const dir = makeDir('backfill')
+    // まず新スキーマの DB を作らせる（DDL を二重に持たない）。1 回目は定義が無いので穴埋めは走らない
+    {
+      await bootApp(dir)
+      await stopChildren(spawned.splice(0))
+    }
+    // 履歴に favicon を入れる。alpha は**完全一致**、org は **host だけ一致**（/beta ≠ /）
+    {
+      const db = new Database(path.join(dir, 'history.db'))
+      db.prepare('DELETE FROM pages').run()
+      const insert = db.prepare(
+        'INSERT INTO pages (url, title, visit_count, last_visited_at, favicon_url) VALUES (?, ?, ?, ?, ?)'
+      )
+      // alpha: 完全一致。**同 host により新しい行**（zzz）を置き、完全一致がフォールバックに勝つことを弁別する
+      insert.run('https://example.com/alpha', 'alpha', 1, 1_700_000_000_000, 'https://example.com/alpha.png')
+      insert.run('https://example.com/zzz', 'newer', 1, 1_700_000_300_000, 'https://example.com/zzz.png')
+      insert.run('https://example.org/beta', 'beta-old', 1, 1_700_000_000_000, 'https://example.org/old.png')
+      insert.run('https://example.org/beta2', 'beta-new', 1, 1_700_000_100_000, 'https://example.org/new.png')
+      // `_` を含む origin を**定義側**に置く。エスケープ無しの LIKE だと `_` が 1 文字ワイルドカードになり、
+      // より新しい `example.org` 側（new.png）を拾って FAIL する（＝範囲比較で弁別できる）
+      insert.run('https://example_org/x', 'underscore', 1, 1_700_000_050_000, 'https://example_org/trap.png')
+      insert.run('https://example.net/gamma', 'gamma', 1, 1_700_000_000_000, null)
+      db.close()
+    }
+    // `faviconUrl` / `section` を持たない旧形式の pins.json（版は 2 のまま）
+    const pinsFile = path.join(dir, 'pins.json')
+    fs.writeFileSync(
+      pinsFile,
+      `${JSON.stringify(
+        {
+          version: 2,
+          data: {
+            favorites: [
+              { id: 'f-exact', url: 'https://example.com/alpha', title: 'alpha', customTitle: null },
+              { id: 'f-host', url: 'https://example.org/', title: 'org', customTitle: null },
+              { id: 'f-underscore', url: 'https://example_org/', title: 'us', customTitle: null }
+            ],
+            pinned: [
+              {
+                id: 'folder',
+                kind: 'folder',
+                title: 'F',
+                customTitle: null,
+                collapsed: false,
+                children: [
+                  {
+                    id: 'p-none',
+                    kind: 'link',
+                    url: 'https://example.net/gamma',
+                    title: 'g',
+                    customTitle: null
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        null,
+        2
+      )}\n`
+    )
+    const backfillLogs = () => {
+      const logDir = path.join(dir, 'logs')
+      let count = 0
+      for (const name of fs.readdirSync(logDir)) {
+        if (!name.endsWith('.log')) continue
+        count += (
+          fs.readFileSync(path.join(logDir, name), 'utf8').match(/"pins\.favicons_backfilled"/g) ?? []
+        ).length
+      }
+      return count
+    }
+    {
+      const { cdp } = await bootApp(dir)
+      const shared = JSON.parse(await evalInUi(cdp, 'window.nemo.getSharedState().then(JSON.stringify)'))
+      const byId = new Map(shared.favorites.map((f) => [f.id, f.faviconUrl]))
+      check(
+        '完全一致の URL は履歴の favicon で埋まる（同 host のより新しい行より優先）',
+        byId.get('f-exact') === 'https://example.com/alpha.png',
+        String(byId.get('f-exact'))
+      )
+      check(
+        '完全一致が無ければ同 host の**最近の**行の favicon で埋まる',
+        byId.get('f-host') === 'https://example.org/new.png',
+        String(byId.get('f-host'))
+      )
+      check(
+        '`_` を含む host はその host の行だけ拾う（LIKE のワイルドカードにしない）',
+        byId.get('f-underscore') === 'https://example_org/trap.png',
+        String(byId.get('f-underscore'))
+      )
+      const gamma = shared.pinned[0]?.children?.[0]
+      check(
+        '履歴に favicon が無い定義は null のまま（フォルダの中も辿っている）',
+        gamma && gamma.faviconUrl === null,
+        JSON.stringify(gamma)
+      )
+      await stopChildren(spawned.splice(0))
+    }
+    // 書き込みは set() のデバウンス後。ファイルに残っていることを見る
+    const written = JSON.parse(fs.readFileSync(pinsFile, 'utf8')).data
+    check(
+      '埋めた favicon が pins.json に書かれている',
+      written.favorites.every((f) => typeof f.faviconUrl === 'string'),
+      JSON.stringify(written.favorites.map((f) => f.faviconUrl))
+    )
+    check('1 回目の起動で穴埋めが 1 回走った', backfillLogs() === 1, `${backfillLogs()} 回`)
+    {
+      const { cdp } = await bootApp(dir)
+      const shared = JSON.parse(await evalInUi(cdp, 'window.nemo.getSharedState().then(JSON.stringify)'))
+      check(
+        '2 回目の起動でも結果が同じ（冪等）',
+        JSON.stringify(shared.favorites) === JSON.stringify(written.favorites),
+        JSON.stringify(shared.favorites.map((f) => f.faviconUrl))
+      )
+      await stopChildren(spawned.splice(0))
+    }
+    check('2 回目の起動では穴埋めが走らない', backfillLogs() === 1, `${backfillLogs()} 回`)
+    check('穴埋めの経路で未捕捉例外が出ていない', findUncaughtExceptions(dir).length === 0)
+  }
 } catch (error) {
   failures += 1
   console.error(`FAIL  例外で中断 — ${error?.stack ?? error}`)

@@ -128,7 +128,14 @@ export function parseArcSidebar(raw) {
         }
         emitted.add(childId)
         stats.tabs += 1
-        result.push({ id: childId, kind: 'link', title: titleOf(item) || url, customTitle: null, url })
+        result.push({
+          id: childId,
+          kind: 'link',
+          title: titleOf(item) || url,
+          customTitle: null,
+          url,
+          faviconUrl: null
+        })
         continue
       }
 
@@ -176,7 +183,15 @@ export function parseArcSidebar(raw) {
     if (!node) continue
     for (const child of walk(node.childrenIds, 0)) {
       if (child.kind !== 'link') continue
-      favorites.push({ id: child.id, url: child.url, title: child.title, customTitle: null })
+      // 取り込みは全部 `tools`（`messages` への振り分けはユーザーが手で行う）
+      favorites.push({
+        id: child.id,
+        url: child.url,
+        title: child.title,
+        customTitle: null,
+        section: 'tools',
+        faviconUrl: null
+      })
     }
   }
 

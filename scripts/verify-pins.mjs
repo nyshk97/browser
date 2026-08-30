@@ -115,6 +115,14 @@ if (mode === '--lazy-write') {
   const tmpTab = await ui.ev(`window.nemo.createTab('${PAGES}/iframe.html').then(k => k)`)
   await ui.ev(`window.nemo.renameTab(${json(tmpTab)}, '作業用').then(() => 'ok')`)
 
+  // `/index.html` は favicon を出す。**定義側**に写るまで待つ（再起動後の検査の前提）
+  const pinDef = await waitFor(
+    ui,
+    `window.nemo.getSharedState().then(s => { const n = s.pinned.find(n => n.kind === 'link'); return n && n.faviconUrl ? n.faviconUrl : '' })`,
+    { timeoutMs: 15000 }
+  ).catch(() => '')
+  check('ページが申告した favicon がピン定義に写る', pinDef !== '', pinDef.slice(0, 60))
+
   const s = await state()
   check(
     '遅延ロード前提: ピンと Favorite のタブが開いている',
@@ -161,6 +169,20 @@ if (mode === '--lazy-read') {
     tabs.some((t) => t.customTitle === '作業用'),
     json(tabs.map((t) => t.customTitle))
   )
+
+  // **タブを開いていなくても** favicon で描かれる（定義に持っているので頭文字に落ちない）
+  {
+    const pinDef = sh.pinned.find((n) => n.kind === 'link')
+    check(
+      '再起動後もピン定義が favicon を持っている',
+      Boolean(pinDef?.faviconUrl),
+      pinDef?.faviconUrl?.slice(0, 60)
+    )
+    const drawn = await windows[0].session.ev(
+      `(() => { const row = document.querySelector('.row.pin'); if (!row) return 'no-row'; return row.querySelector('img.fi') ? 'img' : row.querySelector('.fi.letter') ? 'letter' : 'none' })()`
+    )
+    check('タブ実体が無くてもピン行が favicon の <img> で描かれる（頭文字ではない）', drawn === 'img', drawn)
+  }
 
   // 初クリックでタブが生まれ、**登録 URL**が開く
   const pin = sh.pinned.find((n) => n.kind === 'link')
@@ -537,9 +559,16 @@ const loaded = (session, key, part) =>
  * ------------------------------------------------------------------ */
 
 {
-  const key = await ui.ev(`window.nemo.createTab('${PAGES}/index.html').then(k => k)`)
+  // ピンは favicon の**無い** `/login.html` から作る。シークレット側で favicon の**ある** `/index.html`
+  // （同じ host）へ遷移させ、pins.json の faviconUrl が null のままなことを見る
+  const key = await ui.ev(`window.nemo.createTab('${PAGES}/login.html').then(k => k)`)
   await ui.ev(`window.nemo.pinTab(${json(key)}).then(() => 'ok')`)
   const pin = flatten((await shared()).pinned).find((n) => n.kind === 'link')
+  check(
+    '前提: favicon の無いページから作ったピンは faviconUrl が null',
+    pin?.faviconUrl === null,
+    json(pin?.faviconUrl)
+  )
   await ui.ev(`window.nemo.closeTab(${json(key)}).then(() => 'ok')`)
 
   await ui.ev('window.nemo.createPrivateWindow().then(() => "ok")')
@@ -551,19 +580,31 @@ const loaded = (session, key, part) =>
       priv,
       `window.nemo.getWindowState().then(s => { const t = s.tabs.find(t => t.pinnedId === ${json(pin.id)}); return t ? t.key : '' })`
     )
-    await loaded(priv, privKey, '/index.html')
-    await priv.ev(`window.nemo.navigate(${json(privKey)}, '${PAGES}/login.html').then(() => 'ok')`)
+    await loaded(priv, privKey, '/login.html')
+    await priv.ev(`window.nemo.navigate(${json(privKey)}, '${PAGES}/index.html').then(() => 'ok')`)
     await waitFor(
       priv,
-      `window.nemo.getWindowState().then(s => s.tabs.some(t => t.key === ${json(privKey)} && !t.loading && t.url.includes('/login.html')))`,
+      `window.nemo.getWindowState().then(s => s.tabs.some(t => t.key === ${json(privKey)} && !t.loading && t.url.includes('/index.html')))`,
       { timeoutMs: 15000 }
     )
+    // favicon がシークレット側のタブに届くまで待つ（届いていないと「書かない」検査が空振りする）
+    const privFavicon = await waitFor(
+      priv,
+      `window.nemo.getWindowState().then(s => { const t = s.tabs.find(t => t.key === ${json(privKey)}); return t && t.faviconUrl ? 'yes' : '' })`,
+      { timeoutMs: 15000 }
+    ).catch(() => '')
+    check('前提: シークレット側のタブには favicon が届いている', privFavicon === 'yes')
     await sleep(500)
     const after = flatten((await shared()).pinned).find((n) => n.id === pin.id)
     check(
       'シークレットで開いたページのタイトルを pins.json に書かない',
       after?.title === pin.title,
       `${pin.title} -> ${after?.title}`
+    )
+    check(
+      'シークレットで届いた favicon を pins.json に書かない',
+      after?.faviconUrl === null,
+      json(after?.faviconUrl)
     )
     // シークレットウィンドウは閉じる（後の検証が誤って掴まないように）
     await priv.ev(
@@ -1049,6 +1090,221 @@ const settle = () => sleep(250)
 
   await resetDefinitions()
   await ui.ev(`window.nemo.closeTab(${json(key)}).then(() => 'ok')`)
+}
+
+/* ------------------------------------------------------------------ *
+ * Favorites のセクション（messages / tools）・⌘1〜9・⌘長押しの番号バッジ
+ * ------------------------------------------------------------------ */
+
+{
+  await resetDefinitions()
+  await closeEphemeralTabs()
+  const settleUi = () => sleep(250)
+
+  /** N 個の Favorite を作って ID の配列を返す（全部 `tools` に入る）。 */
+  const makeFavorites = async (n, prefix) => {
+    const ids = []
+    for (let i = 0; i < n; i += 1) {
+      const key = await ui.ev(`window.nemo.createTab('${PAGES}/login.html?${prefix}${i}').then(k => k)`)
+      await ui.ev(`window.nemo.addFavorite(${json(key)}).then(() => 'ok')`)
+      const sh = await shared()
+      const fav = sh.favorites.find((f) => f.url.endsWith(`?${prefix}${i}`))
+      ids.push(fav.id)
+      await ui.ev(`window.nemo.closeTab(${json(key)}).then(() => 'ok')`)
+    }
+    return ids
+  }
+  const favs = await makeFavorites(5, 'f')
+  {
+    const sh = await shared()
+    check(
+      '追加した Favorite は全部 tools に入る（既定）',
+      sh.favorites.length === 5 && sh.favorites.every((f) => f.section === 'tools'),
+      json(sh.favorites.map((f) => f.section))
+    )
+  }
+
+  // messages へ 2 件移す（右クリックの「Messages へ移動」と同じ API）
+  await ui.ev(`window.nemo.moveFavorite(${json(favs[0])}, 'messages').then(() => 'ok')`)
+  await ui.ev(`window.nemo.moveFavorite(${json(favs[1])}, 'messages').then(() => 'ok')`)
+  await settleUi()
+  {
+    const sh = await shared()
+    const messages = sh.favorites.filter((f) => f.section === 'messages').map((f) => f.id)
+    const tools = sh.favorites.filter((f) => f.section === 'tools').map((f) => f.id)
+    check('messages へ移せる（末尾に付く）', json(messages) === json([favs[0], favs[1]]), json(messages))
+    check('tools 側の並びは動かない', json(tools) === json([favs[2], favs[3], favs[4]]), json(tools))
+    // 描画順: messages → tools → bookmarks（ラベルの並び）と、グリッドの data-section
+    const labels = JSON.parse(
+      await ui.ev(
+        `JSON.stringify([...document.querySelectorAll('.scroll .label')].map((l) => (l.childNodes[0]?.textContent ?? '').trim()))`
+      )
+    )
+    check(
+      'ラベルが messages → tools → bookmarks の順に描かれる',
+      json(labels) === json(['messages', 'tools', 'bookmarks']),
+      json(labels)
+    )
+    const grids = JSON.parse(
+      await ui.ev(
+        `JSON.stringify([...document.querySelectorAll('.fav-grid')].map((g) => [g.dataset.section, g.querySelectorAll('.fav').length]))`
+      )
+    )
+    check(
+      'グリッドが messages(2) → tools(3) の順',
+      json(grids) ===
+        json([
+          ['messages', 2],
+          ['tools', 3]
+        ]),
+      json(grids)
+    )
+    check(
+      'tools ↔ bookmarks の間に区切り線が無い',
+      (await ui.ev(
+        `(() => { const g = document.querySelector('.fav-grid[data-section="tools"]'); let el = g.nextElementSibling; return el && el.classList.contains('label') && (el.childNodes[0]?.textContent ?? '').trim() === 'bookmarks' })()`
+      )) === true
+    )
+  }
+
+  // 相対 index の解決: Messages 2 件・Tools 3 件で、tools の 3 番目を tools の index 1 へ
+  await ui.ev(`window.nemo.moveFavorite(${json(favs[4])}, 'tools', 1).then(() => 'ok')`)
+  {
+    const sh = await shared()
+    const messages = sh.favorites.filter((f) => f.section === 'messages').map((f) => f.id)
+    const tools = sh.favorites.filter((f) => f.section === 'tools').map((f) => f.id)
+    check('相対 index: tools の 2 番目に入る', json(tools) === json([favs[2], favs[4], favs[3]]), json(tools))
+    check('相対 index: messages は動かない', json(messages) === json([favs[0], favs[1]]), json(messages))
+  }
+  // messages の 2 番目を tools の末尾へ → ⌘N の通し番号がずれる（messages 1 件・tools 4 件）
+  await ui.ev(`window.nemo.moveFavorite(${json(favs[1])}, 'tools').then(() => 'ok')`)
+  {
+    const sh = await shared()
+    const order = [
+      ...sh.favorites.filter((f) => f.section === 'messages'),
+      ...sh.favorites.filter((f) => f.section === 'tools')
+    ].map((f) => f.id)
+    check(
+      'messages → tools へ移すと通し番号が期待どおりずれる',
+      json(order) === json([favs[0], favs[2], favs[4], favs[3], favs[1]]),
+      json(order)
+    )
+  }
+
+  /* --- ⌘1〜9 --- */
+  // 通し番号 1 = messages の 1 件目、2 = tools の 1 件目
+  const active = () => state().then((s) => s.tabs.find((t) => t.key === s.activeTabKey) ?? null)
+  const base = await ui.ev(`window.nemo.createTab('${PAGES}/iframe.html').then(k => k)`)
+  await ui.ev(`window.nemo.selectTab(${json(base)}).then(() => 'ok')`)
+  await ui.ev(`window.nemo.runCommandForVerify('select-favorite-1').then(String)`)
+  await waitFor(
+    ui,
+    `window.nemo.getWindowState().then(s => s.tabs.some(t => t.favoriteId === ${json(favs[0])}) ? 'ok' : '')`
+  )
+  check(
+    '⌘1 で messages の 1 件目が開いてアクティブになる',
+    (await active())?.favoriteId === favs[0],
+    json((await active())?.favoriteId)
+  )
+  await ui.ev(`window.nemo.runCommandForVerify('select-favorite-2').then(String)`)
+  await waitFor(
+    ui,
+    `window.nemo.getWindowState().then(s => s.tabs.some(t => t.favoriteId === ${json(favs[2])}) ? 'ok' : '')`
+  )
+  check(
+    '⌘2 で tools の 1 件目（通し番号）が開く',
+    (await active())?.favoriteId === favs[2],
+    json((await active())?.favoriteId)
+  )
+  // 同じキーをもう一度 → 直前のタブ（⌘1 で開いた messages 1 件目）へ戻る
+  await ui.ev(`window.nemo.runCommandForVerify('select-favorite-2').then(String)`)
+  await settleUi()
+  check(
+    '同じ ⌘N をもう一度押すと直前のタブへ戻る',
+    (await active())?.favoriteId === favs[0],
+    json((await active())?.favoriteId)
+  )
+  await ui.ev(`window.nemo.runCommandForVerify('select-favorite-2').then(String)`)
+  await settleUi()
+  check(
+    'さらに押すと行ったり来たりできる',
+    (await active())?.favoriteId === favs[2],
+    json((await active())?.favoriteId)
+  )
+  // 対象が無い番号は何もしない（5 件しか無いので 9 は空振り）
+  const beforeNine = (await state()).activeTabKey
+  await ui.ev(`window.nemo.runCommandForVerify('select-favorite-9').then(String)`)
+  await settleUi()
+  check('対象の無い ⌘9 は何もしない', (await state()).activeTabKey === beforeNine)
+  check(
+    '旧 select-tab-N は知らないコマンドとして拒否される',
+    (await ui.ev(`window.nemo.runCommandForVerify('select-tab-1').then(String)`)) === 'false'
+  )
+
+  /* --- ⌘ 長押しの番号バッジ（main の状態機械を診断 IPC で直接叩く） --- */
+  const hint = (action) => ui.ev(`window.nemo.shortcutHintForVerify('${action}').then(String)`)
+  const badges = () =>
+    ui.ev(`JSON.stringify([...document.querySelectorAll('.fav .kb')].map((b) => b.textContent))`)
+  await hint('up')
+  check('⌘ を押した瞬間には出ない（350ms 未満）', (await hint('down')) === 'false')
+  await sleep(120)
+  check('120ms ではまだ出ない', (await hint('query')) === 'false')
+  await sleep(500)
+  check('350ms を超えると出る', (await hint('query')) === 'true')
+  await settleUi()
+  check(
+    'バッジが 1〜5 の順で描かれる（5 件なので 5 個）',
+    (await badges()) === json(['1', '2', '3', '4', '5']),
+    await badges()
+  )
+  check('keyUp で消える', (await hint('up')) === 'false')
+  await settleUi()
+  check('keyUp 後は DOM からも消える', (await badges()) === '[]', await badges())
+  await hint('down')
+  await sleep(500)
+  check('（再度）出ている', (await hint('query')) === 'true')
+  check('blur で消える', (await hint('blur')) === 'false')
+  await hint('down')
+  await sleep(500)
+  check('（再々度）出ている', (await hint('query')) === 'true')
+  await sleep(5200)
+  check('表示から 5 秒で自動的に消える（keyUp の取りこぼし対策）', (await hint('query')) === 'false')
+  await settleUi()
+  check('自動解除後は DOM からも消える', (await badges()) === '[]', await badges())
+
+  /* --- グリッドへのドロップは落とした側の section に入る --- */
+  await closeEphemeralTabs()
+  const dropped = await ui.ev(`window.nemo.createTab('${PAGES}/index.html').then(k => k)`)
+  await ui.ev(`window.nemo.renameTab(${json(dropped)}, 'ドロップ元M').then(() => 'ok')`)
+  await settleUi()
+  await ui.ev(
+    `window.__nemoVerify.drag(
+       document.querySelector('.scroll .row[title="ドロップ元M"]'),
+       document.querySelector('.fav-grid[data-section="messages"]')
+     )`
+  )
+  await settleUi()
+  {
+    const sh = await shared()
+    const fav = sh.favorites.find((f) => f.customTitle === 'ドロップ元M')
+    check('messages のグリッドへ落とすと messages に入る', fav?.section === 'messages', json(fav?.section))
+    // favicon が定義に写る（/index.html は favicon を出す）→ タブを閉じても <img> で描かれる
+    const favicon = await waitFor(
+      ui,
+      `window.nemo.getSharedState().then(s => { const f = s.favorites.find(f => f.customTitle === 'ドロップ元M'); return f && f.faviconUrl ? 'yes' : '' })`,
+      { timeoutMs: 15000 }
+    ).catch(() => '')
+    check('開いている Favorite の favicon が定義に写る', favicon === 'yes')
+    await ui.ev(`window.nemo.closeTab(${json(dropped)}).then(() => 'ok')`)
+    await settleUi()
+    const drawn = await ui.ev(
+      `(() => { const cell = document.querySelector('.fav[data-id=${JSON.stringify(fav?.id)}]'); if (!cell) return 'no-cell'; return cell.querySelector('img.fi') ? 'img' : cell.querySelector('.fi.letter') ? 'letter' : 'none' })()`
+    )
+    check('閉じても Favorite のセルは favicon の <img> のまま（頭文字に落ちない）', drawn === 'img', drawn)
+  }
+
+  await resetDefinitions()
+  await closeEphemeralTabs()
 }
 
 await resetDefinitions()

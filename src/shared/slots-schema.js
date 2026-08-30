@@ -12,7 +12,7 @@
  * Electron 非依存にして `scripts/slots-schema.test.mjs` から直接テストする。
  * **`node:os` などの Node 専用 API を持ち込まない**（`src/shared/*` は renderer からも import される）。
  */
-import { isRecord, normalizePins, normalizeStoredUrl } from './settings-schema.js'
+import { isRecord, normalizeFaviconUrl, normalizePins, normalizeStoredUrl } from './settings-schema.js'
 
 /** スロット1枚のスキーマ版。 */
 export const SLOTS_VERSION = 1
@@ -24,10 +24,14 @@ export const SLOT_COUNT = 3
 export const MAX_SLOT_ICONS = 6
 
 /**
- * `faviconUrl` の長さの上限。
+ * カードの `icons` に焼き込む `faviconUrl` の長さの上限。
  *
  * `data:` の favicon は数十 KB になることがあり、6 件ぶんがそのままスロットの容量になる。
  * 超えたものは **`faviconUrl` だけ落として `url` は残す**（ホスト名の頭文字で描ける）。
+ *
+ * **定義側（`favorites[].faviconUrl` / ピン留めの `faviconUrl`）は別の上限**
+ * （`MAX_DEFINITION_DATA_FAVICON_LENGTH`、`normalizePins` が掛ける）。`icons` は定義の値を
+ * 優先して作るので、この 8KB が効くのは**履歴から補完した分**だけ。
  */
 export const MAX_FAVICON_LENGTH = 8192
 
@@ -71,7 +75,7 @@ function normalizeIcons(raw) {
     const url = normalizeStoredUrl(item['url'])
     if (!url || seen.has(url)) continue
     seen.add(url)
-    result.push({ url, faviconUrl: normalizeFaviconUrl(item['faviconUrl']) })
+    result.push({ url, faviconUrl: normalizeIconFaviconUrl(item['faviconUrl']) })
   }
   return result
 }
@@ -80,14 +84,28 @@ function normalizeIcons(raw) {
  * @param {unknown} value
  * @returns {string | null}
  */
-function normalizeFaviconUrl(value) {
-  if (typeof value !== 'string' || value.length > MAX_FAVICON_LENGTH) return null
-  if (value.startsWith('data:image/')) return value
-  try {
-    return new URL(value).protocol === 'https:' ? value : null
-  } catch {
-    return null
-  }
+function normalizeIconFaviconUrl(value) {
+  return normalizeFaviconUrl(value, { maxDataLength: MAX_FAVICON_LENGTH, maxUrlLength: MAX_FAVICON_LENGTH })
+}
+
+/**
+ * 旧形式（`section` を持たない）のスロットか。**正規化の前の raw で見る**。
+ *
+ * `normalizePins` は欠損を `tools` に倒すので、正規化後には「明示的に tools」と
+ * 「そもそも無かった」が区別できない。適用時に「手作業で `messages` に振り分けた
+ * Favorite を旧スロットで黙って `tools` に戻さない」ために、スロット単位で判定する。
+ *
+ * Favorites が 0 件のスロットは `section` を持ちようがないので「新形式」扱い
+ * （引き継ぐ相手も居ない）。
+ *
+ * @param {unknown} raw `{ version, data }` の `data`
+ * @returns {boolean}
+ */
+export function slotHasSections(raw) {
+  if (!isRecord(raw) || !Array.isArray(raw['favorites'])) return true
+  const items = raw['favorites'].filter(isRecord)
+  if (items.length === 0) return true
+  return items.some((item) => 'section' in item)
 }
 
 /**
@@ -164,7 +182,7 @@ export function buildSlot(payload) {
 export function collectIcons(favorites, pinned, favicons) {
   return iconCandidates(favorites, pinned)
     .slice(0, MAX_SLOT_ICONS)
-    .map((url) => ({ url, faviconUrl: normalizeFaviconUrl(favicons.get(url)) }))
+    .map((url) => ({ url, faviconUrl: normalizeIconFaviconUrl(favicons.get(url)) }))
 }
 
 /**

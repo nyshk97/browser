@@ -32,6 +32,7 @@ import { cancelPrompts, currentPrompt, setPromptNotifier } from './prompts.js'
 import { getSettings } from './store/settings.js'
 import { getLoadedExtensions, onExtensionsChanged } from './extension-state.js'
 import { attachDevToolsExtensionShim } from './devtools-shim.js'
+import { attachShortcutHint, shortcutHintHide } from './shortcut-hint.js'
 import { getTimings } from './timings.js'
 import {
   addFavorite as addFavoriteDefinition,
@@ -48,6 +49,9 @@ import {
   removeFavorite as removeFavoriteDefinition,
   renameNode,
   replaceAll as replacePinsDefinition,
+  moveFavorite as moveFavoriteDefinition,
+  inheritSections,
+  setFaviconForDefinition,
   setPinnedTitle,
   unpin as unpinDefinition,
   updatePinnedUrl as updatePinnedUrlDefinition,
@@ -74,6 +78,7 @@ import {
 import { resolveReopen, resolveTabOwnership } from '../shared/tab-ownership.js'
 import type {
   FavoriteItem,
+  FavoriteSection,
   FindState,
   PinnedNode,
   Prompt,
@@ -721,8 +726,13 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
     const next = favicons[0]
     if (!next) return
     tab.faviconUrl = next
-    // `remember` の中に置く（シークレットウィンドウでは履歴に一切書かない）
-    remember(() => recordFavicon(tab.url, next))
+    // `remember` の中に置く（シークレットウィンドウでは履歴にも **pins.json にも**書かない。
+    // `page-title-updated` と同じ不変条件）
+    remember(() => {
+      recordFavicon(tab.url, next)
+      const definitionId = tab.pinnedId ?? tab.favoriteId
+      if (definitionId) setFaviconForDefinition(definitionId, next, tab.url)
+    })
     notify()
   })
   // HTTP 認証の自動入力は「遷移中の URL」を知らないと同一オリジン判定ができない
@@ -798,6 +808,8 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
 
   attachSwipeNavigation(tab, wc)
   attachVimScroll(tab, wc)
+  // ⌘ の長押し（Favorites の番号バッジ）。ページ側にフォーカスがあるときの Meta はここでしか拾えない
+  attachShortcutHint(win, wc)
   // DevTools の中の拡張パネルに `chrome.debugger` の空実装を配る（preload はサブフレームに届かない）
   wc.on('devtools-opened', () => attachDevToolsExtensionShim(wc))
 
@@ -1126,6 +1138,12 @@ export class NemoWindow {
   private focusRingViewRef: View | null = null
   readonly tabs: NemoTab[] = []
   activeTabKey: string | null = null
+  /**
+   * 直前にアクティブだったタブ（⌘N の 2 度押しで戻る先）。
+   * `selectTab` で**別のタブへ移ったときだけ**更新する（同じタブの再選択で自分自身にしない）。
+   * 閉じた / 別ウィンドウへ移したら null。`createTab` のローカル `previousActiveKey` とは別物
+   */
+  previousTabKey: string | null = null
   sidebarVisible: boolean
   overlay: OverlayKind = null
   private destroyed = false
@@ -1201,7 +1219,14 @@ export class NemoWindow {
       // ここを拾わないと、アプリを行き来しても小窓が出入りしない。
       notifyCall()
     })
-    this.baseWindow.on('blur', () => notifyCall())
+    this.baseWindow.on('blur', () => {
+      notifyCall()
+      // ⌘ の keyUp はもう届かない（⌘⇥ で別アプリへ行った等）→ 番号バッジは必ず消す
+      shortcutHintHide(this, 'blur')
+    })
+    for (const view of [this.chromeView, this.toolbarView, this.overlayView]) {
+      if (view) attachShortcutHint(() => this, view.webContents)
+    }
 
     this.baseWindow.on('resize', () => this.layout())
     this.baseWindow.on('enter-full-screen', () => {
@@ -2285,6 +2310,7 @@ export function selectTab(win: NemoWindow, key: string): void {
   if (tab.peekOf) tab = tab.peekOf
 
   const already = win.activeTabKey === tab.key
+  if (!already) win.previousTabKey = win.activeTabKey
   win.activeTabKey = tab.key
   // 見えるものの決定と反映は `applyVisibility()` に一本化してある
   // （sleep からの復帰・ペインのフォーカス購読も全部そこ）。
@@ -2384,7 +2410,7 @@ function canJoinSplit(win: NemoWindow, tab: NemoTab): { ok: true } | { ok: false
  * 選択と `applyVisibility()` が走り、寝かせたまま復元するはずのタブが
  * 全部起きてしまう（`lastActiveAt` も現在時刻に上書きされる）。
  *
- * **右のタブを左の直後へ移す**。これで ⌘1〜9 / ⌃Tab / セッション保存の並びが
+ * **右のタブを左の直後へ移す**。これで ⌃Tab / セッション保存の並びが
  * サイドバーの見た目（左が上・右が下）と自動的に一致し、解除時の並べ替えが要らなくなる。
  */
 export function linkSplit(win: NemoWindow, left: NemoTab, right: NemoTab): SplitPair {
@@ -2695,6 +2721,7 @@ export function removeTab(
   }
   tab.view = null
   log('tab.remove', { key, windowId: win.id })
+  if (win.previousTabKey === key) win.previousTabKey = null
 
   if (win.activeTabKey === key) {
     // **分割の相方が居たらそれを選ぶ**。位置で選ぶ既定の規則だと、
@@ -2823,6 +2850,7 @@ export function moveTabToWindow(tab: NemoTab, target: NemoWindow): boolean {
   const moving = tab.peek ? [tab, tab.peek] : [tab]
   for (const item of moving) transferOne(item, source, target)
 
+  if (source.previousTabKey === tab.key) source.previousTabKey = null
   if (source.activeTabKey === tab.key) {
     source.activeTabKey = null
     // **通常タブから選ぶ**（別の親の Peek を選ばない）
@@ -3139,6 +3167,10 @@ function assignDefinition(tab: NemoTab, kind: 'pinned' | 'favorite', definition:
   }
   tab.pinnedId = kind === 'pinned' ? definition.id : null
   tab.favoriteId = kind === 'favorite' ? definition.id : null
+  // **既に届いている favicon を定義へ写す**。`page-favicon-updated` は所属より前に来ているのが普通
+  // （開いてから ⌘D / ドロップする）で、次の読み込みまで待つと「開いているのに頭文字」になる。
+  // シークレットでは書かない（`page-favicon-updated` 側と同じ不変条件）
+  if (tab.faviconUrl && !tab.window.isPrivate) setFaviconForDefinition(definition.id, tab.faviconUrl, tab.url)
 }
 
 /**
@@ -3183,9 +3215,12 @@ function demoteEverywhere(removed: RemovedDefinition[], skip?: NemoTab): number 
  */
 export async function applySlot(
   index: number,
-  data: { favorites: FavoriteItem[]; pinned: PinnedNode[] }
+  data: { favorites: FavoriteItem[]; pinned: PinnedNode[] },
+  options: { sectioned: boolean } = { sectioned: true }
 ): Promise<boolean> {
-  const removed = await replacePinsDefinition({ favorites: data.favorites, pinned: data.pinned })
+  // 旧形式（`section` 無し）のスロットは、今の振り分けを引き継ぐ（手作業の `messages` を黙って戻さない）
+  const favorites = options.sectioned ? data.favorites : inheritSections(data.favorites)
+  const removed = await replacePinsDefinition({ favorites, pinned: data.pinned })
   if (removed === null) return false
   const demoted = demoteEverywhere(removed)
   log('slot.applied', {
@@ -3264,21 +3299,25 @@ export function togglePin(tab: NemoTab): void {
  * タブを Favorites に入れる（メニュー / サイドバーへの D&D）。
  * `togglePin` と対称に、ピン留めに属していれば**定義ごと**移す。
  */
-export function addFavoriteFromTab(tab: NemoTab): void {
-  // **既に Favorites なら何もしない**（降格・付け替えは分割と無関係）
-  if (tab.favoriteId) return
-  // Favorites も分割に入れない（`togglePin` と同じ規則）。昇格の手前で解く
-  separateSplit(tab.window, tab.key)
-  const pinnedId = tab.pinnedId ?? findPinnedByUrl(tab.url)?.id ?? null
-  if (pinnedId) {
-    const result = convertPinToFavorite(pinnedId)
-    if (result) applyConversion(tab, result, 'favorite')
-    return
+export function addFavoriteFromTab(tab: NemoTab, section?: FavoriteSection): void {
+  // **既に Favorites なら定義は作らない**（降格・付け替えは分割と無関係）。
+  // `section` が明示されていれば（グリッドへのドロップ）そのセクションへ動かすだけ
+  if (!tab.favoriteId) {
+    // Favorites も分割に入れない（`togglePin` と同じ規則）。昇格の手前で解く
+    separateSplit(tab.window, tab.key)
+    const pinnedId = tab.pinnedId ?? findPinnedByUrl(tab.url)?.id ?? null
+    if (pinnedId) {
+      const result = convertPinToFavorite(pinnedId)
+      if (result) applyConversion(tab, result, 'favorite')
+    } else {
+      const item = addFavoriteDefinition(tab.url, tab.title, tab.customTitle)
+      if (!item) return
+      assignDefinition(tab, 'favorite', { id: item.id, title: item.title, customTitle: item.customTitle })
+      tab.window.pushState()
+    }
   }
-  const item = addFavoriteDefinition(tab.url, tab.title, tab.customTitle)
-  if (!item) return
-  assignDefinition(tab, 'favorite', { id: item.id, title: item.title, customTitle: item.customTitle })
-  tab.window.pushState()
+  // 追加の既定は `tools`。落とした側のグリッドがあるときだけそちらへ（末尾に付ける）
+  if (section && tab.favoriteId) moveFavoriteDefinition(tab.favoriteId, section)
 }
 
 /** URL から Favorite 定義を引く（同じ URL を両方の枠に置かないため）。 */

@@ -2,7 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   DEFAULT_SETTINGS,
+  MAX_DEFINITION_DATA_FAVICON_LENGTH,
   MAX_PIN_DEPTH,
+  favoritesInShortcutOrder,
+  normalizeDefinitionFaviconUrl,
   normalizePins,
   normalizeSettings,
   normalizeStoredUrl,
@@ -456,4 +459,82 @@ test('拡張の無効化リストは拡張 ID の形だけ残し、ネストを�
   // `extensions` が壊れていても既定で埋まる（浅いマージで消えない）
   assert.deepEqual(normalizeSettings({ extensions: 'x' }).extensions, { disabled: [] })
   assert.deepEqual(normalizeSettings({ extensions: {} }).extensions, { disabled: [] })
+})
+
+test('Favorites の section は欠損・不正を tools に倒し、messages だけ通す', () => {
+  const { favorites } = normalizePins({
+    favorites: [
+      { id: 'f1', url: 'https://a.example/', title: 'A', customTitle: null },
+      { id: 'f2', url: 'https://b.example/', title: 'B', customTitle: null, section: 'messages' },
+      { id: 'f3', url: 'https://c.example/', title: 'C', customTitle: null, section: 'evil' }
+    ]
+  })
+  assert.deepEqual(
+    favorites.map((item) => item.section),
+    ['tools', 'messages', 'tools']
+  )
+})
+
+test('定義の faviconUrl は https と 2KB までの data: だけ。欠損は null', () => {
+  const data = `data:image/png;base64,${'A'.repeat(MAX_DEFINITION_DATA_FAVICON_LENGTH)}`
+  const { favorites, pinned } = normalizePins({
+    favorites: [
+      {
+        id: 'f1',
+        url: 'https://a.example/',
+        title: 'A',
+        customTitle: null,
+        faviconUrl: 'https://a.example/i.png'
+      },
+      {
+        id: 'f2',
+        url: 'https://b.example/',
+        title: 'B',
+        customTitle: null,
+        faviconUrl: 'http://b.example/i.png'
+      },
+      { id: 'f3', url: 'https://c.example/', title: 'C', customTitle: null, faviconUrl: data },
+      { id: 'f4', url: 'https://d.example/', title: 'D', customTitle: null }
+    ],
+    pinned: [
+      {
+        id: 'p1',
+        kind: 'link',
+        url: 'https://p.example/',
+        title: 'P',
+        customTitle: null,
+        faviconUrl: 'https://p.example/i.png'
+      },
+      {
+        id: 'p2',
+        kind: 'link',
+        url: 'https://q.example/',
+        title: 'Q',
+        customTitle: null,
+        faviconUrl: 'javascript:1'
+      }
+    ]
+  })
+  assert.deepEqual(
+    favorites.map((item) => item.faviconUrl),
+    ['https://a.example/i.png', null, null, null]
+  )
+  assert.deepEqual(
+    pinned.map((node) => node.faviconUrl),
+    ['https://p.example/i.png', null]
+  )
+  assert.equal(normalizeDefinitionFaviconUrl(`data:image/png;base64,${'A'.repeat(100)}`)?.length, 122)
+})
+
+test('favoritesInShortcutOrder は messages → tools の順で、各セクション内は配列の順', () => {
+  const items = [
+    { id: 't1', section: 'tools' },
+    { id: 'm1', section: 'messages' },
+    { id: 't2', section: 'tools' },
+    { id: 'm2', section: 'messages' }
+  ]
+  assert.deepEqual(
+    favoritesInShortcutOrder(items).map((item) => item.id),
+    ['m1', 'm2', 't1', 't2']
+  )
 })

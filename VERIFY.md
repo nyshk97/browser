@@ -553,6 +553,11 @@ end tell'
 screencapture -x -R<x,y,w,h> /path/to/out.png
 ```
 
+- **使い捨てインスタンスのウィンドウが他ウィンドウに隠れていると UI View は `visibilityState: hidden` になり
+  rAF が止まる**。ece の `<browser-action>` は rAF で描き直すので、アイコンが「更新されない」ように見える
+  （`Page.captureScreenshot` を撮った回だけ更新される＝スクショがフレームを強制する）。描画でなく状態で判定するなら
+  toolbar の `browserAction.getState('persist:nemo')` を読む（`activeTabId` と per-tab の `iconModified` が取れる）
+
 **AI が自走で見た目を確かめるときは、View 単位で撮るほうが速い**。上の手順は
 ウィンドウ全体を撮るためにウィンドウ位置を要求するが、サイドバーとツールバーは
 **別の WebContentsView** なので、CDP の `Page.captureScreenshot` を View ごとに撮れば
@@ -766,6 +771,20 @@ popup が開いて `chrome.*` が使える / オプションページを Nemo �
   `extension.sw_console` / `extension.page_console` として残る（URL はオリジンまで伏せる。
   本文にメール等が載りうるので常用版では出ない dev 用スイッチ）。CDP を開かずに実 Vault で使える。
   読むのは `~/Library/Application Support/Nemo-dev/logs/` の最新ファイル
+
+### Bitwarden の「popup では動くのに SW 側の表示が古い」を切り分ける
+
+- まず SW の状態が古いと疑う（アイコン・インラインメニュー・バッジは SW が描く。popup は自分で storage を読む）。
+  SW が idle 停止（30〜50 秒）→再起動で直るなら、他コンテキストの変更が SW に届いていない
+- 拡張の設定値の有無を `Local Extension Settings` の LevelDB で見るとき、**`.ldb` は snappy 圧縮なので
+  `strings` に出ないことは「無い」の証明にならない**（`.log` だけ平文）。SW の `chrome.storage.local.get(null)` か
+  popup の設定画面で見る
+- ログインなしで測れるもの: 使い捨てプロファイルに実 artifact を積み、SW に CDP で `chrome.runtime.onMessage` /
+  `onConnect` / `storage.onChanged` のフックを仕込む（`sender.tab` / `frameId` / `tabs.sendMessage(frameId)` /
+  拡張 iframe の読み込み / onChanged の経路）。ログアウト状態では Bitwarden 内部のゲート
+  （`Autofill monitoring disabled`）で止まるので、content script の挙動は `chrome.scripting.executeScript` で
+  overlay 版 bootstrap を手で注入し、`collectPageDetailsImmediately` を送ってから欄にフォーカスする
+- CDP を SW に繋いだままだと SW は idle 停止しない。停止をまたぐ検証は繋がずに `/json/list` から消えるのを待つ
 
 ### popup がおかしいとき
 

@@ -25,6 +25,12 @@ UI コンポーネントを載せるなら、そのスイートが**設定画面
 新規ファイルの登録漏れは `verify-targets.test.mjs` が落とすが、
 **既存エントリの広げ忘れは落とせない**（腐っても症状は「速く PASS」）。
 
+**popup に繋ぐ検査は popup.js の初期化完了を待ってから始める。** `connectTo(cdp, 'popup.html')` は
+target ができた直後に繋がり、popup.js のトップレベル（リスナー登録・初期の storage 書き込み）がまだ走っていない。
+その状態で記録を空にして書き込むと、最初の check だけ 0 件になる（原因は検査の順序なのに polyfill を疑って
+1 周無駄にした実例あり）。`waitFor(popup, "document.getElementById('messaging')?.textContent ? 'ready' : ''")`
+を `check` にして置く。
+
 ## `log()` に新しいイベントを足すとき
 
 **detail は `sanitizeDetail`（`src/shared/log-redact.js`）を通ってから書かれる。** 型は合っていても

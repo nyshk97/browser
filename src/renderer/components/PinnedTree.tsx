@@ -38,7 +38,7 @@ function displayName(node: { title: string; customTitle: string | null }): strin
 /**
  * ピン留めのツリー（フォルダは1階層まで）。
  *
- * 「定義」を描く。開いているタブがあれば、その状態（読み込み中・未読）を重ねて出す。
+ * 「定義」を描く。開いているタブがあれば、その状態（読み込み中・音）を重ねて出す。
  * ピン留めタブを閉じても定義は残るので、行そのものは消えない（Arc の挙動）。
  *
  * 落とせるものは2種類ある。ピン留め同士の並べ替えと、下の一時タブからの移動
@@ -248,7 +248,6 @@ export function PinnedTree({
             onCancel={() => setEditingId(null)}
           />
           {tab?.audible ? <span className="mark">♪</span> : null}
-          {tab?.unread ? <span className="dot" /> : null}
           <button
             type="button"
             className="x"

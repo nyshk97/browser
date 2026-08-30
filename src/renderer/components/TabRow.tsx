@@ -224,7 +224,6 @@ export function TabRow({
             ♪
           </span>
         ) : null}
-        {tab.unread ? <span className="dot" title="未読" /> : null}
         <button
           type="button"
           className="x"

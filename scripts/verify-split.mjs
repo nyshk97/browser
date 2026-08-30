@@ -893,23 +893,6 @@ await resetTabs()
   if (pinned?.pinnedId) await call(`window.nemo.unpin(${JSON.stringify(pinned.pinnedId)})`)
 }
 
-/* ---- 未読 ---- */
-{
-  await resetTabs()
-  const [a, b] = await makeTabs(2, 'unread')
-  await ui.ev(dragScript(a, b, 'middle'))
-  await waitFor(ui, "window.nemo.getWindowState().then((s) => s.tabs.some((t) => t.splitSide) ? 'ok' : '')")
-  // 相方（左）で読み込みを起こす
-  await call(`window.nemo.reload(${JSON.stringify(a)})`)
-  await sleep(600)
-  const s = await state()
-  check(
-    '分割を表示している間は相方に未読が付かない',
-    tabOf(s, a)?.unread === false,
-    `unread=${tabOf(s, a)?.unread}`
-  )
-}
-
 /* ---- main 側の拒否（ピン留め・Favorites）---- */
 {
   await resetTabs()

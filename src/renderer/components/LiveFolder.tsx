@@ -229,7 +229,6 @@ export function LiveFolder({
                   bucket={bucket}
                   count={items.length}
                   collapsed={collapsed[bucket]}
-                  unread={items.some((item) => item.unread)}
                   truncated={state.truncation[bucket] !== null}
                   onToggle={() => toggleBucket(bucket)}
                 />
@@ -296,26 +295,23 @@ export function LiveFolder({
  *
  * - 右の数字は**バケットに割り当てられた件数**（`items.length`。重複除外後の値で、折りたたみ状態にも
  *   DOM 上の行数にも検索の取得件数 `returned` にも依存しない）。打ち切りは末尾に別行で出す
- * - 畳んでいて未読があれば件数の横に青ドット。開いたら行側のドットだけにする
- * - ドットは装飾なので、支援技術には `aria-label` で件数と未読の有無を伝える
+ * - 支援技術には `aria-label` で件数を伝える
  */
 function BucketHeading({
   bucket,
   count,
   collapsed,
-  unread,
   truncated,
   onToggle
 }: {
   bucket: LivePrBucket
   count: number
   collapsed: boolean
-  unread: boolean
   truncated: boolean
   onToggle: () => void
 }): React.JSX.Element {
   const controls = truncated ? `lf-items-${bucket} lf-truncated-${bucket}` : `lf-items-${bucket}`
-  const label = `${BUCKET_LABEL[bucket]}, ${count} 件${unread ? ', 未読あり' : ''}`
+  const label = `${BUCKET_LABEL[bucket]}, ${count} 件`
   return (
     <button
       type="button"
@@ -330,7 +326,6 @@ function BucketHeading({
       </span>
       <span className="name">{BUCKET_LABEL[bucket]}</span>
       <span className="count">{count}</span>
-      {collapsed && unread ? <span className="dot" /> : null}
     </button>
   )
 }
@@ -370,7 +365,6 @@ function PrRow({
         <span className="lf-title">{item.title}</span>
         <span className="lf-sub-line">{subline}</span>
       </span>
-      {item.unread ? <span className="dot" /> : null}
     </button>
   )
 }

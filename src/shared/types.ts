@@ -326,8 +326,6 @@ export interface TabState {
   crashed: boolean
   /** 音を鳴らしているか。 */
   audible: boolean
-  /** 非アクティブのまま読み込みが終わった（サイドバーの未読表示に使う）。 */
-  unread: boolean
   zoomFactor: number
   /**
    * 左右に並べている相方のタブ key。分割していなければ null。
@@ -426,8 +424,6 @@ export interface LivePullRequest {
   bucket: LivePrBucket
   /** ISO8601。並びはこれの降順。 */
   updatedAt: string
-  /** 新しく現れた PR（**更新されただけでは立てない**）。 */
-  unread: boolean
 }
 
 /**

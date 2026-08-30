@@ -192,7 +192,7 @@ export function Sidebar(): React.JSX.Element {
  *
  * ピン留めと同じ**専用枠**として描く。押すと Favorite 定義に属するタブが開き、
  * 下の一時タブ一覧には出ない。閉じてもグリッドからは消えない。
- * 状態（読み込み中 / 未読 / アクティブ / 音）もピン留め行と同じ規則で重ねる。
+ * 状態（読み込み中 / アクティブ / 音）もピン留め行と同じ規則で重ねる。
  */
 function FavoriteGrid({
   favorites,
@@ -325,7 +325,6 @@ function FavoriteGrid({
                 <Favicon url={favorite.url} title={name} src={tab?.faviconUrl ?? null} />
               )}
               {tab?.audible ? <span className="fav-mark">♪</span> : null}
-              {tab?.unread ? <span className="fav-dot" /> : null}
             </button>
           )
         })}

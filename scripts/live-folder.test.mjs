@@ -437,8 +437,7 @@ test('正しいキャッシュはそのまま通る', () => {
         author: 'quill',
         state: 'approved',
         bucket: 'review',
-        updatedAt: '2026-08-25T11:30:00Z',
-        unread: true
+        updatedAt: '2026-08-25T11:30:00Z'
       },
       // 同じ URL が2度出ても1行にする
       {
@@ -454,6 +453,5 @@ test('正しいキャッシュはそのまま通る', () => {
   assert.equal(cache.login, 'octo-dev')
   assert.equal(cache.updatedAt, NOW)
   assert.equal(cache.items.length, 1)
-  assert.equal(cache.items[0].unread, true)
   assert.deepEqual(cache.truncation.review, { returned: 100, total: 137 })
 })

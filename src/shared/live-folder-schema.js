@@ -104,8 +104,7 @@ export function normalizeLivePullRequest(raw) {
     author: normalizeText(raw['author']),
     state: /** @type {import('./types.js').LivePrState} */ (state),
     bucket: /** @type {import('./types.js').LivePrBucket} */ (bucket),
-    updatedAt,
-    unread: raw['unread'] === true
+    updatedAt
   }
 }
 

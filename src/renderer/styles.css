@@ -312,17 +312,7 @@ body[data-view='toolbar'] {
   box-shadow: inset 0 0 0 1.5px var(--nemo-accent);
 }
 
-/* 未読ドットと音符はセルの角に重ねる（行と違って横に並べる余白が無い） */
-.fav .fav-dot {
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--nemo-accent);
-}
-
+/* 音符はセルの角に重ねる（行と違って横に並べる余白が無い） */
 .fav .fav-mark {
   position: absolute;
   bottom: 2px;
@@ -520,14 +510,6 @@ body[data-view='toolbar'] {
   color: #d3d3dd;
 }
 
-.row .dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--nemo-accent);
-  flex: 0 0 auto;
-}
-
 .row .mark {
   font-size: 10px;
   opacity: 0.7;
@@ -623,14 +605,6 @@ body[data-view='toolbar'] {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
-}
-
-.split-row .chip .dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--nemo-accent);
-  flex: 0 0 auto;
 }
 
 .split-row .chip .mark {
@@ -731,15 +705,6 @@ body[data-view='toolbar'] {
 
 .lf-sub[aria-expanded='true'] .chev {
   transform: rotate(90deg);
-}
-
-/* 畳んでいて未読があるときの青ドット（`.row .dot` と同じ見た目。件数の右に 6px 空ける） */
-.lf-sub .dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--nemo-accent);
-  flex: 0 0 auto;
 }
 
 .lf-sub .name {

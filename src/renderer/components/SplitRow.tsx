@@ -68,7 +68,7 @@ export function SplitRow({
   )
 }
 
-/** 結合行の片側。中身は通常のタブ行と同じ規則（favicon → 名前 → 未読 / ♪ → ×）。 */
+/** 結合行の片側。中身は通常のタブ行と同じ規則（favicon → 名前 → ♪ → ×）。 */
 function Chip({
   tab,
   focused,
@@ -133,7 +133,6 @@ function Chip({
           ♪
         </span>
       ) : null}
-      {tab.unread ? <span className="dot" title="未読" /> : null}
       <button
         type="button"
         className="x"

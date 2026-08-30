@@ -67,7 +67,6 @@ import {
   getLiveFolderState,
   initLiveFolders,
   isLiveFolderTabUrl,
-  markLiveFolderRead,
   onLiveFolderChanged,
   stopLiveFolders
 } from './live-folders/index.js'
@@ -534,7 +533,6 @@ export class NemoTab {
   faviconUrl: string | null = null
   lastActiveAt = Date.now()
   crashed = false
-  unread = false
   zoomFactor = 1
   find: FindState | null = null
   /** 次に表示するときに読み込む URL（sleep からの復帰用）。 */
@@ -673,7 +671,6 @@ export class NemoTab {
       visible: this.view?.getVisible() ?? false,
       crashed: this.crashed,
       audible: wc ? wc.isCurrentlyAudible() : false,
-      unread: this.unread,
       zoomFactor: this.zoomFactor,
       splitPartnerKey: this.split?.partnerOf(this)?.key ?? null,
       splitSide: this.split?.sideOf(this) ?? null
@@ -731,13 +728,7 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
   trackNavigationForHttpAuth(wc)
 
   wc.on('did-start-loading', notify)
-  wc.on('did-stop-loading', () => {
-    // **見えていない**まま読み込みが終わったら未読にする。
-    // `activeTabKey` で見ると、分割の相方は画面に出ているのに未読が付く
-    // （落とす側だけ直しても、ここで付け直されて意味が無い）。
-    if (!win().visibleTabKeys.has(tab.key)) tab.unread = true
-    notify()
-  })
+  wc.on('did-stop-loading', notify)
   // 会議の検知は **`dom-ready` / `did-navigate` / `did-navigate-in-page` の3つ**で拾う。
   // **`did-navigate` を必ず入れる**（bfcache から復元されると `dom-ready` は出ない）。
   wc.on('dom-ready', () => notifyCall(tab))
@@ -1754,7 +1745,6 @@ export class NemoWindow {
    *   ⌃M の MRU 順（`lastActiveAt` の降順）で左右が同着になり、
    *   「右ペインから別タブへ行って ⌃M」で左へ戻ってしまう。
    *   相方が先に自動アーカイブされる問題は sweep 側（`pairLastActiveAt`）で塞ぐ
-   * - **見えているタブ全部の未読を落とす**（相方に未読ドットが残らないように）
    * - ペインのクリックでフォーカスが移るよう、見えている分割の 2 本にだけ購読を張る
    */
   applyVisibility(): void {
@@ -1772,15 +1762,6 @@ export class NemoWindow {
     for (const tab of this.tabs) tab.view?.setVisible(visible.has(tab.key))
 
     if (active) active.lastActiveAt = Date.now()
-
-    for (const key of visible) {
-      const tab = this.findTab(key)
-      if (!tab) continue
-      tab.unread = false
-      // **Live Folder の未読も同じ経路で落とす。** 行のクリックだけで消すと、
-      // コマンドバー・履歴・⌘数字・タブ切替から同じ URL を開いても未読が残る
-      markLiveFolderRead(tab.url)
-    }
 
     this.syncPaneFocusWatchers()
   }
@@ -2304,7 +2285,7 @@ export function selectTab(win: NemoWindow, key: string): void {
   const already = win.activeTabKey === tab.key
   win.activeTabKey = tab.key
   // 見えるものの決定と反映は `applyVisibility()` に一本化してある
-  // （sleep からの復帰・未読落とし・ペインのフォーカス購読も全部そこ）。
+  // （sleep からの復帰・ペインのフォーカス購読も全部そこ）。
   win.applyVisibility()
   // **`already` でも必ずレイアウトし直す**。`applyVisibility()` が寝ていたタブを
   // 起こしていることがあり、新しい View に bounds を配らないと 0x0 のまま出る。
@@ -3455,20 +3436,7 @@ export function startBackgroundWork(): void {
   onExtensionsChanged(() => {
     for (const win of windowsById.values()) win.pushShared()
   })
-  // 未読の判定に「いま見られているタブ」が要るので、registry から借りる形で渡す
-  // （live-folders 側から registry を import すると循環する）
-  initLiveFolders({
-    // **「見えている」で見る**（`activeTabKey` だけだと分割の相方の PR が未読のまま残る）
-    activeUrls: () =>
-      [...windowsById.values()]
-        .filter((win) => !win.isDestroyed && !win.isPrivate && win.kind === 'normal')
-        .flatMap((win) =>
-          [...win.visibleTabKeys].flatMap((key) => {
-            const tab = win.findTab(key)
-            return tab ? [tab.url] : []
-          })
-        )
-  })
+  initLiveFolders()
 
   // ダイアログの表示先はウィンドウ
   setPromptNotifier((windowId, prompt) => {

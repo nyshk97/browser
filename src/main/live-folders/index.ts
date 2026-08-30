@@ -11,10 +11,10 @@ import {
 } from '../../shared/live-folder-schema.js'
 import { fetchLivePullRequests, isGithubTestEndpoint } from './github-pr.js'
 import { resolveToken, type TokenSource } from './token.js'
-import type { LiveFolderCache, LiveFolderState, LivePullRequest } from '../../shared/types.js'
+import type { LiveFolderCache, LiveFolderState } from '../../shared/types.js'
 
 /**
- * Live Folder の心臓部。取得の間隔・キャッシュ・未読を1か所で握る。
+ * Live Folder の心臓部。取得の間隔・キャッシュを1か所で握る。
  *
  * 「次に投げてよい時刻」を **`nextAutomaticAttemptAt` 1つに寄せている**のが肝心。
  * タイマー・focus・resume が**それぞれ別のゲートを持つと必ず食い違う**
@@ -62,13 +62,6 @@ const tokenRetryMs = (): number => getTimings().liveFolderTickMs
  */
 type RequestKind = 'auto' | 'manual' | 'credential'
 
-/** registry から借りるもの（live-folders から registry を import しないため）。 */
-export interface LiveFolderHost {
-  /** いまどこかの**通常**ウィンドウでアクティブに見られているタブの URL。 */
-  activeUrls(): string[]
-}
-
-let host: LiveFolderHost = { activeUrls: () => [] }
 const listeners = new Set<() => void>()
 
 let store: JsonStore<LiveFolderCache> | null = null
@@ -172,33 +165,11 @@ export function isLiveFolderTabUrl(url: string, isPrivate: boolean): boolean {
   return state.items.some((item) => normalizePrUrl(item.url) === key)
 }
 
-/**
- * その URL の未読を落とす。
- *
- * **タブ選択の共通経路（`registry.selectTab`）から呼ぶ。**
- * UI 側で消すと、コマンドバー・履歴・⌘数字・タブ切替から同じ URL を開いたときに
- * 未読が残る。
- */
-export function markLiveFolderRead(url: string): void {
-  const key = normalizePrUrl(url)
-  if (!key) return
-  let changed = false
-  const items = cache.items.map((item) => {
-    if (item.url !== key || !item.unread) return item
-    changed = true
-    return { ...item, unread: false }
-  })
-  if (!changed) return
-  writeCache({ ...cache, items })
-  notify()
-}
-
 /* ------------------------------------------------------------------ *
  * 起動と停止
  * ------------------------------------------------------------------ */
 
-export function initLiveFolders(nextHost: LiveFolderHost): void {
-  host = nextHost
+export function initLiveFolders(): void {
   store = new JsonStore<LiveFolderCache>(
     userDataPath('live-folders.json'),
     LIVE_FOLDER_VERSION,
@@ -443,7 +414,7 @@ function applyResult(
   writeCache({
     credentialKey,
     login: result.login,
-    items: withUnread(result.items),
+    items: result.items,
     truncation: result.truncation,
     updatedAt: now
   })
@@ -485,31 +456,6 @@ function recordFailure(
   // **待ち時間そのものをログに出す。** 「120 秒待つこと」を外から確かめるのに
   // 実際に 120 秒待つのは検証が重すぎるので、値で見られるようにしておく
   log('live_folder.backoff', { kind: classification.kind, waitMs: wait })
-}
-
-/**
- * **新しく現れた PR に未読を立てる。**
- *
- * `updatedAt` が変わっただけでは未読にしない（自分がコメントしただけで未読が立つと、
- * 未読ドットが「見ていないもの」を指さなくなる）。
- *
- * ただし**取得の時点でその PR がどこかの通常ウィンドウでアクティブなタブなら未読にしない**。
- * 「タブが存在する」では広すぎる（バックグラウンドで開きっぱなしのタブまで既読になり、
- * 更新に気づけなくなる）。
- */
-function withUnread(items: LivePullRequest[]): LivePullRequest[] {
-  const previous = new Map(cache.items.map((item) => [item.url, item]))
-  const active = new Set(
-    host
-      .activeUrls()
-      .map((url) => normalizePrUrl(url))
-      .filter((url): url is string => url !== null)
-  )
-  return items.map((item) => {
-    const before = previous.get(item.url)
-    if (before) return { ...item, unread: before.unread }
-    return { ...item, unread: !active.has(item.url) }
-  })
 }
 
 function writeCache(next: LiveFolderCache): void {

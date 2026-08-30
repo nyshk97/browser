@@ -313,8 +313,7 @@ function restartWrite() {
       author: 'someone',
       state: 'waiting',
       bucket: 'review',
-      updatedAt: '2026-08-01T00:00:00Z',
-      unread: false
+      updatedAt: '2026-08-01T00:00:00Z'
     })),
     {
       url: 'javascript:alert(1)',
@@ -623,29 +622,6 @@ async function main() {
   )
   await shot(ui, 'review-open')
 
-  // 未読ドット: 畳んでいる間は小見出し側、開いたら行側だけ
-  await collapseAll(ui)
-  const listState = await liveState(ui)
-  const unreadReview = listState.items.filter((item) => item.bucket === 'review' && item.unread).length
-  const unreadMine = listState.items.filter((item) => item.bucket === 'mine' && item.unread).length
-  const headDotClosed = await ui.ev(countOf('.lf-bucket[data-bucket="review"] > .lf-sub .dot'))
-  const rowDotClosed = await ui.ev(countOf('.lf-row .dot'))
-  await ui.ev(`${sub('review')}.click()`)
-  await until(async () => (await ui.ev(subExpanded('review'))) === 'true')
-  const headDotOpen = await ui.ev(countOf('.lf-bucket[data-bucket="review"] > .lf-sub .dot'))
-  const rowDotOpen = await ui.ev(countOf('.lf-bucket[data-bucket="review"] .lf-row .dot'))
-  const mineHeadDot = await ui.ev(countOf('.lf-bucket[data-bucket="mine"] > .lf-sub .dot'))
-  check(
-    '畳んでいる間は小見出しに未読ドット、開くと行側だけに移る',
-    unreadReview >= 1 &&
-      headDotClosed === 1 &&
-      rowDotClosed === 0 &&
-      headDotOpen === 0 &&
-      rowDotOpen === unreadReview &&
-      mineHeadDot === (unreadMine > 0 ? 1 : 0),
-    `review 未読 ${unreadReview} / 閉: 見出し ${headDotClosed}・行 ${rowDotClosed} → 開: 見出し ${headDotOpen}・行 ${rowDotOpen} / mine 見出し ${mineHeadDot}（未読 ${unreadMine}）`
-  )
-
   // 右クリック: メニューは出るが開閉しない・再取得もしない
   await collapseAll(ui)
   resetCounters()
@@ -709,11 +685,8 @@ async function main() {
   )
   const labelOf = (bucket) => labels.find(([key]) => key === bucket)?.[1] ?? ''
   check(
-    'aria-label に件数と未読の有無が入る',
-    /2 件/.test(labelOf('review')) &&
-      /1 件/.test(labelOf('mine')) &&
-      labelOf('review').includes('未読あり') === unreadReview > 0 &&
-      labelOf('mine').includes('未読あり') === unreadMine > 0,
+    'aria-label に件数が入る',
+    /2 件/.test(labelOf('review')) && /1 件/.test(labelOf('mine')),
     JSON.stringify(labels)
   )
   const controlsOk = await ui.ev(
@@ -751,9 +724,9 @@ async function main() {
   )
   await collapseAll(ui)
 
-  /* ---- ⑪ バックグラウンドのタブは既読扱いにしない ---- */
+  /* ---- ③ 一覧に載る前後で PR のタブが一時タブに出入りする ---- */
   // 1回目のレスポンスにその PR を含めず、同じ URL のタブを**非アクティブで**開いておく →
-  // 2回目で初めて現れたときに未読が立つ
+  // 2回目で現れた瞬間に一時タブから消える
   //
   // **この検証だけは github.com に実際の GET が飛ぶ**（存在しない PR なので 404 が返る）。
   // タブとの紐づけは URL が自然キーなので、`https://github.com/...` 以外は
@@ -775,13 +748,6 @@ async function main() {
   serve(okBody(BASE))
   await refresh(ui)
   await until(async () => (await liveState(ui))?.items.some((item) => item.url === PR_12))
-  let state = await liveState(ui)
-  const bgItem = state.items.find((item) => item.url === PR_12)
-  check(
-    '⑪ バックグラウンドで開きっぱなしのタブは既読扱いにしない（未読が立つ）',
-    bgItem?.unread === true,
-    JSON.stringify(bgItem?.unread)
-  )
 
   /* ---- ③ Live Folder に載っている URL のタブは一時タブから消える ---- */
   const ephemeralExcluded = await until(async () => {
@@ -792,73 +758,6 @@ async function main() {
     '③ Live Folder に載った瞬間、そのタブは一時タブから消える',
     ephemeralExcluded === ephemeralBefore,
     `一覧に載る前 ${ephemeralWithTab} 行 → 載った後 ${JSON.parse(await ui.ev(EPHEMERAL_TITLES)).length} 行`
-  )
-
-  /* ---- ⑩ コマンドバー経由でも未読が落ちる（UI のクリックを経由しない） ---- */
-  // **直前が未読だったこと**も一緒に出す（最初から既読だと空振りしたまま PASS する）
-  const unreadBefore = bgItem?.unread === true
-  await ui.ev(`window.nemo.selectTab(${JSON.stringify(bgKey)}).then(() => 'ok')`)
-  await until(async () => !(await liveState(ui)).items.find((item) => item.url === PR_12)?.unread)
-  state = await liveState(ui)
-  const unreadAfter = state.items.find((item) => item.url === PR_12)?.unread
-  check(
-    '⑩ 行をクリックせず同じ URL のタブを選んでも未読が落ちる',
-    unreadBefore === true && unreadAfter === false,
-    `選ぶ前 unread=${unreadBefore} → 選んだ後 unread=${unreadAfter}`
-  )
-  // 既読化が行側のドットに反映される（review を開いたまま N-1 件。PR_41 は未読のままなので 0 は期待しない）
-  await collapseAll(ui)
-  await ui.ev(`${sub('review')}.click()`)
-  await until(async () => (await ui.ev(subExpanded('review'))) === 'true')
-  const unreadReviewNow = state.items.filter((item) => item.bucket === 'review' && item.unread).length
-  const rowDotsAfterRead = await until(async () => {
-    const n = await ui.ev(countOf('.lf-bucket[data-bucket="review"] .lf-row .dot'))
-    return n === unreadReviewNow ? n : -1
-  })
-  check(
-    '既読化した PR の行ドットが消える（review の行ドット = 未読数）',
-    unreadReviewNow === unreadReview - 1 && rowDotsAfterRead === unreadReviewNow,
-    `既読化前 ${unreadReview} → 後 ${unreadReviewNow} / 行ドット ${rowDotsAfterRead}`
-  )
-
-  // mine に既読の PR しか無い状態（既読済みの PR_12 を mine 側の検索に返し、review からは外す）。
-  // PR_88 を実際に開いて既読化すると GitHub へ実接続するタブが増えるので使わない
-  const pr12AsMine = mine({
-    repo: 'acme/tools',
-    number: 12,
-    title: 'Cache the parsed manifest',
-    author: 'octo-dev',
-    updatedAt: '2026-08-25T11:30:00Z'
-  })
-  serve(okBody([...BASE.filter((item) => item.node.url !== PR_12 && item.__bucket === 'review'), pr12AsMine]))
-  await refresh(ui)
-  await until(async () => (await liveState(ui))?.items.find((item) => item.url === PR_12)?.bucket === 'mine')
-  await collapseAll(ui)
-  const mineReadLabel = await ui.ev(`${sub('mine')}?.getAttribute('aria-label')`)
-  const mineReadDot = await ui.ev(countOf('.lf-bucket[data-bucket="mine"] > .lf-sub .dot'))
-  const mineReadState = (await liveState(ui)).items.filter((item) => item.bucket === 'mine')
-  check(
-    '未読が無いバケットは小見出しのドットも aria-label の「未読あり」も出ない',
-    mineReadState.length === 1 &&
-      mineReadState[0].unread === false &&
-      mineReadDot === 0 &&
-      typeof mineReadLabel === 'string' &&
-      !mineReadLabel.includes('未読あり'),
-    `mine=${JSON.stringify(mineReadState.map((item) => [item.url, item.unread]))} dot=${mineReadDot} label=${JSON.stringify(mineReadLabel)}`
-  )
-
-  /* ---- アクティブなタブの PR は未読にしない ---- */
-  serve(okBody(BASE.filter((item) => item.node.url !== PR_12)))
-  await refresh(ui)
-  await until(async () => !(await liveState(ui)).items.some((item) => item.url === PR_12))
-  serve(okBody(BASE))
-  await refresh(ui)
-  await until(async () => (await liveState(ui))?.items.some((item) => item.url === PR_12))
-  state = await liveState(ui)
-  check(
-    '⑪ 取得の時点でアクティブなタブなら未読にしない',
-    state.items.find((item) => item.url === PR_12)?.unread === false,
-    JSON.stringify(state.items.find((item) => item.url === PR_12)?.unread)
   )
 
   /* ---- ③ 一覧から消えると開いていたタブが「今日のタブ」に現れる ---- */
@@ -934,7 +833,7 @@ async function main() {
   serve(okBody([...BASE.filter((item) => item.__bucket === 'review'), ...bulk], { mineTotal: 137 }))
   await refresh(ui)
   await until(async () => (await liveState(ui))?.truncation?.mine !== null)
-  state = await liveState(ui)
+  let state = await liveState(ui)
   const mineCount = state.items.filter((item) => item.bucket === 'mine').length
   check(
     '⑦ 100 件で止まる（サーバは 137 件と申告 / 返したのは 100 件）',

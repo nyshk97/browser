@@ -306,8 +306,7 @@ function readSearch(search, bucket) {
       author,
       state: prState(node),
       bucket,
-      updatedAt: node['updatedAt'],
-      unread: false
+      updatedAt: node['updatedAt']
     })
     if (pr) items.push(pr)
   }

@@ -30,6 +30,8 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-30
+
 ### 変更
 
 - **サイドバーの並びを Pull Request → Favorites → ブックマーク → タブ にした**（Favorites が Live Folder の下に来る）。見出しは `messages` / `tools` / `bookmarks` の薄いラベルで揃え、ピンのアイコンは無くした

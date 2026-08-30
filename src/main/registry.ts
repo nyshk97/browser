@@ -32,6 +32,7 @@ import { cancelPrompts, currentPrompt, setPromptNotifier } from './prompts.js'
 import { getSettings } from './store/settings.js'
 import { getLoadedExtensions, onExtensionsChanged } from './extension-state.js'
 import { attachDevToolsExtensionShim } from './devtools-shim.js'
+import { attachContextMenu } from './context-menu.js'
 import { attachShortcutHint, shortcutHintHide } from './shortcut-hint.js'
 import { getTimings } from './timings.js'
 import {
@@ -812,6 +813,8 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
   attachShortcutHint(win, wc)
   // DevTools の中の拡張パネルに `chrome.debugger` の空実装を配る（preload はサブフレームに届かない）
   wc.on('devtools-opened', () => attachDevToolsExtensionShim(wc))
+  // ページ本体の右クリック（画像の保存・検証だけ。Electron は標準では何も出さない）
+  attachContextMenu(wc, () => (win().isDestroyed ? null : win().baseWindow))
 
   // ページが自分で閉じた（`window.close()`）ときの後始末。
   //

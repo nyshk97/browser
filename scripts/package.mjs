@@ -82,7 +82,7 @@ if (channel === 'stable') {
   builderArgs.push(
     '--config.publish.provider=github',
     '--config.publish.owner=nyshk97',
-    '--config.publish.repo=nemo'
+    '--config.publish.repo=browser'
   )
 } else {
   // 自動更新用の zip は常用版だけでよい。target を上書きすると yml 側の

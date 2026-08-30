@@ -79,7 +79,7 @@ mise run dev       # 開発版 Nemo を起動（HMR あり・拡張つき）
 
 ## リリース
 
-配布物は [GitHub Release](https://github.com/nyshk97/nemo/releases) に置き、
+配布物は [GitHub Release](https://github.com/nyshk97/browser/releases) に置き、
 アプリ内自動更新（electron-updater）で配る。
 
 **リリースの経路は `mise run release` ただ1つ**。ここに手順を書き写さない
@@ -149,7 +149,7 @@ dev 版（`Nemo Dev`）とは bundle id もデータディレクトリも別な�
 ### 新しい Mac で環境を揃える
 
 ```bash
-git clone git@github.com:nyshk97/nemo.git ~/browser && cd ~/browser
+git clone git@github.com:nyshk97/browser.git ~/browser && cd ~/browser
 mise run setup                  # 依存 + 拡張 artifact
 ```
 

@@ -145,7 +145,7 @@ if (writeIndex !== -1) {
     '# Third-party notices',
     '',
     'Nemo は GPL-3.0-only で配布されています。Nemo 自身のソースは',
-    'https://github.com/nyshk97/nemo で入手できます。',
+    'https://github.com/nyshk97/browser で入手できます。',
     '',
     '以下は Nemo に同梱・リンクされている第三者ソフトウェアとそのライセンスです。',
     ''

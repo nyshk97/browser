@@ -23,7 +23,7 @@ import { projectRoot } from './lib/harness.mjs'
 import { loadReleaseConfig } from './lib/release-config.mjs'
 import { findSection, releaseSection, changelogPath } from './changelog.mjs'
 
-const REPO = 'nyshk97/nemo'
+const REPO = 'nyshk97/browser'
 const CHANNEL = 'stable'
 const PRODUCT_NAME = 'Nemo'
 const APP_ID = 'local.nyshk97.nemo'

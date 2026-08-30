@@ -686,7 +686,7 @@ electron-builder は `publish` を書かなくても **git remote から推測�
 mise run package && ls "dist/dev/mac-arm64/Nemo Dev.app/Contents/Resources/app-update.yml"
 # → No such file or directory になるのが正しい
 mise run package:stable && cat "dist/stable/mac-arm64/Nemo.app/Contents/Resources/app-update.yml"
-# → provider: github / owner: nyshk97 / repo: nemo
+# → provider: github / owner: nyshk97 / repo: browser
 ```
 
 ## リリースと自動更新
@@ -701,14 +701,14 @@ mise run release 0.2.0               # preflight → bump → 署名 → notariz
 リリース後に確かめること:
 
 ```bash
-gh release view v0.2.0 --repo nyshk97/nemo --json assets --jq '.assets[].name'
+gh release view v0.2.0 --repo nyshk97/browser --json assets --jq '.assets[].name'
 # → 今回の版の dmg / zip / *.blockmap と latest-mac.yml **だけ**が並ぶこと
 #   （zip と latest-mac.yml が無いとアプリ内更新が動かない。
 #     古い版の成果物が混ざっていたら dist/ の掃除が漏れている）
 
 # **配ったものに対して**公証を見る。dmg と .app の両方を見ること
 # （.app だけ公証しても dmg には署名もチケットも無い、という状態を実際に踏んだ）
-gh release download v0.2.0 --repo nyshk97/nemo --pattern '*.dmg' --dir /tmp
+gh release download v0.2.0 --repo nyshk97/browser --pattern '*.dmg' --dir /tmp
 spctl -a -t open --context context:primary-signature -vv /tmp/Nemo-0.2.0-arm64.dmg
 xcrun stapler validate /tmp/Nemo-0.2.0-arm64.dmg
 # → accepted / source=Notarized Developer ID

@@ -131,8 +131,8 @@ if (channel === 'stable') {
   const feed = fs.existsSync(updateFeed) ? fs.readFileSync(updateFeed, 'utf8') : ''
   check('常用版に更新 feed（app-update.yml）が入っている', feed.length > 0)
   check(
-    '更新 feed が GitHub の nyshk97/nemo を指している',
-    /provider:\s*github/.test(feed) && /owner:\s*nyshk97/.test(feed) && /repo:\s*nemo/.test(feed),
+    '更新 feed が GitHub の nyshk97/browser を指している',
+    /provider:\s*github/.test(feed) && /owner:\s*nyshk97/.test(feed) && /repo:\s*browser/.test(feed),
     feed.replace(/\n/g, ' ').trim()
   )
 } else {

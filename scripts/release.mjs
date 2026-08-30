@@ -126,7 +126,7 @@ export function renderCask(version, sha256) {
   homepage "https://github.com/${REPO}"
 
   auto_updates true
-  depends_on arch: :arm64, macos: ">= :monterey"
+  depends_on arch: :arm64, macos: :monterey
 
   app "${PRODUCT_NAME}.app"
 

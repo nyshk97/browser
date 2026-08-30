@@ -30,6 +30,10 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 
 ## [Unreleased]
 
+### 追加
+
+- **Homebrew で入れられるようになった**（`brew install --cask nyshk97/tap/nemo`）。リリースのたびに cask も自動で更新される
+
 ### 変更
 
 - **ツールバー右上の拡張アイコンを Bitwarden だけにした**。Keepa や GraphQL Network Inspector のようにページ側で勝手に働く拡張は、有効でもアイコンを出さない（拡張自体は動いている）。どれを出すかは `extensions.lock.json` の `showInToolbar` で決める

@@ -15,6 +15,7 @@
  *   draft の間はタグが実体化しないので、途中で落ちても「リリース物のないタグ」が残らない
  */
 import { execFileSync, spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -25,6 +26,11 @@ import { findSection, releaseSection, changelogPath } from './changelog.mjs'
 const REPO = 'nyshk97/nemo'
 const CHANNEL = 'stable'
 const PRODUCT_NAME = 'Nemo'
+const APP_ID = 'local.nyshk97.nemo'
+/** Homebrew の自作 tap。Brewfile の `cask 'nyshk97/tap/nemo'` がここを見る。 */
+const TAP_REPO = 'nyshk97/homebrew-tap'
+const CASK_TOKEN = 'nemo'
+const CASK_PATH = `Casks/${CASK_TOKEN}.rb`
 
 const packageJsonPath = path.join(projectRoot, 'package.json')
 
@@ -95,6 +101,83 @@ export function selectAssets(names, version) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Homebrew cask（nyshk97/tap/nemo）
+ * ------------------------------------------------------------------ */
+
+/**
+ * cask の中身。`brew bundle` で 2 台目に入れる導線のため、Release と同時に更新する。
+ *
+ * `auto_updates true` にしてあるので、入れた後の更新はアプリ内（electron-updater）に任せ、
+ * `brew upgrade` は cask の版が上がっても触らない。
+ *
+ * @param {string} version
+ * @param {string} sha256 配る dmg の sha256
+ */
+export function renderCask(version, sha256) {
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`cask に書けないバージョン: ${version}`)
+  if (!/^[0-9a-f]{64}$/.test(sha256)) throw new Error(`sha256 の形が不正: ${sha256}`)
+  return `cask "${CASK_TOKEN}" do
+  version "${version}"
+  sha256 "${sha256}"
+
+  url "https://github.com/${REPO}/releases/download/v#{version}/${PRODUCT_NAME}-#{version}-arm64.dmg"
+  name "${PRODUCT_NAME}"
+  desc "自分専用のブラウザ（Arc 風サイドバー・ピン留め・拡張同梱）"
+  homepage "https://github.com/${REPO}"
+
+  auto_updates true
+  depends_on arch: :arm64, macos: ">= :monterey"
+
+  app "${PRODUCT_NAME}.app"
+
+  uninstall quit: "${APP_ID}"
+
+  zap trash: [
+    "~/Library/Application Support/${PRODUCT_NAME}",
+    "~/Library/Caches/${APP_ID}",
+    "~/Library/Caches/${APP_ID}.ShipIt",
+    "~/Library/Logs/${PRODUCT_NAME}",
+    "~/Library/Preferences/${APP_ID}.plist",
+    "~/Library/Saved Application State/${APP_ID}.savedState",
+  ]
+end
+`
+}
+
+function sha256Of(file) {
+  return createHash('sha256').update(fs.readFileSync(file)).digest('hex')
+}
+
+/**
+ * tap の cask を Release の版に合わせる（GitHub Contents API。tap の clone は要らない）。
+ * 公開の**後**に呼ぶ。ここで失敗しても Release は出ているので巻き戻さず、手で直せるように叫ぶ。
+ */
+function updateCask(version, dmg) {
+  const content = renderCask(version, sha256Of(dmg))
+  const existing = tryRun('gh', ['api', `repos/${TAP_REPO}/contents/${CASK_PATH}`, '--jq', '.sha'])
+  const args = [
+    'api',
+    `repos/${TAP_REPO}/contents/${CASK_PATH}`,
+    '--method',
+    'PUT',
+    '--field',
+    `message=${existing.code === 0 ? 'chore' : 'feat'}: ${CASK_TOKEN} ${version}`,
+    '--field',
+    `content=${Buffer.from(content).toString('base64')}`,
+    '--silent'
+  ]
+  if (existing.code === 0) args.push('--field', `sha=${existing.stdout.trim()}`)
+  run('gh', args)
+
+  // brew のローカル tap クローンは自動更新されない。ここで pull しておかないと
+  // 直後の `brew bundle` が「No available formula or cask」になる（無ければ何もしない）
+  const tapDir = tryRun('brew', ['--repository', TAP_REPO])
+  if (tapDir.code === 0 && fs.existsSync(tapDir.stdout.trim())) {
+    tryRun('git', ['-C', tapDir.stdout.trim(), 'pull', '--ff-only', '--quiet'])
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * preflight
  * ------------------------------------------------------------------ */
 
@@ -115,6 +198,12 @@ function preflight(version, tag) {
 
   const auth = tryRun('gh', ['auth', 'status'])
   if (auth.code !== 0) fail(`gh の認証が通っていない:\n${auth.stderr}`)
+
+  // 公開後に cask を書きに行く。届かないなら Release を出す前に止める
+  const tap = tryRun('gh', ['api', `repos/${TAP_REPO}`, '--jq', '.permissions.push'])
+  if (tap.code !== 0 || tap.stdout.trim() !== 'true') {
+    fail(`${TAP_REPO} に push できない（cask を更新できない）:\n${tap.stderr || tap.stdout}`)
+  }
 
   const branch = capture('git', ['rev-parse', '--abbrev-ref', 'HEAD'])
   if (branch !== 'main') fail(`main ブランチでリリースする（今: ${branch}）`)
@@ -265,6 +354,22 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
     const url = capture('gh', ['release', 'view', tag, '--repo', REPO, '--json', 'url', '--jq', '.url'])
     console.log(`\n[release] 完了: ${PRODUCT_NAME} ${version}\n${url}`)
+
+    /* ---- 6. Homebrew cask（Release は出ているので、ここの失敗は巻き戻さない） ---- */
+    console.log(`\n=== cask を更新する（${TAP_REPO} ${CASK_PATH}）`)
+    try {
+      updateCask(
+        version,
+        assets.find((asset) => asset.endsWith('.dmg'))
+      )
+      console.log(`[release] cask 更新: nyshk97/tap/${CASK_TOKEN} ${version}`)
+    } catch (error) {
+      console.error(
+        `[release] cask の更新に失敗した（Release は公開済み）: ${error.message}\n` +
+          `  ${TAP_REPO} の ${CASK_PATH} を手で ${version} に上げる（sha256 は配った dmg のもの）`
+      )
+      process.exitCode = 1
+    }
   } catch (error) {
     console.error(`\n[release] 失敗: ${error.message}`)
 

@@ -107,3 +107,22 @@ test('前回のビルドが残っていたら配らずに落とす', async () =>
   // 実際に 0.0.0 の dmg が 0.1.0 の Release に並んだ（掃除の漏れを配る前に捕まえる）
   assert.throws(() => selectAssets(['Nemo-0.0.0-arm64.dmg', 'Nemo-0.1.0-arm64.dmg'], '0.1.0'), /0\.0\.0/)
 })
+
+test('cask は配る dmg の URL と sha256 を指す', async () => {
+  const { renderCask } = await import('./release.mjs')
+  const sha = 'a'.repeat(64)
+  const cask = renderCask('0.8.1', sha)
+  assert.match(cask, /^cask "nemo" do$/m)
+  assert.match(cask, /version "0\.8\.1"/)
+  assert.match(cask, new RegExp(`sha256 "${sha}"`))
+  // selectAssets が配る dmg の実ファイル名（Nemo-<version>-arm64.dmg）と一致していること
+  assert.match(cask, /releases\/download\/v#\{version\}\/Nemo-#\{version\}-arm64\.dmg/)
+  assert.match(cask, /auto_updates true/)
+  assert.match(cask, /uninstall quit: "local\.nyshk97\.nemo"/)
+})
+
+test('cask に書けない値は落とす', async () => {
+  const { renderCask } = await import('./release.mjs')
+  assert.throws(() => renderCask('0.8', 'a'.repeat(64)), /バージョン/)
+  assert.throws(() => renderCask('0.8.1', 'xyz'), /sha256/)
+})

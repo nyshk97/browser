@@ -106,9 +106,15 @@ push 前に失敗したら bump commit は自動で巻き戻る。何度でも�
 
 ### 常用版の入れ方
 
-`Nemo-<version>-arm64.dmg` を開いて `/Applications` に入れる。dev 版（`Nemo Dev`）とは
-bundle id もデータディレクトリも別なので**同時に入れて同時に動かせる**。
-以後の更新はアプリが自動で取得し、サイドバー左下のバージョン表示から適用できる。
+Homebrew の自作 tap（`nyshk97/tap/nemo`）から入れる。Brewfile に載せてあるので
+`brew bundle` で他の自作アプリと一緒に入る（単体なら `brew install --cask nyshk97/tap/nemo`）。
+cask は `mise run release` が Release の公開直後に自動で更新する。
+
+dmg（`Nemo-<version>-arm64.dmg`）を開いて `/Applications` に入れても動くが、
+その後 `brew bundle` が「既に App がある」で落ちるので、常用は cask に統一する。
+dev 版（`Nemo Dev`）とは bundle id もデータディレクトリも別なので**同時に入れて同時に動かせる**。
+以後の更新はアプリが自動で取得し、サイドバー左下のバージョン表示から適用できる
+（`auto_updates true` なので `brew upgrade` は触らない）。
 
 ### 新しい Mac で用意するもの
 
@@ -147,8 +153,8 @@ git clone git@github.com:nyshk97/nemo.git ~/browser && cd ~/browser
 mise run setup                  # 依存 + 拡張 artifact
 ```
 
-常用版そのものは [GitHub Release](https://github.com/nyshk97/nemo/releases) の dmg を入れる
-（リポジトリは開発のために要る）。ブックマークは、アプリを起動して
+常用版そのものは `brew bundle`（`cask 'nyshk97/tap/nemo'`）で入れる。**使うだけなら
+リポジトリの clone は要らない**（開発するときだけ）。ブックマークは、アプリを起動して
 設定 › ブックマークのセーブスロットから読み込む。
 
 ## Arc からの移行

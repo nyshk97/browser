@@ -10,21 +10,17 @@ Arc のサイドバー（Favorites / ピン留め / 一時タブ）・コマン�
 
 ## Highlights
 
-- **Chrome 拡張（Manifest V3）がそのまま動く。** `electron-chrome-extensions` に足りない API
-  （`chrome.storage.onChanged` 等）を polyfill し、service worker が idle で止まった後も Bitwarden の
-  自動入力が壊れないことを、実物の拡張を入れた CI で毎回確かめている
-- **枠が何十個あっても起動が重くならない。** Favorites / ピン留めは「枠」で、タブは押した瞬間に生まれる。
-  起動時にタブ実体を 1 つも作らない
-- **「ちょっと見る」と「腰を据えて読む」を ⌘O ひとつで分ける。** リンクは今のページの上に浮かぶ Peek で開き、
-  ターミナルや Slack から踏んだ URL はメインウィンドウを奪わず小窓（Little Nemo）で出る。どちらも ⌘O でタブに昇格
-- **GitHub の PR がサイドバーに勝手に並び、勝手に消える。** レビュー依頼と自分の未マージ PR を Live Folder として表示。
-  Arc のバイナリを `strings` で読んで実装を確かめたうえで、別の方式を採った
-- **別の Mac への移行が設定画面で完結する。** ピン留め / Favorites は iCloud 上のセーブスロットに保存して読み込む。
-  Basic 認証のパスワードは端末固有の鍵（`safeStorage`）で暗号化されていて他の Mac では復号できないため、
-  持ち出すときはパスフレーズで暗号化し直す
-- **検証はブラウザ自身が回す。** `mise run verify` がビルド → 起動 → CDP で実ブラウザを操作 → 後片付けまで行う
-  （17 スイート・ユニットテスト 342 件）。変更ファイルから必要なスイートだけを選んで走らせる
-- **常用しながら開発できる。** dev 版は表示名・bundle id・アイコン・データディレクトリが常用版と別
+- **Chrome 拡張（Manifest V3）がそのまま動く。** `electron-chrome-extensions` に足りない API を polyfill している。
+  `chrome.storage.onChanged` は送り手 × 領域 × 受け手を総当たりで測って「受け手が service worker の経路だけ 0 件」を
+  突き止めてから塞いだ
+- **GitHub の Active な PR がサイドバーに自動で並ぶ（Live Folder）。** レビュー依頼と自分の未マージ PR を GraphQL 1 本で取り、
+  60 秒ポーリング + ウィンドウのフォーカス時に即時更新。コストはクエリ 1 回で 1pt なので rate limit の 1〜2% に収まる。
+  トークンは設定した PAT → `gh auth token` の順で解決し、端末鍵で暗号化して保存する
+- **Google Meet の通話バーを自作。** 別のページやアプリに移っても通話バーが浮いたまま残る。Arc と同じく Document Picture-in-Picture を
+  使うつもりだったが、Electron 41 は blink 側の API だけ生えていてウィンドウ実装が無く、サイズ 0 の document が 800ms 後に
+  勝手に閉じる。そのため panel ウィンドウで組んだ（+0.8MB。中の `WebContentsView` は 1 枚 +89MB）
+- **ピン留めが何十個あっても起動は軽い。** タブの実体は押した瞬間に作り、しばらく見ていないタブはメモリを解放する。
+  メモリ / CPU は診断ログに定期記録していて、Arc や Chrome と並べて比べられる
 
 ## スタンス
 

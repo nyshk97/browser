@@ -369,7 +369,7 @@ if (MODE === 'restart-write') {
   const savedTimes = Object.fromEntries(
     JSON.parse(
       await ui.ev(
-        "window.nemo.getSharedState().then(s => JSON.stringify((s.ephemeralTabs ?? []).map(d => [d.url, d.lastActiveAt])))"
+        'window.nemo.getSharedState().then(s => JSON.stringify((s.ephemeralTabs ?? []).map(d => [d.url, d.lastActiveAt])))'
       )
     ).filter(([url]) => url.includes('blank.html?restart-'))
   )
@@ -521,11 +521,13 @@ await resetTabs()
   // 一時タブの一覧は**全ウィンドウ共有の定義**から描かれるので、期待値も共有一覧から出す:
   // 「共有定義のうち、このウィンドウで分割に入っていないもの」+「ローカルタブ（定義なし）」
   const splitDefIds = new Set(
-    s.tabs.filter((tab) => tab.splitSide !== null).flatMap((tab) => (tab.ephemeralId ? [tab.ephemeralId] : []))
+    s.tabs
+      .filter((tab) => tab.splitSide !== null)
+      .flatMap((tab) => (tab.ephemeralId ? [tab.ephemeralId] : []))
   )
   const sharedDefIds = JSON.parse(
     await ui.ev(
-      "window.nemo.getSharedState().then(s => JSON.stringify((s.ephemeralTabs ?? []).map(d => d.id)))"
+      'window.nemo.getSharedState().then(s => JSON.stringify((s.ephemeralTabs ?? []).map(d => d.id)))'
     )
   )
   const localRows = s.tabs.filter(

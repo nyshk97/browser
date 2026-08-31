@@ -134,19 +134,22 @@ export function installPermissionsQueryShim() {
   if (typeof mediaDevices.getUserMedia === 'function') {
     const originalGetUserMedia = mediaDevices.getUserMedia
     const realGetUserMedia = originalGetUserMedia.bind(mediaDevices)
-    mediaDevices.getUserMedia = mask(/** @param {unknown[]} args */ (...args) =>
-      realGetUserMedia(...args).then((/** @type {any} */ stream) => {
-        try {
-          for (const track of stream.getTracks()) {
-            if (track.kind === 'audio') capturedKinds.add('audioinput')
-            if (track.kind === 'video') capturedKinds.add('videoinput')
+    mediaDevices.getUserMedia = mask(
+      /** @param {unknown[]} args */ (...args) =>
+        realGetUserMedia(...args).then((/** @type {any} */ stream) => {
+          try {
+            for (const track of stream.getTracks()) {
+              if (track.kind === 'audio') capturedKinds.add('audioinput')
+              if (track.kind === 'video') capturedKinds.add('videoinput')
+            }
+            reevaluateAll()
+          } catch {
+            /* 記憶に失敗しても stream は返す */
           }
-          reevaluateAll()
-        } catch {
-          /* 記憶に失敗しても stream は返す */
-        }
-        return stream
-      }), originalGetUserMedia)
+          return stream
+        }),
+      originalGetUserMedia
+    )
   }
 
   /**

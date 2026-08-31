@@ -849,7 +849,8 @@ console.log('\n--- 暗幕の出し入れと ⌃M')
     urlPart: `view=peek&window=${scrimWindowId}`,
     waitReady: false
   })
-  const scrimDiag = () => ui.ev('window.nemo.splitDiagnostics().then((d) => JSON.stringify(d))').then(JSON.parse)
+  const scrimDiag = () =>
+    ui.ev('window.nemo.splitDiagnostics().then((d) => JSON.stringify(d))').then(JSON.parse)
   const visibleWhileOpen = await scrim.ev('document.visibilityState')
   check(
     'Peek が出ている間は暗幕の View が表示されている',
@@ -861,7 +862,9 @@ console.log('\n--- 暗幕の出し入れと ⌃M')
   // 帯は通常タブが 2 本以上ないと開かない（`advanceSwitcher` が黙って return する）。
   // 共有モデルでは閉じる操作が全ウィンドウに波及して先行セクションの残りタブが減るので、
   // 前提の 2 本目はここで自分で用意する
-  const mruFiller = await ui.ev(`window.nemo.createTab('${PAGES}/index.html?scrim-mru', { background: true })`)
+  const mruFiller = await ui.ev(
+    `window.nemo.createTab('${PAGES}/index.html?scrim-mru', { background: true })`
+  )
   const beforeActive = (await state()).activeTabKey
   await call('window.nemo.switchTab()')
   await sleep(500)
@@ -1376,7 +1379,9 @@ console.log('\n--- 前面コマンド（Peek 表示中は Peek が対象）')
     const uiErrorsBefore = countLogEvents(USER_DATA, 'ui.error')
     await call('window.nemo.closePeek()')
     await sleep(1000)
-    const overlayState = JSON.parse(await ui.ev('window.nemo.getOverlayState().then((s) => JSON.stringify(s))'))
+    const overlayState = JSON.parse(
+      await ui.ev('window.nemo.getOverlayState().then((s) => JSON.stringify(s))')
+    )
     check('Peek を閉じたら FindBar も閉じる', overlayState.kind === null, `kind=${overlayState.kind}`)
     check(
       'FindBar の閉じ経路で ui.error が出ていない',
@@ -1390,7 +1395,10 @@ console.log('\n--- 前面コマンド（Peek 表示中は Peek が対象）')
   await call(`window.nemo.closeTab(${JSON.stringify(parent.key)})`)
   parent.page.close()
   await sleep(300)
-  check('前面コマンド検証で main の未捕捉例外が出ていない', countLogEvents(USER_DATA, 'app.uncaught_exception') === 0)
+  check(
+    '前面コマンド検証で main の未捕捉例外が出ていない',
+    countLogEvents(USER_DATA, 'app.uncaught_exception') === 0
+  )
 }
 
 console.log(failures === 0 ? '\n全て PASS' : `\n${failures} 件 FAIL`)

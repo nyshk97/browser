@@ -688,7 +688,12 @@ export function registerIpcHandlers(): void {
     const wc = tab.webContents
     // 検索語そのものはログに出さない（長さだけ）。key は「前面 = Peek 優先」の
     // 自走検証が対象タブの判定に読む
-    log('find.requested', { attached: Boolean(wc), length: text.length, key: tab.key, peek: tab.peekOf !== null })
+    log('find.requested', {
+      attached: Boolean(wc),
+      length: text.length,
+      key: tab.key,
+      peek: tab.peekOf !== null
+    })
     // Electron 41 では `findNext: false` を**明示すると `found-in-page` が飛んでこない**
     // （省略時＝既定値 false と挙動が違う）。新規検索のときは指定しない。
     // docs/compat.md「既知の癖」参照。

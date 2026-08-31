@@ -107,9 +107,7 @@ if (mode === '--session-read') {
         const active = w.state.tabs.find((t) => t.key === w.state.activeTabKey)
         return active !== undefined && active.ephemeralId !== null
       }),
-    withTabs
-      .map((w) => w.state.tabs.find((t) => t.key === w.state.activeTabKey)?.url ?? 'なし')
-      .join(', ')
+    withTabs.map((w) => w.state.tabs.find((t) => t.key === w.state.activeTabKey)?.url ?? 'なし').join(', ')
   )
 
   // 初期化完了の合図が「タブが揃ってから」であること（本編から移した検査）。
@@ -895,9 +893,7 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
     rawState === 'granted' && state === 'prompt',
     `素 ${rawState} / シム後 ${state}`
   )
-  const cameraState = await page.ev(
-    `navigator.permissions.query({ name: 'camera' }).then((r) => r.state)`
-  )
+  const cameraState = await page.ev(`navigator.permissions.query({ name: 'camera' }).then((r) => r.state)`)
   check('未決定のカメラも prompt になる', cameraState === 'prompt', String(cameraState))
 
   const labels = await page.ev(
@@ -935,13 +931,16 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
   const deadline = Date.now() + 15000
   while (!target && Date.now() < deadline) {
     target =
-      (await listTargets(CDP)).find(
-        (t) => t.url.includes('private=1') && t.url.includes('view=sidebar')
-      ) ?? null
+      (await listTargets(CDP)).find((t) => t.url.includes('private=1') && t.url.includes('view=sidebar')) ??
+      null
     if (!target) await sleep(300)
   }
   if (!target) {
-    check('シークレットでも未決定のマイクが prompt になる', false, 'シークレットウィンドウの UI が見つからない')
+    check(
+      'シークレットでも未決定のマイクが prompt になる',
+      false,
+      'シークレットウィンドウの UI が見つからない'
+    )
   } else {
     const privateUi = await connect(target.webSocketDebuggerUrl)
     await waitFor(privateUi, "typeof window.nemo === 'object' && window.nemo !== null ? 'ready' : ''")

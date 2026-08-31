@@ -1,0 +1,2 @@
+# 自走検証・テストコード（.mjs）を GitHub の言語統計から除外する
+scripts/** linguist-vendored

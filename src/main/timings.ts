@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { DEFAULT_TIMINGS, resolveTimings, type Timings } from '../shared/timings.js'
+import { DEFAULT_TIMINGS, formatTimingsLogDetail, resolveTimings, type Timings } from '../shared/timings.js'
 import { log } from './log.js'
 
 /**
@@ -23,12 +23,12 @@ export function initTimings(): void {
   /*
    * 実効値は必ず1行残す。既定値の書き間違いは、30分 / 24時間を実時間で待つ確認では捕まらない。
    *
-   * **平たく展開せず JSON 文字列で出す**。`sessionSaveDebounceMs` のようにキー名へ
-   * `session` を含むものは `log-redact` が `[redacted]` に落とすので、
-   * 展開すると肝心の値が読めない（redaction 側に穴を開けるのは論外）。
+   * 形式は `key=value` の文字列配列（`formatTimingsLogDetail`）。平たく展開すると
+   * `sessionSaveDebounceMs` がキー名 redaction に食われ、1本の JSON 文字列だと
+   * `sanitizeDetail` の 200 文字切りで壊れる（どちらも実例あり）。
    */
   log('timings.resolved', {
-    effective: JSON.stringify(resolved),
+    effective: formatTimingsLogDetail(resolved),
     overridden: raw !== undefined && raw !== ''
   })
 }

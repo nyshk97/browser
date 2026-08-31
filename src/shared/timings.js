@@ -50,6 +50,46 @@ export const DEFAULT_TIMINGS = {
 export const TIMING_KEYS = /** @type {(keyof Timings)[]} */ (Object.keys(DEFAULT_TIMINGS))
 
 /**
+ * `timings.resolved` ログの `effective` を組み立てる。
+ *
+ * **1本の JSON 文字列にしない**: 8キーで 212 文字になり、`sanitizeDetail` の
+ * 200 文字切りで `…` が付いて JSON として読めなくなる（httpAuth のキー追加で
+ * 閾値を越え、CI の verify-packaged が落ち続けた実例）。
+ * キーを平たく展開もしない（`sessionSaveDebounceMs` の `session` が
+ * キー名 redaction に食われる）。`key=value` の文字列配列なら要素ごとに短く、
+ * キー名は値の中身なので redaction も素通りする。
+ *
+ * @param {Timings} timings
+ * @returns {string[]}
+ */
+export function formatTimingsLogDetail(timings) {
+  return TIMING_KEYS.map((key) => `${key}=${timings[key]}`)
+}
+
+/**
+ * `formatTimingsLogDetail` の逆。ログから実効値を読み戻す（verify-packaged が使う）。
+ * 配列でない・壊れた要素は黙って捨てる（検査側が既定値との不一致として検出する）。
+ *
+ * @param {unknown} entries
+ * @returns {Partial<Record<keyof Timings, number>>}
+ */
+export function parseTimingsLogDetail(entries) {
+  /** @type {Partial<Record<keyof Timings, number>>} */
+  const result = {}
+  if (!Array.isArray(entries)) return result
+  for (const entry of entries) {
+    if (typeof entry !== 'string') continue
+    const eq = entry.indexOf('=')
+    if (eq <= 0) continue
+    const key = entry.slice(0, eq)
+    const value = Number(entry.slice(eq + 1))
+    if (!Object.prototype.hasOwnProperty.call(DEFAULT_TIMINGS, key) || !Number.isFinite(value)) continue
+    result[/** @type {keyof Timings} */ (key)] = value
+  }
+  return result
+}
+
+/**
  * `NEMO_VERIFY_TIMINGS`（JSON）を既定値に重ねる。
  *
  * **パース失敗・知らないキー・数値でない値はすべて即エラー**にする。

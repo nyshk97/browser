@@ -24,7 +24,7 @@ import {
   waitForHttp,
   waitForLogEvent
 } from './lib/harness.mjs'
-import { DEFAULT_TIMINGS } from '../src/shared/timings.js'
+import { DEFAULT_TIMINGS, parseTimingsLogDetail } from '../src/shared/timings.js'
 
 /**
  * 拡張ページ向けの preload（`preload/extension-shim.cjs`）がパッケージに同梱されているか。
@@ -233,8 +233,8 @@ try {
       resolvedLine ?? '(無い)'
     )
     const logged = resolvedLine ? JSON.parse(resolvedLine) : {}
-    // 実効値は `effective` に JSON 文字列で入っている（キーを平たく出すと redaction に食われる）
-    const resolved = typeof logged.effective === 'string' ? JSON.parse(logged.effective) : {}
+    // 実効値は `effective` に `key=value` の文字列配列で入っている（形式の理由は formatTimingsLogDetail を見よ）
+    const resolved = parseTimingsLogDetail(logged.effective)
     const mismatched = Object.entries(DEFAULT_TIMINGS).filter(([key, value]) => resolved[key] !== value)
     check(
       'パッケージ版では NEMO_VERIFY_TIMINGS が効かない（実効値が本番既定値のまま）',

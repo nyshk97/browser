@@ -10,7 +10,14 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_TIMINGS, TIMING_KEYS, resolveTimings } from '../src/shared/timings.js'
+import {
+  DEFAULT_TIMINGS,
+  TIMING_KEYS,
+  formatTimingsLogDetail,
+  parseTimingsLogDetail,
+  resolveTimings
+} from '../src/shared/timings.js'
+import { sanitizeDetail } from '../src/shared/log-redact.js'
 
 test('env が無ければ本番既定値', () => {
   for (const raw of [undefined, null, '']) {
@@ -53,4 +60,22 @@ test('数値でない値・0 以下・NaN はエラー', () => {
 
 test('TIMING_KEYS は既定値のキーと一致する', () => {
   assert.deepEqual([...TIMING_KEYS].sort(), Object.keys(DEFAULT_TIMINGS).sort())
+})
+
+test('timings.resolved の detail は sanitizeDetail を通しても壊れない（全キーが復元できる）', () => {
+  // 1本の JSON 文字列だと 200 文字切りで `…` が付き JSON として読めなくなる退行を固定する
+  const detail = sanitizeDetail({ effective: formatTimingsLogDetail(DEFAULT_TIMINGS), overridden: false })
+  const flat = JSON.stringify(detail)
+  for (const marker of ['…', '[redacted]', '[deep]']) {
+    assert.ok(!flat.includes(marker), `sanitizeDetail が ${marker} を出した: ${flat}`)
+  }
+  assert.deepEqual(parseTimingsLogDetail(detail.effective), DEFAULT_TIMINGS)
+})
+
+test('parseTimingsLogDetail は配列でない・壊れた要素を黙って捨てる', () => {
+  assert.deepEqual(parseTimingsLogDetail(undefined), {})
+  assert.deepEqual(parseTimingsLogDetail('sleepSweepMs=5000'), {})
+  assert.deepEqual(parseTimingsLogDetail(['sleepSweepMs=5000', 'unknownKey=1', 'sleepSweepMs', 42, '=3']), {
+    sleepSweepMs: 5000
+  })
 })

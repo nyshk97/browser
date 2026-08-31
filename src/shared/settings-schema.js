@@ -357,6 +357,57 @@ export function normalizeCustomTitle(value) {
 }
 
 /* ------------------------------------------------------------------ *
+ * 一時タブの共有定義（全ウィンドウ横断）
+ * ------------------------------------------------------------------ */
+
+/** 一時タブの共有定義（`ephemeral-tabs.json`）のスキーマ版。 */
+export const EPHEMERAL_TABS_VERSION = 1
+
+/**
+ * @typedef {object} EphemeralTabDef
+ * @property {string} id
+ * @property {string} url 実体のナビゲーションに追随する（ピン留めの「登録 URL」とは逆の規則）
+ * @property {string} title 既定名（ページタイトルに追随）
+ * @property {string | null} customTitle ユーザーが付けた名前（無ければ null）
+ * @property {string | null} faviconUrl
+ * @property {number} lastActiveAt どのウィンドウの実体でもよいので、最後に使われた時刻
+ */
+
+/**
+ * 一時タブの共有定義を検査して正規化する。
+ *
+ * ピン留めと同じく URL は http / https だけ（`about:blank` や拡張ページは
+ * **定義を持たないウィンドウローカルのタブ**として扱い、ここには入れない）。
+ * 並び順は配列順（追加順）で、並べ替え API は持たない。
+ *
+ * @param {unknown} raw
+ * @returns {{ tabs: EphemeralTabDef[] }}
+ */
+export function normalizeEphemeralTabs(raw) {
+  const input = isRecord(raw) ? raw : {}
+  const seen = new Set()
+  const tabs = Array.isArray(input['tabs'])
+    ? input['tabs'].flatMap((item) => {
+        if (!isRecord(item)) return []
+        const id = normalizeId(item['id'], seen)
+        const url = normalizeStoredUrl(item['url'])
+        if (!id || !url) return []
+        return [
+          {
+            id,
+            url,
+            title: normalizeTitle(item['title'], url),
+            customTitle: normalizeCustomTitle(item['customTitle']),
+            faviconUrl: normalizeDefinitionFaviconUrl(item['faviconUrl']),
+            lastActiveAt: normalizeTimestamp(item['lastActiveAt'])
+          }
+        ]
+      })
+    : []
+  return { tabs }
+}
+
+/* ------------------------------------------------------------------ *
  * セッション復元
  * ------------------------------------------------------------------ */
 
@@ -366,8 +417,10 @@ export function normalizeCustomTitle(value) {
  * - 2 … `lastActiveAt` を持つ（**自動アーカイブの寿命を再起動でリセットしないため**）
  * - 3 … **一時タブだけ**を保存する（`pinnedId` を持たない）。`customTitle` を持つ
  * - 4 … 分割ビューの組み合わせ（`splits`）を持つ
+ * - 5 … 野良タブの正が共有定義ストア（`ephemeral-tabs.json`）へ移った。
+ *        ウィンドウは `tabs` を持たず、`activeEphemeralId` と定義 ID の `splits` だけ持つ
  */
-export const SESSION_VERSION = 4
+export const SESSION_VERSION = 5
 
 /**
  * @typedef {object} SavedTab
@@ -380,6 +433,13 @@ export const SESSION_VERSION = 4
 /**
  * @typedef {object} SavedWindow
  * @property {{ x: number, y: number, width: number, height: number } | null} bounds
+ * @property {string | null} activeEphemeralId 選択していた一時タブ定義（ピン / Favorite なら null）
+ * @property {[string, string][]} splits 左右に並べた組（一時タブ定義 ID で `[左, 右]`）
+ */
+
+/**
+ * @typedef {object} LegacySavedWindow 版 4 以前のウィンドウ（移行の入力にだけ使う）
+ * @property {{ x: number, y: number, width: number, height: number } | null} bounds
  * @property {SavedTab[]} tabs
  * @property {number} activeIndex
  * @property {[number, number][]} splits 左右に並べた組（`tabs` の添字で `[左, 右]`）
@@ -390,62 +450,133 @@ export const SESSION_VERSION = 4
  * @property {SavedWindow[]} windows
  * @property {boolean} cleanExit
  * @property {number} savedAt
+ * @property {LegacySavedWindow[] | null} legacyWindows
+ *   版 4 以前のウィンドウを読んだときだけ入る（共有ストアへの一度きりの移行の入力）。
+ *   **正規化で捨ててはいけない** —— `initSession` は読み込み直後に正規化後の値を
+ *   書き戻すので、ここで落とすと移行コードが走る前に旧タブが session.json から消える。
+ *   移行の冪等判定もこのフィールドの有無で行う（`JsonStore` は normalize に版番号を渡さない）
  */
 
 /**
  * 保存されたセッションを検査して正規化する。
  *
- * 版 1 には `lastActiveAt` が無い。**「たった今」に倒す**
- * （0 にすると、版を上げた直後の初回起動で古いタブが一斉に自動アーカイブされる）。
+ * 版 4 以前のウィンドウ（`tabs` を持つ）と版 5 のウィンドウ（持たない）を
+ * **形で見分ける**。旧形式は `legacyWindows` に退避して返し、共有ストアへの移行は
+ * `initSession` 側で行う。
  *
- * 版 2 までは**ピン留めのタブもセッションに入っている**。版 3 はピン / Favorites の
- * タブを復元しない（枠をクリックした時点で作る）ので、`pinnedId` を持つレコードは
- * **丸ごと落とす**。フィールドだけ捨てると、旧データのピンタブが一時タブとして復活する。
+ * 旧形式の規則（移行の入力を壊さないためにそのまま維持する）:
+ * - 版 1 には `lastActiveAt` が無い。**「たった今」に倒す**
+ *   （0 にすると、版を上げた直後の初回起動で古いタブが一斉に自動アーカイブされる）
+ * - 版 2 までは**ピン留めのタブもセッションに入っている**。`pinnedId` を持つレコードは
+ *   **丸ごと落とす**。フィールドだけ捨てると、旧データのピンタブが一時タブとして復活する
+ * - タブが 1 本も残らないウィンドウは丸ごと落とす（版 5 のウィンドウは逆で、
+ *   実体を持たないウィンドウも共有一覧のビューとして正常なので bounds があれば残す）
  *
  * @param {unknown} raw
  * @returns {SessionData}
  */
 export function normalizeSession(raw) {
   const input = isRecord(raw) ? raw : {}
-  const windows = Array.isArray(input['windows'])
-    ? input['windows'].flatMap((value) => {
-        if (!isRecord(value)) return []
-        const rawTabs = Array.isArray(value['tabs']) ? value['tabs'] : []
-        /** @type {SavedTab[]} */
-        const tabs = []
-        /** 元の添字 → 除外後の添字。**選択タブがずれないため**に持つ。 */
-        const moved = new Map()
-        for (const [index, tab] of rawTabs.entries()) {
-          if (!isRecord(tab)) continue
-          // 版 2 以前のピン留めタブ（枠の側から作り直されるので復元しない）
-          if (typeof tab['pinnedId'] === 'string') continue
-          const url = normalizeStoredUrl(tab['url'])
-          if (!url) continue
-          moved.set(index, tabs.length)
-          tabs.push({
-            url,
-            title: typeof tab['title'] === 'string' ? tab['title'].slice(0, 300) : '',
-            customTitle: normalizeCustomTitle(tab['customTitle']),
-            lastActiveAt: normalizeTimestamp(tab['lastActiveAt'])
-          })
-        }
-        if (tabs.length === 0) return []
-        // 元の値を新しい長さに clamp するだけだと、先頭や中間のタブが落ちたときに
-        // **別のタブが選択される**。元のアクティブタブが残っていればその新しい位置へ。
-        const savedIndex =
-          typeof value['activeIndex'] === 'number' && Number.isInteger(value['activeIndex'])
-            ? value['activeIndex']
-            : 0
-        const activeIndex = moved.get(savedIndex) ?? 0
-        const splits = normalizeSplits(value['splits'], moved, tabs.length)
-        return [{ bounds: normalizeBounds(value['bounds']), tabs, activeIndex, splits }]
+  /** @type {SavedWindow[]} */
+  const windows = []
+  /** @type {LegacySavedWindow[]} */
+  const legacyWindows = []
+  if (Array.isArray(input['windows'])) {
+    for (const value of input['windows']) {
+      if (!isRecord(value)) continue
+      if (Array.isArray(value['tabs'])) {
+        const legacy = normalizeLegacyWindow(value)
+        if (legacy) legacyWindows.push(legacy)
+        continue
+      }
+      windows.push({
+        bounds: normalizeBounds(value['bounds']),
+        activeEphemeralId: normalizeDefinitionRef(value['activeEphemeralId']),
+        splits: normalizeIdSplits(value['splits'])
       })
-    : []
+    }
+  }
   return {
     windows,
     cleanExit: input['cleanExit'] === true,
-    savedAt: typeof input['savedAt'] === 'number' ? input['savedAt'] : 0
+    savedAt: typeof input['savedAt'] === 'number' ? input['savedAt'] : 0,
+    legacyWindows: legacyWindows.length > 0 ? legacyWindows : null
   }
+}
+
+/**
+ * 版 4 以前のウィンドウ 1 枚ぶん。
+ * @param {Record<string, unknown>} value
+ * @returns {LegacySavedWindow | null}
+ */
+function normalizeLegacyWindow(value) {
+  const rawTabs = Array.isArray(value['tabs']) ? value['tabs'] : []
+  /** @type {SavedTab[]} */
+  const tabs = []
+  /** 元の添字 → 除外後の添字。**選択タブがずれないため**に持つ。 */
+  const moved = new Map()
+  for (const [index, tab] of rawTabs.entries()) {
+    if (!isRecord(tab)) continue
+    // 版 2 以前のピン留めタブ（枠の側から作り直されるので復元しない）
+    if (typeof tab['pinnedId'] === 'string') continue
+    const url = normalizeStoredUrl(tab['url'])
+    if (!url) continue
+    moved.set(index, tabs.length)
+    tabs.push({
+      url,
+      title: typeof tab['title'] === 'string' ? tab['title'].slice(0, 300) : '',
+      customTitle: normalizeCustomTitle(tab['customTitle']),
+      lastActiveAt: normalizeTimestamp(tab['lastActiveAt'])
+    })
+  }
+  if (tabs.length === 0) return null
+  // 元の値を新しい長さに clamp するだけだと、先頭や中間のタブが落ちたときに
+  // **別のタブが選択される**。元のアクティブタブが残っていればその新しい位置へ。
+  const savedIndex =
+    typeof value['activeIndex'] === 'number' && Number.isInteger(value['activeIndex'])
+      ? value['activeIndex']
+      : 0
+  const activeIndex = moved.get(savedIndex) ?? 0
+  const splits = normalizeSplits(value['splits'], moved, tabs.length)
+  return { bounds: normalizeBounds(value['bounds']), tabs, activeIndex, splits }
+}
+
+/**
+ * 一時タブ定義への参照（`activeEphemeralId`）。ID の形だけ見る
+ * （実在の検査は復元側。定義が消えていたら復元側が先頭定義へ倒す）。
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+function normalizeDefinitionRef(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 64) return null
+  return value
+}
+
+/**
+ * 版 5 の分割の組（一時タブ定義 ID の対）。
+ *
+ * 捨てる規則は添字版（`normalizeSplits`）と同じ:
+ * 形が違う・左右が同じ・**同じ定義が 2 つ以上の組に現れたら競合した組を全部落とす**。
+ *
+ * @param {unknown} raw
+ * @returns {[string, string][]}
+ */
+function normalizeIdSplits(raw) {
+  if (!Array.isArray(raw)) return []
+  /** @type {[string, string][]} */
+  const pairs = []
+  for (const entry of raw) {
+    if (!Array.isArray(entry) || entry.length !== 2) continue
+    const left = normalizeDefinitionRef(entry[0])
+    const right = normalizeDefinitionRef(entry[1])
+    if (!left || !right || left === right) continue
+    pairs.push([left, right])
+  }
+  const seen = new Map()
+  for (const [left, right] of pairs) {
+    for (const id of [left, right]) seen.set(id, (seen.get(id) ?? 0) + 1)
+  }
+  return pairs.filter(([left, right]) => seen.get(left) === 1 && seen.get(right) === 1)
 }
 
 /**

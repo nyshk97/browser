@@ -813,6 +813,10 @@ console.log('\n--- 暗幕の出し入れと ⌃M')
   )
 
   /* ⌃M: 暗幕にフォーカスがあるときも「⌃ を離したら確定」できること */
+  // 帯は通常タブが 2 本以上ないと開かない（`advanceSwitcher` が黙って return する）。
+  // 共有モデルでは閉じる操作が全ウィンドウに波及して先行セクションの残りタブが減るので、
+  // 前提の 2 本目はここで自分で用意する
+  const mruFiller = await ui.ev(`window.nemo.createTab('${PAGES}/index.html?scrim-mru', { background: true })`)
   const beforeActive = (await state()).activeTabKey
   await call('window.nemo.switchTab()')
   await sleep(500)
@@ -834,6 +838,7 @@ console.log('\n--- 暗幕の出し入れと ⌃M')
   )
   const switched = await state()
   check('⌃M の確定で別のタブへ移っている', switched.activeTabKey !== beforeActive)
+  await call(`window.nemo.closeTab(${JSON.stringify(mruFiller)})`)
   await call(`window.nemo.selectTab(${JSON.stringify(parent.key)})`)
   await sleep(400)
 
@@ -1000,15 +1005,20 @@ async function miniStates() {
      */
     const marker = `${PAGES}/index.html?session-marker`
     const markerKey = await ui.ev(`window.nemo.createTab(${JSON.stringify(marker)}, { background: true })`)
-    await sleep(afterSessionSave()) // セッション保存のデバウンス（2 段の合計から導く）
-    const sessionFile = path.join(USER_DATA, 'session.json')
-    const raw = fs.existsSync(sessionFile) ? fs.readFileSync(sessionFile, 'utf8') : '{}'
+    // 版 5 から野良タブの正は共有定義ストア（session.json は URL を持たない）。
+    // ephemeral-tabs.json のデバウンスは JsonStore 既定（400ms）なので少し余分に待つ
+    await sleep(afterSessionSave() + 800)
+    const defsFile = path.join(USER_DATA, 'ephemeral-tabs.json')
+    const rawDefs = fs.existsSync(defsFile) ? fs.readFileSync(defsFile, 'utf8') : '{}'
     check(
-      'session.json が実際に書かれている（否定形の検査が空振りしていない証拠）',
-      raw.includes('session-marker'),
-      `exists=${fs.existsSync(sessionFile)} len=${raw.length}`
+      'ephemeral-tabs.json が実際に書かれている（否定形の検査が空振りしていない証拠）',
+      rawDefs.includes('session-marker'),
+      `exists=${fs.existsSync(defsFile)} len=${rawDefs.length}`
     )
-    check('小窓はセッションに保存されない', !raw.includes('site=mini'), raw.slice(0, 200))
+    check('小窓は共有定義ストアに保存されない', !rawDefs.includes('site=mini'), rawDefs.slice(0, 200))
+    const sessionFile = path.join(USER_DATA, 'session.json')
+    const rawSession = fs.existsSync(sessionFile) ? fs.readFileSync(sessionFile, 'utf8') : '{}'
+    check('小窓はセッションに保存されない', !rawSession.includes('site=mini'), rawSession.slice(0, 200))
     await call(`window.nemo.closeTab(${JSON.stringify(markerKey)})`)
   }
 

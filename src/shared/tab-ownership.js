@@ -1,11 +1,12 @@
 // @ts-check
 /**
- * タブの「所属」（ピン留め / Favorite のどちらの定義に属するか）の正規化。
+ * タブの「所属」（ピン留め / Favorite / 一時タブ共有定義のどれに属するか）の正規化。
  *
  * `createTab` は復元・⌘⇧T・変換・拡張の popup など**あちこちから呼ばれる**ので、
  * 不変条件は呼び出し側ではなくここで1度だけ保証する。
  *
- *  1. `pinnedId` と `favoriteId` は**排他**（両方来たら `pinnedId` を優先する）
+ *  1. `pinnedId` / `favoriteId` / `ephemeralId` は**排他**
+ *     （複数来たら pinned > favorite > ephemeral の順に優先する）
  *  2. **存在する定義の ID だけ**受け付ける（消えた ID は null に倒す）
  *  3. **1 ウィンドウにつき 1 定義 1 タブ**（同じ定義のタブが既にあるなら所属を付けない）
  *
@@ -17,13 +18,15 @@
  * @typedef {object} OwnershipRequest
  * @property {string | null | undefined} [pinnedId]
  * @property {string | null | undefined} [favoriteId]
+ * @property {string | null | undefined} [ephemeralId]
  */
 
 /**
  * @typedef {object} OwnershipContext
  * @property {(id: string) => boolean} pinnedExists ピン留め定義が実在するか
  * @property {(id: string) => boolean} favoriteExists Favorite 定義が実在するか
- * @property {{ pinnedId: string | null, favoriteId: string | null }[]} windowTabs
+ * @property {(id: string) => boolean} ephemeralExists 一時タブ共有定義が実在するか
+ * @property {{ pinnedId: string | null, favoriteId: string | null, ephemeralId: string | null }[]} windowTabs
  *   これから足すウィンドウに既にあるタブ（自分自身は含めない）
  */
 
@@ -31,6 +34,7 @@
  * @typedef {object} OwnershipResult
  * @property {string | null} pinnedId
  * @property {string | null} favoriteId
+ * @property {string | null} ephemeralId
  * @property {string[]} dropped 落とした理由（ログに残す）
  */
 
@@ -45,11 +49,17 @@ export function resolveTabOwnership(requested, context) {
   let pinnedId = typeof requested.pinnedId === 'string' && requested.pinnedId ? requested.pinnedId : null
   let favoriteId =
     typeof requested.favoriteId === 'string' && requested.favoriteId ? requested.favoriteId : null
+  let ephemeralId =
+    typeof requested.ephemeralId === 'string' && requested.ephemeralId ? requested.ephemeralId : null
 
-  // 1. 排他。両方来たらピン留めを優先する（どちらかを黙って捨てず必ずログに残す）
+  // 1. 排他。複数来たら pinned > favorite > ephemeral（どれかを黙って捨てず必ずログに残す）
   if (pinnedId && favoriteId) {
     favoriteId = null
     dropped.push('both_ids')
+  }
+  if (ephemeralId && (pinnedId || favoriteId)) {
+    ephemeralId = null
+    dropped.push('ephemeral_with_definition')
   }
 
   // 2. 消えた定義への紐付けを持ち込ませない。
@@ -62,6 +72,10 @@ export function resolveTabOwnership(requested, context) {
     favoriteId = null
     dropped.push('missing_favorite')
   }
+  if (ephemeralId && !context.ephemeralExists(ephemeralId)) {
+    ephemeralId = null
+    dropped.push('missing_ephemeral')
+  }
 
   // 3. 同じ定義のタブが同じウィンドウに既にあるなら所属を付けない
   //    （呼び出し側の取りこぼしをここで止める）
@@ -73,8 +87,12 @@ export function resolveTabOwnership(requested, context) {
     favoriteId = null
     dropped.push('duplicate_favorite')
   }
+  if (ephemeralId && context.windowTabs.some((tab) => tab.ephemeralId === ephemeralId)) {
+    ephemeralId = null
+    dropped.push('duplicate_ephemeral')
+  }
 
-  return { pinnedId, favoriteId, dropped }
+  return { pinnedId, favoriteId, ephemeralId, dropped }
 }
 
 /**

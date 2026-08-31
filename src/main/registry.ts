@@ -59,6 +59,15 @@ import {
   setDefinitionUrl,
   type ConversionResult
 } from './store/pins.js'
+import {
+  addEphemeralTab,
+  bumpEphemeralActivity,
+  findEphemeralTab,
+  getEphemeralTabs,
+  onEphemeralTabsChanged,
+  removeEphemeralTab,
+  updateEphemeralFromTab
+} from './store/ephemeral-tabs.js'
 import { recordFavicon, recordVisit, updateTitle } from './store/history.js'
 import { archiveTab, pruneArchive, type ArchiveReason } from './store/archive.js'
 import { saveSession, type SavedWindow } from './store/session.js'
@@ -92,13 +101,18 @@ import type {
 } from '../shared/types.js'
 
 /**
- * タブとウィンドウの所有モデル（計画 1-2）。
+ * タブとウィンドウの所有モデル（計画 1-2 + 野良タブのウィンドウ横断共有）。
  *
  * - Favorites / ピン留めの**定義**は全ウィンドウ共有（`store/pins.ts` が持つ）
+ * - **一時タブ（野良タブ）の定義も全ウィンドウ共有**（`store/ephemeral-tabs.ts` が持つ）。
+ *   通常ウィンドウの http/https タブは必ずどれかの定義層に属し、
+ *   サイドバーの一覧は定義層から描かれる（ウィンドウは共有サイドバーのビュー）
  * - **実体化したタブは必ず1つの windowId に所属する**
- * - **ピン留め定義（pinnedId）とタブ実体（key）は別 ID**
+ * - **定義 ID（pinnedId / favoriteId / ephemeralId）とタブ実体（key）は別 ID**
  * - 別ウィンドウへの移動は**所有権の移動**（`moveTabToWindow`）
- * - 各ウィンドウが自分の activeTabKey を持つ
+ * - 各ウィンドウが自分の activeTabKey を持つ（アクティブ選択・ページ実体はウィンドウローカル）
+ * - ウィンドウを閉じるのは**実体のデタッチ**で、定義は残る（Never lose a tab）。
+ *   定義を消すのは `removeEphemeralEverywhere`（⌘W・×・定義基準の自動アーカイブ）だけ
  *
  * タブ ID に WebContents.id を使わないのが Phase 0 との一番の違い。
  * sleep / discard で WebContents を捨てても、ウィンドウを移しても
@@ -507,6 +521,12 @@ export class NemoTab {
   /** Favorite 定義に紐づいているなら、その ID（`pinnedId` とは排他）。 */
   favoriteId: string | null = null
   /**
+   * 一時タブの共有定義（`store/ephemeral-tabs.ts`）に紐づいているなら、その ID。
+   * 3 者排他。null は定義を持たないウィンドウローカルのタブ
+   * （`about:blank`・拡張ページ・シークレット・小窓・Peek）。
+   */
+  ephemeralId: string | null = null
+  /**
    * ユーザーが付けた名前（一時タブぶん）。
    * **専用タブの表示名は定義側が正**で、ここは降格したときに引き継ぐための控え。
    */
@@ -672,8 +692,13 @@ export class NemoTab {
       chromeWindowId: this.window.baseWindow.isDestroyed() ? -1 : this.window.baseWindow.id,
       pinnedId: this.pinnedId,
       favoriteId: this.favoriteId,
+      ephemeralId: this.ephemeralId,
       title: displayTitle(this.title, this.url),
-      customTitle: this.customTitle,
+      // 共有定義に属するタブの名前は定義が正（リネームは定義へ書かれ、タブ側は降格の控えのみ）。
+      // ここで実効値に解決しないと、renderer / 検証が「リネームが消えた」ように見える
+      customTitle: this.ephemeralId
+        ? (findEphemeralTab(this.ephemeralId)?.customTitle ?? null)
+        : this.customTitle,
       url: this.url,
       faviconUrl: this.faviconUrl,
       loading: wc ? wc.isLoading() : false,
@@ -722,6 +747,7 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
       updateTitle(tab.url, title)
       const definitionId = tab.pinnedId ?? tab.favoriteId
       if (definitionId) setPinnedTitle(definitionId, title)
+      else if (tab.ephemeralId) updateEphemeralFromTab(tab.ephemeralId, { title })
     })
     notify()
   })
@@ -738,6 +764,7 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
       recordFavicon(tab.url, next)
       const definitionId = tab.pinnedId ?? tab.favoriteId
       if (definitionId) setFaviconForDefinition(definitionId, next, tab.url)
+      else if (tab.ephemeralId) updateEphemeralFromTab(tab.ephemeralId, { faviconUrl: next })
     })
     notify()
   })
@@ -753,6 +780,7 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
   wc.on('did-navigate', (_event, url) => {
     syncUrl()
     remember(() => recordVisit(url, tab.title))
+    syncEphemeralDefinition(tab)
     tab.find = null
     notify()
     notifyCall(tab)
@@ -761,6 +789,7 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
     if (!isMainFrame) return
     syncUrl()
     remember(() => recordVisit(url, tab.title))
+    syncEphemeralDefinition(tab)
     notify()
     notifyCall(tab)
   })
@@ -1076,10 +1105,12 @@ export function setOverlayChangeListener(fn: (win: NemoWindow, kind: OverlayKind
  * registry から import すると循環するので**注入で受ける**（`overlayChangeListener` と同じ形）。
  * - `refresh` … 候補・表示対象を計算し直す。**何度呼んでもよい**（冪等）
  * - `isSleepExempt` … そのタブを sleep / 自動アーカイブの対象から外すか（計画 R3）
+ * - `isJoined` … そのタブが会議に参加中か（共有タブの二重実体化ガードが見る）
  */
 interface CallWatcher {
   refresh(navigated?: NemoTab): void
   isSleepExempt(tab: NemoTab): boolean
+  isJoined(tab: NemoTab): boolean
 }
 
 let callWatcher: CallWatcher | null = null
@@ -1894,7 +1925,10 @@ export class NemoWindow {
       version: app.getVersion(),
       update: getUpdateState(),
       liveFolder: this.isPrivate ? null : getLiveFolderState(),
-      extensions: getLoadedExtensions()
+      extensions: getLoadedExtensions(),
+      // シークレットは共有に参加しない（`liveFolder` と同じくデータごと渡さない。
+      // renderer はウィンドウローカルのタブ一覧へフォールバックする）
+      ephemeralTabs: this.isPrivate ? null : getEphemeralTabs()
     }
   }
 
@@ -1924,48 +1958,34 @@ export class NemoWindow {
   }
 
   /**
-   * セッションに残すぶん。
+   * セッションに残すぶん（版 5）。
    *
-   * **一時タブだけ**を保存する。ピン / Favorites のタブは枠（定義）の側から
-   * 作り直すので保存しない（起動時にタブ実体を1つも作らないための肝）。
-   * 絞り込みは `activeIndex` の算出とも**同じ配列**で行う。条件がズレると
-   * 復元後に別のタブが選択される。
+   * **野良タブ本体はもう保存しない**（正は共有定義ストア `ephemeral-tabs.json`）。
+   * ここに残るのはウィンドウごとのビューの状態:
+   * bounds・アクティブだった一時タブ定義・分割の組（定義 ID の対）だけ。
    */
   toSaved(): SavedWindow {
     const bounds = this.baseWindow.isDestroyed() ? null : this.baseWindow.getBounds()
-    // Peek は保存しない（再起動では復元しない仕様）
-    const saved = this.normalTabs.filter(
-      (tab) => /^https?:\/\//.test(tab.url) && tab.pinnedId === null && tab.favoriteId === null
-    )
-    // lastActiveAt も保存する。落とすと自動アーカイブの寿命が再起動でリセットされる
-    const tabs = saved.map((tab) => ({
-      url: tab.url,
-      title: tab.title,
-      customTitle: tab.customTitle,
-      lastActiveAt: tab.lastActiveAt
-    }))
-    const activeIndex = Math.max(
-      saved.findIndex((tab) => tab.key === this.activeTabKey),
-      0
-    )
+    const active = this.getActiveTab()
+    // アクティブがピン / Favorite / ローカルタブなら null（復元は先頭定義へ倒す。
+    // 旧実装の `Math.max(findIndex, 0)` と同等）
+    const activeEphemeralId = active?.ephemeralId ?? null
     /*
-     * 分割の組。**`saved` と同じ配列の添字**で表す（`activeIndex` と揃える）。
-     *
-     * - **左右の両方が保存対象に入っている組だけ**書く。`saved` は `https?:` 以外を
-     *   落とすので、片方が `about:blank` の組をそのまま書くと `-1` を含む値を自分で作る
+     * 分割の組（定義 ID の対）。
+     * - **左右の両方が定義を持つ組だけ**書く（ローカルタブの分割は復元しない）
      * - **`tab === pair.left` のときだけ**出す。左右の両タブが同じ `SplitPair` を
      *   指しているので、素朴に走査すると同じ組が 2 回出て、次の起動で
-     *   自分が書いた `splits` を「添字の重複」として捨てることになる
+     *   自分が書いた `splits` を「重複」として捨てることになる
      */
-    const splits: [number, number][] = []
-    for (const [index, tab] of saved.entries()) {
+    const splits: [string, string][] = []
+    for (const tab of this.normalTabs) {
       const pair = tab.split
       if (!pair || pair.left !== tab) continue
-      const rightIndex = saved.indexOf(pair.right)
-      if (rightIndex === -1) continue
-      splits.push([index, rightIndex])
+      const left = pair.left.ephemeralId
+      const right = pair.right.ephemeralId
+      if (left && right) splits.push([left, right])
     }
-    return { bounds, tabs, activeIndex, splits }
+    return { bounds, activeEphemeralId, splits }
   }
 
   destroy(): void {
@@ -2193,6 +2213,15 @@ export interface CreateTabOptions {
    * 省略すると「たった今」になり、**自動アーカイブの寿命がリセットされる**。
    */
   lastActiveAt?: number
+  /**
+   * 一時タブの共有定義に紐づくタブとして作る（`openEphemeral` / セッション復元）。
+   *
+   * **省略（undefined）のときだけ、`createTab` が新しい定義を自動で作る**
+   * （通常ウィンドウの http/https タブが対象）。渡したのに `resolveTabOwnership` が
+   * 落とした場合は**新しい定義を作らない** —— 黙って「所属なし」に流すと
+   * 同じ URL の定義が増殖する。
+   */
+  ephemeralId?: string | null
 }
 
 export function createTab(win: NemoWindow, url: string = BLANK_URL, options: CreateTabOptions = {}): NemoTab {
@@ -2223,10 +2252,11 @@ export function createTab(win: NemoWindow, url: string = BLANK_URL, options: Cre
   // 所属の不変条件（排他 / 実在 / 1 ウィンドウ 1 定義 1 タブ）は**ここで1度だけ**保証する。
   // 呼び出し口が多いので、経路ごとに書くと必ずどれかで漏れる。
   const ownership = resolveTabOwnership(
-    { pinnedId: options.pinnedId, favoriteId: options.favoriteId },
+    { pinnedId: options.pinnedId, favoriteId: options.favoriteId, ephemeralId: options.ephemeralId },
     {
       pinnedExists: (id) => findPinned(id) !== null,
       favoriteExists: (id) => findFavorite(id) !== null,
+      ephemeralExists: (id) => findEphemeralTab(id) !== null,
       windowTabs: win.tabs
     }
   )
@@ -2235,7 +2265,18 @@ export function createTab(win: NemoWindow, url: string = BLANK_URL, options: Cre
   }
   tab.pinnedId = ownership.pinnedId
   tab.favoriteId = ownership.favoriteId
+  tab.ephemeralId = ownership.ephemeralId
   win.tabs.push(tab)
+  // 通常ウィンドウの所属なし http/https タブは、その場で共有定義も作る（全ウィンドウのサイドバーに出す）。
+  // **呼び出し側が `ephemeralId` を渡したときは作らない**（`CreateTabOptions.ephemeralId` を参照）
+  if (
+    options.ephemeralId === undefined &&
+    !ownership.pinnedId &&
+    !ownership.favoriteId &&
+    !ownership.ephemeralId
+  ) {
+    ensureEphemeralDefinition(tab)
+  }
   if (!options.asleep) tab.materialize()
   win.layout()
 
@@ -2593,6 +2634,10 @@ export function promotePeek(win: NemoWindow, peek: NemoTab): void {
     win.tabs.splice(index, 1)
     win.tabs.push(peek)
   }
+  // 通常タブになったので共有定義も作る（`createTab` を通らない生成経路。
+  // 漏らすとどのサイドバーにも出ない不可視タブになる。共有一覧の順序は追加順なので、
+  // 「末尾へ動かす」は定義の新規追加 = 末尾で自然に満たされる）
+  ensureEphemeralDefinition(peek)
   win.layout()
   selectTab(win, peek.key)
   log('peek.promote', { key: peek.key, parent: parent.key, windowId: win.id })
@@ -2688,6 +2733,20 @@ export function removeTab(
     return
   }
 
+  // 共有定義に属するタブを閉じる = **定義ごと削除**（全ウィンドウから消える。決定表参照）。
+  // 波及 close 中の再入（`removeEphemeralEverywhere` が呼ぶ `removeTab`）はそのまま通す
+  const shared = win.findTab(key)
+  if (shared?.ephemeralId && !removingEphemeralIds.has(shared.ephemeralId)) {
+    if (findEphemeralTab(shared.ephemeralId)) {
+      removeEphemeralEverywhere(shared.ephemeralId, { ...options, origin: win })
+      return
+    }
+    // 定義が既に無い（壊れた参照）。委譲すると何もせず戻って**閉じられないタブ**になるので、
+    // 紐付けを外して通常の削除に落とす
+    log('tab.ephemeral_missing_definition', { key, defId: shared.ephemeralId })
+    shared.ephemeralId = null
+  }
+
   const index = win.tabs.findIndex((tab) => tab.key === key)
   if (index === -1) return
   const [tab] = win.tabs.splice(index, 1)
@@ -2719,7 +2778,12 @@ export function removeTab(
     removeTab(win, peek.key, options)
   }
 
-  rememberClosedTab(win, tab, options.archiveReason ?? 'closed')
+  // 波及 close 中は記録しない（「定義削除は 1 回、実体 close は N 回」。
+  // 素通しだと 2 ウィンドウで開いていたタブを閉じたとき ⌘⇧T に 2 件・アーカイブに 2 回積まれる。
+  // 記録は `removeEphemeralEverywhere` が定義から 1 回だけ行う）
+  if (!(tab.ephemeralId && removingEphemeralIds.has(tab.ephemeralId))) {
+    rememberClosedTab(win, tab, options.archiveReason ?? 'closed')
+  }
 
   const wc = tab.webContents
   if (tab.view) win.baseWindow.contentView.removeChildView(tab.view)
@@ -2768,6 +2832,7 @@ export function removeTab(
 export function effectiveCustomTitle(tab: NemoTab): string | null {
   if (tab.pinnedId) return findPinned(tab.pinnedId)?.customTitle ?? null
   if (tab.favoriteId) return findFavorite(tab.favoriteId)?.customTitle ?? null
+  if (tab.ephemeralId) return findEphemeralTab(tab.ephemeralId)?.customTitle ?? null
   return tab.customTitle
 }
 
@@ -2857,6 +2922,10 @@ export function moveTabToWindow(tab: NemoTab, target: NemoWindow): boolean {
 
   const moving = tab.peek ? [tab, tab.peek] : [tab]
   for (const item of moving) transferOne(item, source, target)
+
+  // 小窓 → 通常ウィンドウの ⌘O 合流。合流した時点で共有定義に入る
+  // （小窓にいる間は共有に参加しない。Peek はそのまま Peek なので作らない）
+  if (canHostAdditionalTabs(target) && !target.isPrivate) ensureEphemeralDefinition(tab)
 
   if (source.previousTabKey === tab.key) source.previousTabKey = null
   if (source.activeTabKey === tab.key) {
@@ -3171,14 +3240,82 @@ function assignDefinition(tab: NemoTab, kind: 'pinned' | 'favorite', definition:
   for (const other of tab.window.tabs) {
     if (other === tab) continue
     const owned = kind === 'pinned' ? other.pinnedId : other.favoriteId
-    if (owned === definition.id) demoteTab(other, definition)
+    if (owned === definition.id) {
+      demoteTab(other, definition)
+      // 降格したタブに共有定義を与える（`demoteEverywhere` と同じ扱い。
+      // 定義なしのローカル行のままだと他ウィンドウに出ず、再起動でも消える）
+      ensureEphemeralDefinition(other)
+    }
   }
+  // 一時タブからの**昇格**なら、共有定義は削除して他ウィンドウの実体を新定義へ付け替える
+  // （実体は閉じない。消し忘れると同じタブが 2 層に出る）
+  const promotedEphemeralId = tab.ephemeralId
+  tab.ephemeralId = null
   tab.pinnedId = kind === 'pinned' ? definition.id : null
   tab.favoriteId = kind === 'favorite' ? definition.id : null
+  if (promotedEphemeralId) rebindEphemeralEverywhere(promotedEphemeralId, kind, definition, tab)
   // **既に届いている favicon を定義へ写す**。`page-favicon-updated` は所属より前に来ているのが普通
   // （開いてから ⌘D / ドロップする）で、次の読み込みまで待つと「開いているのに頭文字」になる。
   // シークレットでは書かない（`page-favicon-updated` 側と同じ不変条件）
   if (tab.faviconUrl && !tab.window.isPrivate) setFaviconForDefinition(definition.id, tab.faviconUrl, tab.url)
+}
+
+/**
+ * 一時タブの共有定義が昇格（⌘D / Favorites 追加）で消えるとき、
+ * **他ウィンドウの実体を新しい定義へ付け替える**（実体は閉じない）。
+ *
+ * 付け替え先に同じ定義のタブが既にいるウィンドウでは、
+ * 「1 ウィンドウ 1 定義 1 タブ」を守るため所属なしのローカルタブへ倒す
+ * （名前は定義の customTitle を写して失わない）。
+ */
+function rebindEphemeralEverywhere(
+  ephemeralId: string,
+  kind: 'pinned' | 'favorite',
+  definition: RemovedDefinition,
+  skip: NemoTab
+): void {
+  /**
+   * rival で倒す実体に与える共有定義。**rebind 1 回につき 1 本だけ**作って束ねる
+   * （`demoteEverywhere` の `ephemeralByDefinition` と同じ規則。実体ごとに作ると
+   * 同じ URL の行が N 本並ぶ）。rival は各ウィンドウに高々 1 本なので、
+   * 1 本の定義に束ねても「1 ウィンドウ 1 定義 1 タブ」は破れない。
+   */
+  let fallbackDefId: string | null = null
+  let fallbackCreated = false
+  for (const win of windowsById.values()) {
+    if (win.isDestroyed) continue
+    let changed = false
+    for (const tab of win.tabs) {
+      if (tab === skip || tab.ephemeralId !== ephemeralId) continue
+      tab.ephemeralId = null
+      const rival = win.tabs.some(
+        (other) => other !== tab && (kind === 'pinned' ? other.pinnedId : other.favoriteId) === definition.id
+      )
+      if (rival) {
+        // 「1 ウィンドウ 1 定義 1 タブ」を守れないので所属なしに倒す。名前は写して失わない。
+        // **共有定義は作り直す**（定義なしのローカル行は他ウィンドウに出ず `toSaved()` にも
+        // 載らないため、別ウィンドウから ⌘D しただけで既存タブが再起動で消える）
+        tab.customTitle = definition.customTitle
+        if (!fallbackCreated) {
+          fallbackCreated = true
+          if (ensureEphemeralDefinition(tab)) fallbackDefId = tab.ephemeralId
+        } else if (fallbackDefId) {
+          tab.ephemeralId = fallbackDefId
+        }
+      } else {
+        // **ピン留め / Favorites は分割に入れない**（`togglePin` が昇格の手前で解くのと
+        // 同じ不変条件。解かずに付け替えると、サイドバーから結合行が消えるのに
+        // 画面には分割が残り、解除する導線が無くなる）
+        separateSplit(win, tab.key)
+        tab.pinnedId = kind === 'pinned' ? definition.id : null
+        tab.favoriteId = kind === 'favorite' ? definition.id : null
+      }
+      changed = true
+    }
+    if (changed) win.pushState()
+  }
+  removeEphemeralTab(ephemeralId)
+  log('tab.ephemeral_promoted', { defId: ephemeralId, kind })
 }
 
 /**
@@ -3190,6 +3327,13 @@ function assignDefinition(tab: NemoTab, kind: 'pinned' | 'favorite', definition:
 function demoteEverywhere(removed: RemovedDefinition[], skip?: NemoTab): number {
   if (removed.length === 0) return 0
   const byId = new Map(removed.map((definition) => [definition.id, definition]))
+  /**
+   * 降格した実体に与える共有定義。**消えた定義 1 つにつき 1 本だけ**作り、
+   * 全ウィンドウの降格実体をそこへ束ねる（実体ごとに作ると、2 ウィンドウで開いていた
+   * ピンを外した瞬間に同じ URL の行が 2 本並ぶ）。null は「作れなかった」
+   * （http/https でない等）で、そのウィンドウローカルのタブに倒す。
+   */
+  const ephemeralByDefinition = new Map<string, string | null>()
   let demoted = 0
   for (const win of windowsById.values()) {
     if (win.isDestroyed) continue
@@ -3201,6 +3345,21 @@ function demoteEverywhere(removed: RemovedDefinition[], skip?: NemoTab): number 
       const definition = byId.get(owned)
       if (!definition) continue
       demoteTab(tab, definition)
+      if (!win.isPrivate && canHostAdditionalTabs(win) && !tab.peekOf) {
+        let ephemeralId = ephemeralByDefinition.get(definition.id)
+        if (ephemeralId === undefined) {
+          ephemeralId =
+            addEphemeralTab({
+              url: tab.url,
+              title: tab.title,
+              customTitle: definition.customTitle,
+              faviconUrl: tab.faviconUrl,
+              lastActiveAt: tab.lastActiveAt
+            })?.id ?? null
+          ephemeralByDefinition.set(definition.id, ephemeralId)
+        }
+        tab.ephemeralId = ephemeralId
+      }
       demoted += 1
       changed = true
     }
@@ -3297,7 +3456,9 @@ export function togglePin(tab: NemoTab): void {
     if (result) applyConversion(tab, result, 'pinned')
     return
   }
-  const node = findPinnedByUrl(tab.url) ?? pinUrl(tab.url, tab.title, tab.customTitle)
+  // 名前は**実効値**を渡す（共有定義のタブのリネームは定義側にあり、
+  // `tab.customTitle` を渡すと昇格の瞬間に名前が失われる）
+  const node = findPinnedByUrl(tab.url) ?? pinUrl(tab.url, tab.title, effectiveCustomTitle(tab))
   if (!node) return
   assignDefinition(tab, 'pinned', { id: node.id, title: node.title, customTitle: node.customTitle })
   tab.window.pushState()
@@ -3318,7 +3479,8 @@ export function addFavoriteFromTab(tab: NemoTab, section?: FavoriteSection): voi
       const result = convertPinToFavorite(pinnedId)
       if (result) applyConversion(tab, result, 'favorite')
     } else {
-      const item = addFavoriteDefinition(tab.url, tab.title, tab.customTitle)
+      // `togglePin` と同じく名前は実効値（定義側のリネーム）を渡す
+      const item = addFavoriteDefinition(tab.url, tab.title, effectiveCustomTitle(tab))
       if (!item) return
       assignDefinition(tab, 'favorite', { id: item.id, title: item.title, customTitle: item.customTitle })
       tab.window.pushState()
@@ -3374,14 +3536,181 @@ export function openFavorite(win: NemoWindow, favoriteId: string): void {
   createTab(win, item.url, { favoriteId, title: item.title, customTitle: item.customTitle })
 }
 
+/* ------------------------------------------------------------------ *
+ * 一時タブの共有定義とタブ実体の対応
+ * ------------------------------------------------------------------ */
+
 /**
- * タブの名前を変える。専用タブなら**所属定義**を、一時タブならタブ自身を書き換える。
+ * 所属を持たないタブに共有定義を作って紐づける。
+ *
+ * 作らない条件（= ウィンドウローカルのタブのまま）:
+ * シークレット / 小窓 / Peek / 既に所属あり / http・https でない URL
+ * （`addEphemeralTab` が null を返す。`about:blank` は最初のナビゲーションで定義化される）。
+ *
+ * @returns 定義を作ったか
+ */
+function ensureEphemeralDefinition(tab: NemoTab): boolean {
+  const win = tab.window
+  if (win.isPrivate || !canHostAdditionalTabs(win)) return false
+  if (tab.peekOf) return false
+  if (tab.pinnedId || tab.favoriteId || tab.ephemeralId) return false
+  const def = addEphemeralTab({
+    url: tab.url,
+    title: tab.title,
+    customTitle: tab.customTitle,
+    faviconUrl: tab.faviconUrl,
+    lastActiveAt: tab.lastActiveAt
+  })
+  if (!def) return false
+  tab.ephemeralId = def.id
+  return true
+}
+
+/**
+ * ナビゲーション時の定義との同期。
+ * - 定義を持つタブ → url / title を書き戻す（最後に触った実体が勝つ）
+ * - 所属なしのローカルタブ（`about:blank` から始まった ⌘T 等）→ http/https に来た時点で定義化
+ */
+function syncEphemeralDefinition(tab: NemoTab): void {
+  if (tab.window.isPrivate) return
+  if (tab.ephemeralId) {
+    updateEphemeralFromTab(tab.ephemeralId, { url: tab.url, title: tab.title })
+    return
+  }
+  if (tab.pinnedId || tab.favoriteId) return
+  // `ephemeralId` が TabState に載るまで renderer は「ローカル行」として描いているので、
+  // 定義化したら pushState で載せ替える
+  if (ensureEphemeralDefinition(tab)) tab.window.pushState()
+}
+
+/**
+ * 波及 close 中の定義 ID。`removeEphemeralEverywhere` が呼ぶ `removeTab` の再入
+ * （また定義削除へ回って無限ループ）と、⌘⇧T / アーカイブの重複記録を止める。
+ */
+const removingEphemeralIds = new Set<string>()
+
+/** 会議に参加中の実体（共有タブの二重実体化ガードが見る）。 */
+function findJoinedEphemeralInstance(defId: string): { win: NemoWindow; tab: NemoTab } | null {
+  if (!callWatcher) return null
+  for (const win of windowsById.values()) {
+    if (win.isDestroyed) continue
+    for (const tab of win.tabs) {
+      if (tab.ephemeralId === defId && callWatcher.isJoined(tab)) return { win, tab }
+    }
+  }
+  return null
+}
+
+/** 参加中の実体があるウィンドウへフォーカスを移す（ガードの見え方 = 無反応にしない）。 */
+function focusEphemeralInstance(target: { win: NemoWindow; tab: NemoTab }): void {
+  const { win, tab } = target
+  if (win.isDestroyed || win.baseWindow.isDestroyed()) return
+  if (!win.baseWindow.isVisible()) win.baseWindow.show()
+  win.baseWindow.focus()
+  app.focus({ steal: true })
+  selectTab(win, tab.key)
+}
+
+/**
+ * 一時タブの共有定義をそのウィンドウで開く（既に実体があればそれを選ぶ）。
+ *
+ * ピン留めの `openPinned` と違い、開く URL は**定義の現在 URL**
+ * （実体のナビゲーションに追随した値。「登録 URL に戻る」規則は無い）。
+ *
+ * **通話ガード**: 別ウィンドウの実体が会議に参加中なら実体化せず、そのウィンドウへ
+ * フォーカスを移す（二重に開くと Arc で報告されていた「待機側を閉じると通話ごと切断」を踏む）。
+ */
+export function openEphemeral(win: NemoWindow, defId: string): void {
+  if (win.isPrivate || !canHostAdditionalTabs(win)) return
+  const def = findEphemeralTab(defId)
+  if (!def) return
+  const existing = win.normalTabs.find((tab) => tab.ephemeralId === defId)
+  if (existing) {
+    selectTab(win, existing.key)
+    return
+  }
+  const joined = findJoinedEphemeralInstance(defId)
+  if (joined) {
+    log('call.guarded', { defId, action: 'open' })
+    focusEphemeralInstance(joined)
+    return
+  }
+  createTab(win, def.url, { ephemeralId: defId, title: def.title })
+}
+
+/**
+ * 一時タブの共有定義を削除する（= 全ウィンドウから消える）。
+ *
+ * **「定義削除は 1 回、実体 close は N 回」**。定義を消す経路はここ（⌘W・×・
+ * close-ephemeral IPC・定義基準の自動アーカイブ）だけで、ウィンドウを閉じる
+ * `destroy()` / `moveTabToWindow` は実体のデタッチのみ（定義は残る）。
+ *
+ * ⌘⇧T とアーカイブへの記録は**定義から 1 回だけ**行う。実体側の `removeTab` に
+ * 任せると 2 ウィンドウで開いていたタブが二重に積まれ、**実体ゼロの定義**
+ * （未実体化のまま自動アーカイブされるもの = 大半）は記録を残さず黙って消える。
+ * 「アーカイブは removeTab に任せて経路を 1 本に」という以前の不変条件は、
+ * 共有定義のタブについてはここへ移った。
+ *
+ * **通話ガード**: どこかの実体が会議に参加中で、削除の起点がそのウィンドウでなければ拒否
+ * （未実体化のウィンドウから × 一発で通話が切れるのを防ぐ）。自動アーカイブは
+ * sweep 側の除外（isSleepExempt の全ウィンドウ OR）が守るのでガードしない。
+ */
+export function removeEphemeralEverywhere(
+  defId: string,
+  options: { archiveReason?: ArchiveReason; origin?: NemoWindow } = {}
+): void {
+  const def = findEphemeralTab(defId)
+  if (!def) return
+  if (options.archiveReason !== 'auto') {
+    const joined = findJoinedEphemeralInstance(defId)
+    if (joined && joined.win !== options.origin) {
+      log('call.guarded', { defId, action: 'close' })
+      focusEphemeralInstance(joined)
+      return
+    }
+  }
+
+  removingEphemeralIds.add(defId)
+  try {
+    for (const win of [...windowsById.values()]) {
+      if (win.isDestroyed) continue
+      for (const tab of [...win.tabs]) {
+        if (tab.ephemeralId === defId) removeTab(win, tab.key, { archiveReason: options.archiveReason })
+      }
+    }
+  } finally {
+    removingEphemeralIds.delete(defId)
+  }
+
+  // 記録は定義の値から（url / title / customTitle は書き戻しで実体に追随している）
+  if (/^https?:\/\//.test(def.url)) {
+    closedTabs.push({
+      url: def.url,
+      title: def.title,
+      pinnedId: null,
+      favoriteId: null,
+      customTitle: def.customTitle
+    })
+    if (closedTabs.length > CLOSED_TAB_LIMIT) closedTabs.shift()
+    archiveTab(def.url, def.title, options.archiveReason ?? 'closed')
+  }
+  removeEphemeralTab(defId)
+  log('tab.ephemeral_removed', { defId, reason: options.archiveReason ?? 'closed' })
+}
+
+/**
+ * タブの名前を変える。定義に属するタブなら**所属定義**を、ローカルタブならタブ自身を書き換える。
  * `null` / 空文字で解除して実タイトルに戻る。
  */
 export function renameTab(tab: NemoTab, title: string | null): void {
   const definitionId = tab.pinnedId ?? tab.favoriteId
   if (definitionId) {
     renameNode(definitionId, title)
+    return
+  }
+  if (tab.ephemeralId) {
+    // 共有一覧の名前は定義が正（タブ側に書くと他ウィンドウに出ず再起動でも消える）
+    updateEphemeralFromTab(tab.ephemeralId, { customTitle: title })
     return
   }
   const trimmed = typeof title === 'string' ? title.trim().slice(0, 300) : ''
@@ -3486,6 +3815,10 @@ export function startBackgroundWork(): void {
   onPinsChanged(() => {
     for (const win of windowsById.values()) win.pushShared()
   })
+  // 一時タブの共有定義も同じ経路（書き戻し由来の通知はストア側でデバウンス済み）
+  onEphemeralTabsChanged(() => {
+    for (const win of windowsById.values()) win.pushShared()
+  })
   onDownloadsChanged(() => {
     for (const win of windowsById.values()) win.pushShared()
   })
@@ -3557,22 +3890,53 @@ function sweepSleep(): void {
  * 対象は**一時タブだけ**。ピン留め / Favorites のタブは触らない（Arc と同じ）。
  * アーカイブは「閉じる」だが**消さない**。ライブラリから掘り返せる。
  *
+ * **共有定義（`ephemeralId` を持つタブ）は定義基準で判定する**:
+ * - 「最後に使った時刻」は定義の `lastActiveAt` と全実体の `pairLastActiveAt` の最大値
+ *   （「全実体が閾値超え」のような全称条件は**実体ゼロで空虚に真**になるので使わない。
+ *   実体が 1 つも無い定義は自身の `lastActiveAt` で普通に老化する）
+ * - 除外条件（見えている / Peek 持ち / 音 / 会議中）は**全ウィンドウ横断の OR**
+ *   （B で見ているタブを A 基準で消さない）
+ * - 記録は `removeEphemeralEverywhere` が定義から 1 回だけ行う（実体ゼロでも黙って消えない）
+ *
  * 触らないもの:
  * - アクティブなタブ（見ている最中に消えたら事故）
  * - 音が出ているタブ（裏で再生中）
- * - シークレットウィンドウのタブ（そもそも記録に残さない）
+ * - シークレットウィンドウのタブ（そもそも共有にも記録にも入らない）
  */
 function sweepArchive(): void {
   const hours = getSettings().tabArchiveHours
   if (hours <= 0) return
   const threshold = Date.now() - hours * 3_600_000
   let archived = 0
+
+  // --- 共有定義は定義基準 ---
+  for (const def of [...getEphemeralTabs()]) {
+    let last = def.lastActiveAt
+    let excluded = false
+    for (const win of windowsById.values()) {
+      if (win.isDestroyed || win.isPrivate) continue
+      const visible = win.visibleTabKeys
+      for (const tab of win.normalTabs) {
+        if (tab.ephemeralId !== def.id) continue
+        last = Math.max(last, pairLastActiveAt(tab))
+        if (visible.has(tab.key)) excluded = true
+        if (tab.peek) excluded = true
+        if (tab.webContents?.isCurrentlyAudible()) excluded = true
+        if (callWatcher?.isSleepExempt(tab)) excluded = true
+      }
+    }
+    if (excluded || last > threshold) continue
+    removeEphemeralEverywhere(def.id, { archiveReason: 'auto' })
+    archived += 1
+    log('tab.auto_archived', { defId: def.id })
+  }
+
+  // --- 定義を持たないウィンドウローカルのタブ（about:blank・拡張ページ等）は従来どおり ---
   for (const win of [...windowsById.values()]) {
     if (win.isDestroyed || win.isPrivate) continue
     const visible = win.visibleTabKeys
     for (const tab of [...win.normalTabs]) {
-      // ピン留め / Favorites の専用タブは触らない（Arc と同じ）
-      if (tab.pinnedId !== null || tab.favoriteId !== null) continue
+      if (tab.pinnedId !== null || tab.favoriteId !== null || tab.ephemeralId !== null) continue
       // **見えているタブは触らない**（分割の相方も画面に出ている）
       if (visible.has(tab.key)) continue
       // Peek を持つ親タブは触らない（見ている最中の Peek ごと消えるのは事故）
@@ -3586,7 +3950,7 @@ function sweepArchive(): void {
         removeTab(win, tab.key)
         continue
       }
-      // アーカイブは removeTab に任せる（経路を1本にしておかないと理由がズレる）
+      // 定義化に失敗した http タブの保険。アーカイブは removeTab に任せる
       removeTab(win, tab.key, { archiveReason: 'auto' })
       archived += 1
       log('tab.auto_archived', { key: tab.key, windowId: win.id })
@@ -3621,6 +3985,15 @@ function scheduleSessionSave(): void {
 }
 
 export function collectSession(): SavedWindow[] {
+  // 実体の `lastActiveAt` を定義へ写す（定義基準の自動アーカイブと再起動後の寿命の正）。
+  // セッション保存と終了時の両方がここを通るので、写す場所はこの 1 か所に寄せる。
+  // 通知は飛ばない（UI は使わない値。永続化は JsonStore のデバウンスに任せる）
+  for (const win of windowsById.values()) {
+    if (win.isDestroyed || win.isPrivate) continue
+    for (const tab of win.tabs) {
+      if (tab.ephemeralId) bumpEphemeralActivity(tab.ephemeralId, tab.lastActiveAt)
+    }
+  }
   // シークレットウィンドウはディスクに残さない（復元もしない）
   // 小窓は復元しない（`toSaved()` を空にするだけでは「空の通常ウィンドウ」として復元される）
   return [...windowsById.values()]

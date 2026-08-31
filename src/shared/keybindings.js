@@ -75,13 +75,9 @@ export const COMMANDS = [
     accelerator: 'Control+M',
     menu: 'tab'
   },
-  {
-    id: 'move-tab-to-new-window',
-    label: 'タブを新規ウィンドウへ',
-    accelerator: 'CmdOrCtrl+Shift+N',
-    menu: 'tab',
-    needsTab: true
-  },
+  // 「タブを新規ウィンドウへ」（⌘⇧N）は共有モデルで廃止した。
+  // 新規ウィンドウにも全タブが出るので「移す」概念が成立しない
+  // （内部の `moveTabToWindow` は小窓の ⌘O 昇格と検証機構として残っている）
   {
     id: 'promote-peek',
     label: 'メインウィンドウで開く',

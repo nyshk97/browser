@@ -126,15 +126,22 @@ try {
   const state = await ui.ev('window.nemo.getWindowState().then(s => JSON.stringify(s))').then(JSON.parse)
   const shared = await ui.ev('window.nemo.getSharedState().then(s => JSON.stringify(s))').then(JSON.parse)
 
-  const urls = state.tabs.map((tab) => tab.url)
+  // 版 5 から野良タブの正は共有定義ストア。移行結果は `shared.ephemeralTabs` で見る
+  const defUrls = (shared.ephemeralTabs ?? []).map((def) => def.url)
   check(
-    '版 2 のピン留めタブは一時タブとして復活しない',
-    !urls.some((url) => url.includes('pin-a') || url.includes('pin-b') || url.includes('pin-c')),
-    urls.join(', ')
+    '版 2 のピン留めタブは共有定義として復活しない',
+    !defUrls.some((url) => url.includes('pin-a') || url.includes('pin-b') || url.includes('pin-c')),
+    defUrls.join(', ')
   )
   check(
-    '一時タブは復元される',
-    urls.some((url) => url.includes('tmp-1')) && urls.some((url) => url.includes('tmp-2')),
+    '一時タブは共有定義ストアへ移行される',
+    defUrls.some((url) => url.includes('tmp-1')) && defUrls.some((url) => url.includes('tmp-2')),
+    defUrls.join(', ')
+  )
+  const urls = state.tabs.map((tab) => tab.url)
+  check(
+    '実体化されるのはアクティブ定義だけ（他はサイドバーに出るだけ）',
+    urls.length === 1 && urls[0].includes('tmp-2'),
     urls.join(', ')
   )
   const active = state.tabs.find((tab) => tab.key === state.activeTabKey)
@@ -144,10 +151,18 @@ try {
     `${active?.url} / ${active?.title}`
   )
   check(
-    '復元したタブに所属は付かない',
-    state.tabs.every((tab) => tab.pinnedId === null && tab.favoriteId === null),
-    JSON.stringify(state.tabs.map((tab) => [tab.pinnedId, tab.favoriteId]))
+    '復元したタブは共有定義に属し、ピン / Favorite は付かない',
+    state.tabs.every((tab) => tab.pinnedId === null && tab.favoriteId === null && tab.ephemeralId !== null),
+    JSON.stringify(state.tabs.map((tab) => [tab.pinnedId, tab.favoriteId, tab.ephemeralId]))
   )
+  {
+    const raw = JSON.parse(fs.readFileSync(path.join(userDataDir, 'session.json'), 'utf8'))
+    check(
+      '移行直後に session.json が版 5 で確定している（saveNow）',
+      raw.version === 5,
+      `version=${raw.version}`
+    )
+  }
 
   const folder = shared.pinned.find((node) => node.kind === 'folder')
   check(
@@ -233,6 +248,9 @@ try {
     const read = await session
       .ev('window.nemo.getWindowState().then(s => JSON.stringify(s))')
       .then(JSON.parse)
+    read.sharedDefs = await session
+      .ev('window.nemo.getSharedState().then(s => JSON.stringify(s.ephemeralTabs ?? []))')
+      .then(JSON.parse)
     session.close()
     await stopChildren([proc])
     spawned.splice(spawned.indexOf(proc), 1)
@@ -265,15 +283,25 @@ try {
   )
   const firstActive = firstRun.tabs.find((tab) => tab.key === firstRun.activeTabKey)
   check('版 4: アクティブタブが並べ替えでずれない', firstActive?.url === url('s0'), firstActive?.url)
+  check(
+    '版 4: 全タブが共有定義ストアへ移行される（4 本）',
+    firstRun.sharedDefs.length === 4,
+    `defs=${firstRun.sharedDefs.length}`
+  )
 
-  // **2 回目**。初回の終了時に正規化済みの版 4 が書かれるので、
-  // それを読み直す経路が壊れていても初回だけでは気づけない。
+  // **2 回目**。初回の移行で版 5 が書かれるので、それを読み直す経路が壊れていても
+  // 初回だけでは気づけない。**定義が二重登録されないこと（移行の冪等性）**もここで見る。
   const secondRun = await readSplitSession('版 4 の 2 回目の起動', splitDir)
   check(
     '版 4: 2 回目の起動でも同じ組・同じアクティブタブ（冪等）',
     JSON.stringify(pairsOf(secondRun)) === JSON.stringify(pairsOf(firstRun)) &&
       secondRun.tabs.find((tab) => tab.key === secondRun.activeTabKey)?.url === firstActive?.url,
     JSON.stringify(pairsOf(secondRun))
+  )
+  check(
+    '版 4: 2 回目の起動で定義が二重登録されない（移行が再実行されない）',
+    secondRun.sharedDefs.length === 4,
+    `defs=${secondRun.sharedDefs.length}`
   )
 
   fs.rmSync(splitDir, { recursive: true, force: true })
@@ -321,6 +349,112 @@ try {
       2
     )}\n`
   )
+
+  /* ---------------------------------------------------------------- *
+   * 版 4 + 複数ウィンドウ（移行の中核: 全ウィンドウの野良タブを出現順に結合し、
+   * ウィンドウごとの activeEphemeralId を自分のタブへ割り当てる）
+   * ---------------------------------------------------------------- */
+  const multiDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nemo-migrate-multi-'))
+  fs.writeFileSync(
+    path.join(multiDir, 'session.json'),
+    `${JSON.stringify(
+      {
+        version: 4,
+        data: {
+          windows: [
+            {
+              bounds: null,
+              activeIndex: 1,
+              tabs: ['w1a', 'w1b'].map((name) => ({
+                url: url(name),
+                title: name,
+                customTitle: null,
+                lastActiveAt: Date.now()
+              })),
+              splits: []
+            },
+            {
+              bounds: null,
+              activeIndex: 0,
+              tabs: [{ url: url('w2a'), title: 'w2a', customTitle: null, lastActiveAt: Date.now() }],
+              splits: []
+            }
+          ],
+          cleanExit: true,
+          savedAt: Date.now()
+        }
+      },
+      null,
+      2
+    )}\n`
+  )
+
+  /** 全通常ウィンドウの状態と共有一覧を読む（`readSplitSession` は先頭の 1 枚しか見ない）。 */
+  const readAllWindows = async (label, dir) => {
+    const port = String(await getFreePort())
+    const endpoint = `http://127.0.0.1:${port}`
+    const proc = spawn(electronPath, ['out/main/index.js'], {
+      cwd: projectRoot,
+      stdio: 'inherit',
+      env: { ...process.env, NEMO_REMOTE_DEBUGGING_PORT: port, NEMO_USER_DATA_DIR: dir }
+    })
+    spawned.push(proc)
+    await waitForHttp(`${endpoint}/json/list`, {
+      child: proc,
+      check: async (res) => (await res.json()).some((t) => t.url.startsWith('nemo://ui/'))
+    })
+    const first = await connectUi(endpoint)
+    const sharedDefs = await first
+      .ev('window.nemo.getSharedState().then(s => JSON.stringify((s.ephemeralTabs ?? []).map(d => d.url)))')
+      .then(JSON.parse)
+    const sidebars = (await (await fetch(`${endpoint}/json/list`)).json()).filter(
+      (t) => t.url.includes('view=sidebar') && !t.url.includes('private=1')
+    )
+    const windows = []
+    for (const target of sidebars) {
+      const session = await connectUi(endpoint, 'sidebar', {
+        urlPart: new URL(target.url).search.slice(1),
+        waitReady: false
+      })
+      windows.push(
+        await session.ev('window.nemo.getWindowState().then(s => JSON.stringify(s))').then(JSON.parse)
+      )
+      session.close()
+    }
+    first.close()
+    await stopChildren([proc])
+    spawned.splice(spawned.indexOf(proc), 1)
+    const uncaughtHere = findUncaughtExceptions(dir)
+    check(`${label}: main プロセスに例外が出ていない`, uncaughtHere.length === 0, uncaughtHere.join(' / '))
+    return { sharedDefs, windows }
+  }
+
+  const multiFirst = await readAllWindows('版 4 複数ウィンドウの初回起動', multiDir)
+  check(
+    '版 4 複数ウィンドウ: 全ウィンドウの野良タブが出現順に結合される',
+    JSON.stringify(multiFirst.sharedDefs) === JSON.stringify([url('w1a'), url('w1b'), url('w2a')]),
+    JSON.stringify(multiFirst.sharedDefs)
+  )
+  check(
+    '版 4 複数ウィンドウ: ウィンドウが 2 枚とも復元される',
+    multiFirst.windows.length === 2,
+    `windows=${multiFirst.windows.length}`
+  )
+  const activeUrls = multiFirst.windows
+    .map((w) => w.tabs.find((t) => t.key === w.activeTabKey)?.url ?? '')
+    .sort()
+  check(
+    '版 4 複数ウィンドウ: 各ウィンドウのアクティブが自分のタブを指す',
+    JSON.stringify(activeUrls) === JSON.stringify([url('w1b'), url('w2a')].sort()),
+    JSON.stringify(activeUrls)
+  )
+  const multiSecond = await readAllWindows('版 4 複数ウィンドウの 2 回目の起動', multiDir)
+  check(
+    '版 4 複数ウィンドウ: 2 回目の起動で定義が増えない（冪等）',
+    JSON.stringify(multiSecond.sharedDefs) === JSON.stringify(multiFirst.sharedDefs),
+    JSON.stringify(multiSecond.sharedDefs)
+  )
+  fs.rmSync(multiDir, { recursive: true, force: true })
 
   const movedRun = await readSplitSession('版 4 + moved の初回起動', movedDir)
   check(

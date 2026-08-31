@@ -38,6 +38,12 @@ import { sampleMetrics } from './metrics.js'
 import { initTimings } from './timings.js'
 import { closeSettings, getSettings, initSettings, updateSettings } from './store/settings.js'
 import { backfillFavicons, closePins, initPins } from './store/pins.js'
+import {
+  closeEphemeralTabs,
+  findEphemeralTab,
+  getEphemeralTabs,
+  initEphemeralTabs
+} from './store/ephemeral-tabs.js'
 import { closeDb, initDb } from './store/db.js'
 import { getFaviconsByUrlOrHost } from './store/history.js'
 import { pruneArchive } from './store/archive.js'
@@ -150,6 +156,9 @@ app
       log('sidebar.restored_on_launch', {})
     }
     initPins()
+    // **`initSession()` より前**。旧版セッションの移行（`initSession` の中で走る）が
+    // 一時タブの共有定義ストアへ書き込むので、後だと移行が空振りする
+    initEphemeralTabs()
     initPermissionStore()
     initCallWindowStore()
     // **認証ハンドラ・IPC 登録より前**（暗号化 backend の解決 → ストアの読み込みの順）
@@ -269,43 +278,54 @@ app
         })
         startupWindows.push(win)
         win.whenUiReady(() => {
-          saved.tabs.forEach((tab) => {
-            // 復元直後は WebContents を作らない（数十タブを一斉に立ち上げない）。
-            // 選んだ時点で読み込まれる。
-            //
-            // ピン留め / Favorites のタブは**そもそもセッションに入っていない**
-            // （枠をクリックした時点で作る）。ここで作るのは一時タブだけ。
-            createTab(win, tab.url, {
-              title: tab.title,
-              // 渡し忘れると一時タブに付けた名前が再起動で消える
-              customTitle: tab.customTitle,
+          /*
+           * 版 5: 野良タブの正は共有定義ストアにある。ウィンドウには
+           * **アクティブ定義と分割の構成員だけ**を `asleep` で実体化する
+           * （それ以外の定義はサイドバーに出るだけで、クリック時に実体化される）。
+           * 複数ウィンドウが同じ定義をアクティブにしていた場合はそのまま両方で実体化する
+           * （Arc と同じ。plan の決定表参照）。
+           */
+          const wanted: string[] = []
+          if (saved.activeEphemeralId) wanted.push(saved.activeEphemeralId)
+          for (const [left, right] of saved.splits) wanted.push(left, right)
+          const byDef = new Map<string, ReturnType<typeof createTab>>()
+          const materialize = (defId: string): void => {
+            const def = findEphemeralTab(defId)
+            if (!def || byDef.has(def.id)) return
+            // 復元直後は WebContents を作らない（選んだ時点で読み込まれる）。
+            // `lastActiveAt` を引き継がないと自動アーカイブの寿命がリセットされる
+            const tab = createTab(win, def.url, {
+              ephemeralId: def.id,
+              title: def.title,
               asleep: true,
-              // 引き継がないと自動アーカイブの寿命が再起動のたびにリセットされる
-              lastActiveAt: tab.lastActiveAt
+              lastActiveAt: def.lastActiveAt
             })
-          })
+            if (tab.ephemeralId === def.id) byDef.set(def.id, tab)
+          }
+          for (const defId of new Set(wanted)) materialize(defId)
+          // アクティブがピン / Favorite だった（= null で保存）・定義が消えていたウィンドウは
+          // **先頭定義へ倒す**（旧実装の `Math.max(findIndex, 0)` と同等。倒さないと
+          // 再起動でそのウィンドウが空状態で立ち上がる）
+          if (byDef.size === 0) {
+            const first = getEphemeralTabs()[0]
+            if (first) materialize(first.id)
+          }
           /*
            * 分割の関係だけを繋ぐ。**通常の `splitTabs` は使わない** ——
            * あれは右を選択して `applyVisibility()` を通すので、組の数だけ
            * WebContents が起きてしまい、「復元直後は寝かせたまま」が壊れる
            * （`lastActiveAt` も現在時刻に上書きされる）。
-           *
-           * **添字は全部まとめて先に解決してから繋ぐ**。1 組ずつ
-           * 「添字を引く → 並べ替える」で処理すると、最初の並べ替えで
-           * 後続の組の添字が別のタブを指す（`[[0,2],[1,3]]` のような
-           * 交差する組で壊れる。`normalizeSession` は非隣接の組も通す）。
-           * アクティブタブも並べ替えの前に控えておく。
            */
-          const activeBefore = win.tabs[saved.activeIndex] ?? win.tabs[0] ?? null
-          const pairs = saved.splits.flatMap(([leftIndex, rightIndex]) => {
-            const left = win.tabs[leftIndex]
-            const right = win.tabs[rightIndex]
-            return left && right ? [[left, right] as const] : []
-          })
-          for (const [left, right] of pairs) linkSplit(win, left, right)
+          for (const [leftId, rightId] of saved.splits) {
+            const left = byDef.get(leftId)
+            const right = byDef.get(rightId)
+            if (left && right) linkSplit(win, left, right)
+          }
 
-          // 選択は**最後に一度だけ**
-          if (activeBefore) selectTab(win, activeBefore.key)
+          // 選択は**最後に一度だけ**。アクティブ定義が消えていたら先頭の実体へ倒す
+          const active = (saved.activeEphemeralId ? byDef.get(saved.activeEphemeralId) : null) ?? null
+          const chosen = active ?? win.normalTabs[0] ?? null
+          if (chosen) selectTab(win, chosen.key)
           win.layout()
         })
       }
@@ -341,14 +361,20 @@ app
     }
 
     // `readyMs` は**タブが揃う前**の値（復元は `whenUiReady` のコールバックで走る）。
-    // 復元タブ数も registry からでなく保存データから数える（この時点では常に 0 になる）
+    // 実体化されるのはアクティブ定義と分割の構成員だけなので、その数を保存データから数える
     log('app.ready', {
       channel,
       electron: process.versions.electron,
       chrome: process.versions.chrome,
       restored: shouldRestore,
       readyMs: Math.round(process.uptime() * 1000),
-      restoredTabs: shouldRestore ? restored.windows.reduce((n, w) => n + w.tabs.length, 0) : 0,
+      restoredTabs: shouldRestore
+        ? restored.windows.reduce(
+            (n, w) =>
+              n + new Set([...(w.activeEphemeralId ? [w.activeEphemeralId] : []), ...w.splits.flat()]).size,
+            0
+          )
+        : 0,
       extensions: extensionCount
     })
   })
@@ -384,6 +410,8 @@ app.on('before-quit', () => {
   stopCallCoordinator()
   closeSettings()
   closePins()
+  // `JsonStore` はデバウンス保存なので flush 必須（書き戻し・lastActiveAt の直近分が落ちる）
+  closeEphemeralTabs()
   closePermissionStore()
   closeSession()
   // `JsonStore` はデバウンス保存なので、flush しないと直前の変更が落ちる

@@ -57,7 +57,7 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 `verify:only split restart` では spike / phase1 / pins の write+read は走らない。
 
 指定できるのは `spike` / `phase1` / `phase2` / `pins` / `switcher` / `peek` / `split` / `call` /
-`live-folder` / `http-auth` / `vim-scroll` / `restart` / `migration` / `db` / `slots`。
+`live-folder` / `http-auth` / `vim-scroll` / `restart` / `shared-tabs` / `migration` / `db` / `slots`。
 
 **足した check が全部走ったかは check 名で突き合わせる**（PASS の総数だけだと、分岐で走らない check や
 既存 check の詳細文字列への誤マッチで数が合わない）。`git show HEAD:scripts/verify-x.mjs` と今の
@@ -101,7 +101,7 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 
 - 知らない名前はエラーにする（typo で「何も回さずに PASS」にしない）
 - 回さなかったものは実行中と最後のサマリの両方に出る（フルで通ったと読み違えないため）
-- `migration` / `db` は自分でアプリを起動するので、それだけ指定したときはアプリを立てない
+- `migration` / `db` / `shared-tabs` は自分でアプリを起動するので、それだけ指定したときはアプリを立てない
 - **検証どうしの前段依存に注意**。絞って回すと、前の検証が作ったタブや履歴が無いぶん
   候補や件数が足りずに落ちることがある。落ちたら「絞ったせい」で済ませず、
   **その検証が自分で前提を作るように直す**（コマンドバーの上下移動がこれで落ちた実例あり。
@@ -135,6 +135,7 @@ mise run verify:only split
 
 | 触ったもの | 回すもの |
 |---|---|
+| **一時タブのウィンドウ横断共有**（共有定義ストア・openEphemeral / close の波及・ピン転換・シークレット / 小窓の除外・再起動復元） | `mise run verify:only shared-tabs`（2 ウィンドウ + 再起動 + 第 2 インスタンスを自分で立てる） |
 | ナビゲーション判定・設定スキーマ・キーバインド・ログ | `mise run check` |
 | **タブスイッチャー（⌃M）**・MRU の並び・オーバーレイの割り込み | `mise run verify:switcher` |
 | **ページの `gg` / `G`**（縦の端へ飛ぶ）・スクロール対象の選択・入力欄の除外 | `mise run verify:only vim-scroll` + 下の「ページの gg / G（実機）」 |

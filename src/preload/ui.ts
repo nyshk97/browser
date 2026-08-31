@@ -46,6 +46,7 @@ const api: NemoUiApi = {
   createTab: (url, options) => ipcRenderer.invoke('nemo:create-tab', url, options) as Promise<string>,
   selectTab: (key) => ipcRenderer.invoke('nemo:select-tab', key) as Promise<void>,
   closeTab: (key) => ipcRenderer.invoke('nemo:close-tab', key) as Promise<void>,
+  // ユーザー導線は廃止済み。自走検証（peek / phase1 / phase2 / split）が実体移送に使うので残す
   moveTabToNewWindow: (key) => ipcRenderer.invoke('nemo:move-tab-to-new-window', key) as Promise<void>,
   navigate: (key, input) => ipcRenderer.invoke('nemo:navigate', key, input) as Promise<void>,
   goBack: (key) => ipcRenderer.invoke('nemo:go-back', key) as Promise<void>,
@@ -54,6 +55,8 @@ const api: NemoUiApi = {
   stop: (key) => ipcRenderer.invoke('nemo:stop', key) as Promise<void>,
   setZoom: (key, factor) => ipcRenderer.invoke('nemo:set-zoom', key, factor) as Promise<number>,
 
+  openEphemeral: (ephemeralId) => ipcRenderer.invoke('nemo:open-ephemeral', ephemeralId) as Promise<void>,
+  closeEphemeral: (ephemeralId) => ipcRenderer.invoke('nemo:close-ephemeral', ephemeralId) as Promise<void>,
   openPinned: (pinnedId) => ipcRenderer.invoke('nemo:open-pinned', pinnedId) as Promise<void>,
   pinTab: (key) => ipcRenderer.invoke('nemo:pin-tab', key) as Promise<void>,
   pinTabAt: (key, parentId, index) =>

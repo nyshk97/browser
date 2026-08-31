@@ -7,6 +7,7 @@ function context(overrides = {}) {
   return {
     pinnedExists: () => true,
     favoriteExists: () => true,
+    ephemeralExists: () => true,
     windowTabs: [],
     ...overrides
   }
@@ -14,7 +15,7 @@ function context(overrides = {}) {
 
 test('所属なしはそのまま', () => {
   const result = resolveTabOwnership({}, context())
-  assert.deepEqual(result, { pinnedId: null, favoriteId: null, dropped: [] })
+  assert.deepEqual(result, { pinnedId: null, favoriteId: null, ephemeralId: null, dropped: [] })
 })
 
 test('消えた定義の ID は落とす（どの層にも出ないタブを作らない）', () => {
@@ -25,6 +26,10 @@ test('消えた定義の ID は落とす（どの層にも出ないタブを作�
   const favorite = resolveTabOwnership({ favoriteId: 'gone' }, context({ favoriteExists: () => false }))
   assert.equal(favorite.favoriteId, null)
   assert.ok(favorite.dropped.includes('missing_favorite'))
+
+  const ephemeral = resolveTabOwnership({ ephemeralId: 'gone' }, context({ ephemeralExists: () => false }))
+  assert.equal(ephemeral.ephemeralId, null)
+  assert.ok(ephemeral.dropped.includes('missing_ephemeral'))
 })
 
 test('両方の ID を同時に渡したらピン留めだけ残す', () => {
@@ -32,6 +37,22 @@ test('両方の ID を同時に渡したらピン留めだけ残す', () => {
   assert.equal(result.pinnedId, 'p1')
   assert.equal(result.favoriteId, null)
   assert.ok(result.dropped.includes('both_ids'))
+})
+
+test('ephemeralId は pinned / favorite と排他（定義側が勝つ）', () => {
+  const withPin = resolveTabOwnership({ pinnedId: 'p1', ephemeralId: 'e1' }, context())
+  assert.equal(withPin.pinnedId, 'p1')
+  assert.equal(withPin.ephemeralId, null)
+  assert.ok(withPin.dropped.includes('ephemeral_with_definition'))
+
+  const withFav = resolveTabOwnership({ favoriteId: 'f1', ephemeralId: 'e1' }, context())
+  assert.equal(withFav.favoriteId, 'f1')
+  assert.equal(withFav.ephemeralId, null)
+  assert.ok(withFav.dropped.includes('ephemeral_with_definition'))
+
+  const alone = resolveTabOwnership({ ephemeralId: 'e1' }, context())
+  assert.equal(alone.ephemeralId, 'e1')
+  assert.deepEqual(alone.dropped, [])
 })
 
 test('同じ定義のタブが同じウィンドウに既にあれば所属を付けない', () => {
@@ -48,6 +69,14 @@ test('同じ定義のタブが同じウィンドウに既にあれば所属を�
   )
   assert.equal(favorite.favoriteId, null)
   assert.ok(favorite.dropped.includes('duplicate_favorite'))
+
+  // 同じ共有定義の実体は 1 ウィンドウ 1 本（復元・openEphemeral の競合をここで止める）
+  const ephemeral = resolveTabOwnership(
+    { ephemeralId: 'e1' },
+    context({ windowTabs: [{ pinnedId: null, favoriteId: null, ephemeralId: 'e1' }] })
+  )
+  assert.equal(ephemeral.ephemeralId, null)
+  assert.ok(ephemeral.dropped.includes('duplicate_ephemeral'))
 })
 
 test('別の定義のタブが並んでいるだけなら所属は付く', () => {

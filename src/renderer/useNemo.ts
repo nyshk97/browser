@@ -26,7 +26,8 @@ export function useSharedState(): SharedState {
     version: '',
     update: { status: 'idle', version: null, percent: null, error: null },
     liveFolder: null,
-    extensions: []
+    extensions: [],
+    ephemeralTabs: null
   })
   useEffect(() => {
     void window.nemo.getSharedState().then(setState)

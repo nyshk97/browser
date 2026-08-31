@@ -183,10 +183,12 @@ if (mode === '--lazy-read') {
     check('再起動後もグリッドのセルが絵文字で描かれる', drawn === '🏠', drawn)
   }
 
+  // 版 5 から一時タブの名前は共有定義側が持つ（実体はアクティブ定義しか作られないので、
+  // タブ実体の customTitle では見えないことがある）
   check(
     '一時タブに付けた名前が再起動をまたいで残る',
-    tabs.some((t) => t.customTitle === '作業用'),
-    json(tabs.map((t) => t.customTitle))
+    (sh.ephemeralTabs ?? []).some((d) => d.customTitle === '作業用'),
+    json((sh.ephemeralTabs ?? []).map((d) => d.customTitle))
   )
 
   // **タブを開いていなくても** favicon で描かれる（定義に持っているので頭文字に落ちない）

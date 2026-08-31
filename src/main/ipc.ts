@@ -10,8 +10,10 @@ import {
   createWindow,
   findWindowByUiWebContents,
   moveTabToWindow,
+  openEphemeral,
   openFavorite,
   openPinned,
+  removeEphemeralEverywhere,
   pinTabInto,
   removeFavoriteEverywhere,
   promoteForegroundView,
@@ -338,6 +340,9 @@ export function registerIpcHandlers(): void {
     removeTab(win, tab.key)
   })
 
+  // **ユーザー導線（メニュー・⌘⇧N）は共有モデルで廃止済み**だが、この口は消さない。
+  // verify-peek / phase1 / phase2 / split の 4 スイートが「実体を別ウィンドウへ移す」
+  // シナリオの検証機構として使っている（内部の `moveTabToWindow` は mini の ⌘O 昇格でも使う）
   ipcMain.handle('nemo:move-tab-to-new-window', (event, key: unknown) => {
     const { win, tab } = requireTab(event, key)
     // 1枚しか無いタブを別ウィンドウへ動かしても意味がないので何もしない
@@ -462,6 +467,30 @@ export function registerIpcHandlers(): void {
   })
 
   /* ---- サイドバー（定義） ---- */
+  /*
+   * 一時タブの共有定義。**シークレットウィンドウからの呼び出しは弾く**
+   * （共有の除外という不変条件を IPC 層にも置く。renderer には
+   * `ephemeralTabs` を渡していないので ID を知らないはずだが、口は閉じておく）。
+   */
+  ipcMain.handle('nemo:open-ephemeral', (event, ephemeralId: unknown) => {
+    const win = requireWindow(event)
+    if (win.isPrivate) {
+      log('ipc.rejected', { reason: 'private_window', channel: 'open-ephemeral' })
+      return
+    }
+    openEphemeral(win, requireString(ephemeralId, 'ephemeralId'))
+  })
+
+  ipcMain.handle('nemo:close-ephemeral', (event, ephemeralId: unknown) => {
+    const win = requireWindow(event)
+    if (win.isPrivate) {
+      log('ipc.rejected', { reason: 'private_window', channel: 'close-ephemeral' })
+      return
+    }
+    // 定義は全ウィンドウ共有なので、閉じる = 定義ごと削除（全ウィンドウから消える）
+    removeEphemeralEverywhere(requireString(ephemeralId, 'ephemeralId'), { origin: win })
+  })
+
   ipcMain.handle('nemo:open-pinned', (event, pinnedId: unknown) => {
     const win = requireWindow(event)
     openPinned(win, requireString(pinnedId, 'pinnedId'))

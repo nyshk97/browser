@@ -87,11 +87,29 @@ if (mode === '--session-read') {
     })
   }
 
-  const urls = windows.flatMap((w) => w.state.tabs.map((t) => t.url))
+  // 版 5 から野良タブの正は共有定義ストア。**一覧に両方戻っている**ことを見る
+  // （実体はアクティブ定義しか作られないので、タブ実体の URL では数えられない）
+  const sharedDefs = await windows[0].session
+    .ev('window.nemo.getSharedState().then(s => JSON.stringify((s.ephemeralTabs ?? []).map(d => d.url)))')
+    .then(JSON.parse)
   check(
-    'セッション復元: 前回のタブが戻っている',
-    urls.some((u) => u.includes('/login.html')) && urls.some((u) => u.includes('/iframe.html')),
-    urls.join(', ')
+    'セッション復元: 前回のタブが共有一覧に戻っている',
+    sharedDefs.some((u) => u.includes('/login.html')) && sharedDefs.some((u) => u.includes('/iframe.html')),
+    sharedDefs.join(', ')
+  )
+  // どの URL がアクティブかは後続スイートの write に依存して揺れるので固定しない。
+  // 「復元で作られる実体は共有定義のもので、各ウィンドウのアクティブに割り当たる」を見る
+  const withTabs = windows.filter((w) => w.state.tabs.length > 0)
+  check(
+    'セッション復元: 各ウィンドウのアクティブ定義が実体化して戻る',
+    withTabs.length >= 1 &&
+      withTabs.every((w) => {
+        const active = w.state.tabs.find((t) => t.key === w.state.activeTabKey)
+        return active !== undefined && active.ephemeralId !== null
+      }),
+    withTabs
+      .map((w) => w.state.tabs.find((t) => t.key === w.state.activeTabKey)?.url ?? 'なし')
+      .join(', ')
   )
 
   // 初期化完了の合図が「タブが揃ってから」であること（本編から移した検査）。
@@ -131,17 +149,27 @@ if (mode === '--session-read') {
     windows.map((w) => String(w.state.sidebarVisible)).join(', ')
   )
 
-  const sleeper = windows.find((w) => w.state.tabs.some((t) => t.key !== w.state.activeTabKey && t.asleep))
-  if (sleeper) {
-    const target = sleeper.state.tabs.find((t) => t.key !== sleeper.state.activeTabKey && t.asleep)
-    await sleeper.session.ev(`window.nemo.selectTab(${JSON.stringify(target.key)}).then(() => 'ok')`)
-    const after = await waitFor(
-      sleeper.session,
-      `window.nemo.getWindowState().then(s => { const t = s.tabs.find(t => t.key === ${JSON.stringify(target.key)}); return t && !t.asleep ? 'awake' : '' })`
-    )
-    check('sleep 中のタブを選ぶと読み直される', after === 'awake')
-  } else {
-    check('sleep 中のタブを選ぶと読み直される', false, 'sleep しているタブが無い')
+  // 版 5: 復元直後は「アクティブ定義だけ実体化」なので、寝ているタブは原則いない。
+  // 「触った時点で読み込まれる」の対象は**未実体化の共有定義**になった —— 一覧の行を選ぶと
+  // このウィンドウに実体化されて読み込まれることを見る（旧 sleep 復帰の検査の後継）。
+  {
+    const w = windows[0]
+    const materialized = new Set(w.state.tabs.flatMap((t) => (t.ephemeralId ? [t.ephemeralId] : [])))
+    const defId = await w.session
+      .ev(
+        `window.nemo.getSharedState().then(s => (s.ephemeralTabs ?? []).find(d => !${JSON.stringify([...materialized])}.includes(d.id))?.id ?? '')`
+      )
+      .then((v) => v)
+    if (defId) {
+      await w.session.ev(`window.nemo.openEphemeral(${JSON.stringify(defId)}).then(() => 'ok')`)
+      const after = await waitFor(
+        w.session,
+        `window.nemo.getWindowState().then(s => { const t = s.tabs.find(t => t.ephemeralId === ${JSON.stringify(defId)}); return t && !t.asleep ? 'awake' : '' })`
+      )
+      check('未実体化の共有定義を選ぶと実体化して読み込まれる', after === 'awake')
+    } else {
+      check('未実体化の共有定義を選ぶと実体化して読み込まれる', false, '未実体化の定義が無い')
+    }
   }
   process.exit(failures === 0 ? 0 : 1)
 }

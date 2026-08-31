@@ -64,6 +64,27 @@ export interface PinnedFolder {
 }
 
 /**
+ * 一時タブ（野良タブ）の共有定義。全ウィンドウ共有・永続化（`ephemeral-tabs.json`）。
+ *
+ * ピン留め / Favorite と同じ「定義とタブ実体の分離」の 3 つ目の層。
+ * 違いは **URL が実体のナビゲーションに追随する**ことと、**同じ URL の定義を複数許す**こと。
+ * 並び順は配列順（追加順）。シークレット・小窓のタブはこの層に入らない。
+ */
+export interface EphemeralTabDef {
+  id: string
+  /** 実体の現在 URL（最後に触った実体が勝つ。実体化済みの他ウィンドウは追随しない）。 */
+  url: string
+  /** 既定名（ページタイトルに追随）。 */
+  title: string
+  /** ユーザーが付けた名前。null なら未設定で、表示は `title` に戻る。 */
+  customTitle: string | null
+  /** `FavoriteItem.faviconUrl` と同じ。 */
+  faviconUrl: string | null
+  /** どのウィンドウの実体でもよいので、最後に使われた時刻（定義基準の自動アーカイブが見る）。 */
+  lastActiveAt: number
+}
+
+/**
  * 消えた（消える）定義の名前。
  *
  * 専用タブが一時タブへ降格するとき、**所属していた定義の名前をタブへ写す**必要がある。
@@ -318,6 +339,12 @@ export interface TabState {
    * `pinnedId` とは**排他**（両方 non-null にはしない）。
    */
   favoriteId: string | null
+  /**
+   * 一時タブの共有定義（`EphemeralTabDef`）に紐づいているタブなら、その定義 ID。
+   * `pinnedId` / `favoriteId` とは**排他**。null なら定義を持たない
+   * ウィンドウローカルのタブ（`about:blank`・拡張ページ・シークレット・小窓）。
+   */
+  ephemeralId: string | null
   title: string
   /**
    * ユーザーが付けた名前（一時タブぶん）。null なら未設定。
@@ -404,6 +431,12 @@ export interface SharedState {
   liveFolder: LiveFolderState | null
   /** lock にある拡張の一覧（OFF も含む。`enabled` で見分ける）。 */
   extensions: LoadedExtensionInfo[]
+  /**
+   * 一時タブの共有定義（全ウィンドウ横断の一覧。並びは追加順）。
+   * **シークレットウィンドウには `null` を渡す**（共有に参加しない。
+   * renderer はウィンドウローカルのタブ一覧へフォールバックする）。
+   */
+  ephemeralTabs: EphemeralTabDef[] | null
 }
 
 /**
@@ -894,6 +927,10 @@ export interface NemoUiApi {
   setZoom(key: string, factor: number): Promise<number>
 
   /* サイドバー（定義） */
+  /** 一時タブの共有定義をこのウィンドウで開く（実体があれば選択、無ければ実体化）。 */
+  openEphemeral(ephemeralId: string): Promise<void>
+  /** 一時タブの共有定義を閉じる（定義ごと削除 = 全ウィンドウから消える）。 */
+  closeEphemeral(ephemeralId: string): Promise<void>
   openPinned(pinnedId: string): Promise<void>
   pinTab(key: string): Promise<void>
   /** タブをピン留めツリーの指定位置へ置く（サイドバーへのドラッグ & ドロップ）。 */

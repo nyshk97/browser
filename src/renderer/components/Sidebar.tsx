@@ -16,7 +16,13 @@ import { UrlEdit } from './UrlEdit.js'
 import { LiveFolder } from './LiveFolder.js'
 import { normalizePrUrl } from '../../shared/live-folder-schema.js'
 import { FAVORITE_SECTIONS, isImageIcon } from '../../shared/favorites.js'
-import type { FavoriteItem, FavoriteSection, TabState, UpdateState } from '../../shared/types.js'
+import type {
+  EphemeralTabDef,
+  FavoriteItem,
+  FavoriteSection,
+  TabState,
+  UpdateState
+} from '../../shared/types.js'
 
 /**
  * サイドバー（DESIGN.md「3層の並び」）。
@@ -68,26 +74,51 @@ export function Sidebar(): React.JSX.Element {
   )
 
   /**
-   * 一時タブ。**専用枠（ピン留め / Favorites）に属するタブはここに出さない**
-   * （出すと同じタブがサイドバーに2回並ぶ）。
+   * 一時タブの一覧。**全ウィンドウ共有の定義（`shared.ephemeralTabs`）が正**で、
+   * このウィンドウのタブ実体は「実体化済みか / アクティブか」の装飾に使う
+   * （ピン留め行の `openPinnedIds` と同じ型）。
    *
-   * **Peek も出さない**。Peek は親タブの上に浮いているだけで、
-   * 一覧では親タブが1本出ているように見せる。
-   *
-   * **Live Folder に載っている URL のタブも出さない**（同じ理由で二重に並ぶ）。
+   * - `shared.ephemeralTabs` が来ないシークレットウィンドウは、従来どおり
+   *   ウィンドウローカルのタブ一覧に倒す（private 専用の分岐を別に書かない）
+   * - `ephemeralId` を持たないローカルタブ（`about:blank`・拡張ページ）は
+   *   **常に一覧の末尾へ併記**する（定義化後も末尾 = 新規追加の位置なので行が飛ばない）
+   * - **専用枠（ピン留め / Favorites）に属するタブと Peek は出さない**
+   *   （出すと同じタブがサイドバーに2回並ぶ / Peek は親タブ1本に見せる）
+   * - **Live Folder に載っている URL は出さない**（二重に並ぶ）。ただし
+   *   分割に入っている実体は除外より結合行を優先する —— 除外を掛けたままだと、
+   *   分割したページが PR の URL へ遷移した瞬間に結合行ごと消え、解除する導線が無くなる
    */
+  const ephemeralRows = useMemo(() => {
+    const tabs = (state?.tabs ?? []).filter(
+      (tab) => tab.pinnedId === null && tab.favoriteId === null && tab.peekParentKey === null
+    )
+    const defs = shared.ephemeralTabs
+    let rows: { def: EphemeralTabDef | null; tab: TabState | null }[]
+    if (defs === null) {
+      rows = tabs.map((tab) => ({ def: null, tab }))
+    } else {
+      const byDef = new Map(tabs.flatMap((tab) => (tab.ephemeralId ? [[tab.ephemeralId, tab] as const] : [])))
+      const defIds = new Set(defs.map((def) => def.id))
+      rows = [
+        ...defs.map((def) => ({ def, tab: byDef.get(def.id) ?? null })),
+        // 定義が見つからない `ephemeralId`（壊れた参照）もローカル行として出す。
+        // 落とすと「サイドバーに出ないのに閉じられないタブ」になり、手がかりが残らない
+        ...tabs
+          .filter((tab) => tab.ephemeralId === null || !defIds.has(tab.ephemeralId))
+          .map((tab) => ({ def: null, tab }))
+      ]
+    }
+    return rows.filter((row) => {
+      if (row.tab && row.tab.splitSide !== null) return true
+      const key = normalizePrUrl(row.tab?.url ?? row.def?.url ?? '')
+      return !(key !== null && liveUrls.has(key))
+    })
+  }, [state, shared.ephemeralTabs, liveUrls])
+
+  /** このウィンドウに実体がある一時タブ（分割のドロップ判定・結合行の相方解決に使う）。 */
   const ephemeral: TabState[] = useMemo(
-    () =>
-      (state?.tabs ?? []).filter((tab) => {
-        if (tab.pinnedId !== null || tab.favoriteId !== null || tab.peekParentKey !== null) return false
-        // **分割に入っているタブは Live Folder の除外より結合行を優先する**。
-        // 除外を掛けたままだと、分割したページが PR の URL へ遷移した瞬間に
-        // 結合行ごと消え、画面には分割が出ているのに解除する導線が無くなる。
-        if (tab.splitSide !== null) return true
-        const key = normalizePrUrl(tab.url)
-        return !(key !== null && liveUrls.has(key))
-      }),
-    [state, liveUrls]
+    () => ephemeralRows.flatMap((row) => (row.tab ? [row.tab] : [])),
+    [ephemeralRows]
   )
 
   /** Live Folder の行を「開いている」表示にするための URL 集合。 */
@@ -161,7 +192,10 @@ export function Sidebar(): React.JSX.Element {
           <span className="plus">＋</span>
           <span className="tt">New Tab</span>
         </button>
-        {ephemeral.map((tab) => {
+        {ephemeralRows.map((row) => {
+          const tab = row.tab
+          // このウィンドウに実体が無い共有定義の行（クリックで実体化・× で全ウィンドウから削除）
+          if (!tab) return row.def ? <EphemeralDefRow key={row.def.id} def={row.def} /> : null
           // 分割の右側は自分の行を持たない（左が結合行として両方を描く）。
           // 相方が見つからないときだけ通常の行に落とす（保険）。
           const partner = tab.splitPartnerKey
@@ -184,6 +218,8 @@ export function Sidebar(): React.JSX.Element {
               key={tab.key}
               tab={tab}
               active={tab.key === state?.activeTabKey}
+              // 共有定義の名前は定義が正（rename は定義へ書かれ、タブ側の customTitle は使わない）
+              label={row.def?.customTitle ?? undefined}
               splitTargets={ephemeral}
             />
           )
@@ -191,6 +227,40 @@ export function Sidebar(): React.JSX.Element {
       </div>
 
       <Footer version={shared.version} update={shared.update} />
+    </div>
+  )
+}
+
+/**
+ * このウィンドウに実体が無い、全ウィンドウ共有の一時タブ定義の行。
+ *
+ * 別ウィンドウで開いている（かもしれない）タブが Arc 風に非アクティブの見た目で並ぶ。
+ * 許す操作は**クリック（このウィンドウで実体化）と ×（定義ごと削除 = 全ウィンドウから消える）**
+ * の 2 つだけ。rename・分割・copy-url などは実体化してから
+ * （`TabRow` / `RowMenu` は `tab.key` 前提なので、ここに口を広げない）。
+ */
+function EphemeralDefRow({ def }: { def: EphemeralTabDef }): React.JSX.Element {
+  const name = def.customTitle ?? def.title
+  return (
+    <div
+      className="row remote"
+      title={name}
+      data-def-id={def.id}
+      onClick={() => void window.nemo.openEphemeral(def.id)}
+    >
+      <Favicon url={def.url} title={name} src={def.faviconUrl} />
+      <span className="tt">{name}</span>
+      <button
+        type="button"
+        className="x"
+        title="閉じる（全ウィンドウから消える）"
+        onClick={(event) => {
+          event.stopPropagation()
+          void window.nemo.closeEphemeral(def.id)
+        }}
+      >
+        ×
+      </button>
     </div>
   )
 }

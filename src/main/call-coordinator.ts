@@ -484,6 +484,12 @@ export function startCallCoordinator(): void {
     isSleepExempt: (tab) => {
       const candidate = candidates.get(tab.key)
       return candidate ? isShowable(candidate) : false
+    },
+    // 共有タブの二重実体化ガード用。`isShowable` より狭く「参加中」だけを見る
+    // （縮退（unknown）でも `joinedAt` が残っていれば参加中の可能性があるので守る）
+    isJoined: (tab) => {
+      const candidate = candidates.get(tab.key)
+      return candidate ? candidate.state === 'joined' || candidate.joinedAt !== null : false
     }
   })
   refreshCallCoordinator()

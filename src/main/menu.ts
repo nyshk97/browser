@@ -9,7 +9,6 @@ import {
   createTab,
   createWindow,
   focusedOrFirstWindow,
-  moveTabToWindow,
   openFavorite,
   openPrivateWindow,
   removeTab,
@@ -57,7 +56,6 @@ const MINI_BLOCKED_COMMANDS = new Set([
   'command-bar',
   'focus-address',
   'toggle-sidebar',
-  'move-tab-to-new-window',
   'pin-tab',
   'add-favorite',
   'switch-tab',
@@ -204,13 +202,6 @@ export function runCommandForWindow(win: NemoWindow, command: string): void {
       // Peek → 同じウィンドウの通常タブ / 小窓 → 直近の通常ウィンドウのタブ
       promoteForegroundView(win)
       return
-    case 'move-tab-to-new-window': {
-      if (!tab || win.normalTabs.length <= 1) return
-      // 移動先も同じ性質にする（シークレットのタブは通常ウィンドウへは移せない）
-      const target = createWindow(undefined, { isPrivate: win.isPrivate })
-      target.whenUiReady(() => moveTabToWindow(tab, target))
-      return
-    }
     case 'toggle-devtools': {
       const wc = tab?.webContents
       if (!wc) return

@@ -12,6 +12,7 @@ import {
   normalizeSettings,
   normalizeStoredUrl,
   readVersioned,
+  normalizeEphemeralTabs,
   normalizeSession,
   normalizeCallWindow,
   fitsAnyWorkArea
@@ -191,8 +192,8 @@ test('セッションは lastActiveAt を保つ（自動アーカイブの寿命
     cleanExit: true,
     savedAt: 1
   })
-  assert.equal(result.windows[0].tabs[0].lastActiveAt, old)
-  assert.equal(result.windows[0].tabs[1].lastActiveAt, old)
+  assert.equal(result.legacyWindows[0].tabs[0].lastActiveAt, old)
+  assert.equal(result.legacyWindows[0].tabs[1].lastActiveAt, old)
 })
 
 test('版 1（lastActiveAt なし）は「たった今」に倒す', () => {
@@ -203,7 +204,7 @@ test('版 1（lastActiveAt なし）は「たった今」に倒す', () => {
     cleanExit: true,
     savedAt: 1
   })
-  const value = result.windows[0].tabs[0].lastActiveAt
+  const value = result.legacyWindows[0].tabs[0].lastActiveAt
   assert.ok(value >= before && value <= Date.now(), `たった今になっていない: ${value}`)
 })
 
@@ -222,7 +223,7 @@ test('壊れた / 未来の lastActiveAt は「たった今」に倒す', () => 
       }
     ]
   })
-  for (const tab of result.windows[0].tabs) {
+  for (const tab of result.legacyWindows[0].tabs) {
     assert.ok(tab.lastActiveAt <= Date.now(), `未来の値が残っている: ${tab.lastActiveAt}`)
     assert.ok(tab.lastActiveAt > 0)
   }
@@ -241,8 +242,8 @@ test('セッションの URL も http/https 以外を落とす', () => {
       }
     ]
   })
-  assert.equal(result.windows[0].tabs.length, 1)
-  assert.equal(result.windows[0].tabs[0].url, 'https://ok.example.com/')
+  assert.equal(result.legacyWindows[0].tabs.length, 1)
+  assert.equal(result.legacyWindows[0].tabs[0].url, 'https://ok.example.com/')
 })
 
 /* ------------------------------------------------------------------ *
@@ -266,9 +267,9 @@ test('版 2 のピン留めタブはレコードごと落ちる（一時タブ�
       )
     ]
   })
-  assert.equal(result.windows[0].tabs.length, 1)
-  assert.equal(result.windows[0].tabs[0].url, 'https://tmp.example/')
-  assert.equal('pinnedId' in result.windows[0].tabs[0], false, 'pinnedId は版 3 では持たない')
+  assert.equal(result.legacyWindows[0].tabs.length, 1)
+  assert.equal(result.legacyWindows[0].tabs[0].url, 'https://tmp.example/')
+  assert.equal('pinnedId' in result.legacyWindows[0].tabs[0], false, 'pinnedId は版 3 では持たない')
 })
 
 test('ピン留めタブしか無かったウィンドウは丸ごと落ちる', () => {
@@ -278,8 +279,8 @@ test('ピン留めタブしか無かったウィンドウは丸ごと落ちる',
       v2Window([{ url: 'https://tmp.example/', title: 'tmp', pinnedId: null, lastActiveAt: 1 }], 0)
     ]
   })
-  assert.equal(result.windows.length, 1)
-  assert.equal(result.windows[0].tabs[0].url, 'https://tmp.example/')
+  assert.equal(result.legacyWindows.length, 1)
+  assert.equal(result.legacyWindows[0].tabs[0].url, 'https://tmp.example/')
 })
 
 test('セッションの customTitle は往復する', () => {
@@ -294,8 +295,8 @@ test('セッションの customTitle は往復する', () => {
       )
     ]
   })
-  assert.equal(result.windows[0].tabs[0].customTitle, '作業用')
-  assert.equal(result.windows[0].tabs[1].customTitle, null)
+  assert.equal(result.legacyWindows[0].tabs[0].customTitle, '作業用')
+  assert.equal(result.legacyWindows[0].tabs[1].customTitle, null)
 })
 
 test('移行後の activeIndex は「元のアクティブタブの新しい位置」になる', () => {
@@ -304,16 +305,16 @@ test('移行後の activeIndex は「元のアクティブタブの新しい位�
 
   // 先頭がピンタブ: 元 index 1（tmp1）→ 新 index 0
   const head = normalizeSession({ windows: [v2Window([pin('p1'), tmp(1), tmp(2)], 1)] })
-  assert.equal(head.windows[0].tabs[head.windows[0].activeIndex].url, 'https://tmp1.example/')
+  assert.equal(head.legacyWindows[0].tabs[head.legacyWindows[0].activeIndex].url, 'https://tmp1.example/')
 
   // 中間がピンタブ: 元 index 2（tmp2）→ 新 index 1
   const middle = normalizeSession({ windows: [v2Window([tmp(1), pin('p1'), tmp(2)], 2)] })
-  assert.equal(middle.windows[0].tabs[middle.windows[0].activeIndex].url, 'https://tmp2.example/')
+  assert.equal(middle.legacyWindows[0].tabs[middle.legacyWindows[0].activeIndex].url, 'https://tmp2.example/')
 
   // アクティブだったタブ自体がピンタブ: 残った先頭に倒す
   const gone = normalizeSession({ windows: [v2Window([tmp(1), pin('p1'), tmp(2)], 1)] })
-  assert.equal(gone.windows[0].activeIndex, 0)
-  assert.equal(gone.windows[0].tabs[0].url, 'https://tmp1.example/')
+  assert.equal(gone.legacyWindows[0].activeIndex, 0)
+  assert.equal(gone.legacyWindows[0].tabs[0].url, 'https://tmp1.example/')
 })
 
 /* ------------------------------------------------------------------ *
@@ -356,7 +357,7 @@ test('版 3 以前（splits なし）は分割なしに倒す', () => {
     cleanExit: true,
     savedAt: 1
   })
-  assert.deepEqual(result.windows[0].splits, [])
+  assert.deepEqual(result.legacyWindows[0].splits, [])
 })
 
 test('正しい splits はそのまま残る', () => {
@@ -364,7 +365,7 @@ test('正しい splits はそのまま残る', () => {
     [0, 1],
     [2, 3]
   ])
-  assert.deepEqual(result.windows[0].splits, [
+  assert.deepEqual(result.legacyWindows[0].splits, [
     [0, 1],
     [2, 3]
   ])
@@ -377,7 +378,7 @@ test('交差する組（非隣接）も有効な形として残る', () => {
     [0, 2],
     [1, 3]
   ])
-  assert.deepEqual(result.windows[0].splits, [
+  assert.deepEqual(result.legacyWindows[0].splits, [
     [0, 2],
     [1, 3]
   ])
@@ -385,7 +386,7 @@ test('交差する組（非隣接）も有効な形として残る', () => {
 
 test('壊れた splits は落とす（範囲外・左右同一・非整数・形が違う）', () => {
   const result = sessionWith(plainTabs(3), [[0, 9], [1, 1], ['a', 2], [0], null, [0, 2]])
-  assert.deepEqual(result.windows[0].splits, [[0, 2]])
+  assert.deepEqual(result.legacyWindows[0].splits, [[0, 2]])
 })
 
 test('同じタブに触れる組は競合した分を全部落とす（先着を残さない）', () => {
@@ -395,7 +396,7 @@ test('同じタブに触れる組は競合した分を全部落とす（先着�
     [1, 2],
     [3, 0]
   ])
-  assert.deepEqual(result.windows[0].splits, [])
+  assert.deepEqual(result.legacyWindows[0].splits, [])
 })
 
 test('除外されたタブがあっても splits の添字は読み替えられる', () => {
@@ -409,7 +410,7 @@ test('除外されたタブがあっても splits の添字は読み替えられ
     { url: 'https://right.example.com/', title: 'R', pinnedId: null, lastActiveAt: 1 } // → 1
   ]
   const result = sessionWith(tabs, [[1, 3]])
-  const win = result.windows[0]
+  const win = result.legacyWindows[0]
   assert.deepEqual(win.splits, [[0, 1]])
   // **URL で突き合わせる**（添字だけ見ても繋ぎ間違いは分からない）
   assert.equal(win.tabs[win.splits[0][0]].url, 'https://left.example.com/')
@@ -421,7 +422,7 @@ test('除外されたタブを指す組は丸ごと落とす', () => {
     { url: 'https://pinned.example.com/', title: 'p', pinnedId: 'pin-1', lastActiveAt: 1 },
     { url: 'https://a.example.com/', title: 'a', pinnedId: null, lastActiveAt: 1 }
   ]
-  assert.deepEqual(sessionWith(tabs, [[0, 1]]).windows[0].splits, [])
+  assert.deepEqual(sessionWith(tabs, [[0, 1]]).legacyWindows[0].splits, [])
 })
 
 test('会議の小窓の位置は整数へ丸めて読む', () => {
@@ -622,4 +623,126 @@ test('normalizePins は冪等（customIcon 込みで 2 回通しても変わら�
   const once = normalizePins(raw)
   assert.deepEqual(normalizePins(once), once)
   assert.equal(once.favorites[0].customIcon, '🏢')
+})
+
+/* ------------------------------------------------------------------ *
+ * セッション（版 5 — 野良タブの正が共有定義ストアへ移った）
+ * ------------------------------------------------------------------ */
+
+test('版 5 のウィンドウ（tabs なし）は windows へ、旧版（tabs あり）は legacyWindows へ分かれる', () => {
+  const result = normalizeSession({
+    windows: [
+      { bounds: null, activeEphemeralId: 'e1', splits: [] },
+      { bounds: null, activeIndex: 0, tabs: [{ url: 'https://tmp.example/', lastActiveAt: 1 }] }
+    ]
+  })
+  assert.equal(result.windows.length, 1)
+  assert.equal(result.windows[0].activeEphemeralId, 'e1')
+  assert.equal(result.legacyWindows.length, 1)
+  assert.equal(result.legacyWindows[0].tabs[0].url, 'https://tmp.example/')
+})
+
+test('版 5 だけを読んだら legacyWindows は null（移行の冪等判定に使う）', () => {
+  const result = normalizeSession({
+    windows: [{ bounds: { x: 0, y: 0, width: 800, height: 600 }, activeEphemeralId: null, splits: [] }]
+  })
+  assert.equal(result.legacyWindows, null)
+})
+
+test('版 5: 実体を持たないウィンドウも bounds があれば残る（共有一覧のビューとして正常）', () => {
+  const result = normalizeSession({
+    windows: [{ bounds: { x: 1, y: 2, width: 640, height: 480 }, activeEphemeralId: null, splits: [] }]
+  })
+  assert.equal(result.windows.length, 1)
+  assert.deepEqual(result.windows[0].bounds, { x: 1, y: 2, width: 640, height: 480 })
+})
+
+test('版 5: 壊れた activeEphemeralId / splits は落とす（競合した組は全部落とす）', () => {
+  const result = normalizeSession({
+    windows: [
+      {
+        bounds: null,
+        activeEphemeralId: 42,
+        splits: [['a', 'b'], ['c', 'c'], ['b', 'd'], [1, 'e'], ['x']]
+      }
+    ]
+  })
+  const win = result.windows[0]
+  assert.equal(win.activeEphemeralId, null)
+  // 'a-b' と 'b-d' は 'b' を取り合うので両方落ちる（先着を残さない）
+  assert.deepEqual(win.splits, [])
+})
+
+test('版 5: 正しい splits（定義 ID の対）はそのまま残る', () => {
+  const result = normalizeSession({
+    windows: [
+      {
+        bounds: null,
+        activeEphemeralId: 'e1',
+        splits: [
+          ['e1', 'e2'],
+          ['e3', 'e4']
+        ]
+      }
+    ]
+  })
+  assert.deepEqual(result.windows[0].splits, [
+    ['e1', 'e2'],
+    ['e3', 'e4']
+  ])
+})
+
+/* ------------------------------------------------------------------ *
+ * 一時タブの共有定義（ephemeral-tabs.json）
+ * ------------------------------------------------------------------ */
+
+test('一時タブ定義: http/https 以外・ID 欠損・重複 ID は落ちる', () => {
+  const { tabs } = normalizeEphemeralTabs({
+    tabs: [
+      { id: 'e1', url: 'https://a.example/', title: 'A', lastActiveAt: 1 },
+      { id: 'e1', url: 'https://dup.example/', title: 'dup', lastActiveAt: 1 },
+      { id: 'e2', url: 'about:blank', title: 'blank', lastActiveAt: 1 },
+      { id: 'e3', url: 'file:///etc/passwd', title: 'x', lastActiveAt: 1 },
+      { url: 'https://noid.example/', title: 'noid', lastActiveAt: 1 }
+    ]
+  })
+  assert.deepEqual(
+    tabs.map((tab) => tab.id),
+    ['e1']
+  )
+})
+
+test('一時タブ定義: 同じ URL の別定義は許す（タブは URL の実体なので重複排除しない）', () => {
+  const { tabs } = normalizeEphemeralTabs({
+    tabs: [
+      { id: 'e1', url: 'https://a.example/', title: 'A', lastActiveAt: 1 },
+      { id: 'e2', url: 'https://a.example/', title: 'A2', lastActiveAt: 1 }
+    ]
+  })
+  assert.equal(tabs.length, 2)
+})
+
+test('一時タブ定義: customTitle / faviconUrl / lastActiveAt の欠損・不正は既定へ倒す', () => {
+  const before = Date.now()
+  const { tabs } = normalizeEphemeralTabs({
+    tabs: [
+      {
+        id: 'e1',
+        url: 'https://a.example/',
+        title: '',
+        customTitle: '  ',
+        faviconUrl: 'http://a.example/i.png',
+        lastActiveAt: -5
+      }
+    ]
+  })
+  assert.equal(tabs[0].title, 'https://a.example/')
+  assert.equal(tabs[0].customTitle, null)
+  assert.equal(tabs[0].faviconUrl, null, 'favicon は https / data:image のみ')
+  assert.ok(tabs[0].lastActiveAt >= before && tabs[0].lastActiveAt <= Date.now())
+})
+
+test('一時タブ定義: 壊れた入力は空に倒す', () => {
+  assert.deepEqual(normalizeEphemeralTabs(null), { tabs: [] })
+  assert.deepEqual(normalizeEphemeralTabs({ tabs: 'nope' }), { tabs: [] })
 })

@@ -481,6 +481,15 @@ try {
     }
   }
 
+  if (want('shared-tabs')) {
+    // 野良タブのウィンドウ横断共有は**自分でアプリを起動して**確かめる（別プロファイル）。
+    // 2 枚目のウィンドウ・再起動・第 2 インスタンス起動（小窓）を伴うので相乗りしない。
+    await stopAll()
+    console.log('\n=== 野良タブのウィンドウ横断共有')
+    const sharedTabsCode = await runToCompletion(process.execPath, ['scripts/verify-shared-tabs.mjs'])
+    if (sharedTabsCode !== 0) exitCode = sharedTabsCode
+  }
+
   if (want('migration')) {
     // 旧版セッションからの移行は**自分でアプリを起動して**確かめる（別プロファイル）。
     // ここまでの起動を止めてから回す（同時に2つの Nemo を立てない）。

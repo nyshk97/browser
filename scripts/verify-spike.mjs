@@ -122,14 +122,21 @@ function activeContentsId(state) {
  * 起こす手段はアプリが持っている `restartServiceWorkers()` を使う。
  */
 async function swSession() {
-  let t = (await targets()).find((x) => x.type === 'service_worker')
+  // **自作テスト拡張（lock の先頭）の SW を名指しで選ぶ**。`find` で
+  // 「最初に見つかったもの」を拾うと、SW の起動順しだいで --storage-write と
+  // --storage-read が**別の拡張**に繋がり、「chrome.storage.local が再起動をまたいで残る」が
+  // {} で落ちる（順序依存のフレーク）。API 検査もこの拡張の permissions が前提
+  const TEST_EXTENSION_ID = 'nngceckbapebfimnlniiiahkandclblb'
+  const pick = (list) =>
+    list.find((x) => x.type === 'service_worker' && x.url.includes(TEST_EXTENSION_ID))
+  let t = pick(await targets())
   if (!t) {
     // このファイルの `connect()` は close を返さない（開いたままにする）
     const ui = await uiSession()
     await ui.ev('window.nemo.restartServiceWorkers()')
     for (let i = 0; i < 20 && !t; i += 1) {
       await sleep(300)
-      t = (await targets()).find((x) => x.type === 'service_worker')
+      t = pick(await targets())
     }
   }
   if (!t) throw new Error('拡張の service worker が起動していない（起こしても出てこない）')

@@ -363,11 +363,15 @@ if (MODE === 'restart-write') {
    * 全ペアが materialize され、`lastActiveAt` も現在時刻に上書きされる。
    * 読み出し側で突き合わせないと、「関係構築だけの関数を使う」理由が守られているか分からない。
    */
+  // 版 5 から野良タブの正は共有定義ストア。`lastActiveAt` は定義側が持つ
+  // （session.json は URL を持たない）。セッション保存が実体の値を定義へ写した後の
+  // メモリ値を控える（ディスクは JsonStore のデバウンス中でずれうる）
   const savedTimes = Object.fromEntries(
-    (saved?.data?.windows ?? [])
-      .flatMap((w) => w.tabs ?? [])
-      .filter((tab) => typeof tab.url === 'string' && tab.url.includes('blank.html?restart-'))
-      .map((tab) => [tab.url, tab.lastActiveAt])
+    JSON.parse(
+      await ui.ev(
+        "window.nemo.getSharedState().then(s => JSON.stringify((s.ephemeralTabs ?? []).map(d => [d.url, d.lastActiveAt])))"
+      )
+    ).filter(([url]) => url.includes('blank.html?restart-'))
   )
   check(
     '再起動前: 4 本ぶんの lastActiveAt を控えられた',
@@ -514,9 +518,25 @@ await resetTabs()
 
   // 結合行が 1 件出て、**分割に入った 2 本は通常行から消える**こと。
   // 前の検証が残したタブがあるので、通常行の数は状態から出す（固定値で書かない）。
-  const expectedRows = s.tabs.filter(
-    (tab) => tab.pinnedId === null && tab.favoriteId === null && tab.splitSide === null
+  // 一時タブの一覧は**全ウィンドウ共有の定義**から描かれるので、期待値も共有一覧から出す:
+  // 「共有定義のうち、このウィンドウで分割に入っていないもの」+「ローカルタブ（定義なし）」
+  const splitDefIds = new Set(
+    s.tabs.filter((tab) => tab.splitSide !== null).flatMap((tab) => (tab.ephemeralId ? [tab.ephemeralId] : []))
+  )
+  const sharedDefIds = JSON.parse(
+    await ui.ev(
+      "window.nemo.getSharedState().then(s => JSON.stringify((s.ephemeralTabs ?? []).map(d => d.id)))"
+    )
+  )
+  const localRows = s.tabs.filter(
+    (tab) =>
+      tab.pinnedId === null &&
+      tab.favoriteId === null &&
+      tab.ephemeralId === null &&
+      tab.peekParentKey === null &&
+      tab.splitSide === null
   ).length
+  const expectedRows = sharedDefIds.filter((id) => !splitDefIds.has(id)).length + localRows
   const rows = JSON.parse(
     await ui.ev(
       "JSON.stringify({ split: document.querySelectorAll('.split-row').length," +

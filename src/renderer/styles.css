@@ -461,6 +461,12 @@ body[data-view='toolbar'] {
   opacity: 0.62;
 }
 
+/* このウィンドウに実体が無い共有の一時タブ（別ウィンドウで開いているかもしれない行）。
+   閉じているピン留めと同じ落とし方で「ここでは非アクティブ」を示す */
+.row.remote {
+  opacity: 0.62;
+}
+
 .row.crashed {
   box-shadow: inset 2px 0 0 var(--nemo-danger);
 }

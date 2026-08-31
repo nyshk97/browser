@@ -30,7 +30,6 @@ export const DEFAULT_SETTINGS = {
   searchTemplate: 'https://www.google.com/search?q={q}',
   keybindings: {},
   restoreSession: true,
-  askDownloadLocation: false,
   liveFolderEnabled: true,
   extensions: { disabled: [] }
 }
@@ -59,10 +58,9 @@ export function normalizeSettings(raw) {
       typeof input['restoreSession'] === 'boolean'
         ? input['restoreSession']
         : DEFAULT_SETTINGS.restoreSession,
-    askDownloadLocation:
-      typeof input['askDownloadLocation'] === 'boolean'
-        ? input['askDownloadLocation']
-        : DEFAULT_SETTINGS.askDownloadLocation,
+    // 保存先を毎回聞くかの設定（`askDownloadLocation`）は廃止した。**常に聞く**
+    // （自走検証だけ `NEMO_DOWNLOAD_DIR` がダイアログを抑止する）。
+    // 保存済みの値は「知らないキー」としてここで捨てられるので移行処理は要らない。
     // **`SETTINGS_VERSION` は上げない**。キーの追加はここが既定値で埋めるので、
     // 既存の `settings.json` をそのまま読める（版を上げると古い Nemo が読めなくなる）
     liveFolderEnabled:

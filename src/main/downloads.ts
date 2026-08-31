@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { log, logError, redactUrl } from './log.js'
-import { getSettings } from './store/settings.js'
 import { idsOverCap } from '../shared/download-cap.js'
 import type { DownloadState } from '../shared/types.js'
 
@@ -81,7 +80,11 @@ export function installDownloadHandler(pageSession: Session, scope: string | nul
     const id = randomUUID()
     const host = redactUrl(item.getURL())
 
-    if (getSettings().askDownloadLocation) {
+    // 保存先は**毎回ダイアログで選ぶ**（設定 `askDownloadLocation` は廃止した。OFF にする理由が無い）。
+    // 例外は `NEMO_DOWNLOAD_DIR`（自走検証）があるときだけ:
+    // `showSaveDialogSync` は main を止めるので CDP からは操作できず検証が固まるし、
+    // env で保存先が決まっているならユーザーに聞く意味もない。
+    if (!process.env['NEMO_DOWNLOAD_DIR']) {
       // 保存先を聞く。ここは OS のファイル選択なのでネイティブダイアログでよい
       // （ブラウザ UI に置き換えられる類のものではない）。
       const chosen = dialog.showSaveDialogSync({

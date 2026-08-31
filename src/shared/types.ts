@@ -780,8 +780,6 @@ export interface NemoSettings {
   keybindings: Record<string, string>
   /** 起動時にセッションを復元する。 */
   restoreSession: boolean
-  /** ダウンロード先を毎回聞く。 */
-  askDownloadLocation: boolean
   /**
    * サイドバーに GitHub の PR（Live Folder）を出す。
    * UI からは変えられない（常に出す）。`settings.json` に false を書いた場合だけ隠れる。

@@ -1113,7 +1113,7 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
   check('縦に流れるジェスチャでは履歴が動かない', afterVertical.includes('/cache.html'), afterVertical)
   page.close()
 
-  /* スーパーリロード（右クリック / ⌘⇧R）は、キャッシュ済みのサブリソースまで取り直す */
+  /* ハード再読み込み（⌘⇧R / ⟳右クリックメニュー）は、キャッシュ済みのサブリソースまで取り直す */
   const hits = async () => (await (await fetch(`${PAGES}/__nemo_cache_count__`)).json()).hits
   const base = await hits()
   await ui.ev(`window.nemo.reload(${JSON.stringify(key)}).then(() => 'ok')`)

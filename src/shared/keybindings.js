@@ -43,7 +43,7 @@ export const COMMANDS = [
   { id: 'reload', label: '再読み込み', accelerator: 'CmdOrCtrl+R', menu: 'view', needsTab: true },
   {
     id: 'reload-ignoring-cache',
-    label: 'キャッシュを無視して再読み込み',
+    label: 'ハード再読み込み',
     accelerator: 'CmdOrCtrl+Shift+R',
     menu: 'view',
     needsTab: true

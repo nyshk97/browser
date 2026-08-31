@@ -923,6 +923,8 @@ export interface NemoUiApi {
   goForward(key: string): Promise<void>
   /** `ignoreCache` でキャッシュを無視して読み直す（スーパーリロード）。 */
   reload(key: string, options?: { ignoreCache?: boolean }): Promise<void>
+  /** 再読み込みボタンの右クリック。「通常 / ハード再読み込み」の native メニューをカーソル位置に出す。 */
+  reloadMenu(key: string): Promise<void>
   stop(key: string): Promise<void>
   setZoom(key: string, factor: number): Promise<number>
 

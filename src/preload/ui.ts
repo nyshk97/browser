@@ -52,6 +52,7 @@ const api: NemoUiApi = {
   goBack: (key) => ipcRenderer.invoke('nemo:go-back', key) as Promise<void>,
   goForward: (key) => ipcRenderer.invoke('nemo:go-forward', key) as Promise<void>,
   reload: (key, options) => ipcRenderer.invoke('nemo:reload', key, options) as Promise<void>,
+  reloadMenu: (key) => ipcRenderer.invoke('nemo:reload-menu', key) as Promise<void>,
   stop: (key) => ipcRenderer.invoke('nemo:stop', key) as Promise<void>,
   setZoom: (key, factor) => ipcRenderer.invoke('nemo:set-zoom', key, factor) as Promise<number>,
 

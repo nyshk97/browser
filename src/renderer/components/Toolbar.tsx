@@ -175,7 +175,7 @@ export function Toolbar({ pane = 'left' }: { pane?: 'left' | 'right' }): React.J
       <button
         type="button"
         className="icon nav"
-        title={activeTab?.loading ? '停止' : '再読み込み（右クリックでキャッシュを無視）'}
+        title={activeTab?.loading ? '停止' : '再読み込み（右クリックでメニュー）'}
         disabled={!activeTab}
         onClick={() => {
           focusPane()
@@ -183,10 +183,10 @@ export function Toolbar({ pane = 'left' }: { pane?: 'left' | 'right' }): React.J
           void (activeTab.loading ? window.nemo.stop(activeTab.key) : window.nemo.reload(activeTab.key))
         }}
         onContextMenu={(event) => {
-          // スーパーリロード。⌘⇧R と同じ経路（キャッシュを捨てて読み直す）
+          // 「通常の再読み込み / ハード再読み込み」の native メニュー（main 側で popup）
           event.preventDefault()
           focusPane()
-          if (activeTab) void window.nemo.reload(activeTab.key, { ignoreCache: true })
+          if (activeTab) void window.nemo.reloadMenu(activeTab.key)
         }}
       >
         {activeTab?.loading ? '×' : '⟳'}

@@ -153,7 +153,9 @@ export function runCommandForWindow(win: NemoWindow, command: string): void {
       else foreground?.webContents?.reload()
       return
     case 'reload-ignoring-cache':
-      foreground?.webContents?.reloadIgnoringCache()
+      // スリープ中は ⌘R と同じく起こすだけ（materialize は通常読み込みで、キャッシュ無視まではしない）
+      if (foreground?.asleep) selectTab(win, foreground.key)
+      else foreground?.webContents?.reloadIgnoringCache()
       return
     case 'zoom-in':
     case 'zoom-out':

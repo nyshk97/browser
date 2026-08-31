@@ -1,4 +1,4 @@
-import { app, clipboard, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, clipboard, ipcMain, Menu, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { PAGE_PARTITION, userDataPath } from './paths.js'
 import { restartServiceWorkers, setExtensionEnabled } from './extensions.js'
 import { getLoadedExtensions } from './extension-state.js'
@@ -229,6 +229,20 @@ function requireTab(event: IpcMainInvokeEvent, key: unknown): { win: NemoWindow;
   return { win, tab }
 }
 
+const HARD_RELOAD_LABEL =
+  COMMANDS.find((entry) => entry.id === 'reload-ignoring-cache')?.label ?? 'ハード再読み込み'
+
+/** ⌘R / ⌘⇧R / ボタン / メニューで共通の再読み込み。`ignoreCache` はハード再読み込み。 */
+function reloadTab(win: NemoWindow, tab: NemoTab, ignoreCache: boolean): void {
+  if (tab.asleep) {
+    selectTab(win, tab.key)
+    return
+  }
+  tab.crashed = false
+  if (ignoreCache) tab.webContents?.reloadIgnoringCache()
+  else tab.webContents?.reload()
+}
+
 function requireString(value: unknown, what: string): string {
   if (typeof value !== 'string' || value.length === 0 || value.length > 4096) {
     throw new Error(`invalid ${what}`)
@@ -440,15 +454,25 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('nemo:reload', (event, key: unknown, options: unknown) => {
     const { win, tab } = requireTab(event, key)
-    // キャッシュ無視（サイドバーの再読み込みボタンを右クリック / ⌘⇧R）
     const ignoreCache = options !== undefined && requireRecord(options, 'options')['ignoreCache'] === true
-    if (tab.asleep) {
-      selectTab(win, tab.key)
-      return
+    reloadTab(win, tab, ignoreCache)
+  })
+
+  // ツールバーの再読み込みボタンの右クリック。Toolbar の View は高さが
+  // TOOLBAR_HEIGHT しかなく DOM のメニュー（RowMenu）が収まらないので native で出す
+  ipcMain.handle('nemo:reload-menu', (event, key: unknown) => {
+    const { win, tab } = requireTab(event, key)
+    const run = (ignoreCache: boolean) => (): void => {
+      // click はメニューが閉じた後に届く。その間にタブ・ウィンドウが閉じられていたら何もしない
+      if (win.isDestroyed || win.baseWindow.isDestroyed() || win.findTab(tab.key) !== tab) return
+      reloadTab(win, tab, ignoreCache)
     }
-    tab.crashed = false
-    if (ignoreCache) tab.webContents?.reloadIgnoringCache()
-    else tab.webContents?.reload()
+    log('reload_menu.open', { key: tab.key })
+    Menu.buildFromTemplate([
+      { label: '通常の再読み込み', click: run(false) },
+      // 表示メニュー（⌘⇧R）と同じ操作なので、名前は keybindings の定義に寄せて 1 か所にする
+      { label: HARD_RELOAD_LABEL, click: run(true) }
+    ]).popup({ window: win.baseWindow })
   })
 
   ipcMain.handle('nemo:stop', (event, key: unknown) => {

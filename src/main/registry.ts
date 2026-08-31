@@ -1744,7 +1744,9 @@ export class NemoWindow {
     this.overlay = kind
     this.layout()
     if (kind) this.overlayWebContents.focus()
-    else this.getActiveTab()?.webContents?.focus()
+    // Peek が出ているならフォーカスは Peek へ返す（⌘L → Esc で裏の親ページに
+    // キー入力が入るのを防ぐ）
+    else this.getForegroundTab()?.webContents?.focus()
     this.overlayWebContents.send('nemo:overlay', kind)
     this.pushState()
     overlayChangeListener?.(this, kind)
@@ -1788,8 +1790,10 @@ export class NemoWindow {
     keys.add(active.key)
     const partner = active.split?.partnerOf(active)
     if (partner) keys.add(partner.key)
-    // 中身がまだ来ていない Peek は出さない（プレースホルダーに任せる）
-    if (active.peek && !active.peek.peekAwaitingDocument) keys.add(active.peek.key)
+    // 中身がまだ来ていない Peek は出さない（プレースホルダーに任せる）。
+    // 「出してよい Peek か」の条件は getForegroundTab() が唯一の実体
+    const foreground = this.getForegroundTab()
+    if (foreground && foreground !== active) keys.add(foreground.key)
     return keys
   }
 
@@ -1881,19 +1885,41 @@ export class NemoWindow {
     return this.tabs.find((tab) => tab.key === this.activeTabKey) ?? null
   }
 
+  /**
+   * 前面のタブ（= ユーザーが「今見ているページ」）。**Peek が出ていれば Peek**。
+   *
+   * 「いま見えているページへの操作」（⌘L / reload / 戻る / zoom / find / copy-url /
+   * devtools / 拡張から見た active）は全部ここに向ける。**一覧・選択・保存系**
+   * （サイドバー・⌘1〜9・セッション）は `getActiveTab()` のまま。
+   *
+   * 中身がまだ来ていない Peek（`peekAwaitingDocument`）は前面としない
+   * （`visibleTabKeys` と同じ意味。まだ何も見えていないものにコマンドを向けない）。
+   * ここで `view.getVisible()` を条件にすると `visibleTabKeys` → `applyVisibility` と
+   * 循環するので、判定は必ず `peekAwaitingDocument` で行う。
+   */
+  getForegroundTab(): NemoTab | null {
+    const active = this.getActiveTab()
+    if (!active) return null
+    const peek = active.peek
+    return peek && !peek.peekAwaitingDocument ? peek : active
+  }
+
   findTab(key: string): NemoTab | null {
     return this.tabs.find((tab) => tab.key === key) ?? null
   }
 
   toState(): WindowState {
-    const active = this.getActiveTab()
+    // find の状態はタブごと（`found-in-page` が `tab.find` に書く）なので、
+    // UI に見せるのは**前面**のぶん。選択タブから引くと Peek を検索したときに
+    // FindBar の n/N が出ない
+    const foreground = this.getForegroundTab()
     return {
       windowId: this.id,
       tabs: this.tabs.map((tab) => tab.toState()),
       activeTabKey: this.activeTabKey,
       sidebarVisible: this.sidebarVisible,
       fullScreen: this.baseWindow.isDestroyed() ? false : this.baseWindow.isFullScreen(),
-      find: active?.find ?? null,
+      find: foreground?.find ?? null,
       isPrivate: this.isPrivate,
       kind: this.kind
     }
@@ -2327,8 +2353,9 @@ let syncingExtensionSelection = false
 export function syncForegroundTab(win: NemoWindow): void {
   if (win.isDestroyed || win.isPrivate) return
   if (syncingExtensionSelection) return
-  const active = win.getActiveTab()
-  const foreground = active?.peek ?? active
+  // awaiting の Peek は前面にしない（切り替えは dom-ready 後の reveal() が
+  // 親を選択中のとき selectTab 経由でここを呼び直すことに依存している）
+  const foreground = win.getForegroundTab()
   const wc = foreground?.webContents
   if (!wc) return
   if (lastForegroundContentsId.get(win.id) === wc.id) return

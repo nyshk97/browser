@@ -117,6 +117,10 @@ export function runCommandForWindow(win: NemoWindow, command: string): void {
   }
 
   const tab = win.getActiveTab()
+  // 「いま見えているページへの操作」（reload / 戻る / zoom / devtools / copy-url）は
+  // 前面（Peek 優先）に向ける。一覧・選択・定義系（pin-tab / add-favorite / next-tab 等）は
+  // 選択タブ（`tab`）のまま
+  const foreground = win.getForegroundTab()
 
   switch (command) {
     case 'new-window':
@@ -143,22 +147,24 @@ export function runCommandForWindow(win: NemoWindow, command: string): void {
       win.setSidebarVisible(!win.sidebarVisible)
       return
     case 'reload':
-      if (tab?.asleep) selectTab(win, tab.key)
-      else tab?.webContents?.reload()
+      // Peek は sweepSleep の対象外（normalTabs しか回らない）なので、
+      // foreground が Peek のときこの分岐には入らない
+      if (foreground?.asleep) selectTab(win, foreground.key)
+      else foreground?.webContents?.reload()
       return
     case 'reload-ignoring-cache':
-      tab?.webContents?.reloadIgnoringCache()
+      foreground?.webContents?.reloadIgnoringCache()
       return
     case 'zoom-in':
     case 'zoom-out':
     case 'zoom-reset': {
-      if (!tab) return
+      if (!foreground) return
       const next =
         command === 'zoom-reset'
           ? 1
-          : Math.min(Math.max(tab.zoomFactor + (command === 'zoom-in' ? 0.1 : -0.1), 0.25), 5)
-      tab.zoomFactor = Number(next.toFixed(2))
-      tab.webContents?.setZoomFactor(tab.zoomFactor)
+          : Math.min(Math.max(foreground.zoomFactor + (command === 'zoom-in' ? 0.1 : -0.1), 0.25), 5)
+      foreground.zoomFactor = Number(next.toFixed(2))
+      foreground.webContents?.setZoomFactor(foreground.zoomFactor)
       win.pushState()
       return
     }
@@ -166,13 +172,16 @@ export function runCommandForWindow(win: NemoWindow, command: string): void {
       win.baseWindow.setFullScreen(!win.baseWindow.isFullScreen())
       return
     case 'go-back':
-      if (tab?.webContents?.navigationHistory.canGoBack()) tab.webContents.navigationHistory.goBack()
+      if (foreground?.webContents?.navigationHistory.canGoBack())
+        foreground.webContents.navigationHistory.goBack()
       return
     case 'go-forward':
-      if (tab?.webContents?.navigationHistory.canGoForward()) tab.webContents.navigationHistory.goForward()
+      if (foreground?.webContents?.navigationHistory.canGoForward())
+        foreground.webContents.navigationHistory.goForward()
       return
     case 'copy-url':
-      if (tab) sendToUi(win, 'copy-url')
+      // 対象の key を選ぶのは renderer（Sidebar）。ここは存在チェックだけ
+      if (foreground) sendToUi(win, 'copy-url')
       return
     case 'pin-tab':
       // 実装は registry の togglePin に1本化する（解除は全ウィンドウに効かせる必要がある）
@@ -203,7 +212,7 @@ export function runCommandForWindow(win: NemoWindow, command: string): void {
       promoteForegroundView(win)
       return
     case 'toggle-devtools': {
-      const wc = tab?.webContents
+      const wc = foreground?.webContents
       if (!wc) return
       if (wc.isDevToolsOpened()) wc.closeDevTools()
       else wc.openDevTools({ mode: 'right' })

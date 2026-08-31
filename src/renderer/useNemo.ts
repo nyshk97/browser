@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { NemoUiApi, SharedState, WindowState } from '../shared/types.js'
+import type { NemoUiApi, SharedState, TabState, WindowState } from '../shared/types.js'
 
 declare global {
   interface Window {
@@ -49,6 +49,29 @@ export function useShortcutHint(): boolean {
 /** main のメニューから飛んでくるコマンド。 */
 export function useCommand(handler: (command: string) => void): void {
   useEffect(() => window.nemo.onCommand(handler))
+}
+
+/**
+ * アクティブタブの Peek（表示待ちも含む）。無ければ null。
+ *
+ * Peek の暗幕・プレースホルダー（`Peek.tsx`）はこちらを使う
+ * （awaiting 中も「窓の形」を描く必要がある）。
+ */
+export function peekTab(state: WindowState | null): TabState | null {
+  return state?.tabs.find((tab) => tab.peekParentKey === state.activeTabKey) ?? null
+}
+
+/**
+ * 前面のタブ（= ユーザーが「今見ているページ」）。**表示中の Peek 優先**。
+ *
+ * ⌘L・copy-url・find など「いま見えているページへの操作」はこちらを対象にする。
+ * main 側の `NemoWindow.getForegroundTab()` と同じ意味（あちらは
+ * `peekAwaitingDocument`、こちらは push 済みの `visible` で判定する）。
+ */
+export function foregroundTab(state: WindowState | null): TabState | null {
+  const peek = peekTab(state)
+  if (peek?.visible) return peek
+  return state?.tabs.find((tab) => tab.key === state.activeTabKey) ?? null
 }
 
 /** URL を人が読む形にする（scheme と末尾スラッシュを落とす）。 */

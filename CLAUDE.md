@@ -42,6 +42,13 @@ UI コンポーネントを載せるなら、そのスイートが**設定画面
 （`{"version":1,"data":{"liveFolderEnabled":false}}`）を置くのが最小
 （`NEMO_GITHUB_TEST_ENDPOINT` 方式はモックサーバが要る）。
 
+**renderer の `document.visibilityState` を View の出し入れの PASS 条件に使わない。**
+View の可視性だけでなく**検証ウィンドウ自体の遮蔽（別 Space・前面に他のウィンドウ）でも
+hidden になる**ので、デスクトップの状態しだいで同一コードが run ごとに揺れる
+（暗幕検査が 4 run 中 2 回偽 FAIL した実測あり）。View が出ているかは main の実状態
+（`splitDiagnostics().peekScrim` のような `getVisible()` 由来の値）を正にし、
+visibilityState は診断の詳細としてだけ出す。
+
 **CDP の target は名指しで選ぶ。** `find(x => x.type === 'service_worker')` のような
 「最初に見つかったもの」は起動順で別の拡張・別のウィンドウに繋がり、
 **write と read で別対象**になる順序依存フレークを生む（フル実行でだけ storage 検査が

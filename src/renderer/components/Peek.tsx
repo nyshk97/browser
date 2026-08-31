@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useWindowState } from '../useNemo.js'
+import { peekTab, useWindowState } from '../useNemo.js'
 
 /**
  * Peek（ウィンドウ内ポップアップ）の暗幕と操作ボタン（DESIGN.md「Peek」）。
@@ -13,7 +13,7 @@ import { useWindowState } from '../useNemo.js'
  */
 export function Peek(): React.JSX.Element | null {
   const state = useWindowState()
-  const peek = state?.tabs.find((tab) => tab.peekParentKey === state.activeTabKey) ?? null
+  const peek = peekTab(state)
 
   // Esc は main 側（ページの `before-input-event`）で拾う。
   // フォーカスは Peek のページにあることが多く、ここの keydown には来ないため。

@@ -441,7 +441,8 @@ export function watchExtensionPopups(extensions: ElectronChromeExtensions): void
     // `tab-updated` は electron-chrome-extensions が `chrome.tabs.onUpdated` に
     // 変換してくれる唯一の自前フックなので、ここで1回だけ撃つ。
     contents.once('destroyed', () => {
-      const active = focusedOrFirstWindow()?.getActiveTab()?.webContents
+      // 拡張から見た active は前面（Peek 優先）。syncForegroundTab と同じ向き
+      const active = focusedOrFirstWindow()?.getForegroundTab()?.webContents
       if (!active || active.isDestroyed()) return
       active.emit('tab-updated')
       log('extension.action_refresh_nudged', { extensionId: popup.extensionId })

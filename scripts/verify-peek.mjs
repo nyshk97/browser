@@ -216,9 +216,18 @@ const normalTabs = (s) => s.tabs.filter((t) => t.peekParentKey === null)
  * 全体の最後の1件を見ると移動元の結果を読んでしまう。
  */
 function lastForeground(windowId = null) {
+  return lastLogEntry('tab.foreground', windowId)
+}
+
+/**
+ * 診断ログの最後の1件（イベント名で絞る。`windowId` を渡すとそのウィンドウ分だけ）。
+ * **`windowId` の絞り込みは detail に `windowId` を出しているイベントに限る**
+ * （`copy_url.requested` / `find.requested` は出していないので、渡すと黙って常に null になる）。
+ */
+function lastLogEntry(event, windowId = null) {
   if (!USER_DATA) return null
   const lines = readLogLines(USER_DATA)
-    .filter((line) => line.includes('"event":"tab.foreground"'))
+    .filter((line) => line.includes(`"event":"${event}"`))
     .map((line) => {
       try {
         return JSON.parse(line)
@@ -742,6 +751,14 @@ console.log('\n--- R9: Peek を持つ親タブの移動')
   const peek = peekOf(await state(), parent.key)
   check('Peek ができている（前提）', peek !== null)
 
+  // `moveTabToNewWindow` は**タブが1枚だと no-op**（1枚を動かしても意味が無いため）。
+  // 詰め物のタブをもう1本用意して、移動が実際に起きる状態を作る
+  // （これが無いと以降の R9 検査は全部「移動していないのに PASS」の空振りになる。
+  // ⌘⇧N 廃止でウィンドウのタブが1枚になった際に実際に腐っていた）
+  const moveFiller = await ui.ev(
+    `window.nemo.createTab(${JSON.stringify(`${PAGES}/index.html?move-filler`)}, { background: true })`
+  )
+  const originWindowId = (await state()).windowId
   await call(`window.nemo.moveTabToNewWindow(${JSON.stringify(parent.key)})`)
   await sleep(1800)
 
@@ -761,9 +778,13 @@ console.log('\n--- R9: Peek を持つ親タブの移動')
   }
   const holder = targets.find((t) => t.s.tabs.some((tab) => tab.key === parent.key))
   check(
-    '親タブが移動先ウィンドウにいる',
-    holder !== undefined,
-    `windows=${targets.length} ${myWindow?.[1] ?? ''}`
+    'R9: 親タブが元と**別の**ウィンドウへ移った',
+    holder !== undefined && holder.s.windowId !== originWindowId,
+    `origin=${originWindowId} holder=${holder?.s.windowId ?? '(無し)'} windows=${targets.length} ${myWindow?.[1] ?? ''}`
+  )
+  check(
+    'R9: 元のウィンドウから親タブが消えている',
+    !(await state()).tabs.some((tab) => tab.key === parent.key)
   )
   check(
     'R9: Peek も一緒に移動している',
@@ -779,12 +800,24 @@ console.log('\n--- R9: Peek を持つ親タブの移動')
     JSON.stringify(fg)
   )
 
-  // 後片付け（移動先ウィンドウごと閉じる）
-  if (holder) {
+  // 後片付け: 先にタブを閉じて共有定義ごと消し、空になった移動先ウィンドウも閉じる
+  // （最後のタブを閉じてもウィンドウは空状態で残るため。close-window は自分の
+  // WebContents ごと消える操作なので応答を待たない —— CLAUDE.md「自分のウィンドウを
+  // 閉じるコマンドは invoke の応答を待たない」）
+  if (holder && holder.s.windowId !== originWindowId) {
+    await holder.session.ev(`window.nemo.closeTab(${JSON.stringify(parent.key)}).then(() => 'ok')`)
+    await sleep(600)
+    await evSuicidal(
+      holder.session,
+      `(setTimeout(() => { void window.nemo.runCommandForVerify('close-window') }, 50), 'ok')`
+    )
+    await sleep(800)
+  } else if (holder) {
     await holder.session.ev(`window.nemo.closeTab(${JSON.stringify(parent.key)}).then(() => 'ok')`)
     await sleep(600)
   }
   for (const t of targets) t.session.close()
+  await call(`window.nemo.closeTab(${JSON.stringify(moveFiller)})`)
   parent.page.close()
   await sleep(600)
 }
@@ -802,14 +835,26 @@ console.log('\n--- 暗幕の出し入れと ⌃M')
   const peek = peekOf(await state(), parent.key)
   check('Peek ができている（前提）', peek !== null)
 
-  // 暗幕は独立した UI View。**`document.visibilityState` が View の可視性に連動する**ので、
-  // 「閉じたのに最前面へ残ってページのクリックを遮る」をここで機械的に検出できる。
-  const scrim = await connectUi(CDP, 'peek', { waitReady: false })
+  /*
+   * 暗幕は独立した UI View。**出し入れの判定は main の実状態
+   * （`splitDiagnostics().peekScrim` = `getVisible()` とその bounds）を正にする**。
+   * renderer の `document.visibilityState` は View の可視性だけでなく
+   * **検証ウィンドウ自体の遮蔽（別 Space・前面に他のウィンドウ）でも hidden になる**ため、
+   * PASS 条件に使うと実行環境依存で揺れる（実測: 同一コードで run ごとに hidden / visible）。
+   * visibilityState は診断の詳細としてだけ出す。
+   * 暗幕セッション（⌃M のキー入力用）は CLAUDE.md の規則どおりウィンドウを名指しして繋ぐ。
+   */
+  const scrimWindowId = (await state()).windowId
+  const scrim = await connectUi(CDP, 'peek', {
+    urlPart: `view=peek&window=${scrimWindowId}`,
+    waitReady: false
+  })
+  const scrimDiag = () => ui.ev('window.nemo.splitDiagnostics().then((d) => JSON.stringify(d))').then(JSON.parse)
   const visibleWhileOpen = await scrim.ev('document.visibilityState')
   check(
     'Peek が出ている間は暗幕の View が表示されている',
-    visibleWhileOpen === 'visible',
-    String(visibleWhileOpen)
+    (await scrimDiag()).peekScrim !== null,
+    `visibilityState=${visibleWhileOpen}`
   )
 
   /* ⌃M: 暗幕にフォーカスがあるときも「⌃ を離したら確定」できること */
@@ -842,14 +887,16 @@ console.log('\n--- 暗幕の出し入れと ⌃M')
   await call(`window.nemo.selectTab(${JSON.stringify(parent.key)})`)
   await sleep(400)
 
-  /* ✕ で閉じたあと、暗幕の View が残っていないこと（残るとページを触れなくなる） */
+  /* ✕ で閉じたあと、暗幕の View が残っていないこと（残るとページを触れなくなる）。
+     判定は開き側と同じく main の実状態（遮蔽で hidden になる visibilityState だと、
+     暗幕が残る回帰が出ていても遮蔽中は hidden が返って素通りする） */
   await call('window.nemo.closePeek()')
   await sleep(800)
   const visibleAfterClose = await scrim.ev('document.visibilityState')
   check(
     'Peek を閉じたら暗幕の View も隠れる（ページのクリックを遮らない）',
-    visibleAfterClose === 'hidden',
-    String(visibleAfterClose)
+    (await scrimDiag()).peekScrim === null,
+    `visibilityState=${visibleAfterClose}`
   )
   scrim.close()
 
@@ -1180,6 +1227,170 @@ async function miniStates() {
     `${(await miniTargets()).length} 枚`
   )
   check('検証中に main の未捕捉例外が出ていない', countLogEvents(USER_DATA, 'app.uncaught_exception') === 0)
+}
+
+/* ------------------------------------------------------------------ *
+ * 前面コマンド（Peek 表示中は ⌘L / reload / go-back / copy-url / find / zoom が Peek に向く）
+ *
+ * 「前面 = 表示中の Peek ?? 選択タブ」の不変条件を守る。
+ * main は `getForegroundTab()`（registry.ts）、renderer は `foregroundTab(state)`
+ * （useNemo.ts）が実体で、次に `getActiveTab()` や `toState().find` を触った誰かが
+ * 黙って壊せるので、ここで恒久的に見張る。
+ * ------------------------------------------------------------------ */
+
+console.log('\n--- 前面コマンド（Peek 表示中は Peek が対象）')
+
+{
+  const parent = await openParent('foreground')
+  // クエリで一意にする。素の index.html はフル実行だと他スイートの残タブと同一 URL になり、
+  // `connectPage` が「target が1つに定まらない」で落ちる（--only では 1 件で通ってしまう）
+  const childUrl = `${PAGES}/index.html?peek-foreground`
+  await evUser(parent.page, `window.open(${JSON.stringify(childUrl)}, '_blank')`)
+
+  // reveal（dom-ready で View が出る）まで待つ。awaiting の Peek は前面にならない
+  let peek = null
+  for (let i = 0; i < 40; i += 1) {
+    peek = peekOf(await state(), parent.key)
+    if (peek?.visible === true) break
+    await sleep(250)
+  }
+  check('前面コマンド: Peek が開いて表示済み', peek?.visible === true, JSON.stringify(peek))
+
+  if (peek?.visible === true) {
+    const cmd = (name) => ui.ev(`window.nemo.runCommandForVerify(${JSON.stringify(name)})`)
+    // オーバーレイ（アドレスバー / FindBar）は sidebar とは別の UI View。
+    // **ウィンドウを名指しする**（素の view=overlay は後続でウィンドウが増えると別の窓を掴む）
+    const windowId = (await state()).windowId
+    const overlay = await connectTo(CDP, `view=overlay&window=${windowId}`)
+
+    /* ⌘L: アドレスバーには前面（= Peek）の URL が入る */
+    await cmd('focus-address')
+    await waitFor(overlay, "document.querySelector('.cmd-input input') ? 'ok' : ''")
+    const addr = await overlay.ev("document.querySelector('.cmd-input input')?.value ?? ''")
+    check('⌘L のアドレスバーは Peek の URL（親ではない）', addr === peek.url, `value=${addr}`)
+    await call('window.nemo.setOverlay(null)')
+    await sleep(300)
+
+    /* copy-url: 対象 key を選ぶのは renderer。ログの key が Peek を指す */
+    await cmd('copy-url')
+    await sleep(500)
+    const copied = lastLogEntry('copy_url.requested')
+    check(
+      'copy-url の対象が Peek（renderer の foregroundTab）',
+      copied?.key === peek.key && copied?.peek === true,
+      JSON.stringify(copied)
+    )
+
+    /* zoom: 前面（Peek）の zoomFactor だけが変わる */
+    await cmd('zoom-in')
+    await sleep(400)
+    {
+      const s = await state()
+      const z = peekOf(s, parent.key)
+      const p = s.tabs.find((t) => t.key === parent.key)
+      check(
+        'zoom-in は Peek に効く（親は 1 のまま）',
+        z?.zoomFactor === 1.1 && p?.zoomFactor === 1,
+        `peek=${z?.zoomFactor} parent=${p?.zoomFactor}`
+      )
+      await cmd('zoom-reset')
+      await sleep(300)
+    }
+
+    /* find (a) 直叩き: n/N（WindowState.find）が Peek 側の件数を返す = toState が前面から引く */
+    await call(`window.nemo.find(${JSON.stringify(peek.key)}, 'Nemo')`)
+    const total = await waitFor(
+      ui,
+      'window.nemo.getWindowState().then((s) => (s.find && s.find.totalMatches > 0 ? s.find.totalMatches : 0))'
+    ).catch(() => 0)
+    check('find: n/N が Peek 側の件数（toState().find が前面から引く）', total > 0, `matches=${total}`)
+    await call(`window.nemo.stopFind(${JSON.stringify(peek.key)})`)
+    await sleep(200)
+
+    /* find (b) FindBar 経由: 検索対象の key が Peek を指す = renderer の foregroundTab を通る */
+    await cmd('find')
+    await waitFor(overlay, "document.querySelector('.findbar input') ? 'ok' : ''")
+    await overlay.ev(`(() => {
+      const input = document.querySelector('.findbar input')
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+      setter.call(input, 'Nemo')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      return 'ok'
+    })()`)
+    await sleep(800)
+    const found = lastLogEntry('find.requested')
+    check(
+      'FindBar の検索対象が Peek（renderer の foregroundTab）',
+      found?.key === peek.key && found?.peek === true,
+      JSON.stringify(found)
+    )
+
+    /* reload: Peek だけが読み直される（ページ内の印が消える）。親の印は残る */
+    await call('window.nemo.setOverlay(null)')
+    await sleep(300)
+    const peekPage = await connectPage(childUrl)
+    await peekPage.ev("window.__nemoMark = 'peek'; 'ok'")
+    await parent.page.ev("window.__nemoMark = 'parent'; 'ok'")
+    peekPage.close()
+    await cmd('reload')
+    await sleep(1500)
+    const peekPage2 = await connectPage(childUrl)
+    await waitFor(peekPage2, "document.readyState === 'complete' ? 'ok' : ''")
+    const peekMark = await peekPage2.ev("window.__nemoMark ?? ''")
+    const parentMark = await parent.page.ev("window.__nemoMark ?? ''")
+    peekPage2.close()
+    check(
+      'reload は Peek に効く（親は読み直されない）',
+      peekMark === '' && parentMark === 'parent',
+      `peek=[${peekMark}] parent=[${parentMark}]`
+    )
+
+    /* navigate（⌘L の確定と同じ IPC）: Peek が遷移し、親は動かず、Peek のまま */
+    const secondUrl = `${PAGES}/peek.html?site=fg2`
+    await call(`window.nemo.navigate(${JSON.stringify(peek.key)}, ${JSON.stringify(secondUrl)})`)
+    await sleep(1000)
+    {
+      const s = await state()
+      const moved = peekOf(s, parent.key)
+      const p = s.tabs.find((t) => t.key === parent.key)
+      check(
+        'navigate で Peek が遷移し、Peek のまま維持される',
+        moved?.key === peek.key && moved?.url === secondUrl,
+        JSON.stringify({ url: moved?.url, peekParentKey: moved?.peekParentKey })
+      )
+      check('親タブの URL は変わらない', p?.url === parent.url, `parent=${p?.url}`)
+    }
+
+    /* go-back: Peek の履歴が戻る（親は履歴が無く canGoBack が false なので、
+       親側の不動は検査しない —— FAIL できない検査は守っている範囲を偽る） */
+    await cmd('go-back')
+    await sleep(1200)
+    {
+      const back = peekOf(await state(), parent.key)
+      check('go-back は Peek に効く', back?.url === childUrl, `url=${back?.url}`)
+    }
+
+    /* Peek を検索中に Peek を閉じる → FindBar も閉じ、消えた key への stopFind で落ちない */
+    await cmd('find')
+    await waitFor(overlay, "document.querySelector('.findbar input') ? 'ok' : ''")
+    const uiErrorsBefore = countLogEvents(USER_DATA, 'ui.error')
+    await call('window.nemo.closePeek()')
+    await sleep(1000)
+    const overlayState = JSON.parse(await ui.ev('window.nemo.getOverlayState().then((s) => JSON.stringify(s))'))
+    check('Peek を閉じたら FindBar も閉じる', overlayState.kind === null, `kind=${overlayState.kind}`)
+    check(
+      'FindBar の閉じ経路で ui.error が出ていない',
+      countLogEvents(USER_DATA, 'ui.error') === uiErrorsBefore,
+      `${countLogEvents(USER_DATA, 'ui.error') - uiErrorsBefore} 件増`
+    )
+
+    overlay.close()
+  }
+
+  await call(`window.nemo.closeTab(${JSON.stringify(parent.key)})`)
+  parent.page.close()
+  await sleep(300)
+  check('前面コマンド検証で main の未捕捉例外が出ていない', countLogEvents(USER_DATA, 'app.uncaught_exception') === 0)
 }
 
 console.log(failures === 0 ? '\n全て PASS' : `\n${failures} 件 FAIL`)

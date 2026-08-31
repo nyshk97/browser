@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { useCommand, useSharedState, useShortcutHint, useWindowState } from '../useNemo.js'
+import { foregroundTab, useCommand, useSharedState, useShortcutHint, useWindowState } from '../useNemo.js'
 import { PinnedTree } from './PinnedTree.js'
 import { TabRow, TAB_DRAG_TYPE, useDragEnd } from './TabRow.js'
 import { SplitRow } from './SplitRow.js'
@@ -33,14 +33,15 @@ export function Sidebar(): React.JSX.Element {
   const state = useWindowState()
   const shared = useSharedState()
 
-  const activeTab = useMemo(() => state?.tabs.find((tab) => tab.key === state.activeTabKey) ?? null, [state])
+  // copy-url は「いま見えているページ」の URL（Peek が出ていれば Peek）
+  const foreground = useMemo(() => foregroundTab(state), [state])
 
   useCommand(
     useCallback(
       (command) => {
-        if (command === 'copy-url' && activeTab) void window.nemo.copyUrl(activeTab.key)
+        if (command === 'copy-url' && foreground) void window.nemo.copyUrl(foreground.key)
       },
-      [activeTab]
+      [foreground]
     )
   )
 

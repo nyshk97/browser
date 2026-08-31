@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useCommand, useSharedState, useWindowState } from '../useNemo.js'
+import { foregroundTab, useCommand, useSharedState, useWindowState } from '../useNemo.js'
 import { PromptDialog } from './PromptDialog.js'
 import { Library } from './Library.js'
 import { Favicon } from './Sidebar.js'
@@ -154,7 +154,8 @@ function CommandBar({
   const [cursor, setCursor] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const activeTab = useMemo(() => state?.tabs.find((tab) => tab.key === state.activeTabKey) ?? null, [state])
+  // ⌘L の対象は前面（Peek が出ていれば Peek）。表示する URL と Enter の遷移先を揃える
+  const activeTab = useMemo(() => foregroundTab(state), [state])
 
   // ⌘L は現在の URL を入れた状態で開く（コマンドが届く前に描画されても空欄にならないよう初期値で入れる）。
   const [query, setQuery] = useState(() => (newTab ? '' : (activeTab?.url ?? '')))
@@ -349,13 +350,34 @@ function EnterIcon(): React.JSX.Element {
 function FindBar({ onClose, state }: { onClose: () => void; state: WindowState | null }): React.JSX.Element {
   const [query, setQuery] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
-  const activeKey = state?.activeTabKey ?? null
+  // 検索対象は前面（Peek が出ていれば Peek）。n/N も main が前面の find を送ってくる
+  const activeKey = foregroundTab(state)?.key ?? null
   const find = state?.find ?? null
 
   useEffect(() => {
     inputRef.current?.focus()
     inputRef.current?.select()
   }, [])
+
+  /**
+   * 前面が変わったら（Peek が閉じた・親を検索中に Peek が開いた等）検索を終える。
+   * 開いたまま残すと n/N が 0/0 のまま、前のページにハイライトが残る。
+   *
+   * `stopFind` は**直前の前面**に向ける（activeKey はもう新しい前面を指している）。
+   * ただしタブごと消えた場合（Peek を閉じた）は撃たない —— `nemo:stop-find` は
+   * `requireTab` で throw するし、WebContents ごと破棄されるのでハイライトも残らない。
+   */
+  const lastKey = useRef(activeKey)
+  useEffect(() => {
+    if (lastKey.current === activeKey) return
+    const prev = lastKey.current
+    lastKey.current = activeKey
+    // null → key は「前面が変わった」ではなく初回 push の到着（`useWindowState` は
+    // IPC の往復が終わるまで null）。ここで閉じるとウィンドウ生成直後の ⌘F が無症状で消える
+    if (prev === null) return
+    if (state?.tabs.some((tab) => tab.key === prev)) void window.nemo.stopFind(prev)
+    onClose()
+  }, [activeKey, state, onClose])
 
   const search = useCallback(
     (text: string, options: { forward?: boolean; findNext?: boolean } = {}) => {

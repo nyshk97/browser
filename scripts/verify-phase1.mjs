@@ -93,6 +93,21 @@ if (mode === '--session-read') {
     urls.some((u) => u.includes('/login.html')) && urls.some((u) => u.includes('/iframe.html')),
     urls.join(', ')
   )
+
+  // 初期化完了の合図が「タブが揃ってから」であること（本編から移した検査）。
+  // ここが逆転すると、外から見たときに registry が空に見える瞬間ができる。
+  // 本編は使い捨てプロファイル（復元なし = 0 タブ起動）なので順序を観測できず、
+  // **復元するタブが必ずある再起動後**でだけ tabs >= 1 を要求できる。
+  {
+    const status = await windows[0].session
+      .ev('window.nemo.getAppStatus().then((s) => JSON.stringify(s))')
+      .then(JSON.parse)
+    check(
+      '初期化完了の合図は復元タブが揃ってから立つ',
+      status.ready === true && status.tabs >= 1,
+      JSON.stringify(status)
+    )
+  }
   /**
    * 復元直後に起きていてよいのは**画面に出ているタブだけ**。
    * アクティブタブに加えて、**分割中ならその相方**も出ている（DESIGN.md「分割ビュー」）。
@@ -135,13 +150,15 @@ if (mode === '--session-read') {
  * 1-0 セキュリティ境界
  * ------------------------------------------------------------------ */
 
-// 初期化完了の合図が「タブが揃ってから」であること。
-// ここが逆転すると、外から見たときに registry が空に見える瞬間ができる。
+// 初期化完了の合図が立っていること。
+// **タブ数は見ない**: 起動時に空タブを作らなくなった（87bae89）ので、復元セッションの無い
+// 使い捨てプロファイルでは 0 タブ起動が正しい（tabs >= 1 のままだと --only phase1 が必ず落ちる）。
+// 「合図はタブが揃ってから立つ」の順序は、タブが必ずある --session-read 側で見る。
 {
   const status = await ui.ev('window.nemo.getAppStatus().then((s) => JSON.stringify(s))').then(JSON.parse)
   check(
-    '初期化完了の合図は起動時のタブが揃ってから立つ',
-    status.ready === true && status.windows >= 1 && status.tabs >= 1,
+    '初期化完了の合図が立っている（起動時のタブは 0 でよい）',
+    status.ready === true && status.windows >= 1,
     JSON.stringify(status)
   )
 }

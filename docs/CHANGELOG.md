@@ -30,6 +30,8 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-31
+
 ### 追加
 
 - **Favorites とブックマークの URL を直接書き換えられる**。右クリックの「URLを変更…」で、枠を押したとき開く URL を任意の URL に差し替えられる（Arc の Edit Pinned URL 相当。Google カレンダーの `u/3/r` を `?authuser=…` 形式にする、のような用途）。タブが閉じていても使え、別の枠と重複する URL や http/https 以外は保存せずエラーを出す。「このページに更新」も Favorites で使えるようにした

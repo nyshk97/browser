@@ -29,6 +29,24 @@ UI コンポーネントを載せるなら、そのスイートが**設定画面
 `['src/main/ipc.ts', ['pins']]` のように載せると**今フルで回っているものが 1 スイートに絞られる改悪**になる
 （レビューでこの提案が出た実例あり）。広げてよいのは既に載っているエントリだけ。
 
+**自分のウィンドウを閉じる・破棄するコマンドは invoke の応答を待たない。**
+`close-window` / 小窓の ⌘O 昇格を `session.ev('window.nemo.xxx().then(...)')` で待つと、
+応答前に WebContents ごと破棄されて**永久に解決しない**（タイムアウトも例外も出ず
+スイートが黙って止まる。2 箇所で別々に踏んだ実例あり）。`verify-peek.mjs` の `evSuicidal` を
+使うか、`(setTimeout(() => { void window.nemo.xxx() }, 50), 'ok')` の形で発火だけして
+結果は状態のポーリングで見る。
+
+**自分でアプリを起動するスイート（verify-all に相乗りしないもの）は Live Folder を
+止めてから起動する。** 止めないと使い捨てプロファイルでも `gh` の実トークンで
+実 GitHub を叩き続ける。userData に `settings.json` の fixture
+（`{"version":1,"data":{"liveFolderEnabled":false}}`）を置くのが最小
+（`NEMO_GITHUB_TEST_ENDPOINT` 方式はモックサーバが要る）。
+
+**CDP の target は名指しで選ぶ。** `find(x => x.type === 'service_worker')` のような
+「最初に見つかったもの」は起動順で別の拡張・別のウィンドウに繋がり、
+**write と read で別対象**になる順序依存フレークを生む（フル実行でだけ storage 検査が
+`{}` で落ちた実例）。拡張は ID、ウィンドウは `?window=N` で選ぶ。
+
 **popup に繋ぐ検査は popup.js の初期化完了を待ってから始める。** `connectTo(cdp, 'popup.html')` は
 target ができた直後に繋がり、popup.js のトップレベル（リスナー登録・初期の storage 書き込み）がまだ走っていない。
 その状態で記録を空にして書き込むと、最初の check だけ 0 件になる（原因は検査の順序なのに polyfill を疑って
@@ -53,11 +71,18 @@ target ができた直後に繋がり、popup.js のトップレベル（リス�
 
 `mise run release` が機械的に切り出す唯一の源。書き方はファイル冒頭の「書き方」節に従う。
 
-## 定義（Favorite / ピン留め）にフィールドを足すとき
+## 定義（Favorite / ピン留め / 一時タブ共有定義）にフィールドを足すとき
 
 **正規化は `src/shared/settings-schema.js` の `normalizePins`（`normalizeFavorite` / `normalizePinnedList`）に足す。**
 `pins.ts` は `JsonStore(..., normalizePins)` で読むので、ここに無いフィールドは**型が通っていても次回起動で黙って消える**。
 スロット（`normalizeSlot`）も同じ関数を通るので、slots-schema 側には書かない。
+
+**一時タブの共有定義（`EphemeralTabDef`）も同じ**: 正規化は同ファイルの `normalizeEphemeralTabs`。
+`ephemeral-tabs.ts` は `JsonStore(..., normalizeEphemeralTabs)` で読むので、ここに無いフィールドは次回起動で黙って消える。
+
+**定義に属するタブの表示名は定義側が正。** `tab.customTitle` を直接読む・別の定義へ渡すと
+null になる（⌘D 昇格の瞬間に付けた名前が消えた実バグあり）。読む側は必ず
+`effectiveCustomTitle(tab)`（registry.ts）を通す。
 
 **タブの状態を定義へ写す（title / favicon 等）ときは、イベント時だけでなく `assignDefinition` の時点で
 タブが既に持っている値も写す。** `page-favicon-updated` は所属より前に来るのが普通（開いてから ⌘D / ドロップ）で、

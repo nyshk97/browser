@@ -30,6 +30,8 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-08-31
+
 ### 変更
 
 - **ダウンロードのたびに保存先を確認するようにした**。ダイアログでキャンセルするとダウンロードを中止する。黙って `~/Downloads` に保存する従来の挙動（`settings.json` の `askDownloadLocation`）は設定ごと廃止

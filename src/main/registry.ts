@@ -55,7 +55,7 @@ import {
   setFaviconForDefinition,
   setPinnedTitle,
   unpin as unpinDefinition,
-  updatePinnedUrl as updatePinnedUrlDefinition,
+  setDefinitionUrl,
   type ConversionResult
 } from './store/pins.js'
 import { recordFavicon, recordVisit, updateTitle } from './store/history.js'
@@ -3390,7 +3390,24 @@ export function renameTab(tab: NemoTab, title: string | null): void {
  */
 export function updatePinnedUrlFromTab(tab: NemoTab): void {
   if (!tab.pinnedId) return
-  updatePinnedUrlDefinition(tab.pinnedId, tab.url)
+  applyUrlFromTab(tab, tab.pinnedId)
+}
+
+/** `updatePinnedUrlFromTab` と対称。そのタブが属する Favorite 定義の URL を差し替える。 */
+export function updateFavoriteUrlFromTab(tab: NemoTab): void {
+  if (!tab.favoriteId) return
+  applyUrlFromTab(tab, tab.favoriteId)
+}
+
+/**
+ * 「このページに更新」の本体。URL 編集（`setDefinitionUrl` 直呼び）と違って
+ * **正しい favicon が手元にある**ので、host が変わって捨てられた `faviconUrl` を
+ * その場で埋め戻す（`assignDefinition` と同じ形。シークレットでは書かない）。
+ * 埋め戻さないと、タブを閉じて開き直すまで頭文字アバターに落ちたままになる。
+ */
+function applyUrlFromTab(tab: NemoTab, definitionId: string): void {
+  if (!setDefinitionUrl(definitionId, tab.url)) return
+  if (tab.faviconUrl && !tab.window.isPrivate) setFaviconForDefinition(definitionId, tab.faviconUrl, tab.url)
 }
 
 /* ------------------------------------------------------------------ *

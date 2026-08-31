@@ -2893,7 +2893,7 @@ body[data-view='call'] {
   font-size: 16px;
 }
 
-/* アイコン編集の枠（Favorites はグリッドの下、ピン留めは行の直下） */
+/* アイコン編集の枠（Favorites はグリッドの下、ピン留めは行の直下）。URL 編集も同じ枠を使う */
 .pin-icon-edit {
   padding: 2px 6px 6px;
 }
@@ -2993,4 +2993,27 @@ body[data-view='call'] {
   margin-top: 4px;
   font-size: 11px;
   color: #ff8a80;
+}
+
+/* URL 編集の枠（「URLを変更…」。アイコン編集と同じ場所に出す） */
+.url-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* `.fav-edit .rename { width: 100% }`（名前の編集用）より詳細度を上げて flex で伸ばす */
+.url-edit-row .url-edit-input,
+.fav-edit .url-edit-row .url-edit-input {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  height: 24px;
+  font-size: 11px;
+}
+
+.url-edit-note {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--nemo-ink-dim);
 }

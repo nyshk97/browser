@@ -574,6 +574,129 @@ const loaded = (session, key, part) =>
 }
 
 /* ------------------------------------------------------------------ *
+ * URL の明示的な変更（「URLを変更…」= Arc の Edit Pinned URL 相当）
+ * ------------------------------------------------------------------ */
+
+{
+  await resetDefinitions()
+  await closeEphemeralTabs()
+
+  // ピン（favicon の**ある** /index.html）と Favorite を1つずつ作る
+  const pinTab = await ui.ev(`window.nemo.createTab('${PAGES}/index.html').then(k => k)`)
+  await loaded(ui, pinTab, '/index.html')
+  await ui.ev(`window.nemo.pinTab(${json(pinTab)}).then(() => 'ok')`)
+  const favTab = await ui.ev(`window.nemo.createTab('${PAGES}/login.html').then(k => k)`)
+  await loaded(ui, favTab, '/login.html')
+  await ui.ev(`window.nemo.addFavorite(${json(favTab)}).then(() => 'ok')`)
+  const pin = flatten((await shared()).pinned).find((n) => n.kind === 'link')
+  const fav = (await shared()).favorites[0]
+
+  // favicon が定義へ写るのを待つ（「host が変わったら捨てる」検査の前提を先に作る）
+  await waitFor(
+    ui,
+    `window.nemo.getSharedState().then(s => { const p = s.pinned.find(n => n.id === ${json(pin.id)}); return p && p.faviconUrl ? 'yes' : '' })`,
+    { timeoutMs: 15000 }
+  )
+
+  // 開いているタブは触らない（決定: 変わるのは「次に開くとき」だけ。開き直しで反映）
+  {
+    const ok = await ui.ev(
+      `window.nemo.setDefinitionUrl(${json(pin.id)}, ${json(`${PAGES}/index.html?while-open=1`)}).then(v => String(v))`
+    )
+    const tabUrl = (await state()).tabs.find((t) => t.key === pinTab)?.url
+    check(
+      '開いているタブの URL は書き換えでは変わらない',
+      ok === 'true' && tabUrl === `${PAGES}/index.html`,
+      `${ok} / ${tabUrl}`
+    )
+  }
+
+  // 「このページに更新」と違い、タブが**閉じていても**書き換えられるのが肝
+  await ui.ev(`window.nemo.closeTab(${json(pinTab)}).then(() => 'ok')`)
+  await ui.ev(`window.nemo.closeTab(${json(favTab)}).then(() => 'ok')`)
+
+  const pinUrl2 = `${PAGES}/index.html?edited=1`
+  const favUrl2 = `${PAGES}/login.html?edited=1`
+  {
+    const ok = await ui.ev(
+      `window.nemo.setDefinitionUrl(${json(pin.id)}, ${json(pinUrl2)}).then(v => String(v))`
+    )
+    const after = flatten((await shared()).pinned).find((n) => n.id === pin.id)
+    check(
+      'タブが閉じていてもピンの URL を書き換えられる',
+      ok === 'true' && after?.url === pinUrl2,
+      `${ok} / ${after?.url}`
+    )
+    check(
+      '同じ host への変更では faviconUrl が残る',
+      typeof after?.faviconUrl === 'string' && after.faviconUrl.length > 0,
+      json(after?.faviconUrl)
+    )
+  }
+  {
+    const ok = await ui.ev(
+      `window.nemo.setDefinitionUrl(${json(fav.id)}, ${json(favUrl2)}).then(v => String(v))`
+    )
+    const after = (await shared()).favorites.find((f) => f.id === fav.id)
+    check(
+      'Favorite の URL も書き換えられる',
+      ok === 'true' && after?.url === favUrl2,
+      `${ok} / ${after?.url}`
+    )
+  }
+
+  // http/https 以外は拒否され、URL は変わらない
+  {
+    const ok = await ui.ev(
+      `window.nemo.setDefinitionUrl(${json(pin.id)}, 'file:///etc/passwd').then(v => String(v))`
+    )
+    const after = flatten((await shared()).pinned).find((n) => n.id === pin.id)
+    check('file: URL への変更は拒否される', ok === 'false' && after?.url === pinUrl2, `${ok} / ${after?.url}`)
+  }
+
+  // 重複の拒否。ピン ↔ ピンは既存の検査にあるので、ここでは**ピン ↔ Favorite のクロス**を見る
+  {
+    const toFav = await ui.ev(
+      `window.nemo.setDefinitionUrl(${json(pin.id)}, ${json(favUrl2)}).then(v => String(v))`
+    )
+    const toPin = await ui.ev(
+      `window.nemo.setDefinitionUrl(${json(fav.id)}, ${json(pinUrl2)}).then(v => String(v))`
+    )
+    const pinAfter = flatten((await shared()).pinned).find((n) => n.id === pin.id)
+    const favAfter = (await shared()).favorites.find((f) => f.id === fav.id)
+    check(
+      'Favorite が持つ URL へのピンの変更は拒否される',
+      toFav === 'false' && pinAfter?.url === pinUrl2,
+      `${toFav} / ${pinAfter?.url}`
+    )
+    check(
+      'ピンが持つ URL への Favorite の変更は拒否される',
+      toPin === 'false' && favAfter?.url === favUrl2,
+      `${toPin} / ${favAfter?.url}`
+    )
+  }
+
+  // host が変わったら faviconUrl を捨てる（`setFaviconForDefinition` の host ガードで自動では直らないため）
+  {
+    const otherHost = PAGES.includes('127.0.0.1')
+      ? PAGES.replace('127.0.0.1', 'localhost')
+      : 'http://nemo-url-edit.invalid'
+    const ok = await ui.ev(
+      `window.nemo.setDefinitionUrl(${json(pin.id)}, ${json(`${otherHost}/index.html`)}).then(v => String(v))`
+    )
+    const after = flatten((await shared()).pinned).find((n) => n.id === pin.id)
+    check(
+      'host が変わる変更では faviconUrl を捨てる',
+      ok === 'true' && after?.faviconUrl === null,
+      `${ok} / ${json(after?.faviconUrl)}`
+    )
+  }
+
+  await resetDefinitions()
+  await closeEphemeralTabs()
+}
+
+/* ------------------------------------------------------------------ *
  * シークレットウィンドウでは既定名を書かない
  * ------------------------------------------------------------------ */
 
@@ -1018,6 +1141,148 @@ const settle = () => sleep(250)
   }
 
   await resetDefinitions()
+}
+
+/* --- 「URLを変更…」の編集枠（ピン行と Favorite セル） --- */
+{
+  await resetDefinitions()
+  await closeEphemeralTabs()
+
+  const key = await ui.ev(`window.nemo.createTab('${PAGES}/index.html').then(k => k)`)
+  await ui.ev(`window.nemo.pinTab(${json(key)}).then(() => 'ok')`)
+  await ui.ev(`window.nemo.closeTab(${json(key)}).then(() => 'ok')`)
+  await settle()
+  const pin = flatten((await shared()).pinned).find((n) => n.kind === 'link')
+
+  // メニューの「URLを変更…」で編集枠が開く（初期値は今の URL）
+  await ui.ev(`(() => {
+    const row = document.querySelector('.row.pin')
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 100 }))
+    return 'ok'
+  })()`)
+  await settle()
+  {
+    const items = await ui
+      .ev(`JSON.stringify([...document.querySelectorAll('.row-menu button')].map((b) => b.textContent))`)
+      .then(JSON.parse)
+    check('ピン行のメニューに「URLを変更…」が出る', items.includes('URLを変更…'), json(items))
+  }
+  await ui.ev(`(() => {
+    const item = [...document.querySelectorAll('.row-menu button')].find((b) => b.textContent === 'URLを変更…')
+    item.click()
+    return 'ok'
+  })()`)
+  await settle()
+  {
+    const value = await ui.ev(`document.querySelector('.url-edit input')?.value ?? ''`)
+    check('編集枠は今の URL を初期値に開く', value === pin.url, value)
+  }
+
+  // http/https 以外はエラーを出して、定義は変わらない
+  await ui.ev(`(() => {
+    const input = document.querySelector('.url-edit input')
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    setter.call(input, 'file:///etc/passwd')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    return 'ok'
+  })()`)
+  await settle()
+  {
+    const error = await ui.ev(`document.querySelector('.url-edit .icon-edit-error')?.textContent ?? ''`)
+    const after = flatten((await shared()).pinned).find((n) => n.id === pin.id)
+    check('http/https 以外はエラーを出す', error.length > 0, error)
+    check('そのとき定義の URL は変わらない', after?.url === pin.url, after?.url)
+  }
+
+  // 正しい URL は保存されて枠が閉じ、開き直すと新しい URL で開く
+  const edited = `${PAGES}/login.html?from=url-edit`
+  await ui.ev(`(() => {
+    const input = document.querySelector('.url-edit input')
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    setter.call(input, ${json(edited)})
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    return 'ok'
+  })()`)
+  await settle()
+  {
+    const after = flatten((await shared()).pinned).find((n) => n.id === pin.id)
+    check('編集枠から URL を保存できる', after?.url === edited, after?.url)
+    check('保存に成功すると枠が閉じる', (await ui.ev(`!document.querySelector('.url-edit')`)) === true)
+  }
+  {
+    await ui.ev(`window.nemo.openPinned(${json(pin.id)}).then(() => 'ok')`)
+    const opened = await waitFor(
+      ui,
+      `window.nemo.getWindowState().then(s => { const t = s.tabs.find(t => t.pinnedId === ${json(pin.id)}); return t ? t.url : '' })`
+    )
+    check('開き直すと変更後の URL で開く', opened.includes('from=url-edit'), opened)
+  }
+
+  // Favorite セル: 開いていれば「このページに更新」も出て、実際に差し替わる
+  const favTab = await ui.ev(`window.nemo.createTab('${PAGES}/iframe.html').then(k => k)`)
+  await loaded(ui, favTab, '/iframe.html')
+  await ui.ev(`window.nemo.addFavorite(${json(favTab)}).then(() => 'ok')`)
+  await settle()
+  {
+    await ui.ev(`(() => {
+      const cell = document.querySelector('.fav')
+      cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }))
+      return 'ok'
+    })()`)
+    await settle()
+    const items = await ui
+      .ev(`JSON.stringify([...document.querySelectorAll('.row-menu button')].map((b) => b.textContent))`)
+      .then(JSON.parse)
+    check(
+      '開いている Favorite のメニューに「URLを変更…」と「このページに更新」が出る',
+      items.includes('URLを変更…') && items.includes('このページに更新'),
+      json(items)
+    )
+  }
+  {
+    await ui.ev(`window.nemo.navigate(${json(favTab)}, '${PAGES}/login.html?fav-current=1').then(() => 'ok')`)
+    await waitFor(
+      ui,
+      `window.nemo.getWindowState().then(s => s.tabs.some(t => t.key === ${json(favTab)} && t.url.includes('fav-current=1')))`
+    )
+    await ui.ev(`window.nemo.updateFavoriteUrl(${json(favTab)}).then(() => 'ok')`)
+    const favAfter = (await shared()).favorites[0]
+    check(
+      'Favorite の「このページに更新」で URL が差し替わる',
+      favAfter?.url?.includes('fav-current=1') === true,
+      favAfter?.url
+    )
+  }
+  // 閉じている Favorite のセルには「このページに更新」を出さない（ピン行と同じ規則）
+  await ui.ev(`window.nemo.closeTab(${json(favTab)}).then(() => 'ok')`)
+  await settle()
+  {
+    await ui.ev(`(() => {
+      const cell = document.querySelector('.fav')
+      cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }))
+      return 'ok'
+    })()`)
+    await settle()
+    const items = await ui
+      .ev(`JSON.stringify([...document.querySelectorAll('.row-menu button')].map((b) => b.textContent))`)
+      .then(JSON.parse)
+    check(
+      '閉じている Favorite のセルには「このページに更新」を出さない',
+      items.includes('URLを変更…') && !items.includes('このページに更新'),
+      json(items)
+    )
+    // 開いたメニューは閉じておく（次の検証が誤って掴まないように）
+    await ui.ev(
+      `(() => { document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); return 'ok' })()`
+    )
+    await settle()
+  }
+
+  await resetDefinitions()
+  await closeEphemeralTabs()
+  await settle()
 }
 
 /* --- ピン留め行の D&D（並べ替え・フォルダへ入れる・フォルダ同士は弾く） --- */

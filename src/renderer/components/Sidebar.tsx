@@ -12,6 +12,7 @@ import {
   fileToIconDataUrl,
   isImageFileDrag
 } from './IconEdit.js'
+import { UrlEdit } from './UrlEdit.js'
 import { LiveFolder } from './LiveFolder.js'
 import { normalizePrUrl } from '../../shared/live-folder-schema.js'
 import { FAVORITE_SECTIONS, isImageIcon } from '../../shared/favorites.js'
@@ -275,6 +276,7 @@ function FavoriteGrid({
   const [editingId, setEditingId] = useState<string | null>(null)
   /** アイコン編集中の Favorite。`error` はドロップで拒否されたときに枠へ持ち越す文言。 */
   const [iconEdit, setIconEdit] = useState<{ id: string; error?: string } | null>(null)
+  const [urlEditId, setUrlEditId] = useState<string | null>(null)
   const [menu, setMenu] = useState<RowMenuState | null>(null)
   const { schedule, cancel } = useDelayedClick()
 
@@ -282,16 +284,24 @@ function FavoriteGrid({
 
   const editing = favorites.find((favorite) => favorite.id === editingId) ?? null
   const iconEditing = favorites.find((favorite) => favorite.id === iconEdit?.id) ?? null
+  const urlEditing = favorites.find((favorite) => favorite.id === urlEditId) ?? null
 
-  // 名前とアイコンの編集枠は同じ場所（グリッドの下）に出すので排他にする
-  // （両方開くと枠が 2 つ並び、どちらもマウント時にフォーカスを取り合う）
+  // 名前・アイコン・URL の編集枠は同じ場所（グリッドの下）に出すので排他にする
+  // （複数開くと枠が並び、どれもマウント時にフォーカスを取り合う）
   const editName = (id: string | null): void => {
     setIconEdit(null)
+    setUrlEditId(null)
     setEditingId(id)
   }
   const editIcon = (next: { id: string; error?: string } | null): void => {
     setEditingId(null)
+    setUrlEditId(null)
     setIconEdit(next)
+  }
+  const editUrl = (id: string | null): void => {
+    setEditingId(null)
+    setIconEdit(null)
+    setUrlEditId(id)
   }
 
   /** セルに落とされた画像ファイルをアイコンにする。拒否されたら編集枠を開いて理由を出す。 */
@@ -427,6 +437,16 @@ function FavoriteGrid({
                   items: [
                     { label: '名前を変更', run: () => editName(favorite.id) },
                     { label: 'アイコンを変更…', run: () => editIcon({ id: favorite.id }) },
+                    { label: 'URLを変更…', run: () => editUrl(favorite.id) },
+                    // 「このページに更新」は**開いているときだけ**出す（ピン留め行と同じ規則）
+                    ...(tab
+                      ? [
+                          {
+                            label: 'このページに更新',
+                            run: () => void window.nemo.updateFavoriteUrl(tab.key)
+                          }
+                        ]
+                      : []),
                     {
                       label: `${other === 'messages' ? 'Messages' : 'Tools'} へ移動`,
                       run: () => void window.nemo.moveFavorite(favorite.id, other)
@@ -471,6 +491,16 @@ function FavoriteGrid({
             error={iconEdit?.error ?? null}
             onSubmit={(icon) => window.nemo.setCustomIcon(iconEditing.id, icon)}
             onClose={() => editIcon(null)}
+          />
+        </div>
+      ) : null}
+      {urlEditing ? (
+        <div className="fav-edit">
+          <UrlEdit
+            key={urlEditing.id}
+            url={urlEditing.url}
+            onSubmit={(url) => window.nemo.setDefinitionUrl(urlEditing.id, url)}
+            onClose={() => editUrl(null)}
           />
         </div>
       ) : null}

@@ -23,6 +23,7 @@ import {
   togglePin,
   openPrivateWindow,
   unpinEverywhere,
+  updateFavoriteUrlFromTab,
   updatePinnedUrlFromTab,
   type NemoTab,
   type NemoWindow,
@@ -45,6 +46,7 @@ import {
   movePinned,
   renameNode,
   setCustomIcon,
+  setDefinitionUrl,
   toggleFolder
 } from './store/pins.js'
 import {
@@ -521,11 +523,24 @@ export function registerIpcHandlers(): void {
     renameTab(tab, optionalTitle(title))
   })
 
-  // 引数はタブの key だけ。定義 ID は main 側でタブから導出する
-  // （renderer から無関係な定義を書き換えられる口を作らない）。
+  // 「このページに更新」の 2 本は引数がタブの key だけで、定義 ID は main 側でタブから導出する
+  // （タブが手元にある操作なので、renderer に定義 ID を指定させる必要がない。
+  //  定義 ID を直接受ける例外は下の `nemo:set-definition-url` を参照）。
   ipcMain.handle('nemo:update-pinned-url', (event, key: unknown) => {
     const { tab } = requireTab(event, key)
     updatePinnedUrlFromTab(tab)
+  })
+
+  ipcMain.handle('nemo:update-favorite-url', (event, key: unknown) => {
+    const { tab } = requireTab(event, key)
+    updateFavoriteUrlFromTab(tab)
+  })
+
+  // 「URLを変更…」だけは**定義 ID を直接受ける**（タブが閉じていても使う操作なので、
+  // タブから導出できない）。書ける値は `normalizeStoredUrl` が http/https に閉じる。
+  ipcMain.handle('nemo:set-definition-url', (event, id: unknown, url: unknown): boolean => {
+    requireWindow(event)
+    return setDefinitionUrl(requireString(id, 'id'), requireString(url, 'url'))
   })
 
   ipcMain.handle('nemo:toggle-folder', (event, id: unknown) => {

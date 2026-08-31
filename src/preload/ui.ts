@@ -67,6 +67,8 @@ const api: NemoUiApi = {
   setCustomIcon: (id, icon) => ipcRenderer.invoke('nemo:set-custom-icon', id, icon) as Promise<boolean>,
   renameTab: (key, title) => ipcRenderer.invoke('nemo:rename-tab', key, title) as Promise<void>,
   updatePinnedUrl: (key) => ipcRenderer.invoke('nemo:update-pinned-url', key) as Promise<void>,
+  updateFavoriteUrl: (key) => ipcRenderer.invoke('nemo:update-favorite-url', key) as Promise<void>,
+  setDefinitionUrl: (id, url) => ipcRenderer.invoke('nemo:set-definition-url', id, url) as Promise<boolean>,
   toggleFolder: (id) => ipcRenderer.invoke('nemo:toggle-folder', id) as Promise<void>,
   movePinned: (id, parentId, index) =>
     ipcRenderer.invoke('nemo:move-pinned', id, parentId, index) as Promise<void>,

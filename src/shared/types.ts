@@ -918,6 +918,14 @@ export interface NemoUiApi {
    * **定義 ID は渡さない**（main 側でタブから導出する）。
    */
   updatePinnedUrl(key: string): Promise<void>
+  /** `updatePinnedUrl` と対称。そのタブが属する Favorite 定義の URL を差し替える。 */
+  updateFavoriteUrl(key: string): Promise<void>
+  /**
+   * 定義（ピン / Favorite）の URL を明示的に書き換える（「URLを変更…」）。
+   * タブが閉じていても使う操作なので、例外的に定義 ID を渡す。
+   * http/https 以外や、別の定義と重複する URL は**既存を消さずに** false を返す。
+   */
+  setDefinitionUrl(id: string, url: string): Promise<boolean>
   toggleFolder(id: string): Promise<void>
   /** ドラッグ & ドロップの結果を反映する。 */
   movePinned(id: string, parentId: string | null, index: number): Promise<void>

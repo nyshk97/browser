@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useState } from 'react'
 import { DefinitionIcon } from './Sidebar.js'
 import { IconEdit } from './IconEdit.js'
+import { UrlEdit } from './UrlEdit.js'
 import { InlineRename, useDelayedClick } from './InlineRename.js'
 import { RowMenu, type RowMenuState } from './RowMenu.js'
 import { TAB_DRAG_TYPE, useDragEnd } from './TabRow.js'
@@ -58,6 +59,7 @@ export function PinnedTree({
   const [dropHint, setDropHint] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [iconEditingId, setIconEditingId] = useState<string | null>(null)
+  const [urlEditingId, setUrlEditingId] = useState<string | null>(null)
   const [menu, setMenu] = useState<RowMenuState | null>(null)
   const { schedule, cancel } = useDelayedClick()
 
@@ -228,11 +230,12 @@ export function PinnedTree({
             onDoubleClick={onDoubleClick}
             onContextMenu={(event) =>
               openMenu(event, node.id, [
-                // 名前とアイコンの編集は排他（両方開くとフォーカスを取り合う）
+                // 名前・アイコン・URL の編集は排他（複数開くとフォーカスを取り合う）
                 {
                   label: '名前を変更',
                   run: () => {
                     setIconEditingId(null)
+                    setUrlEditingId(null)
                     setEditingId(node.id)
                   }
                 },
@@ -240,7 +243,16 @@ export function PinnedTree({
                   label: 'アイコンを変更…',
                   run: () => {
                     setEditingId(null)
+                    setUrlEditingId(null)
                     setIconEditingId(node.id)
+                  }
+                },
+                {
+                  label: 'URLを変更…',
+                  run: () => {
+                    setEditingId(null)
+                    setIconEditingId(null)
+                    setUrlEditingId(node.id)
                   }
                 },
                 // 「このページに更新」は**開いているときだけ**出す（閉じていたら対象タブが無い）
@@ -291,6 +303,16 @@ export function PinnedTree({
                 fallback={tab?.faviconUrl ?? node.faviconUrl}
                 onSubmit={(icon) => window.nemo.setCustomIcon(node.id, icon)}
                 onClose={() => setIconEditingId(null)}
+              />
+            </div>
+          ) : null}
+          {/* URL 編集も同じ場所（対象行の直下）に出す */}
+          {urlEditingId === node.id ? (
+            <div className="pin-icon-edit" style={depth ? { marginLeft: depth * 14 } : undefined}>
+              <UrlEdit
+                url={node.url}
+                onSubmit={(url) => window.nemo.setDefinitionUrl(node.id, url)}
+                onClose={() => setUrlEditingId(null)}
               />
             </div>
           ) : null}

@@ -321,31 +321,44 @@ export function setPinnedTitle(id: string, title: string): void {
 }
 
 /**
- * ピン定義の URL を差し替える（コンテキストメニューの「このページに更新」）。
+ * 定義（ピン / Favorite）の URL を差し替える
+ * （コンテキストメニューの「このページに更新」と「URLを変更…」）。
  *
- * **別のピンが既にその URL を持っていたら何もしない**。
- * 「同じ URL を二重にピン留めしない」不変（`findPinnedByUrl` が支えている）を
- * ここで壊すと、同じ URL の枠が2つ並んでどちらから開いたかで別タブになる。
+ * **別の定義（ピン・Favorite のどちらか）が既にその URL を持っていたら何もしない**。
+ * 「同じ URL を二重に置かない」不変（`findPinnedByUrl` と registry の
+ * `findFavoriteByUrl` が支えている）をここで壊すと、同じ URL の枠が2つ並んで
+ * どちらから開いたかで別タブになる。
+ *
+ * host が変わったら `faviconUrl` を捨てる。`setFaviconForDefinition` は
+ * 「ページの host = 定義の host」のときしか書かないので、残すと前のサイトの
+ * アイコンのまま次にタブを開いても直らない。
  */
-export function updatePinnedUrl(id: string, url: string): boolean {
+export function setDefinitionUrl(id: string, url: string): boolean {
   const normalized = normalizeStoredUrl(url)
   if (!normalized) return false
-  const target = findPinned(id)
-  if (!target || target.kind !== 'link') return false
+  const pin = findPinned(id)
+  if (pin && pin.kind !== 'link') return false
+  const target: PinnedLink | FavoriteItem | null = pin?.kind === 'link' ? pin : findFavorite(id)
+  if (!target) return false
   if (target.url === normalized) return true
-  const conflict = findPinnedByUrl(normalized)
-  if (conflict && conflict.id !== id) {
-    log('pin.url_update_rejected', { id, reason: 'duplicate_url' })
+  const pinConflict = findPinnedByUrl(normalized)
+  const favoriteConflict = data().favorites.find((item) => item.url === normalized)
+  if ((pinConflict && pinConflict.id !== id) || (favoriteConflict && favoriteConflict.id !== id)) {
+    log('definition.url_update_rejected', { id, reason: 'duplicate_url' })
     return false
   }
+  const faviconUrl = hostOf(target.url) === hostOf(normalized) ? target.faviconUrl : null
   const apply = (nodes: PinnedNode[]): PinnedNode[] =>
     nodes.map((node) => {
-      if (node.id === id && node.kind === 'link') return { ...node, url: normalized }
       if (node.kind === 'folder') return { ...node, children: apply(node.children) }
-      return node
+      if (node.id !== id) return node
+      return { ...node, url: normalized, faviconUrl }
     })
-  commit({ ...data(), pinned: apply(data().pinned) })
-  log('pin.url_updated', { id })
+  const favorites = data().favorites.map((item) =>
+    item.id === id ? { ...item, url: normalized, faviconUrl } : item
+  )
+  commit({ favorites, pinned: apply(data().pinned) })
+  log('definition.url_updated', { id, kind: pin ? 'pin' : 'favorite' })
   return true
 }
 

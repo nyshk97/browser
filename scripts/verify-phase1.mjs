@@ -15,7 +15,7 @@
  *   node scripts/verify-phase1.mjs --session-write セッション復元の前半（タブを開く）
  *   node scripts/verify-phase1.mjs --session-read  再起動後に復元されたか見る
  */
-import { connectTo, connectUi, listTargets, sleep, waitFor } from './lib/cdp.mjs'
+import { connect, connectTo, connectUi, evIsolated, listTargets, sleep, waitFor } from './lib/cdp.mjs'
 import { afterSessionSave } from './lib/timings.mjs'
 
 const CDP = process.env.NEMO_CDP ?? 'http://127.0.0.1:9333'
@@ -832,7 +832,8 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
 }
 
 /*
- * 未決定のマイク・カメラの見え方（`security.ts` の `isPermissionsQueryCheck`）。
+ * 未決定のマイク・カメラの見え方（`security.ts` の `isPermissionsQueryCheck` と
+ * `permissions-query-shim` の読み替え）。
  *
  * **両方向から見張る**。Electron の check handler は boolean しか返せず
  * 「未決定」を表現できないので、どちらかに倒すしかない。
@@ -841,19 +842,35 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
  * - 一律 `granted` に倒すと **`enumerateDevices()` のデバイス名が同意なしに漏れる**
  *   （macOS の Continuity Camera はデバイス名に**本名**が入る）
  *
- * どちらに転んでも気づけるよう、2つ並べて見る。
+ * check handler は granted に倒したうえで、main world のシムが
+ * 「granted なのに label 全空 = Nemo 未決定」を `prompt` に読み替える。
+ * Meet は「query granted + label 空」を**デバイス無し**と解釈して getUserMedia を
+ * 呼ばずに詰む（2026-08-31 に実地で確定）ので、この組み合わせを外に見せてはいけない。
  */
 {
   const key = await ui.ev(`window.nemo.createTab('${PAGES}/index.html?probe=media-check').then(k => k)`)
   const page = await connectTo(CDP, 'probe=media-check')
   await waitFor(page, "document.readyState === 'complete' ? 'ok' : ''")
 
-  const state = await page.ev(`navigator.permissions.query({ name: 'microphone' }).then((r) => r.state)`)
+  // 素の値（isolated world = シムが見えない）とシム後の値（main world）を並べて取る。
+  // 差分で断言すると「シムが配られていない」と「シムが例外で素通しした」を切り分けられる。
+  const QUERY_MIC = `navigator.permissions.query({ name: 'microphone' }).then((r) => r.state)`
+  const rawState = await evIsolated(page, QUERY_MIC)
+  const state = await page.ev(QUERY_MIC)
   check(
     '未決定のマイクは permissions.query で denied にならない（サイトが getUserMedia を諦めない）',
     state !== 'denied',
     String(state)
   )
+  check(
+    '未決定のマイクをシムが prompt に読み替える（素: granted → シム後: prompt）',
+    rawState === 'granted' && state === 'prompt',
+    `素 ${rawState} / シム後 ${state}`
+  )
+  const cameraState = await page.ev(
+    `navigator.permissions.query({ name: 'camera' }).then((r) => r.state)`
+  )
+  check('未決定のカメラも prompt になる', cameraState === 'prompt', String(cameraState))
 
   const labels = await page.ev(
     `navigator.mediaDevices.enumerateDevices().then((d) => JSON.stringify(d.map((x) => x.label)))`
@@ -865,8 +882,62 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
     leaked.length === 0 ? `${JSON.parse(labels).length} 件すべて空` : labels
   )
 
+  // Meet の初回判定の再現: 「granted なのに label 全空」を見せていないこと。
+  // 上の 2 検査が別々に通っても、この組み合わせ（矛盾）を外に見せた時点で Meet は詰む。
+  check(
+    'Meet の初回判定（query granted + label 全空 = デバイス無し扱い）に落ちない',
+    state !== 'granted' || leaked.length > 0,
+    `query ${state} / label 付き ${leaked.length} 件`
+  )
+
   page.close()
   await ui.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
+}
+
+/*
+ * シークレットウィンドウでも同じ読み替えが効くこと（preload 登録漏れの再発防止）。
+ *
+ * シークレットの権限記憶は partition 内のメモリだけなので**毎回未決定**になる。
+ * `ensurePrivateSession` は通常セッションと別にシムの preload を登録する必要があり、
+ * 実際に登録が無いままリリースされていた（2026-08-31 の実地調査の発端）。
+ */
+{
+  await ui.ev(`window.nemo.createPrivateWindow().then(() => 'ok')`)
+  let target = null
+  const deadline = Date.now() + 15000
+  while (!target && Date.now() < deadline) {
+    target =
+      (await listTargets(CDP)).find(
+        (t) => t.url.includes('private=1') && t.url.includes('view=sidebar')
+      ) ?? null
+    if (!target) await sleep(300)
+  }
+  if (!target) {
+    check('シークレットでも未決定のマイクが prompt になる', false, 'シークレットウィンドウの UI が見つからない')
+  } else {
+    const privateUi = await connect(target.webSocketDebuggerUrl)
+    await waitFor(privateUi, "typeof window.nemo === 'object' && window.nemo !== null ? 'ready' : ''")
+    await privateUi.ev(`window.nemo.createTab('${PAGES}/index.html?probe=media-private').then(() => 'ok')`)
+    const page = await connectTo(CDP, 'probe=media-private')
+    await waitFor(page, "document.readyState === 'complete' ? 'ok' : ''")
+    const state = await page.ev(`navigator.permissions.query({ name: 'microphone' }).then((r) => r.state)`)
+    check('シークレットでも未決定のマイクが prompt になる', state === 'prompt', String(state))
+    page.close()
+    // **検査後は必ず閉じる**。開いたままだと後続の connectTo / connectUi が
+    // private 側の target を掴んで不安定になる（http-auth の前例と同じ扱い）。
+    // invoke の**応答は待たない**: close-window で自分の renderer ごと破棄されるので
+    // 応答が返らず、awaitPromise で待つとここでハングする（実際に 20 分止まった）。
+    await privateUi.ev(`(window.nemo.runCommandForVerify('close-window'), 'ok')`)
+    privateUi.close()
+    const gone = Date.now() + 10000
+    let left = true
+    while (left && Date.now() < gone) {
+      left = (await listTargets(CDP)).some((t) => t.url.includes('private=1'))
+      if (left) await sleep(300)
+    }
+    // 閉じ漏れは後続検査の connectTo の掴み間違いとして**別の場所で**壊れるので、ここで出す
+    check('シークレットウィンドウを閉じられた（後続検査の掴み間違い防止）', !left)
+  }
 }
 
 // 権限ダイアログ（要求元は**アクティブなタブ**でなければならない。

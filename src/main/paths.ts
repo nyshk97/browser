@@ -49,6 +49,13 @@ const moduleDir = path.dirname(fileURLToPath(import.meta.url))
 /** ビルド成果物のルート（out/main から1つ上 = out/）。 */
 export const outDir = path.resolve(moduleDir, '..')
 
+/**
+ * ビルド済み preload の置き場（out/preload）。
+ * `extensions.ts` と `page-shim.ts` の両方が `extension-shim.cjs` をここから引くので、
+ * レイアウト変更で片方だけ直り漏れないよう 1 か所に持つ。
+ */
+export const preloadDir = path.join(outDir, 'preload')
+
 /** リポジトリのルート（out/main から2つ上）。パッケージ後は app.asar のルート。 */
 export const projectRoot = path.resolve(moduleDir, '..', '..')
 

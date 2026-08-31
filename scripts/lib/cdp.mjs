@@ -53,6 +53,37 @@ export async function connect(wsUrl) {
   }
 }
 
+/**
+ * main world の monkeypatch が**見えない** isolated world で式を評価する。
+ *
+ * ページに注入したシム（`permissions-query-shim` 等）の「素の値」を取るために使う。
+ * 素の値とシム後の値（通常の `ev`）を並べると、「シムが配られていない」と
+ * 「シムが例外で素通しした」を切り分けられる。
+ * 既定の `ev` は main world 固定のまま（全 verify スクリプトが共有しているので挙動を変えない）。
+ */
+export async function evIsolated(session, expression) {
+  const tree = await session.send('Page.getFrameTree')
+  const frameId = tree.result?.frameTree?.frame?.id
+  if (!frameId) throw new Error('Page.getFrameTree で frameId が取れない')
+  const world = await session.send('Page.createIsolatedWorld', {
+    frameId,
+    worldName: 'nemo-verify'
+  })
+  const contextId = world.result?.executionContextId
+  if (!contextId) throw new Error('Page.createIsolatedWorld が contextId を返さない')
+  const r = await session.send('Runtime.evaluate', {
+    expression,
+    awaitPromise: true,
+    returnByValue: true,
+    contextId
+  })
+  const details = r.result?.exceptionDetails
+  if (details) {
+    throw new Error(details.exception?.description ?? details.text ?? 'eval failed')
+  }
+  return r.result?.result?.value
+}
+
 /** URL の一部が一致する target につなぐ。見つかるまで待つ。 */
 export async function connectTo(cdp, urlPart, { timeoutMs = 15000, type = null, exclude = null } = {}) {
   const deadline = Date.now() + timeoutMs

@@ -573,6 +573,18 @@ sqlite3 "$HOME/Library/Application Support/com.apple.TCC/TCC.db" \
 （`screencapture -x` で確認できる）。選ばずに放置すると
 ページ側は `AbortError: Timeout starting video source` になる。
 
+**まっさらな状態（許可も拒否もしていない）の `permissions.query({name:'microphone'})` は
+`'prompt'` が正**（`permissions-query-shim` の読み替え。シークレットウィンドウは毎回この状態になる）。
+`'granted'` が返るのはシムが配られていない兆候で、Google Meet が
+「マイクが見つかりません」（granted なのに label 空 = デバイス無し扱い）で詰む。
+自走検証は `verify:only phase1` が素の値との差分・シークレット側・Meet の判定再現まで見る。
+
+**Meet 初回フローの手動確認（メディア権限まわりを触ったリリースの前に）**:
+dev ビルドのシークレットウィンドウで Meet の会議 URL を開き、
+「マイクが見つかりません」ではなくマイク・カメラの許可フロー
+（Nemo のダイアログ → macOS のダイアログ）に進めることを目視する。
+シークレットは権限を覚えないので、閉じて開き直せば初回状態を何度でも再現できる。
+
 ### スクリーンショット
 
 ```bash

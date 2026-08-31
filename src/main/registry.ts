@@ -23,6 +23,7 @@ import {
   resolveNavigationTarget
 } from './security.js'
 import { watchPageExtensionConsole } from './extension-console.js'
+import { registerPageShim } from './page-shim.js'
 import { log, logError } from './log.js'
 import { startMetricsSampling, stopMetricsSampling } from './metrics.js'
 import { createUiView, disposeUiView, type UiViewKind } from './ui-view.js'
@@ -266,6 +267,10 @@ function ensurePrivateSession(): string {
   // 権限・デバイスの既定は通常セッションと同じ（ここを省くと自動許可され得る）。
   // ただし**記憶はこの partition の中だけ**（常用プロファイルに残さない）。
   applySessionSecurityDefaults(privateSession, 'page', findWindowIdForPageContents, PRIVATE_PARTITION)
+  // permissions.query の読み替えシムもここで配る。シークレットは権限が毎回未決定なので、
+  // 配り漏れると Google Meet の初回詰み（query granted + label 空 → デバイス無し扱い）を
+  // 毎回踏む（実際に配り漏れたままリリースされていた）。
+  registerPageShim(privateSession)
   // ダウンロードもここで登録する。付けないと `will-download` に誰も応えず、
   // 保存先が決まらないまま失敗する（Nemo のダウンロード一覧にも出ない）。
   installDownloadHandler(privateSession, PRIVATE_PARTITION)

@@ -3,8 +3,7 @@ import { ElectronChromeExtensions } from 'electron-chrome-extensions'
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { extensionsDir, extensionsLockPath } from './paths.js'
+import { extensionsDir, extensionsLockPath, preloadDir } from './paths.js'
 import { log, logError } from './log.js'
 import { hashExtensionTree } from '../shared/tree-hash.js'
 import { artifactDirFor, validateLock } from '../shared/ext-lock.js'
@@ -469,8 +468,6 @@ export function watchExtensionPopups(extensions: ElectronChromeExtensions): void
     })
   })
 }
-
-const preloadDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'preload')
 
 /**
  * 拡張コンテキスト向けの `chrome.*` 補完を pageSession に登録する。

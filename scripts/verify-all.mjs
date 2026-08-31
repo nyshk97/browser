@@ -176,6 +176,13 @@ const verifyTimings = JSON.stringify({
 })
 
 /**
+ * beforeunload の離脱確認（will-prevent-unload）はネイティブダイアログなので CDP から
+ * 押せない。アプリには「離れる」を自動選択させ、検証スクリプトには「その前提が成立
+ * している」ことを伝える。**両方に同じ値を渡す**（ズレると phase1 の検査が skip される）。
+ */
+const verifyUnloadChoice = 'leave'
+
+/**
  * 自走検証は CDP を開けるので、**実 Vault の入ったプロファイルでは絶対に回さない**。
  * 使い捨てのデータディレクトリを毎回作って、そこで完結させる。
  */
@@ -252,7 +259,10 @@ async function startApp() {
       NEMO_VERIFY_DIAGNOSTICS: '1',
       // 待ちの本体である「見に行く周期」を検証中だけ縮める。
       // **`runVerify` にも同じ値を渡す**（検証側は読み戻して待ちを組む）。同じく `--only` 非依存
-      NEMO_VERIFY_TIMINGS: verifyTimings
+      NEMO_VERIFY_TIMINGS: verifyTimings,
+      // beforeunload の離脱確認はネイティブダイアログで CDP から押せない。
+      // 検証中は「離れる」を自動選択する。同じく `--only` 非依存
+      NEMO_VERIFY_UNLOAD_CHOICE: verifyUnloadChoice
     }
   })
   await waitForHttp(`${cdp}/json/list`, {
@@ -281,7 +291,10 @@ const runVerify = (script, args = []) =>
       NEMO_GITHUB_TEST_ENDPOINT: githubEndpoint,
       // **アプリに渡すだけでは届かない**。検証スクリプトは別の env で起動されるので、
       // ここにも同じ値を載せる（載せ忘れると verify だけ本番値で待ち、無駄に遅くなる）
-      NEMO_VERIFY_TIMINGS: verifyTimings
+      NEMO_VERIFY_TIMINGS: verifyTimings,
+      // beforeunload の検査は「アプリが leave を自動選択する」前提。検証スクリプト側にも
+      // 載せて、前提が成立しない単体実行（env 無しのアプリ相手）では検査を skip させる
+      NEMO_VERIFY_UNLOAD_CHOICE: verifyUnloadChoice
     }
   })
 

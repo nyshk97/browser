@@ -17,6 +17,7 @@
  */
 import { connect, connectTo, connectUi, evIsolated, listTargets, sleep, waitFor } from './lib/cdp.mjs'
 import { afterSessionSave } from './lib/timings.mjs'
+import { readLogLines } from './lib/harness.mjs'
 
 const CDP = process.env.NEMO_CDP ?? 'http://127.0.0.1:9333'
 const PAGES = process.env.NEMO_TEST_PAGES ?? 'http://127.0.0.1:8787'
@@ -25,6 +26,13 @@ let failures = 0
 function check(name, ok, detail = '') {
   if (!ok) failures += 1
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
+}
+
+/** 条件に到達できなかった検査。黙って PASS にせず、まとめ行に件数を出す（verify-split と同じ）。 */
+let skipped = 0
+function skip(name, reason) {
+  skipped += 1
+  console.log(`SKIP  ${name} — ${reason}`)
 }
 
 /** ピン留めツリーの ID を平らに並べる。 */
@@ -1133,6 +1141,82 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
 }
 
 /* ------------------------------------------------------------------ *
+ * beforeunload が unload を止めるページでもリロードが黙って握り潰されない
+ *
+ * Electron は `will-prevent-unload` を処理しないと、ダイアログも出さずに
+ * リロード・遷移をキャンセルする（⌘R / ⟳ が無反応に見えた実バグ）。
+ * main が確認を出して続行できることを見る（検証中は NEMO_VERIFY_UNLOAD_CHOICE=leave で
+ * 「離れる」を自動選択。ネイティブダイアログは CDP から押せない）。
+ *
+ * **アプリ側に NEMO_VERIFY_UNLOAD_CHOICE=leave が渡っている前提**（verify-all が渡す）。
+ * env 無しで起動したアプリ相手（単体実行）だと本物のネイティブ modal が開いて
+ * main が同期的に固まるので、前提が確認できないときはこのブロックを skip する。
+ * ------------------------------------------------------------------ */
+
+if (process.env.NEMO_VERIFY_UNLOAD_CHOICE !== 'leave' || !process.env.NEMO_USER_DATA_DIR) {
+  skip(
+    'beforeunload の検査',
+    'NEMO_VERIFY_UNLOAD_CHOICE=leave と NEMO_USER_DATA_DIR が無い単体実行（verify-all 経由で回る）'
+  )
+} else {
+  const key = await ui.ev(
+    `window.nemo.createTab(${JSON.stringify(`${PAGES}/login.html?probe=beforeunload`)})`
+  )
+  const page = await connectTo(CDP, 'probe=beforeunload')
+  await page.ev(
+    `(window.addEventListener('beforeunload', (e) => { e.preventDefault(); e.returnValue = '' }), 'ok')`
+  )
+  // sticky user activation が無いと Chromium は beforeunload のキャンセル自体を
+  // 無視する（＝バグを踏まずに検査が空振りする）。実クリック相当で付けてから撃つ
+  await page.send('Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    x: 10,
+    y: 10,
+    button: 'left',
+    clickCount: 1
+  })
+  await page.send('Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    x: 10,
+    y: 10,
+    button: 'left',
+    clickCount: 1
+  })
+  const armed = await page.ev(`navigator.userActivation?.hasBeenActive === true`)
+  check('前提: クリックで sticky activation が付いている', armed === true)
+  await page.ev(`(window.__nemoBeforeUnloadProbe = 1, 'ok')`)
+  page.close()
+
+  await ui.ev(`window.nemo.reload(${JSON.stringify(key)}).then(() => 'ok')`)
+  // リロードが通れば新しいドキュメントになり、印が消える。target は同じタブなので
+  // セッションは張り直さず 1 本で待つ（Runtime.evaluate は遷移中に落ちることがあるので握る）
+  const probe = await connectTo(CDP, 'probe=beforeunload')
+  let marker = null
+  for (let i = 0; i < 25; i += 1) {
+    await sleep(400)
+    marker = await probe.ev(`window.__nemoBeforeUnloadProbe ?? 'gone'`).catch(() => null)
+    if (marker === 'gone') break
+  }
+  probe.close()
+  check(
+    'beforeunload が unload を止めるページでもリロードが通る（will-prevent-unload を処理）',
+    marker === 'gone',
+    `__nemoBeforeUnloadProbe=${JSON.stringify(marker)}`
+  )
+  // 「beforeunload を踏まずに素通りした」と区別する: main が離脱確認を実際に通したログを見る
+  const prompted = readLogLines(process.env.NEMO_USER_DATA_DIR).some((line) => {
+    try {
+      const entry = JSON.parse(line)
+      return entry.event === 'tab.unload_prompt' && entry.key === key && entry.leave === true
+    } catch {
+      return false
+    }
+  })
+  check('リロードは離脱確認（tab.unload_prompt）を通っている', prompted)
+  await ui.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
+}
+
+/* ------------------------------------------------------------------ *
  * 1-2 タブの sleep / ウィンドウ間の移動
  * ------------------------------------------------------------------ */
 
@@ -1273,5 +1357,6 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
 
 ui.close()
 overlay.close()
+if (skipped > 0) console.log(`\n（SKIP ${skipped} 件 —— 見ていない検査がある）`)
 console.log(failures === 0 ? '\nverify-phase1: すべて PASS' : `\nverify-phase1: ${failures} 件 FAIL`)
 process.exit(failures === 0 ? 0 : 1)

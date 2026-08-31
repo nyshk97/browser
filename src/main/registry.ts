@@ -826,6 +826,38 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
   })
   wc.on('unresponsive', () => log('tab.unresponsive', { key: tab.key }))
 
+  // ページの beforeunload が unload をキャンセルしようとしたとき（未保存フォームの
+  // 離脱ガード等）。Electron はここで何もしないと**ダイアログも出さずに**
+  // リロード・ページ遷移を握り潰す（⌘R / ⟳ が無反応に見える。実バグ:
+  // clinicfor の予約フローで再現）。Chrome と同じく確認を出し、「離れる」なら
+  // `event.preventDefault()` で beforeunload を無視して続行する。
+  //
+  // `preventDefault` は**同期でしか効かない**ので、UI 側プロンプト（prompts.ts）は
+  // 使えず、ネイティブの showMessageBoxSync に頼る。ネイティブダイアログは CDP から
+  // 押せないため、自走検証は NEMO_VERIFY_UNLOAD_CHOICE=leave|stay で分岐を選ぶ
+  // （verify-all.mjs が leave を渡す）。
+  wc.on('will-prevent-unload', (event) => {
+    const current = win()
+    // 裏口は必ず `!app.isPackaged` で塞ぐ（NEMO_VERIFY_DIAGNOSTICS / NEMO_VERIFY_TIMINGS と
+    // 同じ規約。配布版で env 1 つで離脱確認を無効化・固定化できてはいけない）
+    const verifyChoice = app.isPackaged ? undefined : process.env['NEMO_VERIFY_UNLOAD_CHOICE']
+    const leave =
+      verifyChoice === 'leave' ||
+      (verifyChoice !== 'stay' &&
+        !current.isDestroyed &&
+        !current.baseWindow.isDestroyed() &&
+        dialog.showMessageBoxSync(current.baseWindow, {
+          type: 'question',
+          buttons: ['このページを離れる', 'キャンセル'],
+          defaultId: 0,
+          cancelId: 1,
+          message: 'サイトを離れますか？',
+          detail: '行った変更が保存されない可能性があります。'
+        }) === 0)
+    log('tab.unload_prompt', { key: tab.key, leave })
+    if (leave) event.preventDefault()
+  })
+
   // Peek が出ている間の Esc は Peek を閉じる。
   //
   // フォーカスは Peek のページ側にあることが多いので、**UI View の keydown では拾えない**。

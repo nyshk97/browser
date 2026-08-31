@@ -21,6 +21,14 @@
     <script>
       const site = new URLSearchParams(location.search).get('site')
       if (site) document.getElementById('site').textContent = `(site=${site})`
+      // ?beforeunload=1 で離脱ガードを張る（will-prevent-unload の目視確認用。VERIFY.md 参照）。
+      // 効かせるにはページを一度クリックして user activation を作ってから遷移・リロードする
+      if (new URLSearchParams(location.search).get('beforeunload') === '1') {
+        window.addEventListener('beforeunload', (e) => {
+          e.preventDefault()
+          e.returnValue = ''
+        })
+      }
       const form = document.getElementById('form')
       setInterval(() => {
         const u = form.username.value

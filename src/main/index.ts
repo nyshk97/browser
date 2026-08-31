@@ -121,6 +121,16 @@ function toChromiumLocale(tag: string): string {
   return tag.split('-')[0] ?? tag
 }
 
+/**
+ * UA から `Electron/x.y.z` トークンを剥がす。
+ *
+ * このトークンを UA スニッフィングで弾くサイトがある。Teams はこれを
+ * 「提供終了したクラシック Teams デスクトップアプリ」と誤判定して
+ * 未ログインでも `/error/eoa` へ 302 する（実測。`Electron/` だけ除去すれば
+ * `/v2` に通り、`nemo/x.y.z` は無害）。Google ログインの安全でないブラウザ判定も同類。
+ */
+app.userAgentFallback = app.userAgentFallback.replace(/\sElectron\/\S+/, '')
+
 // 単一インスタンス（Phase 2-5 の既定ブラウザ対応の前提でもある）
 if (!app.requestSingleInstanceLock()) {
   app.quit()

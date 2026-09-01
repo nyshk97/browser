@@ -30,6 +30,8 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-09-01
+
 ### 変更
 
 - **⌘1〜9 が `tools` の Favorites だけを指すようになった**。今までは `messages` → `tools` の通し番号で、`messages` の件数が変わると `tools` の番号がずれていた。`messages` に番号は付かない（⌘長押しの番号バッジも `tools` だけに出る）。あわせてサイドバーの並びを `tools` が上・`messages` が下に入れ替えた（空セクションもドラッグの受け皿を出す。Favorites が 1 件も無い初回だけ `messages` を畳む）

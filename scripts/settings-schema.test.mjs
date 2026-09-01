@@ -529,7 +529,7 @@ test('定義の faviconUrl は https と 2KB までの data: だけ。欠損は 
   assert.equal(normalizeDefinitionFaviconUrl(`data:image/png;base64,${'A'.repeat(100)}`)?.length, 122)
 })
 
-test('favoritesInShortcutOrder は messages → tools の順で、各セクション内は配列の順', () => {
+test('favoritesInShortcutOrder は tools のみを配列の順で返す（messages に番号は付かない）', () => {
   const items = [
     { id: 't1', section: 'tools' },
     { id: 'm1', section: 'messages' },
@@ -538,7 +538,7 @@ test('favoritesInShortcutOrder は messages → tools の順で、各セクシ�
   ]
   assert.deepEqual(
     favoritesInShortcutOrder(items).map((item) => item.id),
-    ['m1', 'm2', 't1', 't2']
+    ['t1', 't2']
   )
 })
 

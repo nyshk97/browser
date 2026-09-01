@@ -1000,6 +1000,22 @@ const settle = () => sleep(250)
     'Favorites が空のときも受け皿が出る',
     (await ui.ev(`Boolean(document.querySelector('.fav-empty'))`)) === true
   )
+  // 1 件も無い初回だけ messages を畳む（受け皿は tools 側の 1 つ）
+  {
+    const empty = JSON.parse(
+      await ui.ev(
+        `JSON.stringify({
+           sections: [...document.querySelectorAll('.fav-empty')].map((el) => el.dataset.section),
+           messagesLabel: [...document.querySelectorAll('.scroll .label')].some((l) => (l.childNodes[0]?.textContent ?? '').trim() === 'messages')
+         })`
+      )
+    )
+    check(
+      '初回（全空）は受け皿が tools だけで、messages はラベルごと畳まれる',
+      json(empty.sections) === json(['tools']) && !empty.messagesLabel,
+      json(empty)
+    )
+  }
 
   await ui.ev(
     `window.__nemoVerify.drag(
@@ -1379,7 +1395,7 @@ const settle = () => sleep(250)
 }
 
 /* ------------------------------------------------------------------ *
- * Favorites のセクション（messages / tools）・⌘1〜9・⌘長押しの番号バッジ
+ * Favorites のセクション（tools / messages）・⌘1〜9（tools のみ）・⌘長押しの番号バッジ
  * ------------------------------------------------------------------ */
 
 {
@@ -1401,12 +1417,29 @@ const settle = () => sleep(250)
     return ids
   }
   const favs = await makeFavorites(5, 'f')
+  await settleUi()
   {
     const sh = await shared()
     check(
       '追加した Favorite は全部 tools に入る（既定）',
       sh.favorites.length === 5 && sh.favorites.every((f) => f.section === 'tools'),
       json(sh.favorites.map((f) => f.section))
+    )
+    // tools が 1 件でもあれば、messages は空でも D&D の受け皿を出す
+    const shape = JSON.parse(
+      await ui.ev(
+        `JSON.stringify({
+           labels: [...document.querySelectorAll('.scroll .label')].map((l) => (l.childNodes[0]?.textContent ?? '').trim()),
+           toolsCells: document.querySelectorAll('.fav-grid[data-section="tools"] .fav').length,
+           messagesEmpty: Boolean(document.querySelector('.fav-empty[data-section="messages"]'))
+         })`
+      )
+    )
+    check('tools のグリッドに 5 件描かれている', shape.toolsCells === 5, json(shape.toolsCells))
+    check(
+      'messages が空でも受け皿が出る（ラベルは tools → messages → bookmarks）',
+      json(shape.labels) === json(['tools', 'messages', 'bookmarks']) && shape.messagesEmpty,
+      json(shape)
     )
   }
 
@@ -1420,15 +1453,15 @@ const settle = () => sleep(250)
     const tools = sh.favorites.filter((f) => f.section === 'tools').map((f) => f.id)
     check('messages へ移せる（末尾に付く）', json(messages) === json([favs[0], favs[1]]), json(messages))
     check('tools 側の並びは動かない', json(tools) === json([favs[2], favs[3], favs[4]]), json(tools))
-    // 描画順: messages → tools → bookmarks（ラベルの並び）と、グリッドの data-section
+    // 描画順: tools → messages → bookmarks（ラベルの並び）と、グリッドの data-section
     const labels = JSON.parse(
       await ui.ev(
         `JSON.stringify([...document.querySelectorAll('.scroll .label')].map((l) => (l.childNodes[0]?.textContent ?? '').trim()))`
       )
     )
     check(
-      'ラベルが messages → tools → bookmarks の順に描かれる',
-      json(labels) === json(['messages', 'tools', 'bookmarks']),
+      'ラベルが tools → messages → bookmarks の順に描かれる',
+      json(labels) === json(['tools', 'messages', 'bookmarks']),
       json(labels)
     )
     const grids = JSON.parse(
@@ -1437,18 +1470,18 @@ const settle = () => sleep(250)
       )
     )
     check(
-      'グリッドが messages(2) → tools(3) の順',
+      'グリッドが tools(3) → messages(2) の順',
       json(grids) ===
         json([
-          ['messages', 2],
-          ['tools', 3]
+          ['tools', 3],
+          ['messages', 2]
         ]),
       json(grids)
     )
     check(
-      'tools ↔ bookmarks の間に区切り線が無い',
+      'messages ↔ bookmarks の間に区切り線が無い',
       (await ui.ev(
-        `(() => { const g = document.querySelector('.fav-grid[data-section="tools"]'); let el = g.nextElementSibling; return el && el.classList.contains('label') && (el.childNodes[0]?.textContent ?? '').trim() === 'bookmarks' })()`
+        `(() => { const g = document.querySelector('.fav-grid[data-section="messages"]'); let el = g.nextElementSibling; return el && el.classList.contains('label') && (el.childNodes[0]?.textContent ?? '').trim() === 'bookmarks' })()`
       )) === true
     )
   }
@@ -1462,62 +1495,72 @@ const settle = () => sleep(250)
     check('相対 index: tools の 2 番目に入る', json(tools) === json([favs[2], favs[4], favs[3]]), json(tools))
     check('相対 index: messages は動かない', json(messages) === json([favs[0], favs[1]]), json(messages))
   }
-  // messages の 2 番目を tools の末尾へ → ⌘N の通し番号がずれる（messages 1 件・tools 4 件）
+  // messages の 2 番目を tools の末尾へ → ⌘N の並び（tools のみ）の末尾に付く
   await ui.ev(`window.nemo.moveFavorite(${json(favs[1])}, 'tools').then(() => 'ok')`)
   {
     const sh = await shared()
-    const order = [
-      ...sh.favorites.filter((f) => f.section === 'messages'),
-      ...sh.favorites.filter((f) => f.section === 'tools')
-    ].map((f) => f.id)
+    const tools = sh.favorites.filter((f) => f.section === 'tools').map((f) => f.id)
     check(
-      'messages → tools へ移すと通し番号が期待どおりずれる',
-      json(order) === json([favs[0], favs[2], favs[4], favs[3], favs[1]]),
-      json(order)
+      'messages → tools へ移すと tools（⌘N の並び）の末尾に付く',
+      json(tools) === json([favs[2], favs[4], favs[3], favs[1]]),
+      json(tools)
     )
   }
 
   /* --- ⌘1〜9 --- */
-  // 通し番号 1 = messages の 1 件目、2 = tools の 1 件目
+  // 番号は tools のみ: 1 = tools の 1 件目。messages（favs[0] の 1 件）は対象外
   const active = () => state().then((s) => s.tabs.find((t) => t.key === s.activeTabKey) ?? null)
   const base = await ui.ev(`window.nemo.createTab('${PAGES}/iframe.html').then(k => k)`)
   await ui.ev(`window.nemo.selectTab(${json(base)}).then(() => 'ok')`)
   await ui.ev(`window.nemo.runCommandForVerify('select-favorite-1').then(String)`)
   await waitFor(
     ui,
-    `window.nemo.getWindowState().then(s => s.tabs.some(t => t.favoriteId === ${json(favs[0])}) ? 'ok' : '')`
+    `window.nemo.getWindowState().then(s => s.tabs.some(t => t.favoriteId === ${json(favs[2])}) ? 'ok' : '')`
   )
   check(
-    '⌘1 で messages の 1 件目が開いてアクティブになる',
-    (await active())?.favoriteId === favs[0],
+    '⌘1 で tools の 1 件目が開いてアクティブになる（messages は飛ばされる）',
+    (await active())?.favoriteId === favs[2],
     json((await active())?.favoriteId)
   )
   await ui.ev(`window.nemo.runCommandForVerify('select-favorite-2').then(String)`)
   await waitFor(
     ui,
-    `window.nemo.getWindowState().then(s => s.tabs.some(t => t.favoriteId === ${json(favs[2])}) ? 'ok' : '')`
+    `window.nemo.getWindowState().then(s => s.tabs.some(t => t.favoriteId === ${json(favs[4])}) ? 'ok' : '')`
   )
   check(
-    '⌘2 で tools の 1 件目（通し番号）が開く',
-    (await active())?.favoriteId === favs[2],
+    '⌘2 で tools の 2 件目が開く',
+    (await active())?.favoriteId === favs[4],
     json((await active())?.favoriteId)
   )
-  // 同じキーをもう一度 → 直前のタブ（⌘1 で開いた messages 1 件目）へ戻る
+  // 同じキーをもう一度 → 直前のタブ（⌘1 で開いた tools 1 件目）へ戻る
   await ui.ev(`window.nemo.runCommandForVerify('select-favorite-2').then(String)`)
   await settleUi()
   check(
     '同じ ⌘N をもう一度押すと直前のタブへ戻る',
-    (await active())?.favoriteId === favs[0],
+    (await active())?.favoriteId === favs[2],
     json((await active())?.favoriteId)
   )
   await ui.ev(`window.nemo.runCommandForVerify('select-favorite-2').then(String)`)
   await settleUi()
   check(
     'さらに押すと行ったり来たりできる',
-    (await active())?.favoriteId === favs[2],
+    (await active())?.favoriteId === favs[4],
     json((await active())?.favoriteId)
   )
-  // 対象が無い番号は何もしない（5 件しか無いので 9 は空振り）
+  // messages は番号の対象外: 番号付きは tools の 4 件だけなので ⌘5 は空振り
+  // （messages 1 件がどこかで番号に混ざっていれば 5 番目が開いてしまう）
+  const beforeFive = (await state()).activeTabKey
+  await ui.ev(`window.nemo.runCommandForVerify('select-favorite-5').then(String)`)
+  await settleUi()
+  {
+    const afterFive = (await state()).activeTabKey
+    check(
+      'messages は ⌘N の対象にならない（tools 4 件で ⌘5 は空振り）',
+      afterFive === beforeFive,
+      `before=${beforeFive} after=${afterFive}`
+    )
+  }
+  // 対象が無い番号は何もしない
   const beforeNine = (await state()).activeTabKey
   await ui.ev(`window.nemo.runCommandForVerify('select-favorite-9').then(String)`)
   await settleUi()
@@ -1539,10 +1582,16 @@ const settle = () => sleep(250)
   check('350ms を超えると出る', (await hint('query')) === 'true')
   await settleUi()
   check(
-    'バッジが 1〜5 の順で描かれる（5 件なので 5 個）',
-    (await badges()) === json(['1', '2', '3', '4', '5']),
+    'バッジは tools だけに 1〜4 の順で描かれる（messages には出ない）',
+    (await badges()) === json(['1', '2', '3', '4']),
     await badges()
   )
+  {
+    const messagesBadges = await ui.ev(
+      `document.querySelectorAll('.fav-grid[data-section="messages"] .kb').length`
+    )
+    check('messages のグリッドにバッジが無い', messagesBadges === 0, `messages .kb=${messagesBadges}`)
+  }
   check('keyUp で消える', (await hint('up')) === 'false')
   await settleUi()
   check('keyUp 後は DOM からも消える', (await badges()) === '[]', await badges())

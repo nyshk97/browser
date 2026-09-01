@@ -107,7 +107,7 @@ export const COMMANDS = [
 ]
 
 /**
- * `⌘1`〜`⌘9` = Favorites の N 番目（`messages` → `tools` の通し番号）。
+ * `⌘1`〜`⌘9` = Favorites（`tools` セクションのみ）の N 番目。`messages` に番号は付かない。
  * コマンド表には載せず、番号でまとめて扱う（ユーザーの再割り当ては不可）。
  * 旧 `select-tab-N`（一時タブの N 番目）は廃止。設定に残っていても `unknown_command` で弾かれる。
  */

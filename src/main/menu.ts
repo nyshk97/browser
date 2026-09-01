@@ -335,7 +335,7 @@ function selectFavoriteByIndex(index: number): void {
 /**
  * ⌘1〜9 の中身。**対象のウィンドウを指定して**呼べるようにしてある（`runCommandForWindow` と同じ理由）。
  *
- * N 番目は `messages` → `tools` の通し番号（サイドバーのグリッドと同じ順）。
+ * N 番目は `tools` のみが対象（サイドバーの tools グリッドと同じ順。`messages` には番号が無い）。
  * **すでにその Favorite のタブがアクティブなら直前のタブへ戻る**
  * （「Slack を見てすぐ作業に戻る」が同じキー 2 回で済む）。直前のタブが無ければ何もしない。
  */

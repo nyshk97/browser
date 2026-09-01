@@ -7,8 +7,15 @@
  * Electron 非依存。`scripts/settings-schema.test.mjs` からテストする。
  */
 
-/** Favorites のセクション。**サイドバーの並び順でもある**（⌘1〜9 の通し番号もこの順）。 */
-export const FAVORITE_SECTIONS = /** @type {const} */ (['messages', 'tools'])
+/** Favorites のセクション。**サイドバーの並び順でもある**（⌘1〜9 が付く `tools` を上段に）。 */
+export const FAVORITE_SECTIONS = /** @type {const} */ (['tools', 'messages'])
+
+/**
+ * ⌘1〜9 の番号が付くセクション。`favoritesInShortcutOrder`（⌘N が開く対象）と
+ * サイドバーの番号バッジの両方がこれを参照する（別々に持つと、バッジの番号と
+ * ⌘N が開くタイルが食い違っても目視でしか気づけない）。
+ */
+export const SHORTCUT_SECTION = 'tools'
 
 /**
  * 欠損・不正は **`tools`** に倒す（Arc からの取り込み・新規追加も同じ既定）。
@@ -20,15 +27,16 @@ export function normalizeFavoriteSection(value) {
 }
 
 /**
- * ⌘1〜9 に対応する並び（`messages` → `tools`。各セクション内は配列の順）。
- * サイドバーのグリッドと同じ順なので、見た目の N 番目と ⌘N が一致する。
+ * ⌘1〜9 に対応する並び（**`tools` のみ**。配列の順）。
+ * `messages` には番号を付けない（messages の件数で tools の番号がずれない）。
+ * サイドバーの tools グリッドと同じ順なので、見た目の N 番目と ⌘N が一致する。
  *
  * @template {{ section: import('./types.js').FavoriteSection }} T
  * @param {T[]} favorites
  * @returns {T[]}
  */
 export function favoritesInShortcutOrder(favorites) {
-  return FAVORITE_SECTIONS.flatMap((section) => favorites.filter((item) => item.section === section))
+  return favorites.filter((item) => item.section === SHORTCUT_SECTION)
 }
 
 /**

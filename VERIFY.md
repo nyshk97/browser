@@ -294,16 +294,18 @@ mise run verify:only split
 - **シークレットで開いたページのタイトル・favicon を `pins.json` に書かない**
   （ピンは favicon の無いページから作り、シークレット側で favicon のある同 host のページへ遷移させる。
   シークレット側のタブに favicon が届いたことを先に確かめる＝空振りで PASS しない）
-- **Favorites のセクション（messages / tools）**: 追加の既定は `tools` / `moveFavorite(id, section, index)` の
+- **Favorites のセクション（tools / messages）**: 追加の既定は `tools` / `moveFavorite(id, section, index)` の
   **セクション内相対 index → フラット配列の位置**の解決（Messages 2 件・Tools 3 件で Tools の 2 番目へ移すと
-  Tools 内で 2 番目になり Messages は動かない）/ ラベルが messages → tools → bookmarks の順・tools と bookmarks の
-  間に線が無い / messages のグリッドへ落とすと messages に入る
-- **⌘1〜9 = Favorites の通し番号**（`select-favorite-N` を `runCommandForVerify` で撃つ）: ⌘1 で messages の
-  1 件目・⌘2 で tools の 1 件目 / **同じ ⌘N をもう一度で直前のタブへ戻る** / 対象の無い番号は何もしない /
-  旧 `select-tab-N` は拒否される
+  Tools 内で 2 番目になり Messages は動かない）/ ラベルが tools → messages → bookmarks の順・messages と bookmarks の
+  間に線が無い / messages が空でも受け皿が出る（畳むのは Favorites が 1 件も無い初回だけ）/
+  messages のグリッドへ落とすと messages に入る
+- **⌘1〜9 = `tools` の Favorites の番号**（`select-favorite-N` を `runCommandForVerify` で撃つ）: ⌘1 で tools の
+  1 件目・⌘2 で tools の 2 件目（messages は対象外。tools 4 件なら ⌘5 は空振り）/
+  **同じ ⌘N をもう一度で直前のタブへ戻る** / 対象の無い番号は何もしない / 旧 `select-tab-N` は拒否される
 - **⌘ 長押しの番号バッジ**: `window.nemo.shortcutHintForVerify('down' | 'up' | 'blur' | 'query')` で main の
   状態機械を直接叩く（合成キーでは Meta の `before-input-event` を起こせない）。350ms 未満では出ない /
-  出たら `.fav .kb` が 1〜N / keyUp・blur で消える / **表示から 5 秒で自動解除**（5.2 秒待つ）
+  出たら `.fav .kb` が 1〜N（tools だけ。messages には出ない）/ keyUp・blur で消える /
+  **表示から 5 秒で自動解除**（5.2 秒待つ）
 - **favicon が定義に写り、タブを閉じても `<img class="fi">` で描かれる**（頭文字に落ちない）
 - UI 操作（合成イベント）:
   - **閉じているピン行をダブルクリックしてもタブが増えず、編集だけが始まる**

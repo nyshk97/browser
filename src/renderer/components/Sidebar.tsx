@@ -15,7 +15,7 @@ import {
 import { UrlEdit } from './UrlEdit.js'
 import { LiveFolder } from './LiveFolder.js'
 import { normalizePrUrl } from '../../shared/live-folder-schema.js'
-import { FAVORITE_SECTIONS, isImageIcon } from '../../shared/favorites.js'
+import { FAVORITE_SECTIONS, SHORTCUT_SECTION, isImageIcon } from '../../shared/favorites.js'
 import type {
   EphemeralTabDef,
   FavoriteItem,
@@ -26,7 +26,7 @@ import type {
 
 /**
  * サイドバー（DESIGN.md「3層の並び」）。
- * Live Folder → Favorites（messages / tools）→ ピン留め → 一時タブ の順で固定する。
+ * Live Folder → Favorites（tools / messages）→ ピン留め → 一時タブ の順で固定する。
  * **アドレスバーとナビゲーションはここには無い**（ページ領域の上端の `Toolbar`）。
  */
 export function Sidebar(): React.JSX.Element {
@@ -166,7 +166,7 @@ export function Sidebar(): React.JSX.Element {
 
         <FavoriteSections favorites={shared.favorites} tabs={favoriteTabs} />
 
-        {/* tools と bookmarks の間に線は引かない（ラベルだけで区切る） */}
+        {/* messages と bookmarks の間に線は引かない（ラベルだけで区切る） */}
         <div className="label">
           <span>bookmarks</span>
           <button
@@ -267,13 +267,14 @@ function EphemeralDefRow({ def }: { def: EphemeralTabDef }): React.JSX.Element {
 }
 
 /**
- * Favorites の 2 セクション（messages → tools）。
+ * Favorites の 2 セクション（tools → messages）。
  *
  * ドラッグ中の Favorite の ID を**ここで**持つ。グリッドごとに持つと、
- * messages のタイルを tools へ落としたときに受け側が「何が落ちてきたか」を知らない。
+ * tools のタイルを messages へ落としたときに受け側が「何が落ちてきたか」を知らない。
  *
- * **tools が空ならラベルごと畳む**（空になるのは実質初回だけで、上段を空箱 2 つで重くしない）。
- * messages は空でも受け皿を出す（振り分けはここへドロップするのが入口）。
+ * 空セクションも受け皿を出す（出さないと D&D で振り分ける入口が消える）。
+ * ただし **Favorites が 1 件も無い初回だけは messages を畳む**（空箱 2 つで重くしない。
+ * tools は既定の受け皿なので初回も出す）。
  */
 function FavoriteSections({
   favorites,
@@ -287,16 +288,15 @@ function FavoriteSections({
   useDragEnd(useCallback(() => setDragId(null), []))
   const keys = useShortcutHint()
 
-  // ⌘N は messages → tools の通し番号なので、tools の番号は messages の件数ぶんずれる
+  // ⌘N が付くのは SHORTCUT_SECTION（tools）だけ（messages に番号は無い）
   const sections = FAVORITE_SECTIONS.map((section) => ({
     section,
     items: favorites.filter((item) => item.section === section)
   }))
   return (
     <>
-      {sections.map(({ section, items }, position) => {
-        if (section === 'tools' && items.length === 0) return null
-        const shortcutOffset = sections.slice(0, position).reduce((sum, prior) => sum + prior.items.length, 0)
+      {sections.map(({ section, items }) => {
+        if (section === 'messages' && favorites.length === 0) return null
         return (
           <FavoriteGrid
             key={section}
@@ -305,7 +305,7 @@ function FavoriteSections({
             tabs={tabs}
             dragId={dragId}
             setDragId={setDragId}
-            shortcutOffset={shortcutOffset}
+            numbered={section === SHORTCUT_SECTION}
             showKeys={keys}
           />
         )
@@ -314,7 +314,7 @@ function FavoriteSections({
   )
 }
 
-/** ⌘1〜9 の対象。messages → tools の通し番号で、10 個目からは番号が付かない。 */
+/** ⌘1〜9 の対象。tools の先頭からの番号で、10 個目からは番号が付かない。 */
 const MAX_SHORTCUT = 9
 
 /**
@@ -332,7 +332,7 @@ function FavoriteGrid({
   tabs,
   dragId,
   setDragId,
-  shortcutOffset,
+  numbered,
   showKeys
 }: {
   section: FavoriteSection
@@ -340,7 +340,7 @@ function FavoriteGrid({
   tabs: Map<string, TabState>
   dragId: string | null
   setDragId: (id: string | null) => void
-  shortcutOffset: number
+  numbered: boolean
   showKeys: boolean
 }): React.JSX.Element {
   const [dropping, setDropping] = useState(false)
@@ -462,13 +462,13 @@ function FavoriteGrid({
           const classes = ['fav']
           if (tab?.visible) classes.push('active')
           if (!tab) classes.push('closed')
-          const shortcut = shortcutOffset + index + 1
+          const shortcut = numbered ? index + 1 : null
           return (
             <button
               key={favorite.id}
               type="button"
               className={classes.join(' ')}
-              title={shortcut <= MAX_SHORTCUT ? `${name}（⌘${shortcut}）` : name}
+              title={shortcut !== null && shortcut <= MAX_SHORTCUT ? `${name}（⌘${shortcut}）` : name}
               data-id={favorite.id}
               draggable
               onDragStart={() => setDragId(favorite.id)}
@@ -542,7 +542,9 @@ function FavoriteGrid({
                 />
               )}
               {tab?.audible ? <span className="fav-mark">♪</span> : null}
-              {showKeys && shortcut <= MAX_SHORTCUT ? <span className="kb">{shortcut}</span> : null}
+              {showKeys && shortcut !== null && shortcut <= MAX_SHORTCUT ? (
+                <span className="kb">{shortcut}</span>
+              ) : null}
             </button>
           )
         })}

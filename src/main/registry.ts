@@ -638,10 +638,16 @@ export class NemoTab {
     if (!options.adopt) {
       const target = this.pendingUrl ?? this.url
       this.pendingUrl = null
+      // `allowFile: true` の根拠: `this.url` / `pendingUrl` に入る値は (a) 宣言・`materialize` の後始末・`sleep`
+      // （どれも一度ゲート = `createTab` / `loadURL` 前の `resolveNavigationTarget` を通った値）と、
+      // (b) `attachTabEvents` の `syncUrl`（`wc.getURL()`。ページ由来の遷移だが、`will-navigate` /
+      // `will-redirect` / `setWindowOpenHandler` のゲートを通った後の値）の 2 系統だけ。
+      // 外部 URL の小窓（`fillMiniWindow` → `new NemoTab` → ここ）もこの 1 箇所で `file:` が通る。
+      // **将来ここに外部由来の値を入れる経路が増えたら `allowFile` を見直す。**
       const resolved =
         resolveNavigationTarget(
           target,
-          { allowExtensionPages: isLoadedExtensionUrl(target) },
+          { allowExtensionPages: isLoadedExtensionUrl(target), allowFile: true },
           'materialize'
         ) ?? BLANK_URL
       void wc.loadURL(resolved)
@@ -745,6 +751,8 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
     // （pins.json は永続なので、書くと「閉じたら跡形もなく消える」が破れる）。
     remember(() => {
       updateTitle(tab.url, title)
+      // `file:` へ飛んだタブからは定義（pins.json / 一時タブ）に書かない（`canSyncDefinitionFromPage`）
+      if (!canSyncDefinitionFromPage(tab)) return
       const definitionId = tab.pinnedId ?? tab.favoriteId
       if (definitionId) setPinnedTitle(definitionId, title)
       else if (tab.ephemeralId) updateEphemeralFromTab(tab.ephemeralId, { title })
@@ -762,6 +770,7 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
     // `page-title-updated` と同じ不変条件）
     remember(() => {
       recordFavicon(tab.url, next)
+      if (!canSyncDefinitionFromPage(tab)) return
       const definitionId = tab.pinnedId ?? tab.favoriteId
       if (definitionId) setFaviconForDefinition(definitionId, next, tab.url)
       else if (tab.ephemeralId) updateEphemeralFromTab(tab.ephemeralId, { faviconUrl: next })
@@ -2280,6 +2289,11 @@ export interface CreateTabOptions {
    * 同じ URL の定義が増殖する。
    */
   ephemeralId?: string | null
+  /**
+   * `file:` を通す。**唯一の呼び元は IPC の `nemo:create-tab`**（人間の入力が起点で、`resolveInput` を通った URL）。
+   * `setWindowOpenHandler`（ページの popup）・拡張の `tabs.create` からは絶対に true にしない。
+   */
+  allowFile?: boolean
 }
 
 export function createTab(win: NemoWindow, url: string = BLANK_URL, options: CreateTabOptions = {}): NemoTab {
@@ -2300,7 +2314,11 @@ export function createTab(win: NemoWindow, url: string = BLANK_URL, options: Cre
   // 呼び出し側が検証済みの URL を渡す前提だが、ここでも最後に必ず通す
   // （`loadURL` に生の文字列が渡る経路を1つも残さない）。
   const target =
-    resolveNavigationTarget(url, { allowExtensionPages: isLoadedExtensionUrl(url) }, 'createTab') ?? BLANK_URL
+    resolveNavigationTarget(
+      url,
+      { allowExtensionPages: isLoadedExtensionUrl(url), allowFile: options.allowFile === true },
+      'createTab'
+    ) ?? BLANK_URL
 
   const tab = new NemoTab(win, target, options.title)
   if (typeof options.lastActiveAt === 'number' && Number.isFinite(options.lastActiveAt)) {
@@ -3626,6 +3644,18 @@ function ensureEphemeralDefinition(tab: NemoTab): boolean {
 }
 
 /**
+ * ページ由来の値（url / title / favicon）を定義（ピン留め / Favorites / 一時タブ）へ写してよいか。
+ *
+ * **タブの現 URL が http/https でなければ写さない**。定義の URL は `normalizeStoredUrl` が http/https に閉じるので、
+ * `file:` へ飛んだタブから url だけ弾いて title / favicon を書くと「ローカルファイルの題名 ＋ 古い http の URL」の行になる
+ * （2026-09-02 の plan「ローカルファイル」。`file:` タブは定義に載せない。`pins.json` は永続なので再起動でも戻らない）。
+ * `renameTab` はユーザーが明示的に打った名前なので対象外（従来どおり定義へ書く）。
+ */
+function canSyncDefinitionFromPage(tab: NemoTab): boolean {
+  return /^https?:\/\//.test(tab.url)
+}
+
+/**
  * ナビゲーション時の定義との同期。
  * - 定義を持つタブ → url / title を書き戻す（最後に触った実体が勝つ）
  * - 所属なしのローカルタブ（`about:blank` から始まった ⌘T 等）→ http/https に来た時点で定義化
@@ -3633,7 +3663,8 @@ function ensureEphemeralDefinition(tab: NemoTab): boolean {
 function syncEphemeralDefinition(tab: NemoTab): void {
   if (tab.window.isPrivate) return
   if (tab.ephemeralId) {
-    updateEphemeralFromTab(tab.ephemeralId, { url: tab.url, title: tab.title })
+    if (canSyncDefinitionFromPage(tab))
+      updateEphemeralFromTab(tab.ephemeralId, { url: tab.url, title: tab.title })
     return
   }
   if (tab.pinnedId || tab.favoriteId) return

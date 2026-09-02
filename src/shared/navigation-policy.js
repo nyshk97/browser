@@ -18,7 +18,7 @@ export const PAGE_SCHEMES = new Set(['http:', 'https:'])
 export const DENIED_SCHEMES = Object.freeze([
   'javascript:', // ブックマークレット相当。UI からもページからも通さない
   'data:', // data: ページは origin を持たないので同一生成元の判定が崩れる
-  'file:', // ローカルファイルはブラウザ UI からは開かない
+  'file:', // 既定は拒否。人間の入力・OS（open-file）・argv 起点だけ `allowFile` で通す（file: ページからの file→file は `fromFile`）
   'chrome:',
   'devtools:',
   'blob:',
@@ -43,6 +43,14 @@ export const UI_SCHEME_URL_PREFIX = 'nemo://ui/'
  *   このときだけ `chrome-extension:` を**ホストを問わず**許可する（下記参照）。
  *   トップレベル遷移では絶対に true にしない。
  * @property {ReadonlySet<string>} [extensionIds] ロード済み拡張の ID。
+ * @property {boolean} [allowFile]
+ *   `file:` を許可する。**起点が人間の操作**（アドレスバー / コマンドバーの入力、OS の `open-file`、
+ *   プロセス起動時の argv）のときだけ true にする。Web ページ・拡張が渡した URL では絶対に true にしない
+ *   （main の `loadURL` は browser-initiated なので Chromium の renderer 側の file アクセス制限を受けない。
+ *   ここが唯一のゲート）。
+ * @property {boolean} [fromFile]
+ *   現在のページが `file:` である。Chrome と同じく file → file のトップレベル遷移だけ通す。
+ *   サブフレームでは効かない（ローカル HTML の `<iframe src="./x.html">` は空になる）。
  */
 
 /**
@@ -77,6 +85,12 @@ export function isNavigableUrl(url, policy = {}) {
   }
 
   if (PAGE_SCHEMES.has(parsed.protocol)) return true
+
+  if (parsed.protocol === 'file:') {
+    // サブフレームは通さない（2026-08-25 の決定「file: はサブフレームでも拒否」を維持）
+    if (policy.subframe) return false
+    return policy.allowFile === true || policy.fromFile === true
+  }
 
   if (parsed.protocol === 'chrome-extension:') {
     /*
@@ -133,12 +147,15 @@ export const DEFAULT_SEARCH_TEMPLATE = 'https://www.google.com/search?q={q}'
 
 /**
  * コマンドバー等の人間の入力を、そのまま loadURL に渡さずに正規化・検証する。
- * ここからは `chrome-extension:` / `devtools:` / `file:` / `javascript:` / `nemo:` を一切通さない。
+ * ここからは `chrome-extension:` / `devtools:` / `javascript:` / `nemo:` を一切通さない。
+ * `file:` は `options.allowFile` のときだけ通す（人間の入力が起点のときに呼び出し側が立てる。
+ * ローカルパス → `file://` の変換は Node 依存なので main 側で先に済ませる）。
  * @param {string} input
  * @param {string} [searchTemplate] 検索に回すときのテンプレート（https のみ）
+ * @param {{ allowFile?: boolean }} [options]
  * @returns {NavigationDecision}
  */
-export function normalizeNavigationInput(input, searchTemplate = DEFAULT_SEARCH_TEMPLATE) {
+export function normalizeNavigationInput(input, searchTemplate = DEFAULT_SEARCH_TEMPLATE, options = {}) {
   const trimmed = input.trim()
   if (!trimmed) return { allowed: false, url: '', reason: 'empty' }
   if (trimmed === BLANK_URL) return { allowed: true, url: BLANK_URL }
@@ -161,7 +178,10 @@ export function normalizeNavigationInput(input, searchTemplate = DEFAULT_SEARCH_
       // scheme はあるが URL として壊れている入力（`http:/x` など）
       candidate = null
     }
-    if (!candidate || !PAGE_SCHEMES.has(candidate.protocol)) {
+    const schemeAllowed =
+      candidate !== null &&
+      (PAGE_SCHEMES.has(candidate.protocol) || (options.allowFile === true && candidate.protocol === 'file:'))
+    if (!candidate || !schemeAllowed) {
       const scheme = candidate ? candidate.protocol : `${trimmed.slice(0, trimmed.indexOf(':') + 1)}`
       return { allowed: false, url: trimmed, reason: `scheme_not_allowed:${scheme}` }
     }
@@ -219,10 +239,13 @@ function schemeForHost(host) {
  * 実際に開いてよいかは `isNavigableUrl` で改めて判定する
  * （argv は外から来る文字列なので、拾った時点では信用しない）。
  *
+ * `file://` も拾う。argv はプロセスを起動した者しか渡せないので、呼び出し側は
+ * `allowFile: true` で判定する（2026-09-02 の plan「ローカルファイル」）。
+ *
  * @param {readonly string[]} argv 実行ファイル名を除いた引数
  * @returns {string[]}
  */
 export function urlsFromArgv(argv) {
   if (!Array.isArray(argv)) return []
-  return argv.filter((arg) => typeof arg === 'string' && /^https?:\/\//i.test(arg))
+  return argv.filter((arg) => typeof arg === 'string' && /^(https?|file):\/\//i.test(arg))
 }

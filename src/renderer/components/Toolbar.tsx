@@ -70,6 +70,30 @@ function useToolbarActionFilter(
  * 別の WebContentsView なので、サイドバーと状態は共有せず、どちらも
  * `useWindowState()` で main から同じ状態を受け取る。
  */
+/** 拒否の赤枠を出しておく時間。 */
+const REJECTED_MS = 4000
+
+/**
+ * IPC の失敗が**ポリシー拒否**なら理由を返す。それ以外（`loadURL` の失敗など）は null。
+ * `ipcRenderer.invoke` の reject は `Error invoking remote method 'nemo:navigate': Error: navigation rejected: <reason>`
+ * の形で届くので、接頭辞ではなく部分一致で見る。
+ */
+function policyRejection(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : String(error)
+  const match = /navigation rejected: (\S+)/.exec(message)
+  return match ? match[1] : null
+}
+
+/**
+ * 拒否理由（`scheme_not_allowed:javascript:` 等の内部識別子）をユーザー向けの文に落とす。
+ * 識別子はログ（main の `navigation.blocked`）に残るので、ここでは見せない。
+ */
+function rejectionMessage(reason: string): string {
+  const scheme = /^scheme_not_allowed:(.+)$/.exec(reason)?.[1]
+  if (scheme) return `このアドレスは開けません（${scheme} で始まるアドレスは開けない種類です）`
+  return 'この入力は開けません'
+}
+
 export function Toolbar({ pane = 'left' }: { pane?: 'left' | 'right' }): React.JSX.Element {
   const state = useWindowState()
   const shared = useSharedState()
@@ -80,6 +104,19 @@ export function Toolbar({ pane = 'left' }: { pane?: 'left' | 'right' }): React.J
    * 編集中の内容も踏み潰す。
    */
   const [draft, setDraft] = useState<string | null>(null)
+  /**
+   * 直前の入力がポリシーで拒否された理由（`scheme_not_allowed:javascript:` 等）。
+   * 出ている間は入力欄を赤枠にし、`title` で理由を見せる。Toolbar View は高さ 40px で
+   * インラインの文言を置く場所が無い。数秒で消す。
+   */
+  const [rejected, setRejected] = useState<string | null>(null)
+  const rejectedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (rejectedTimer.current) clearTimeout(rejectedTimer.current)
+    },
+    []
+  )
   const inputRef = useRef<HTMLInputElement>(null)
   const actionListRef = useRef<HTMLElement>(null)
   useToolbarActionFilter(actionListRef, shared.extensions)
@@ -113,10 +150,22 @@ export function Toolbar({ pane = 'left' }: { pane?: 'left' | 'right' }): React.J
     event.preventDefault()
     const input = draft ?? activeTab?.url ?? ''
     setDraft(null)
+    setRejected(null)
     inputRef.current?.blur()
     focusPane()
-    if (activeTab) void window.nemo.navigate(activeTab.key, input)
-    else void window.nemo.createTab(input)
+    // 空のまま Enter は Chrome と同じく何もしない（`empty` の拒否を赤枠にしない）
+    if (!input.trim()) return
+    const request = activeTab ? window.nemo.navigate(activeTab.key, input) : window.nemo.createTab(input)
+    void request.catch((error: unknown) => {
+      // **ポリシー拒否だけ**を赤枠にする（main の `resolveInput` が `navigation rejected: <reason>` で投げる）。
+      // `loadURL` 側の失敗（ERR_FILE_NOT_FOUND / ERR_ABORTED）は Chromium のエラーページが出るので混ぜない
+      const reason = policyRejection(error)
+      if (reason === null) return
+      setDraft(input)
+      setRejected(reason)
+      if (rejectedTimer.current) clearTimeout(rejectedTimer.current)
+      rejectedTimer.current = setTimeout(() => setRejected(null), REJECTED_MS)
+    })
   }
 
   return (
@@ -205,7 +254,11 @@ export function Toolbar({ pane = 'left' }: { pane?: 'left' | 'right' }): React.J
           <Address tab={activeTab} />
         </button>
       ) : (
-        <form className="addr editing" onSubmit={submit}>
+        <form
+          className={`addr editing${rejected ? ' rejected' : ''}`}
+          title={rejected ? rejectionMessage(rejected) : undefined}
+          onSubmit={submit}
+        >
           <input
             ref={inputRef}
             value={draft}

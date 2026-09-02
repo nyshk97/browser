@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>local-a</title>
+    <style>
+      body { font: 15px/1.6 -apple-system, sans-serif; margin: 40px; }
+      button { font: inherit; display: block; margin: 8px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>ローカルファイル A</h1>
+    <p>
+      `verify:only local-file` が使う。`file://` でも http でも同じ内容で開く
+      （http 側からの `file:` 遷移が拒否されることの検査にも使う）。
+    </p>
+    <p><a id="to-b" href="local-b.html">B へ（相対リンク）</a></p>
+    <button onclick="window.open(prompt('file:// URL'))">window.open（file: は拒否されるはず）</button>
+    <script>
+      // 検証スクリプトが CDP から呼ぶ入口
+      window.tryOpen = (url) => {
+        window.open(url)
+        return 'tried'
+      }
+      window.tryNavigate = (url) => {
+        location.href = url
+        return 'tried'
+      }
+    </script>
+  </body>
+</html>

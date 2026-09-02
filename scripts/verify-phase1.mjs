@@ -207,8 +207,10 @@ check(
 const first = await state()
 const activeKey = first.activeTabKey
 
+// `file:` は人間の入力（アドレスバー）からは通る（2026-09-02 の plan「ローカルファイル」）。
+// **通る側の固定は `verify:only local-file` 専任**（URL が `file:` になること・拒否表示まで見る）。
+// 拡張・ページからの `file:` の拒否は `verify:ext` と `local-file` が見る
 for (const bad of [
-  'file:///etc/passwd',
   'javascript:alert(1)',
   'data:text/html,<b>x',
   'chrome://version',

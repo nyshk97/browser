@@ -57,7 +57,7 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 `verify:only split restart` では spike / phase1 / pins の write+read は走らない。
 
 指定できるのは `spike` / `phase1` / `phase2` / `pins` / `switcher` / `peek` / `split` / `call` /
-`live-folder` / `http-auth` / `vim-scroll` / `restart` / `shared-tabs` / `migration` / `db` / `slots`。
+`live-folder` / `http-auth` / `vim-scroll` / `restart` / `shared-tabs` / `local-file` / `migration` / `db` / `slots`。
 
 **足した check が全部走ったかは check 名で突き合わせる**（PASS の総数だけだと、分岐で走らない check や
 既存 check の詳細文字列への誤マッチで数が合わない）。`git show HEAD:scripts/verify-x.mjs` と今の
@@ -101,7 +101,7 @@ mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残�
 
 - 知らない名前はエラーにする（typo で「何も回さずに PASS」にしない）
 - 回さなかったものは実行中と最後のサマリの両方に出る（フルで通ったと読み違えないため）
-- `migration` / `db` / `shared-tabs` は自分でアプリを起動するので、それだけ指定したときはアプリを立てない
+- `migration` / `db` / `shared-tabs` / `local-file` は自分でアプリを起動するので、それだけ指定したときはアプリを立てない
 - **検証どうしの前段依存に注意**。絞って回すと、前の検証が作ったタブや履歴が無いぶん
   候補や件数が足りずに落ちることがある。落ちたら「絞ったせい」で済ませず、
   **その検証が自分で前提を作るように直す**（コマンドバーの上下移動がこれで落ちた実例あり。
@@ -136,6 +136,7 @@ mise run verify:only split
 | 触ったもの | 回すもの |
 |---|---|
 | **一時タブのウィンドウ横断共有**（共有定義ストア・openEphemeral / close の波及・ピン転換・シークレット / 小窓の除外・再起動復元） | `mise run verify:only shared-tabs`（2 ウィンドウ + 再起動 + 第 2 インスタンスを自分で立てる） |
+| **ローカルファイル（`file://`）**（`open-file` / argv / アドレスバー・⌘L コマンドバーのパス入力・file → file リンク・http / 拡張からの拒否・一時タブ定義に載せない・アドレスバーの拒否表示） | `mise run verify:only local-file`（第 2 インスタンスと `open -a <dev の Electron.app>` を自分で撃つ。25 件） |
 | ナビゲーション判定・設定スキーマ・キーバインド・ログ | `mise run check` |
 | **タブスイッチャー（⌃M）**・MRU の並び・オーバーレイの割り込み | `mise run verify:switcher` |
 | **ページの `gg` / `G`**（縦の端へ飛ぶ）・スクロール対象の選択・入力欄の除外 | `mise run verify:only vim-scroll` + 下の「ページの gg / G（実機）」 |
@@ -162,7 +163,7 @@ mise run verify:only split
 - **ユニットテスト**: 許可 scheme の判定・コマンドバー入力の正規化・ログの URL 伏せ字 /
   拡張 lock の更新・ロールバック・改ざん検知・パス封じ込め /
   検証ハーネス自身（マーカー掃除の暴発防止・子プロセスの停止）
-- registry の初期状態 / ナビゲーション / scheme allowlist（`file:` `javascript:` `data:` の拒否）
+- registry の初期状態 / ナビゲーション / scheme allowlist（`javascript:` `data:` `nemo:` の拒否。`file:` は人間の入力からは通るので `local-file` が見る）
 - ページ側に `require` / `process` / `window.nemo` が漏れていないこと
 - 拡張の content script がトップフレームと iframe に入ること
 - **ブラウザ UI には content script が入らないこと**（セッション分離が効いていること）
@@ -202,7 +203,7 @@ mise run verify:only split
 `mise run verify` が見ている Phase 1 の項目（`scripts/verify-phase1.mjs`）:
 
 - ブラウザ UI が `nemo://ui/` から配信されていること（`file://` を使っていないこと）
-- 許可外 scheme（`file:` `javascript:` `data:` `chrome:` `nemo:`）を拒否すること
+- 許可外 scheme（`javascript:` `data:` `chrome:` `nemo:`）を拒否すること（`file:` はアドレスバーからは通る。`local-file` 参照）
 - 他ウィンドウのタブを IPC で操作できないこと
 - 作ったタブがアクティブになり、**表示されている View がただ1つ**であること
 - 背景タブがアクティブを奪わないこと
@@ -509,7 +510,7 @@ await window.nemo.restartServiceWorkers()
 |---|---|
 | content script が入っているか | `Runtime.enable` してから `Page.reload` し、`Runtime.executionContextCreated` に拡張名の world が出るか |
 | バックグラウンドタブが前面に出ていないか | `getVisibleTabKeys()` が `activeTabKey` ただ1つを返すこと |
-| scheme allowlist | `window.nemo.navigate(tabKey, 'file:///etc/passwd')` が `navigation rejected` で reject されること |
+| scheme allowlist | `window.nemo.navigate(tabKey, 'javascript:alert(1)')` が `navigation rejected` で reject されること（`file:` は人間の入力からは通る） |
 | popup がタブモデルに乗るか | ページ側で `window.open(...)` → UI 側の `getWindowState()` のタブが増えること |
 | ウィンドウを閉じたときの後始末 | ウィンドウを閉じた後に `/json/list` の `page` が減ること（子 `WebContents` が残っていないこと） |
 | ページ側の隔離 | ページで `typeof require` / `typeof process` / `typeof window.nemo` がすべて `undefined` |
@@ -1277,6 +1278,31 @@ Material Icons の合字・参加中だけ現れる `[data-participant-id]`）�
    （`WebContentsView` 1 枚で約 89MB。閉じ漏れると会議のたびに漏れる）
 8. **Dock アイコンが消えたりちらついたりしない**こと（`setVisibleOnAllWorkspaces` を
    使っていないことの確認。小窓と同じ）
+
+## ローカルファイル（`file://`）
+
+自走検証は `mise run verify:only local-file`（`scripts/verify-local-file.mjs`。25 件）。自分でアプリとページサーバを
+起動し、**共有アプリには相乗りしない**（`open -a <Electron.app>` はバンドル単位の配送で宛先インスタンスを選べないため、
+verify-all では `stopAll()` してから回す）。
+
+- `open-file` は `open -a node_modules/electron/dist/Electron.app <file>` で起動中の dev Electron に届く
+  （**常用の `/Applications/Nemo.app` には絶対に渡さない**。`.html` の既定アプリが常用 Nemo なので、素の `open <file>` は
+  そちらに行く）。届かなかったときは `SKIP` を出して人間の確認に落とす
+- ナビゲート後の `window.nemo.navigate` は**読み込み中のタブへ撃つと ERR_ABORTED（-3）で reject する**
+  （Electron の `loadURL` は直前の読み込みの中断を新しい promise に乗せる）。`nav()` helper が `loading === false` を待ち、
+  -3 だけ握り潰す。ポリシー拒否（`navigation rejected`）はそのまま投げる
+- http ページからの `location.href = file:` / `window.open(file:)` は **Chromium が renderer 内で止める**ので
+  main の `navigation.blocked` は増えない。主検査は「URL が変わらない / タブ・小窓が増えない」で、ログ件数は補助表示
+- 共有定義が汚れないことの検査は、**http ページ本来の題名と favicon が定義に写ってから** `file:` へ飛ばす
+  （題名は URL のフォールバックで先に入るので、`!title.startsWith('http') && faviconUrl` を待つ）
+
+### 人が見る分
+
+1. Finder で `.html` を右クリック →「このアプリケーションで開く」→ Nemo（dev 版なら Nemo-dev）→ 小窓で開く
+2. Terminal で `open -a <その .app> /path/to/x.html` → 同上。常用版をリリースした後は素の `open /path/to/x.html` と
+   Finder のダブルクリックでも開く（`.html` の既定アプリが Nemo のとき）
+3. アドレスバーに `/path/to/x.html`・`~/path/to/x.html` → そのタブで開く。存在しないパスは検索になる
+4. アドレスバーに `javascript:alert(1)` → 入力が残って赤枠が出て、数秒で消える
 
 ## Peek と小窓（実機で人が見る分）
 

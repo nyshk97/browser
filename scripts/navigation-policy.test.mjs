@@ -115,6 +115,56 @@ test('サブフレームでも chrome-extension: 以外の許可外 scheme は�
   }
 })
 
+/* ------------------------------------------------------------------ *
+ * ローカルファイル（2026-09-02 の plan）
+ * ------------------------------------------------------------------ */
+
+test('file: は allowFile / fromFile のときだけ許可する', () => {
+  const url = 'file:///Users/me/mock.html'
+  assert.equal(isNavigableUrl(url), false)
+  assert.equal(isNavigableUrl(url, { allowFile: true }), true)
+  assert.equal(isNavigableUrl(url, { fromFile: true }), true)
+  // 拡張の経路のフラグでは通らない
+  assert.equal(isNavigableUrl(url, { allowExtensionPages: true, extensionIds: LOADED }), false)
+})
+
+test('file: はサブフレームでは fromFile / allowFile があっても拒否する', () => {
+  const url = 'file:///Users/me/inner.html'
+  assert.equal(isNavigableUrl(url, { subframe: true, fromFile: true, extensionIds: LOADED }), false)
+  assert.equal(isNavigableUrl(url, { subframe: true, allowFile: true, extensionIds: LOADED }), false)
+})
+
+test('allowFile / fromFile は他の許可外 scheme に波及しない', () => {
+  for (const url of [
+    'javascript:alert(1)',
+    'data:text/html,<h1>x</h1>',
+    'nemo://ui/index.html',
+    'devtools://devtools/bundled/devtools_app.html',
+    'chrome://settings',
+    `chrome-extension://${[...LOADED][0]}/popup/index.html`
+  ]) {
+    assert.equal(isNavigableUrl(url, { allowFile: true }), false, `${url} が allowFile で許可されている`)
+    assert.equal(isNavigableUrl(url, { fromFile: true }), false, `${url} が fromFile で許可されている`)
+  }
+})
+
+test('コマンドバーの file:// は allowFile のときだけ通る', () => {
+  const input = 'file:///Users/me/mock.html'
+  const denied = normalizeNavigationInput(input)
+  assert.equal(denied.allowed, false)
+  assert.equal(denied.reason, 'scheme_not_allowed:file:')
+  const allowed = normalizeNavigationInput(input, undefined, { allowFile: true })
+  assert.deepEqual(allowed, { allowed: true, url: input })
+  // allowFile でも他の scheme は拒否のまま
+  for (const bad of ['javascript:alert(1)', 'data:text/html,<h1>x</h1>', 'nemo://ui/index.html']) {
+    assert.equal(normalizeNavigationInput(bad, undefined, { allowFile: true }).allowed, false, bad)
+  }
+  // scheme の無いパスは（main 側で変換されない限り）今までどおり検索へ
+  const path = normalizeNavigationInput('/Users/me/mock.html', undefined, { allowFile: true })
+  assert.equal(path.allowed, true)
+  assert.match(path.url, /^https:\/\/www\.google\.com\/search\?q=/)
+})
+
 test('isLoadedExtensionUrl はロード済み拡張のページだけ true', () => {
   assert.equal(isLoadedExtensionUrl(`chrome-extension://${[...LOADED][0]}/a.html`, LOADED), true)
   assert.equal(isLoadedExtensionUrl(`chrome-extension://${OTHER}/a.html`, LOADED), false)
@@ -200,13 +250,15 @@ test('検索テンプレートは差し替えられるが https 以外は既定�
  * 外部アプリから渡された URL（計画 2-5）
  * ------------------------------------------------------------------ */
 
-test('argv から http/https の引数だけを拾う', () => {
+test('argv から http/https/file の引数だけを拾う', () => {
   assert.deepEqual(
     urlsFromArgv(['--flag', 'https://example.com/a', '/tmp/file.txt', 'http://example.org/']),
     ['https://example.com/a', 'http://example.org/']
   )
-  // 拾わないもの（開いてよいかの判定は isNavigableUrl が別途行う）
-  assert.deepEqual(urlsFromArgv(['file:///etc/passwd', 'javascript:alert(1)', 'nemo://ui/index.html']), [])
+  // file:// は拾う（argv はプロセスを起動した者しか渡せない。判定は呼び出し側が allowFile で行う）
+  assert.deepEqual(urlsFromArgv(['file:///Users/me/x.html', 'javascript:alert(1)', 'nemo://ui/index.html']), [
+    'file:///Users/me/x.html'
+  ])
   assert.deepEqual(urlsFromArgv([]), [])
 })
 

@@ -294,6 +294,12 @@ node scripts/ext-webstore-key.mjs <id>  # Web Store の CRX から公開鍵を�
   コマンドバー・Web ページからは通さない
 - ログに URL のパス・クエリ・フラグメントを出さない（`redactUrl` で scheme + host まで落とす）
 - 許可判定は `src/shared/navigation-policy.js` に切り出し、`mise run test` で回帰テストしている
+- **`file:` は人間の操作が起点のときだけ通す**（`allowFile`）: OS の `open-file`（Finder / `open <path>`）・argv の `file://`・
+  アドレスバー / コマンドバーの入力、および `file:` ページからの file → file のトップレベル遷移（`fromFile`）。
+  Web ページの `window.open` / `location.href`・拡張の `tabs.create`・サブフレームからは通さない
+  （main の `loadURL` は browser-initiated で Chromium の renderer 側の file アクセス制限を受けないので、
+  この allowlist が唯一のゲート）。`file:` タブは一時タブ定義・履歴に載せず、permission 要求も通さない
+  （`docs/plans/2026-09-02-1812-local-file-open.md`）
 - **ブラウザ UI は `file://` ではなく `nemo://ui/` で配信する**（`standard` / `secure` / `bypassCSP: false`）。
   配信するのは `out/renderer/` の中だけで、`..` も symlink も外へ出られない
 - UI に厳格な CSP を掛ける（本番は `script-src 'self'`。緩めるのは dev server 経由のときだけ）

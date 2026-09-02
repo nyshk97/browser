@@ -503,6 +503,16 @@ try {
     if (sharedTabsCode !== 0) exitCode = sharedTabsCode
   }
 
+  if (want('local-file')) {
+    // ローカルファイル（file://）は**自分でアプリを起動して**確かめる（別プロファイル）。
+    // `open -a <Electron.app>` はバンドル単位の配送で宛先インスタンスを選べないので、
+    // 共有アプリが生きていると `open-file` がそちらに届く。先に止める
+    await stopAll()
+    console.log('\n=== ローカルファイル（file://）')
+    const localFileCode = await runToCompletion(process.execPath, ['scripts/verify-local-file.mjs'])
+    if (localFileCode !== 0) exitCode = localFileCode
+  }
+
   if (want('migration')) {
     // 旧版セッションからの移行は**自分でアプリを起動して**確かめる（別プロファイル）。
     // ここまでの起動を止めてから回す（同時に2つの Nemo を立てない）。

@@ -216,8 +216,8 @@ await sleep(2500)
 state = await ui.ev('window.nemo.getWindowState()')
 check('コマンドバー入力からナビゲートできる', state.tabs[0].url.includes('login.html'), state.tabs[0].url)
 
-// 3. scheme allowlist
-for (const bad of ['file:///etc/passwd', 'javascript:alert(1)', 'data:text/html,<h1>x</h1>']) {
+// 3. scheme allowlist（`file:` は人間の入力からは通るので `verify:only local-file` 側で見る）
+for (const bad of ['javascript:alert(1)', 'data:text/html,<h1>x</h1>', 'nemo://ui/index.html']) {
   let rejected = false
   try {
     await ui.ev(`window.nemo.navigate(${tabKey}, ${JSON.stringify(bad)})`)

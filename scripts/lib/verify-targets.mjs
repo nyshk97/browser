@@ -37,6 +37,7 @@ export const KNOWN_TARGETS = [
   'vim-scroll', // ページの gg / G（フル既定からは外れている。OPT_IN_ONLY を見る）
   'restart', // 再起動をまたぐ永続性（spike / phase1 / pins / split / call / live-folder の write → read）
   'shared-tabs', // 野良タブのウィンドウ横断共有（自分で起動する）
+  'local-file', // ローカルファイル（file://）を人間の操作からだけ開く（自分で起動する）
   'migration', // 旧版セッションからの移行
   'db', // 旧スキーマの履歴 DB からの移行
   'slots', // セーブスロット（保存 / 読み込み / 移行。自分で起動する。OPT_IN_ONLY を見る）
@@ -126,6 +127,10 @@ export const OWNERS = new Map([
   ['scripts/verify-http-auth.mjs', ['http-auth']],
   ['scripts/verify-vim-scroll.mjs', ['vim-scroll']],
   ['scripts/verify-shared-tabs.mjs', ['shared-tabs']],
+  ['scripts/verify-local-file.mjs', ['local-file']],
+  // `test-pages/` の登録はこの 2 つが最初。この 2 ページは `local-file` しか読まない
+  ['test-pages/local-a.html', ['local-file']],
+  ['test-pages/local-b.html', ['local-file']],
   ['scripts/verify-session-migration.mjs', ['migration']],
   ['scripts/verify-db-migration.mjs', ['db']],
   ['scripts/verify-slots.mjs', ['slots']],

@@ -1,6 +1,7 @@
 import { getFavorites, getPinned } from './store/pins.js'
 import { getFavicons, searchHistory } from './store/history.js'
 import { normalizeNavigationInput } from './security.js'
+import { localPathToFileUrl } from './local-path.js'
 import { getSettings } from './store/settings.js'
 import { tabDisplayName } from './registry.js'
 import type { NemoWindow } from './registry.js'
@@ -101,8 +102,16 @@ export function suggest(win: NemoWindow, rawQuery: string): Suggestion[] {
     }
   }
 
-  // 「そのまま実行」は常に1件出す（候補が無くても Enter で必ず何かが起きる）
-  const decision = normalizeNavigationInput(query, getSettings().searchTemplate)
+  // 「そのまま実行」は常に1件出す（候補が無くても Enter で必ず何かが起きる）。
+  // コマンドバーは人間の入力が起点なので `file:` を通す（ローカルパスは `file://` に変換してから。
+  // 行の `target.url` が `file://` になり、`nemo:navigate` 側の `resolveInput` がそのまま受ける）
+  const decision = normalizeNavigationInput(
+    localPathToFileUrl(query) ?? query,
+    getSettings().searchTemplate,
+    {
+      allowFile: true
+    }
+  )
   if (query && decision.allowed) {
     const isSearch = decision.url.startsWith(getSettings().searchTemplate.split('{q}')[0])
     // タイトルは入力そのまま。「検索する / 開く」は選択行の右端のアクションが担う

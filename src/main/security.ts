@@ -68,6 +68,13 @@ export interface NavigationPolicy {
    * トップレベル遷移では絶対に true にしない。
    */
   subframe?: boolean
+  /**
+   * `file:` を許可する。**起点が人間の操作**（アドレスバー入力・OS の `open-file`・argv）のときだけ true。
+   * Web ページ・拡張が渡した URL では絶対に true にしない（根拠は `shared/navigation-policy.js`）。
+   */
+  allowFile?: boolean
+  /** 現在のページが `file:`。file → file のトップレベル遷移だけ通す。 */
+  fromFile?: boolean
 }
 
 /**
@@ -380,7 +387,10 @@ export function applyWebContentsSecurityDefaults(
   permissionScope: string | null = null
 ): void {
   const policyForCurrentPage = (): NavigationPolicy => ({
-    allowExtensionPages: isLoadedExtensionUrl(contents.getURL())
+    allowExtensionPages: isLoadedExtensionUrl(contents.getURL()),
+    // Chrome と同じく file → file のトップレベル遷移だけ通す（ローカル HTML 内のリンク）。
+    // http(s) → file は今までどおり拒否。サブフレームは `isNavigableUrl` 側で弾く
+    fromFile: contents.getURL().startsWith('file:')
   })
 
   /**

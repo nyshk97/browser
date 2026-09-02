@@ -1,4 +1,5 @@
 import { app, clipboard, ipcMain, Menu, session, shell, type IpcMainInvokeEvent } from 'electron'
+import { localPathToFileUrl } from './local-path.js'
 import { PAGE_PARTITION, userDataPath } from './paths.js'
 import { restartServiceWorkers, setExtensionEnabled } from './extensions.js'
 import { getLoadedExtensions } from './extension-state.js'
@@ -289,9 +290,20 @@ function requireRecord(value: unknown, what: string): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-/** コマンドバー・拡張以外から来た URL は必ずここを通す。 */
+/**
+ * コマンドバー・拡張以外から来た URL は必ずここを通す。
+ *
+ * **人間の入力が起点**（アドレスバー / コマンドバー / Toolbar の ⌘T）なので `allowFile` を立てる。
+ * Web ページ・拡張が渡す URL はここを通らない（`registry.ts` の popup / `extensions.ts` は
+ * `resolveNavigationTarget` を `allowFile` 無しで呼ぶ）。
+ *
+ * 拒否は `navigation rejected: <reason>` の Error で返す。renderer（Toolbar）は**この接頭辞だけ**を
+ * ポリシー拒否として扱い、`loadURL` 側の失敗（ERR_FILE_NOT_FOUND 等）とは区別する。
+ */
 function resolveInput(input: unknown): string {
-  const decision = normalizeNavigationInput(requireString(input, 'input'), getSettings().searchTemplate)
+  const raw = requireString(input, 'input').trim()
+  const fileUrl = localPathToFileUrl(raw)
+  const decision = normalizeNavigationInput(fileUrl ?? raw, getSettings().searchTemplate, { allowFile: true })
   if (!decision.allowed) {
     log('navigation.blocked', { phase: 'ipc', reason: decision.reason })
     throw new Error(`navigation rejected: ${decision.reason}`)
@@ -340,7 +352,9 @@ export function registerIpcHandlers(): void {
     const win = requireWindow(event)
     const raw = optionalString(url, 'url')
     const background = options !== undefined && requireRecord(options, 'options')['background'] === true
-    const tab = createTab(win, raw ? resolveInput(raw) : undefined, { background })
+    // `resolveInput` を通った URL だけが `file:` になりうる。`allowFile` の呼び元はここだけ
+    // （`raw` が無ければ `BLANK_URL` なので立てない）
+    const tab = createTab(win, raw ? resolveInput(raw) : undefined, { background, allowFile: Boolean(raw) })
     return tab.key
   })
 

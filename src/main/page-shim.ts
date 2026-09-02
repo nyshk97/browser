@@ -5,7 +5,8 @@ import { log, logError } from './log.js'
 
 /**
  * ページ向け main world シム（`extension-shim.cjs` の http/https 分岐 =
- * `permissions.query` の「未決定 = prompt」読み替え）をセッションに配る。
+ * `permissions.query` の「未決定 = prompt」読み替えと、WebAuthn の modal 要求の宙吊り対策
+ * `src/shared/webauthn-shim.js`）をセッションに配る。
  *
  * 通常のページセッションには `extensions.ts` の `registerExtensionShim` が同じファイルを
  * 配っているのでこれを呼ぶ必要はない。**シークレットセッション用**:

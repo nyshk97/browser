@@ -65,6 +65,26 @@ Electron を上げる PR では次を必ず通す（Phase 1-10 / Phase 2-6）:
 `chrome.storage` は `local` / `session` / `sync` のいずれも読み書きできた
 （Electron 公式ドキュメントは `local` のみと書いているが、`electron-chrome-extensions` が補っている）。
 
+## WebAuthn（パスキー）は modal 要求が宙吊りになる（Electron 41.10.6、2026-09-02 実測）
+
+`PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()` は false（Touch ID /
+iCloud キーチェーンのプラットフォーム認証器が無い。`app.configureWebAuthn` 未設定）。それ自体は
+正しいが、**modal の `navigator.credentials.get({ publicKey })` / `create({ publicKey })` は
+`timeout` を過ぎても解決も拒否もされず永久に pending** になる（Chrome なら timeout で
+エラー表示 → 閉じると NotAllowedError。Electron には表示する UI が無いので閉じる契機が来ない）。
+`mediation: 'conditional'` も pending だが、こちらは Chrome でも待たせ続ける仕様なので問題ない。
+同じ frame で 2 件目を投げると "already pending" で即拒否されるので、**同時に撃つ実測では
+「2 件目以降は即拒否」に見える**（1 件ずつ別タブで撃つと全部宙吊り）。
+
+Nemo は `src/shared/webauthn-shim.js` でプラットフォーム認証器でしか答えられない要求を
+NotAllowedError で即拒否し、それ以外は timeout で打ち切っている（Electron が直ったら
+isUVPAA() が true になった時点でシムは自動的に素通しになる）。版上げのときは使い捨て
+プロファイルで `https://example.com` を開き、CDP から
+`navigator.credentials.get({ publicKey: { challenge: new Uint8Array(32), rpId: 'example.com', timeout: 8000 } })`
+を isolated world（シムが見えない）で撃って 12 秒後も pending かを見れば再確認できる。
+Bitwarden 拡張のパスキー（`registerContentScripts` の world MAIN で page script を注入）は
+この件と無関係に動く。
+
 ## Phase 1 で分かった癖
 
 ### `better-sqlite3` は Electron 向けの rebuild が要らない（13.0.3 時点）

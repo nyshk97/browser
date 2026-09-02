@@ -2,6 +2,7 @@ import { contextBridge } from 'electron'
 import { installChromeDebuggerStub } from '../shared/chrome-debugger-stub.js'
 import { installStorageOnChangedPolyfill } from '../shared/chrome-storage-onchanged.js'
 import { installPermissionsQueryShim } from '../shared/permissions-query-shim.js'
+import { installWebAuthnShim } from '../shared/webauthn-shim.js'
 
 /**
  * ページ・拡張コンテキスト向けの main world 補完。**frame と service worker の両方に
@@ -15,7 +16,9 @@ import { installPermissionsQueryShim } from '../shared/permissions-query-shim.js
  * - 拡張の service worker: `chrome.storage.*.onChanged` の補完（`src/shared/chrome-storage-onchanged.js`。
  *   Electron 41 は SW 側で onChanged を鳴らさない）
  * - http / https のページ: `navigator.permissions.query` の「未決定 = prompt」読み替え
- *   （`src/shared/permissions-query-shim.js`。Google Meet の初回詰み対策）
+ *   （`src/shared/permissions-query-shim.js`。Google Meet の初回詰み対策）と、
+ *   WebAuthn の modal 要求の宙吊り対策（`src/shared/webauthn-shim.js`。login.live.com の
+ *   パスキーでページが固まる対策）
  * - **それ以外では何もしない**（素のページに `chrome.debugger` を漏らさず、
  *   拡張ページの query には触らない）
  * - `electron-chrome-extensions` の preload は最後に `Object.freeze(chrome)` するので、
@@ -40,5 +43,10 @@ if (isServiceWorker || href.startsWith('chrome-extension://')) {
     contextBridge.executeInMainWorld({ func: installPermissionsQueryShim })
   } catch (error) {
     console.error(`[nemo] permissions query shim failed (${href})`, error)
+  }
+  try {
+    contextBridge.executeInMainWorld({ func: installWebAuthnShim })
+  } catch (error) {
+    console.error(`[nemo] webauthn shim failed (${href})`, error)
   }
 }

@@ -2431,6 +2431,81 @@ body[data-view='toolbar'] {
   height: min(91%, calc(100% - 84px));
   background: var(--nemo-sidebar);
   border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/*
+ * 板の上の「待っている」表現（頭文字・ホスト名・ドット）。
+ * **当たり判定に参加させない**。プレースホルダーはクリックを受けない面なので、
+ * 中身があっても `elementFromPoint` は板そのものを返す（自走検証がそれを見ている）。
+ */
+.peek-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+}
+
+/* 頭文字。サイドバーの favicon 代用（`.fi.letter`）と同じ役だが、窓の中央に置くので大きい */
+.peek-loading-letter {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--nemo-surface-hi);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--nemo-ink);
+}
+
+.peek-loading-host {
+  font-size: 12px;
+  color: var(--nemo-ink-dim);
+}
+
+.peek-loading-dots {
+  display: flex;
+  gap: 5px;
+}
+
+.peek-loading-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--nemo-ink-dim);
+  animation: peek-dot 1s ease-in-out infinite;
+}
+
+.peek-loading-dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.peek-loading-dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes peek-dot {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .peek-loading-dots i {
+    animation: none;
+    opacity: 0.6;
+  }
 }
 
 /* Peek の外側・ページ領域の右上。main 側が上下に 42px の余白を残している */

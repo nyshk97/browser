@@ -101,6 +101,9 @@ async function pageTargetCount(urlPart) {
 
 /** プレースホルダーの面の色（DESIGN.md「Peek」の `--nemo-sidebar`）。 */
 const PLACEHOLDER_RGB = '#1b1b20'
+/** 待ち表現の頭文字タイル（`--nemo-surface-hi`）と文字（`--nemo-ink`）。 */
+const LOADING_TILE_RGB = '#33333d'
+const LOADING_INK_RGB = '#e8e8ee'
 /**
  * ピクセル比較の許容差（各チャンネル）。
  * **`sips` を通すと色が 1〜2 ずれる**（PNG → BMP でカラープロファイルが噛む。
@@ -188,14 +191,18 @@ async function samplePlaceholderPixels(session, measured) {
     const scale = image.width / measured.viewport.w
     const r = measured.rect
     const at = (x, y) => image.at(x * scale, y * scale)
+    const lr = measured.loading?.letterRect
     return {
       file: png,
       scale,
       image: `${image.width}x${image.height}`,
-      center: at(r.x + r.w / 2, r.y + r.h / 2),
+      // **中央は見ない**。中央には待ち表現（頭文字・ホスト名）が乗っているので、面の色は左上 1/4 の点で見る
+      face: at(r.x + r.w / 4, r.y + r.h / 4),
       insideEdge: at(r.x + 4, r.y + r.h / 2),
       // 角丸の外側。**面の色が来たら丸まっていない**
-      corner: at(r.x + 1, r.y + 1)
+      corner: at(r.x + 1, r.y + 1),
+      // 頭文字のタイルの中央。文字（ink）が来ることもあるので、タイルの色か文字の色のどちらか
+      letter: lr ? at(lr.x + lr.w / 2, lr.y + lr.h / 2) : null
     }
   } catch (error) {
     return { error: String(error) }
@@ -447,7 +454,20 @@ console.log('\n--- プレースホルダー')
       radius: style.borderTopLeftRadius,
       center: at(r.x + r.width / 2, r.y + r.height / 2),
       insideEdge: at(r.x + 4, r.y + r.height / 2),
-      corner: at(r.x + 2, r.y + 2)
+      corner: at(r.x + 2, r.y + 2),
+      // 待ち表現（頭文字・ホスト名）。頭文字のタイルは矩形も取ってピクセルで見る
+      loading: (() => {
+        const letter = el.querySelector('.peek-loading-letter')
+        const host = el.querySelector('.peek-loading-host')
+        if (!letter || !host) return null
+        const lr = letter.getBoundingClientRect()
+        return {
+          letter: letter.textContent,
+          host: host.textContent,
+          letterRect: { x: Math.round(lr.x), y: Math.round(lr.y), w: Math.round(lr.width), h: Math.round(lr.height) },
+          dots: el.querySelectorAll('.peek-loading-dots i').length
+        }
+      })()
     })
   })()`
   const measured = JSON.parse(await chrome.ev(probe))
@@ -455,10 +475,21 @@ console.log('\n--- プレースホルダー')
   check('面の色が DESIGN.md の値', measured.background === 'rgb(27, 27, 32)', String(measured.background))
   check('角丸 16px', measured.radius === '16px', String(measured.radius))
   check(
-    '中央と内側の縁がプレースホルダー',
+    '中央と内側の縁がプレースホルダー（待ち表現は当たり判定に参加しない）',
     measured.center === 'placeholder' && measured.insideEdge === 'placeholder',
-    JSON.stringify(measured)
+    JSON.stringify({ center: measured.center, insideEdge: measured.insideEdge })
   )
+  /*
+   * 待ち表現（DESIGN.md「Peek」）: リンク先の URL だけから作るので、板が出た時点で揃っている。
+   * ホストは gate の URL から**期待値を作って**突き合わせる（「何か出ている」では足りない）。
+   */
+  const gateHost = new URL(gateUrl).host
+  check(
+    '板の上に行き先のホスト名と頭文字が出る',
+    measured.loading?.host === gateHost && measured.loading?.letter === gateHost.slice(0, 1).toUpperCase(),
+    JSON.stringify(measured.loading)
+  )
+  check('ドットが 3 つ', measured.loading?.dots === 3, `dots=${measured.loading?.dots}`)
   // **`found` を条件に入れる**。入れないと「そもそも描かれていない」ときに素通りで PASS になる
   check(
     '角は丸まっている（角の内側は当たらない）',
@@ -476,8 +507,16 @@ console.log('\n--- プレースホルダー')
   } else {
     check(
       'ピクセルでも面が DESIGN.md の色（合成しても色がずれない＝不透明）',
-      nearlyEqual(pixels.center, PLACEHOLDER_RGB) && nearlyEqual(pixels.insideEdge, PLACEHOLDER_RGB),
+      nearlyEqual(pixels.face, PLACEHOLDER_RGB) && nearlyEqual(pixels.insideEdge, PLACEHOLDER_RGB),
       JSON.stringify(pixels)
+    )
+    // 待ち表現が**実際に描かれている**こと（DOM にあるだけで `opacity: 0` の類を通さない）。
+    // 頭文字タイルの中央はタイルの色（`--nemo-surface-hi`）か文字の色（`--nemo-ink`）のどちらか
+    check(
+      'ピクセルでも頭文字のタイルが描かれている',
+      pixels.letter !== null &&
+        (nearlyEqual(pixels.letter, LOADING_TILE_RGB) || nearlyEqual(pixels.letter, LOADING_INK_RGB)),
+      `letter=${pixels.letter}`
     )
     check(
       'ピクセルでも角が抜けている（角丸）',

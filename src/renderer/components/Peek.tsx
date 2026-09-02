@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { peekTab, useWindowState } from '../useNemo.js'
+import { hostOf, peekTab, useWindowState } from '../useNemo.js'
 
 /**
  * Peek（ウィンドウ内ポップアップ）の暗幕と操作ボタン（DESIGN.md「Peek」）。
@@ -39,7 +39,11 @@ export function Peek(): React.JSX.Element | null {
         `dom-ready` まで出さない（`peekAwaitingDocument`）ので、その間ここが見える。
         これが無いと、リンクを踏んでも暗幕だけが出て窓が数百 ms〜数秒あらわれない。
       */}
-      {!peek.visible && <div className="peek-placeholder" />}
+      {!peek.visible && (
+        <div className="peek-placeholder">
+          <PeekLoading url={peek.url} />
+        </div>
+      )}
       <div className="peek-tools">
         <button
           type="button"
@@ -59,6 +63,35 @@ export function Peek(): React.JSX.Element | null {
           ✕
         </button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * プレースホルダーの上に置く「待っている」表現: 行き先ホストの頭文字・ホスト名・ドット。
+ *
+ * **favicon は出さない**。ページが申告する favicon（`page-favicon-updated`）は `dom-ready` の
+ * 前後に来るので、プレースホルダーが出ている間にはまず届かない。履歴から引く手もあるが
+ * 画像の取得は別に走るので、待ち途中に差し込まれてチラつく。ここで使うのは
+ * Peek を開いた瞬間に手元にある URL だけにし、板が出た時点で完成形にする。
+ *
+ * 出るのはリンク先の URL のホストなので、短縮 URL やリダイレクト経由だと中継ホストになる。
+ *
+ * **`pointer-events: none`**（CSS 側）。プレースホルダーはクリックを受けないので当たり判定に
+ * 参加させない（自走検証は `elementFromPoint` で「中央がプレースホルダー」を見ている）。
+ */
+function PeekLoading({ url }: { url: string }): React.JSX.Element {
+  const host = hostOf(url).replace(/^www\./, '')
+  const initial = host.slice(0, 1).toUpperCase()
+  return (
+    <div className="peek-loading" aria-hidden="true">
+      {host && <span className="peek-loading-letter">{initial}</span>}
+      {host && <span className="peek-loading-host">{host}</span>}
+      <span className="peek-loading-dots">
+        <i />
+        <i />
+        <i />
+      </span>
     </div>
   )
 }

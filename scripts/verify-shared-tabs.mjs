@@ -7,6 +7,9 @@
  * - アクティブ選択とページ実体はウィンドウごとに独立（同じ定義を両方で実体化できる）
  * - 閉じる = 定義ごと削除で全ウィンドウから消える / ウィンドウを閉じても定義は残る
  * - シークレット・小窓は共有に参加しない（小窓は ⌘O 合流時点で共有入り）
+ * - 実体化済みの他ウィンドウは**その行を選んだ瞬間**に定義の現在 URL へ追随する
+ *   （一致時は読み直さない・beforeunload に止められたら静かに残す・sleep 復帰は定義優先・
+ *   会議参加中の実体は追随しない・追随後は「戻る」で戻れる）
  *
  * 単体で回せる（`node scripts/verify-shared-tabs.mjs`）。
  * 使い捨てのデータディレクトリで自分でアプリを起動する（2 枚目のウィンドウ・
@@ -24,6 +27,7 @@ import {
   getFreePort,
   isChildAlive,
   projectRoot,
+  readLogLines,
   stopChildren,
   waitForHttp
 } from './lib/harness.mjs'
@@ -51,7 +55,17 @@ const appEnv = {
   NEMO_REMOTE_DEBUGGING_PORT: debugPort,
   NEMO_USER_DATA_DIR: userDataDir,
   // `run-command-for-verify`（reopen-tab / close-window / new-private-window）を叩くため
-  NEMO_VERIFY_DIAGNOSTICS: '1'
+  NEMO_VERIFY_DIAGNOSTICS: '1',
+  // 通話ガードの検査で偽 Meet を会議と判定させる。**自分でアプリを起動するので自分で渡す**
+  // （verify-call は verify-all が起こした共有アプリに相乗りしているので不要だった）
+  NEMO_MEET_TEST_URL_PREFIX: `${PAGES}/meet-fake.html`,
+  // beforeunload の検査: 追随起点の遷移は確認を出さずに諦めるのが仕様だが、
+  // 抑止が壊れたときに**本物のネイティブ modal で main が固まる**より「離れる」が選ばれて
+  // URL が変わり FAIL になるほうがよい（単体実行でハングさせない保険）
+  NEMO_VERIFY_UNLOAD_CHOICE: 'leave',
+  // sleep 復帰の検査で「寝かせるべきタブ」を見に行く周期を縮める（本番 5 秒）。
+  // verify-all は自分の子スクリプトにこの値を渡さないので、無ければここで決める
+  NEMO_VERIFY_TIMINGS: process.env.NEMO_VERIFY_TIMINGS ?? JSON.stringify({ sleepSweepMs: 500 })
 }
 
 /** @type {import('node:child_process').ChildProcess[]} */
@@ -113,12 +127,22 @@ const defs = (session) =>
   session.ev('window.nemo.getSharedState().then(s => JSON.stringify(s.ephemeralTabs ?? []))').then(JSON.parse)
 
 /** 共有一覧に URL の一部が現れる / 消えるのを待つ。 */
-async function waitForDef(session, urlPart, { present = true, timeoutMs = 10000 } = {}) {
-  await waitFor(
-    session,
-    `window.nemo.getSharedState().then(s => ((s.ephemeralTabs ?? []).some(d => d.url.includes(${json(urlPart)})) === ${present}) ? 'ok' : '')`,
-    { timeoutMs }
-  )
+async function waitForDef(session, urlPart, { present = true, timeoutMs = 10000, onFail = null } = {}) {
+  try {
+    await waitFor(
+      session,
+      `window.nemo.getSharedState().then(s => ((s.ephemeralTabs ?? []).some(d => d.url.includes(${json(urlPart)})) === ${present}) ? 'ok' : '')`,
+      { timeoutMs }
+    )
+  } catch (error) {
+    // 「何が無かったか」を残す（定義一覧と、呼び出し側が渡した追加の状態）
+    const list = await defs(session).catch(() => [])
+    const extra = onFail ? await onFail().catch((e) => String(e)) : ''
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}\n  定義一覧: ${json(list.map((d) => d.url))}${extra ? `\n  ${extra}` : ''}`,
+      { cause: error }
+    )
+  }
 }
 
 /**
@@ -130,6 +154,150 @@ async function closeWindowOf(session) {
   await session.ev(`(setTimeout(() => { void window.nemo.runCommandForVerify('close-window') }, 50), 'ok')`)
   session.close()
   await sleep(1000)
+}
+
+/** 指定イベントの診断ログ（時刻順）。 */
+function logEvents(event) {
+  return readLogLines(userDataDir)
+    .filter((line) => line.includes(`"event":"${event}"`))
+    .map((line) => {
+      try {
+        return JSON.parse(line)
+      } catch {
+        return null
+      }
+    })
+    .filter((entry) => entry !== null && entry.event === event)
+    .sort((a, b) => String(a.t).localeCompare(String(b.t)))
+}
+
+/** `fn` が null 以外を返すまで待つ（返らなければ null）。 */
+async function waitUntil(fn, { timeoutMs = 10000, intervalMs = 250 } = {}) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const value = await fn()
+    if (value !== null && value !== undefined && value !== false) return value
+    if (Date.now() > deadline) return null
+    await sleep(intervalMs)
+  }
+}
+
+const tabOf = async (session, key) => (await state(session)).tabs.find((t) => t.key === key) ?? null
+/** 検査の詳細に出すぶんだけ（favicon の data URL まで出すと 1 行が数 KB になる）。 */
+const brief = (tab) =>
+  tab ? json({ url: tab.url, asleep: tab.asleep, canGoBack: tab.canGoBack, loading: tab.loading }) : 'null'
+
+/**
+ * そのタブの読み込みが終わるまで待つ。**読み込み中のタブへ `navigate` を撃たない**ため
+ * （先行ロードが中断されると Electron の `loadURL` は新しいほうの Promise を `ERR_ABORTED` で reject する）。
+ */
+const waitForLoaded = (session, key) =>
+  waitFor(
+    session,
+    `window.nemo.getWindowState().then(s => { const t = s.tabs.find(t => t.key === ${json(key)}); return t && !t.loading ? 'ok' : '' })`
+  )
+
+/**
+ * そのウィンドウで共有定義を実体化し、**初回の読み込みが終わるまで待つ**。
+ * 実体化直後の初回コミット（`did-navigate`）は定義へ URL を書き戻す（最後に触った実体が勝つ）ので、
+ * 待たずに他ウィンドウで遷移すると、遅れて届いた古い書き戻しが新しい URL を巻き戻すことがある
+ * （verify-all 経由で 3 回中 2 回踏んだ。人間の操作では踏めない数十 ms の窓）。
+ */
+async function openEphemeralIn(session, defId) {
+  await session.ev(`window.nemo.openEphemeral(${json(defId)}).then(() => 'ok')`)
+  await waitFor(
+    session,
+    `window.nemo.getWindowState().then(s => s.tabs.some(t => t.ephemeralId === ${json(defId)}) ? 'ok' : '')`
+  )
+  const inst = (await state(session)).tabs.find((t) => t.ephemeralId === defId)
+  await waitForLoaded(session, inst.key)
+  return inst
+}
+
+/** そのタブの URL に `urlPart` が含まれるまで待つ（含まれれば URL、諦めれば null）。 */
+const waitForTabUrl = (session, key, urlPart, options) =>
+  waitUntil(async () => {
+    const tab = await tabOf(session, key)
+    return tab && tab.url.includes(urlPart) ? tab.url : null
+  }, options)
+
+/**
+ * 「読み直されたか」を見るためのページ側マーカー。**新しいドキュメントになると消える**。
+ * `ev` は main world で評価するので、同じドキュメントの間だけ `window.__nemoFollowProbe` が残り、
+ * 遷移で新しいドキュメントになると消える（対象は静的な test-pages なのでページ側から潰されない。
+ * verify-phase1 の beforeunload 検査と同じ手筋）。
+ *
+ * **仕込む瞬間に `urlPart` へ一致する page target が 1 つだけ**であること（`connectTo` は
+ * 最初に見つかった target を返すので、2 ウィンドウが同じ URL に居ると相手側に仕込んで空振りする）。
+ */
+async function plantProbe(urlPart) {
+  const matches = (await listTargets(CDP)).filter((t) => t.type === 'page' && t.url.includes(urlPart))
+  if (matches.length !== 1) {
+    throw new Error(`マーカーの仕込み先が 1 つに定まらない: ${urlPart}（${matches.length} 件）`)
+  }
+  const page = await connect(matches[0].webSocketDebuggerUrl)
+  await waitFor(page, "document.readyState === 'complete' ? 'ok' : ''")
+  await page.ev(`(window.__nemoFollowProbe = 1, 'ok')`)
+  const planted = await page.ev('window.__nemoFollowProbe === 1')
+  page.close()
+  return planted === true
+}
+
+/** `urlPart` に一致する page target ごとに、マーカーが残っているかを返す。 */
+async function probeOnTargets(urlPart) {
+  const matches = (await listTargets(CDP)).filter((t) => t.type === 'page' && t.url.includes(urlPart))
+  const results = []
+  for (const target of matches) {
+    const page = await connect(target.webSocketDebuggerUrl)
+    try {
+      results.push((await page.ev('window.__nemoFollowProbe === 1')) === true)
+    } catch {
+      results.push('error')
+    }
+    page.close()
+  }
+  return results
+}
+
+/**
+ * ユーザー操作として評価する（偽 Meet の「参加する」を押すのに使う。verify-call と同じ理由で
+ * 時間で必ず切り上げる）。
+ */
+async function evUser(session, expression) {
+  const sent = session.send('Runtime.evaluate', {
+    expression,
+    awaitPromise: true,
+    returnByValue: true,
+    userGesture: true
+  })
+  const r = await Promise.race([sent, sleep(8000).then(() => null)])
+  if (r === null) throw new Error(`ページの評価が返ってこない: ${expression.slice(0, 60)}`)
+  const details = r.result?.exceptionDetails
+  if (details) throw new Error(details.exception?.description ?? details.text ?? 'eval failed')
+  return r.result?.result?.value
+}
+
+/**
+ * beforeunload で離脱を止めるページにする。Chromium は sticky user activation が無いと
+ * キャンセル自体を無視する（＝検査が空振りする）ので、実クリック相当を撃ってから印を付ける
+ * （verify-phase1 の手筋）。`urlPart` に一致する page target は 1 つだけであること。
+ */
+async function armBeforeUnload(urlPart) {
+  const matches = (await listTargets(CDP)).filter((t) => t.type === 'page' && t.url.includes(urlPart))
+  if (matches.length !== 1) {
+    throw new Error(`beforeunload の仕込み先が 1 つに定まらない: ${urlPart}（${matches.length} 件）`)
+  }
+  const page = await connect(matches[0].webSocketDebuggerUrl)
+  await waitFor(page, "document.readyState === 'complete' ? 'ok' : ''")
+  await page.ev(
+    `(window.addEventListener('beforeunload', (e) => { e.preventDefault(); e.returnValue = '' }), 'ok')`
+  )
+  for (const type of ['mousePressed', 'mouseReleased']) {
+    await page.send('Input.dispatchMouseEvent', { type, x: 10, y: 10, button: 'left', clickCount: 1 })
+  }
+  const armed = await page.ev(`navigator.userActivation?.hasBeenActive === true`)
+  page.close()
+  return armed === true
 }
 
 try {
@@ -185,11 +353,7 @@ try {
   }
 
   // B でクリック → B に実体化。A のアクティブは変わらない（選択はウィンドウローカル）
-  await uiB.ev(`window.nemo.openEphemeral(${json(defA.id)}).then(() => 'ok')`)
-  await waitFor(
-    uiB,
-    `window.nemo.getWindowState().then(s => s.tabs.some(t => t.ephemeralId === ${json(defA.id)}) ? 'ok' : '')`
-  )
+  await openEphemeralIn(uiB, defA.id)
   {
     const sB = await state(uiB)
     const instB = sB.tabs.find((t) => t.ephemeralId === defA.id)
@@ -208,7 +372,9 @@ try {
   await uiA.ev(
     `window.nemo.navigate(${json(keyA)}, ${json(`${PAGES}/login.html?site=shared1-moved`)}).then(() => 'ok')`
   )
-  await waitForDef(uiB, 'site=shared1-moved')
+  await waitForDef(uiB, 'site=shared1-moved', {
+    onFail: async () => `A の実体: ${brief(await tabOf(uiA, keyA))}`
+  })
   {
     const def = (await defs(uiB)).find((d) => d.id === defA.id)
     check(
@@ -221,10 +387,269 @@ try {
     const sB = await state(uiB)
     const instB = sB.tabs.find((t) => t.ephemeralId === defA.id)
     check(
-      '実体化済みの B 側は追随しない（乖離を許容。Arc と同じ）',
+      '実体化済みの B 側は選び直すまで追随しない（ライブ追随はしない。発火点は選択の 1 点）',
       instB?.url.includes('site=shared1') === true && !instB.url.includes('moved'),
       instB?.url
     )
+  }
+
+  /* ---------------------------------------------------------------- *
+   * 2b. 選択時追随（別ウィンドウで進んだページの続きを読む）
+   *
+   * 検査順は固定: 追随する → 一致時は追随しない → beforeunload → sleep 復帰 → 戻れる → 通話ガード。
+   * 「戻れる」は定義を汚す（戻った側の URL に書き戻る）ので、その定義を使う検査の最後に置く。
+   * 「通話ガード」は参加中の実体が sleep 除外・close ガードで残るので末尾に置き、参加側の
+   * ウィンドウから閉じて片付ける。
+   * ---------------------------------------------------------------- */
+  console.log('\n--- 選択時追随（別ウィンドウで進んだページの続き）')
+
+  // B の「別のタブ」（切り替え経路で追随を撃つための退避先）
+  const parkB = await uiB.ev(
+    `window.nemo.createTab(${json(`${PAGES}/index.html?site=follow-park`)}).then(k => k)`
+  )
+  await waitForDef(uiA, 'site=follow-park')
+
+  // --- 追随する（切り替えて選ぶ経路）
+  const keyF = await uiA.ev(`window.nemo.createTab(${json(`${PAGES}/index.html?site=follow1`)}).then(k => k)`)
+  await waitForDef(uiB, 'index.html?site=follow1')
+  const defF = (await defs(uiB)).find((d) => d.url.includes('index.html?site=follow1'))
+  const instF = await openEphemeralIn(uiB, defF.id)
+  await uiB.ev(`window.nemo.selectTab(${json(parkB)}).then(() => 'ok')`)
+  // A で先へ進む → 定義が乖離。この時点で index.html?site=follow1 に居る page は B の実体だけ
+  await waitForLoaded(uiA, keyF)
+  await uiA.ev(
+    `window.nemo.navigate(${json(keyF)}, ${json(`${PAGES}/login.html?site=follow1-moved`)}).then(() => 'ok')`
+  )
+  await waitForDef(uiB, 'site=follow1-moved')
+  check('前提: 追随される側（B の実体）にマーカーを仕込めた', await plantProbe('index.html?site=follow1'))
+  {
+    const followedBefore = logEvents('tab.followed').filter((e) => e.key === instF.key).length
+    await uiB.ev(`window.nemo.selectTab(${json(instF.key)}).then(() => 'ok')`)
+    const followedUrl = await waitForTabUrl(uiB, instF.key, 'site=follow1-moved')
+    const defNow = (await defs(uiB)).find((d) => d.id === defF.id)
+    check(
+      '別ウィンドウで進んだ定義の URL に、その行を選んだ瞬間に追随する',
+      followedUrl !== null && followedUrl === defNow?.url,
+      json({ got: followedUrl, def: defNow?.url })
+    )
+    const followedAfter = logEvents('tab.followed').filter((e) => e.key === instF.key).length
+    check(
+      '追随は tab.followed としてログに残る',
+      followedAfter === followedBefore + 1,
+      `${followedBefore} → ${followedAfter}`
+    )
+    // 対になる「追随しない」検査の空振り防止: 追随は読み直しなのでマーカーが消える
+    const probes = await probeOnTargets('login.html?site=follow1-moved')
+    check(
+      '追随は読み直しなので、仕込んだマーカーが消える（A・B とも同じ URL に居る）',
+      probes.length === 2 && probes.every((v) => v === false),
+      json(probes)
+    )
+  }
+
+  // --- 一致時は追随しない（実体を 1 ウィンドウだけにして、マーカーの仕込み先を一意にする）
+  const keyS = await uiA.ev(
+    `window.nemo.createTab(${json(`${PAGES}/index.html?site=follow-same`)}).then(k => k)`
+  )
+  await waitForDef(uiA, 'site=follow-same')
+  check('前提: 一致状態の実体にマーカーを仕込めた', await plantProbe('index.html?site=follow-same'))
+  // 再クリック（already 経路）と、別タブへ行って戻る（切り替え経路）の両方
+  await uiA.ev(`window.nemo.selectTab(${json(keyS)}).then(() => 'ok')`)
+  await sleep(500)
+  await uiA.ev(`window.nemo.selectTab(${json(keyF)}).then(() => 'ok')`)
+  await sleep(300)
+  await uiA.ev(`window.nemo.selectTab(${json(keyS)}).then(() => 'ok')`)
+  await sleep(800)
+  {
+    const probes = await probeOnTargets('index.html?site=follow-same')
+    check(
+      '実体と定義が一致していれば選び直しても読み直さない（マーカーが残る）',
+      probes.length === 1 && probes[0] === true,
+      json(probes)
+    )
+    check(
+      '一致時は tab.followed が出ない',
+      logEvents('tab.followed').filter((e) => e.key === keyS).length === 0,
+      json(logEvents('tab.followed').map((e) => e.key))
+    )
+  }
+
+  // --- beforeunload: 止められる側（追随される実体 = B）に仕込む。B だけが実体を持つうちに仕込む
+  const keyBU = await uiB.ev(
+    `window.nemo.createTab(${json(`${PAGES}/login.html?site=follow-bu`)}).then(k => k)`
+  )
+  await waitForDef(uiA, 'site=follow-bu')
+  const defBU = (await defs(uiA)).find((d) => d.url.includes('site=follow-bu'))
+  check(
+    '前提: クリックで sticky activation が付き beforeunload を仕込めた',
+    await armBeforeUnload('login.html?site=follow-bu')
+  )
+  const instBU_A = await openEphemeralIn(uiA, defBU.id)
+  {
+    await uiA.ev(
+      `window.nemo.navigate(${json(instBU_A.key)}, ${json(`${PAGES}/index.html?site=follow-bu-moved`)}).then(() => 'ok')`
+    )
+    await waitForDef(uiB, 'site=follow-bu-moved')
+    const promptsBefore = logEvents('tab.unload_prompt').length
+    await uiB.ev(`window.nemo.selectTab(${json(keyBU)}).then(() => 'ok')`)
+    const blocked = await waitUntil(
+      () => (logEvents('tab.follow_blocked').some((e) => e.key === keyBU) ? 'blocked' : null),
+      { timeoutMs: 8000 }
+    )
+    check('beforeunload で止められた追随は tab.follow_blocked としてログに残る', blocked !== null)
+    await sleep(500)
+    const tab = await tabOf(uiB, keyBU)
+    check(
+      '止められた実体は URL が変わらない（乖離のまま静かに残す）',
+      tab?.url.includes('login.html?site=follow-bu') === true && !tab.url.includes('moved'),
+      tab?.url
+    )
+    check(
+      '離脱確認ダイアログは出ない（tab.unload_prompt が増えない）',
+      logEvents('tab.unload_prompt').length === promptsBefore,
+      `${promptsBefore} → ${logEvents('tab.unload_prompt').length}`
+    )
+    const defAfter = (await defs(uiB)).find((d) => d.id === defBU.id)
+    check(
+      '止められても定義の URL は先へ進んだ側のまま',
+      defAfter?.url.includes('follow-bu-moved') === true,
+      defAfter?.url
+    )
+    // 次の選択でまた試みる（抑止フラグが畳まれていれば 2 回目も blocked として出る）
+    await uiB.ev(`window.nemo.selectTab(${json(keyBU)}).then(() => 'ok')`)
+    const blockedTwice = await waitUntil(
+      () => (logEvents('tab.follow_blocked').filter((e) => e.key === keyBU).length >= 2 ? 'ok' : null),
+      { timeoutMs: 8000 }
+    )
+    check('次の選択でまた追随を試みる（止められた記録が 2 件になる）', blockedTwice !== null)
+  }
+
+  // --- sleep 復帰は定義の現在 URL を読む（起こした直後の二重ロードもしない）
+  // B は instF（追随済み・定義と一致・後で「戻れる」に使うので寝かせない）を見せておく
+  await uiB.ev(`window.nemo.selectTab(${json(instF.key)}).then(() => 'ok')`)
+  const keySL = await uiA.ev(
+    `window.nemo.createTab(${json(`${PAGES}/index.html?site=follow-sleep`)}).then(k => k)`
+  )
+  await waitForDef(uiB, 'site=follow-sleep')
+  const defSL = (await defs(uiB)).find((d) => d.url.includes('site=follow-sleep'))
+  const instSL = await openEphemeralIn(uiB, defSL.id)
+  await uiB.ev(`window.nemo.selectTab(${json(instF.key)}).then(() => 'ok')`)
+  {
+    // 全ウィンドウの非表示タブが一斉に寝るので、寝かせたい実体が寝たら即座に元へ戻す
+    const originalSleep = JSON.parse(
+      await uiA.ev('window.nemo.getSettings().then(s => JSON.stringify(s))')
+    ).tabSleepMinutes
+    await uiA.ev(`window.nemo.updateSettings({ tabSleepMinutes: ${600 / 60_000} }).then(() => 'ok')`)
+    const slept = await waitUntil(async () => ((await tabOf(uiB, instSL.key))?.asleep ? 'asleep' : null), {
+      timeoutMs: 15000
+    })
+    await uiA.ev(`window.nemo.updateSettings({ tabSleepMinutes: ${originalSleep} }).then(() => 'ok')`)
+    check('前提: B の実体が sleep した', slept !== null, brief(await tabOf(uiB, instSL.key)))
+    await waitForLoaded(uiA, keySL)
+    await uiA.ev(
+      `window.nemo.navigate(${json(keySL)}, ${json(`${PAGES}/login.html?site=follow-sleep-moved`)}).then(() => 'ok')`
+    )
+    await waitForDef(uiB, 'site=follow-sleep-moved')
+    await uiB.ev(`window.nemo.selectTab(${json(instSL.key)}).then(() => 'ok')`)
+    const wokeUrl = await waitForTabUrl(uiB, instSL.key, 'site=follow-sleep-moved')
+    check(
+      'sleep から起きた実体は定義の現在 URL を読む（寝る前の URL に戻さない）',
+      wokeUrl !== null,
+      brief(await tabOf(uiB, instSL.key))
+    )
+    check(
+      '起床時の採用は tab.follow_on_wake としてログに残る',
+      logEvents('tab.follow_on_wake').filter((e) => e.key === instSL.key).length === 1,
+      json(logEvents('tab.follow_on_wake').map((e) => e.key))
+    )
+    check(
+      '起こした直後の selectTab で二重に読み直さない（tab.followed が出ない）',
+      logEvents('tab.followed').filter((e) => e.key === instSL.key).length === 0,
+      json(logEvents('tab.followed').filter((e) => e.key === instSL.key))
+    )
+  }
+
+  // --- 追随後に「戻る」で乖離側のページに戻れる（定義もそちらへ書き戻る）
+  await uiB.ev(`window.nemo.selectTab(${json(instF.key)}).then(() => 'ok')`)
+  {
+    const before = await tabOf(uiB, instF.key)
+    check(
+      '前提: 追随した実体は「戻る」が押せる（追随は履歴に積む通常の遷移）',
+      before?.canGoBack === true,
+      brief(before)
+    )
+    await uiB.ev(`window.nemo.goBack(${json(instF.key)}).then(() => 'ok')`)
+    const backUrl = await waitUntil(async () => {
+      const tab = await tabOf(uiB, instF.key)
+      return tab && tab.url.includes('index.html?site=follow1') && !tab.url.includes('moved') ? tab.url : null
+    })
+    check('「戻る」で乖離側（追随前）のページに戻れる', backUrl !== null, brief(await tabOf(uiB, instF.key)))
+    const defBack = await waitUntil(async () => {
+      const def = (await defs(uiB)).find((d) => d.id === defF.id)
+      return def && def.url.includes('index.html?site=follow1') && !def.url.includes('moved') ? def.url : null
+    })
+    check('戻ると定義も戻った側の URL に書き戻される（最後に触った実体が勝つ）', defBack !== null, defBack)
+    // 他ウィンドウは次の選択でそちらへ追随する
+    await uiA.ev(`window.nemo.selectTab(${json(keyF)}).then(() => 'ok')`)
+    const aUrl = await waitUntil(async () => {
+      const tab = await tabOf(uiA, keyF)
+      return tab && tab.url.includes('index.html?site=follow1') && !tab.url.includes('moved') ? tab.url : null
+    })
+    check('他ウィンドウは次の選択で戻った側へ追随する', aUrl !== null, brief(await tabOf(uiA, keyF)))
+  }
+
+  // --- 通話ガード: 参加中の実体は選んでも追随しない
+  // 順序: 先に A・B 双方で実体化 → A が別 URL へ（乖離。A は会議候補から外れ、偽 Meet の target は B だけ）→
+  // B で参加 → B で選ぶ。参加後に開く順では openEphemeral のガードが実体化自体を拒むので乖離を作れない
+  const keyM = await uiA.ev(
+    `window.nemo.createTab(${json(`${PAGES}/meet-fake.html?id=follow-call`)}).then(k => k)`
+  )
+  await waitForDef(uiB, 'id=follow-call')
+  const defM = (await defs(uiB)).find((d) => d.url.includes('id=follow-call'))
+  const instM = await openEphemeralIn(uiB, defM.id)
+  await waitForLoaded(uiA, keyM)
+  await uiA.ev(
+    `window.nemo.navigate(${json(keyM)}, ${json(`${PAGES}/index.html?site=follow-call-moved`)}).then(() => 'ok')`
+  )
+  await waitForDef(uiB, 'site=follow-call-moved')
+  {
+    const matches = (await listTargets(CDP)).filter(
+      (t) => t.type === 'page' && t.url.includes('meet-fake.html?id=follow-call')
+    )
+    check(
+      '前提: 偽 Meet の page target は B の実体だけ',
+      matches.length === 1,
+      json(matches.map((t) => t.url))
+    )
+    const meetPage = await connect(matches[0].webSocketDebuggerUrl)
+    await waitFor(meetPage, "document.readyState === 'complete' ? 'ok' : ''")
+    await evUser(meetPage, `(document.getElementById('join').click(), 'ok')`)
+    const joined = await waitUntil(
+      () => (logEvents('call.joined').some((e) => e.key === instM.key) ? 'joined' : null),
+      { timeoutMs: 15000 }
+    )
+    check('前提: B の実体が会議に参加中と検知される（call.joined）', joined !== null)
+    await uiB.ev(`window.nemo.selectTab(${json(instM.key)}).then(() => 'ok')`)
+    await sleep(1500)
+    const tab = await tabOf(uiB, instM.key)
+    check(
+      '会議に参加中の実体は選んでも追随しない（URL が変わらない）',
+      tab?.url.includes('meet-fake.html?id=follow-call') === true,
+      tab?.url
+    )
+    check(
+      '追随の見送りは call.guarded（action=follow）としてログに残る',
+      logEvents('call.guarded').some((e) => e.action === 'follow' && e.defId === defM.id),
+      json(logEvents('call.guarded').map((e) => e.action))
+    )
+    check(
+      '参加中の実体に tab.followed は出ない',
+      logEvents('tab.followed').filter((e) => e.key === instM.key).length === 0
+    )
+    meetPage.close()
+    // 後片付け: 参加側のウィンドウから閉じる（origin が参加側なので close ガードを通る）
+    await uiB.ev(`window.nemo.closeTab(${json(instM.key)}).then(() => 'ok')`)
+    await waitForDef(uiA, 'id=follow-call', { present: false })
   }
 
   /* ---------------------------------------------------------------- *
@@ -360,11 +785,7 @@ try {
     await waitForDef(uiB, 'site=rebind-split')
     const defX = (await defs(uiB)).find((d) => d.url.includes('site=rebind-split'))
     // B で実体化し、B のもう 1 本と分割に入れる
-    await uiB.ev(`window.nemo.openEphemeral(${json(defX.id)}).then(() => 'ok')`)
-    await waitFor(
-      uiB,
-      `window.nemo.getWindowState().then(s => s.tabs.some(t => t.ephemeralId === ${json(defX.id)}) ? 'ok' : '')`
-    )
+    await openEphemeralIn(uiB, defX.id)
     const yKey = await uiB.ev(
       `window.nemo.createTab(${json(`${PAGES}/login.html?site=rebind-partner`)}).then(k => k)`
     )

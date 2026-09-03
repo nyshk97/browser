@@ -29,6 +29,7 @@ import { startMetricsSampling, stopMetricsSampling } from './metrics.js'
 import { createUiView, disposeUiView, type UiViewKind } from './ui-view.js'
 import { buildSwipeInjection } from '../shared/swipe-gesture.js'
 import { buildVimScrollInjection } from '../shared/vim-scroll.js'
+import { normalizeStoredUrl } from '../shared/settings-schema.js'
 import { cancelPrompts, currentPrompt, setPromptNotifier } from './prompts.js'
 import { getSettings } from './store/settings.js'
 import { getLoadedExtensions, onExtensionsChanged } from './extension-state.js'
@@ -636,12 +637,30 @@ export class NemoTab {
     view.setVisible(false)
 
     if (!options.adopt) {
-      const target = this.pendingUrl ?? this.url
+      const local = this.pendingUrl ?? this.url
       this.pendingUrl = null
+      // 共有定義を持つタブは、寝ている間に別ウィンドウの実体が進めた**定義の現在 URL**を優先する
+      // （選択時追随 `followEphemeralDefinition` と同じ述語 `ephemeralFollowTarget`。手元の URL が定義に
+      // 書き戻せない file: 等なら手元を優先し、ローカルファイルを見たまま寝たタブを古い http へ引き戻さない）。
+      // **採用したら `this.url` にも入れる**。入れないと `this.url` は寝る前のままで、`applyVisibility()` の
+      // 直後に走る `selectTab` の追随判定が必ず不一致になり、読み始めた実体にもう一度 `loadURL` が飛ぶ
+      const followed = ephemeralFollowTarget(this, local, 'follow_on_wake')
+      if (followed !== null) {
+        log('tab.follow_on_wake', {
+          key: this.key,
+          windowId: this.window.id,
+          from: redactUrl(local),
+          to: redactUrl(followed)
+        })
+        this.url = followed
+      }
+      const target = followed ?? local
       // `allowFile: true` の根拠: `this.url` / `pendingUrl` に入る値は (a) 宣言・`materialize` の後始末・`sleep`
       // （どれも一度ゲート = `createTab` / `loadURL` 前の `resolveNavigationTarget` を通った値）と、
       // (b) `attachTabEvents` の `syncUrl`（`wc.getURL()`。ページ由来の遷移だが、`will-navigate` /
-      // `will-redirect` / `setWindowOpenHandler` のゲートを通った後の値）の 2 系統だけ。
+      // `will-redirect` / `setWindowOpenHandler` のゲートを通った後の値）と、(c) 上の `followed`
+      // （一時タブ定義ストア由来。`normalizeStoredUrl` で http/https に閉じている上、`ephemeralFollowTarget` の
+      // 中で `allowFile` 無しの `resolveNavigationTarget` を通っている）の 3 系統だけ。
       // 外部 URL の小窓（`fillMiniWindow` → `new NemoTab` → ここ）もこの 1 箇所で `file:` が通る。
       // **将来ここに外部由来の値を入れる経路が増えたら `allowFile` を見直す。**
       const resolved =
@@ -787,6 +806,7 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
   // **`did-navigate` を必ず入れる**（bfcache から復元されると `dom-ready` は出ない）。
   wc.on('dom-ready', () => notifyCall(tab))
   wc.on('did-navigate', (_event, url) => {
+    endFollowLoad(wc)
     syncUrl()
     remember(() => recordVisit(url, tab.title))
     syncEphemeralDefinition(tab)
@@ -796,6 +816,7 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
   })
   wc.on('did-navigate-in-page', (_event, url, isMainFrame) => {
     if (!isMainFrame) return
+    endFollowLoad(wc)
     syncUrl()
     remember(() => recordVisit(url, tab.title))
     syncEphemeralDefinition(tab)
@@ -805,6 +826,10 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
   wc.on('did-finish-load', () => {
     syncUrl()
     notify()
+  })
+  // 追随の抑止フラグは main frame の遷移の決着で必ず畳む（`followEphemeralDefinition` を参照）
+  wc.on('did-fail-load', (_event, _code, _description, _validatedUrl, isMainFrame) => {
+    if (isMainFrame) endFollowLoad(wc)
   })
   wc.on('audio-state-changed', notify)
   wc.on('found-in-page', (_event, result) => {
@@ -817,6 +842,8 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
     notify()
   })
   wc.on('render-process-gone', (_event, details) => {
+    // 追随の読み込み中に落ちたら抑止フラグも畳む（WebContents は生き残るので `destroyed` は来ない）
+    endFollowLoad(wc)
     tab.crashed = true
     log('tab.crashed', { key: tab.key, windowId: win().id, reason: details.reason })
     notify()
@@ -846,6 +873,15 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
   // 押せないため、自走検証は NEMO_VERIFY_UNLOAD_CHOICE=leave|stay で分岐を選ぶ
   // （verify-all.mjs が leave を渡す）。
   wc.on('will-prevent-unload', (event) => {
+    // 追随起点（`followEphemeralDefinition`）の遷移なら、確認を出さずに静かに諦める
+    // （乖離のまま残す。次の選択でまた試みる）。**ここで必ずフラグを畳む**: 畳まないと保険の
+    // タイムアウトまでの間にユーザーが撃った遷移が無言でキャンセルされる（810f8b4 が直したバグの再発）。
+    // 判定は `NEMO_VERIFY_UNLOAD_CHOICE` / ダイアログより**前**に置く。後ろだと自走検証（leave を渡す）では
+    // 「離れる」が自動選択されて追随が通ってしまい、抑止の検査が成立しない
+    if (endFollowLoad(wc)) {
+      log('tab.follow_blocked', { key: tab.key, windowId: win().id })
+      return
+    }
     const current = win()
     // 裏口は必ず `!app.isPackaged` で塞ぐ（NEMO_VERIFY_DIAGNOSTICS / NEMO_VERIFY_TIMINGS と
     // 同じ規約。配布版で env 1 つで離脱確認を無効化・固定化できてはいけない）
@@ -897,6 +933,7 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
   // その時点で `tab.view` は既に差し替わっている（sleep は null、removeTab も null）。
   // 「View がまだこの WebContents を指している」を条件にすると自分から閉じた場合だけ通る。
   wc.on('destroyed', () => {
+    endFollowLoad(wc)
     const current = win()
     if (current.isDestroyed) return
     if (!current.tabs.includes(tab)) return
@@ -2444,6 +2481,12 @@ export function selectTab(win: NemoWindow, key: string): void {
   // **`already` でも必ずレイアウトし直す**。`applyVisibility()` が寝ていたタブを
   // 起こしていることがあり、新しい View に bounds を配らないと 0x0 のまま出る。
   win.layout()
+  // 共有定義を持つタブは、別ウィンドウの実体が進めた定義の現在 URL へ追随する（続きを読む）。
+  // **発火点はここ 1 点**で、`selectTab` を通る全経路（サイドバー・スイッチャー・ペインクリック・
+  // 閉じた後の次タブ・`moveTabToWindow`・復元・`focusEphemeralInstance`）に効く。抑止は経路別の
+  // フラグでなく `ephemeralFollowTarget` の条件で表現する。`already`（同じ行の再クリック）でも撃つので
+  // 早期 return より前に置く。1 ウィンドウで使う限り実体と定義は常に一致し、ここでは何も起きない
+  followEphemeralDefinition(tab)
 
   if (already) {
     // 既に選択済みでも、Peek の出入りで前面のページが変わっていることがある
@@ -3671,6 +3714,103 @@ function syncEphemeralDefinition(tab: NemoTab): void {
   // `ephemeralId` が TabState に載るまで renderer は「ローカル行」として描いているので、
   // 定義化したら pushState で載せ替える
   if (ensureEphemeralDefinition(tab)) tab.window.pushState()
+}
+
+/**
+ * 共有定義の現在 URL へ追随すべきなら、その URL を返す（追随しないなら null）。
+ *
+ * 選択時追随（`followEphemeralDefinition`）と sleep 復帰（`materialize`）の**両方がこの 1 つの述語を使う**
+ * （別々に書くと 4096 文字超の URL 等でずれ、寝て起きただけで古い定義 URL に引き戻される）。条件:
+ * - `ephemeralId` を持つ（pinned / favorite はナビゲーションで定義 URL を更新しないので追随先が無い）
+ * - 手元の URL を `normalizeStoredUrl` に通した値が定義の現在 URL と**不一致**。**`null` なら追随しない**。
+ *   定義側は `normalizeStoredUrl` を通った値なので、同じ正規化を通してから比べる（生比較だと表記割れ・
+ *   4096 文字超で毎回不一致になり、1 ウィンドウ運用でも選択のたびに追随が撃たれる）。`null` ガードが
+ *   file: 等の非 http/https の除外を兼ねる（ローカルファイルを見ているタブを選ぶたびに古い http へ引き戻さない。
+ *   `canSyncDefinitionFromPage` と同じ線）
+ * - 会議に参加中の実体ではない。追随は「参加中の実体を別 URL へ飛ばす新経路」で、二重実体化ガードが
+ *   防いでいた通話切断をすり抜ける。ガード自身の `focusEphemeralInstance` も `selectTab` を呼ぶので必須
+ *
+ * 返す URL は `resolveNavigationTarget` を通す（`allowFile` は付けない。`security.ts` の
+ * 「`loadURL` に生の文字列を渡さない」不変条件。定義 URL の出所が増えても穴にしない）。
+ */
+function ephemeralFollowTarget(
+  tab: NemoTab,
+  currentUrl: string,
+  context: 'follow' | 'follow_on_wake'
+): string | null {
+  if (!tab.ephemeralId) return null
+  const def = findEphemeralTab(tab.ephemeralId)
+  if (!def) return null
+  const normalized = normalizeStoredUrl(currentUrl)
+  if (normalized === null || normalized === def.url) return null
+  if (callWatcher?.isJoined(tab)) {
+    log('call.guarded', { defId: def.id, action: context })
+    return null
+  }
+  return resolveNavigationTarget(def.url, {}, context)
+}
+
+/**
+ * 追随起点の `loadURL` が進行中の WebContents → 保険のタイムアウト。
+ *
+ * 立っている間は `will-prevent-unload`（ページの beforeunload が離脱を止めた）で確認ダイアログを出さずに
+ * 静かに諦める。畳むのは**イベント順序に依存しない 3 点**: (a) `will-prevent-unload` ハンドラ内
+ * （キャンセル確定の瞬間）、(b) main frame の `did-navigate` / `did-navigate-in-page` / `did-fail-load`
+ * （レンダラが落ちたときは `render-process-gone`）、
+ * (c) この保険のタイムアウト。`did-start-navigation` は使わない（`will-prevent-unload` との先後が Chromium の
+ * 内部順序依存で、先に飛ぶと抑止前にフラグが落ちる。サブフレームでも飛ぶ）。beforeunload を持たない大半の
+ * ページでは (b) が畳む。立ちっぱなしのフラグは次のユーザー起点の遷移を無言でキャンセルする。
+ */
+const followLoads = new Map<WebContents, NodeJS.Timeout>()
+const FOLLOW_LOAD_GRACE_MS = 15_000
+
+function beginFollowLoad(wc: WebContents): void {
+  endFollowLoad(wc)
+  const timer = setTimeout(() => endFollowLoad(wc), FOLLOW_LOAD_GRACE_MS)
+  timer.unref?.()
+  followLoads.set(wc, timer)
+}
+
+/** @returns フラグが立っていたか */
+function endFollowLoad(wc: WebContents): boolean {
+  const timer = followLoads.get(wc)
+  if (timer === undefined) return false
+  clearTimeout(timer)
+  followLoads.delete(wc)
+  return true
+}
+
+/**
+ * 選択時追随: 実体の URL が定義の現在 URL と食い違っていたら定義側を読み直す（Arc 的な「続きを読む」）。
+ * 呼び出し側（`selectTab`）に条件分岐は書かない。判定はすべて `ephemeralFollowTarget`。
+ * リロードでなく通常の遷移として履歴に積む（「戻る」で乖離側のページに戻れる）。
+ */
+function followEphemeralDefinition(tab: NemoTab): void {
+  const wc = tab.webContents
+  if (!wc) return
+  // 追随の読み込みが進行中なら撃ち直さない。`selectTab` は `syncForegroundTab` → 拡張の `onActivated` →
+  // `selectTab` と**同期的に再入する**（`already` 経路）ので、ここが無いと `did-navigate` 前の古い `tab.url` で
+  // もう一度不一致と判定され、読み始めた実体に同じ URL の `loadURL` が二重に飛ぶ（自走検証で `tab.followed` が
+  // 2 件出て発覚）。フラグは遷移の決着で畳まれる（`beginFollowLoad` の JSDoc）ので、失敗した追随は次の選択で再試行できる
+  if (followLoads.has(wc)) return
+  const target = ephemeralFollowTarget(tab, tab.url, 'follow')
+  if (target === null) return
+  log('tab.followed', {
+    key: tab.key,
+    windowId: tab.window.id,
+    from: redactUrl(tab.url),
+    to: redactUrl(target)
+  })
+  beginFollowLoad(wc)
+  // beforeunload で止められると `ERR_ABORTED` で reject する。握らないと unhandledRejection →
+  // `app.unhandled_rejection` になる（`materialize` の `void wc.loadURL(...)` を真似ない）
+  wc.loadURL(target).catch((error: unknown) => {
+    const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined
+    // beforeunload で止めた（`tab.follow_blocked`）・ユーザーが先に別の遷移を撃った、は `ERR_ABORTED` で来る。
+    // 仕様どおりの中止なので「失敗」に数えない（数えると事故調査で本当の失敗と紛れる）
+    if (code === 'ERR_ABORTED') return
+    log('tab.follow_failed', { key: tab.key, ...(typeof code === 'string' ? { code } : {}) })
+  })
 }
 
 /**

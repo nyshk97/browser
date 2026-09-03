@@ -239,3 +239,52 @@ test('注入コード: 縦に流れていると判断した後は、横スクロ
   for (let i = 0; i < 10; i += 1) run.fire(-20, (at += 16))
   assert.deepEqual(run.calls, ['back'])
 })
+
+test('注入コード: quirks mode（scrollingElement が body）の文書でも祖先の走査が止まる', () => {
+  // DOCTYPE の無い文書では `document.scrollingElement` が <html> ではなく <body> になる。
+  // 「親が無くなったら scrollingElement へ飛ぶ」走査だと html → body → html … と永遠に回り、
+  // wheel を 1 回受けただけでレンダラが固まる（フォームのプレビューを DOCTYPE 無しで
+  // 描画する埋め込みで実際に踏んだ）。
+  class FakeElement {
+    constructor(tagName, parentElement) {
+      this.tagName = tagName
+      this.parentElement = parentElement
+      this.scrollWidth = 100
+      this.clientWidth = 100
+      this.scrollLeft = 0
+    }
+  }
+  const html = new FakeElement('HTML', null)
+  const body = new FakeElement('BODY', html)
+  const div = new FakeElement('DIV', body)
+  const visited = []
+  const listeners = []
+  const factory = new Function(
+    'window',
+    'document',
+    'Element',
+    'getComputedStyle',
+    'addEventListener',
+    'history',
+    'performance',
+    `return ${buildSwipeInjection()}`
+  )
+  factory(
+    {},
+    { scrollingElement: body },
+    FakeElement,
+    (node) => {
+      visited.push(node.tagName)
+      // 止まらない走査をテストのハングにしない。祖先は 3 つしか無いので、これを超えたら回っている
+      if (visited.length > 10) throw new Error(`走査が止まらない: ${visited.join(' → ')}`)
+      return { overflowX: 'visible' }
+    },
+    (type, fn) => listeners.push([type, fn]),
+    { back: () => {}, forward: () => {} },
+    { now: () => 0 }
+  )
+  const wheel = listeners.find(([type]) => type === 'wheel')?.[1]
+  assert.ok(wheel, 'wheel リスナーが付いている')
+  wheel({ deltaX: -20, deltaY: 0, timeStamp: 1000, target: div })
+  assert.deepEqual(visited, ['DIV', 'BODY', 'HTML'], '祖先を 1 回ずつ見て止まる')
+})

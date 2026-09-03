@@ -141,20 +141,33 @@ export function buildSwipeInjection(config = SWIPE_CONFIG) {
   const feedSwipe = ${feedSwipe.toString()}
   const state = (${createSwipeState.toString()})(performance.now())
 
-  /** そのイベントの位置から見て、まだ dx 方向へ横スクロールできる要素があるか。 */
-  const hasScrollRoom = (target, dx) => {
-    let node = target instanceof Element ? target : document.scrollingElement
-    while (node) {
-      const style = getComputedStyle(node)
-      const scrolls = style.overflowX === 'auto' || style.overflowX === 'scroll'
-      const room = node.scrollWidth - node.clientWidth
-      if ((scrolls || node === document.scrollingElement) && room > 1) {
-        if (dx < 0 && node.scrollLeft > 1) return true
-        if (dx > 0 && node.scrollLeft < room - 1) return true
-      }
-      node = node.parentElement ?? (node === document.scrollingElement ? null : document.scrollingElement)
-    }
+  /** その要素を dx 方向へまだ横スクロールできるか。 */
+  const canScroll = (node, dx) => {
+    const style = getComputedStyle(node)
+    const scrolls = style.overflowX === 'auto' || style.overflowX === 'scroll'
+    const room = node.scrollWidth - node.clientWidth
+    if (!(scrolls || node === document.scrollingElement) || room <= 1) return false
+    if (dx < 0 && node.scrollLeft > 1) return true
+    if (dx > 0 && node.scrollLeft < room - 1) return true
     return false
+  }
+
+  /**
+   * そのイベントの位置から見て、まだ dx 方向へ横スクロールできる要素があるか。
+   *
+   * 祖先を親方向へ辿り、**辿り終えてから** document.scrollingElement を 1 回だけ見る
+   * （祖先に含まれていれば見ない）。「親が無くなったら scrollingElement へ飛ぶ」形にしてはいけない:
+   * DOCTYPE の無い quirks mode の文書では scrollingElement が <html> ではなく <body> なので、
+   * html → body → html … と永遠に回り、**wheel を 1 回受けただけでレンダラが固まる**
+   * （フォームのプレビューを DOCTYPE 無しで描画する埋め込みで実際に踏んだ）。
+   */
+  const hasScrollRoom = (target, dx) => {
+    let root = document.scrollingElement
+    for (let node = target instanceof Element ? target : null; node; node = node.parentElement) {
+      if (node === root) root = null
+      if (canScroll(node, dx)) return true
+    }
+    return root ? canScroll(root, dx) : false
   }
 
   addEventListener(

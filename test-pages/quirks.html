@@ -1,0 +1,17 @@
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>quirks mode（DOCTYPE 無し）— テスト</title>
+    <style>
+      body { font: 15px/1.6 -apple-system, sans-serif; margin: 16px; }
+    </style>
+  </head>
+  <body>
+    <p>
+      <b>DOCTYPE を意図的に書いていない</b>。quirks mode では <code>document.scrollingElement</code> が
+      <code>&lt;html&gt;</code> ではなく <code>&lt;body&gt;</code> になる。
+      スワイプ判定の祖先走査が <code>html → body → html …</code> と回らないことを見る。
+    </p>
+    <div id="target">この要素の上で wheel を撃つ</div>
+  </body>
+</html>

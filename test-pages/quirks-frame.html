@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>quirks mode の iframe — テスト</title>
+    <style>
+      body { font: 15px/1.6 -apple-system, sans-serif; margin: 40px; }
+      iframe { border: 1px solid #ccc; height: 240px; width: 420px; }
+    </style>
+  </head>
+  <body>
+    <h1>quirks mode の文書を埋め込んだ iframe</h1>
+    <p>
+      親は標準モード、子（<code>/quirks.html</code>）は DOCTYPE 無しの quirks mode。
+      DOCTYPE の無い HTML をそのまま描画する埋め込み（フォームのプレビュー等）を模している。
+      子フレームの上でスクロールしてもレンダラが固まらないことを見る。
+    </p>
+    <iframe src="/quirks.html"></iframe>
+  </body>
+</html>

@@ -1108,6 +1108,43 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
     await loaded('/cache.html')
   }
 
+  // quirks mode（DOCTYPE 無し）の子フレームで wheel を受けても固まらないこと。
+  // quirks mode では `document.scrollingElement` が <body> になるので、祖先の走査が
+  // 「親が無くなったら scrollingElement へ飛ぶ」形だと html → body → html … と永遠に回り、
+  // **wheel 1 回でレンダラが固まる**（フォームのプレビューを DOCTYPE 無しで描画する
+  // 埋め込みで実際に踏んだ。閉じる以外に手が無くなる）。
+  // 固まると `page.ev` が永久に返らないので、時間切れで倒す
+  {
+    await ui.ev(`window.nemo.navigate(${JSON.stringify(key)}, '${PAGES}/quirks-frame.html').then(() => 'ok')`)
+    await loaded('/quirks-frame.html')
+    await sleep(500)
+    // 前提: 子フレームが本当に quirks mode で scrollingElement が body、**かつ判定が注入されている**
+    // （子フレームはページと同じワールドに入るのでマーカーが見える）。どちらかが欠けると
+    // 下の検査は wheel を撃っても何も起きずに素通りする
+    const mode = await page.ev(`(() => {
+      const w = document.querySelector('iframe').contentWindow
+      const d = w.document
+      const scrolling = d.scrollingElement === d.body ? 'body' : String(d.scrollingElement && d.scrollingElement.tagName)
+      return d.compatMode + '/' + scrolling + '/' + (w.__nemoSwipeAttached === true ? 'attached' : 'not-attached')
+    })()`)
+    check(
+      'quirks mode の子フレームが用意できている（scrollingElement が body・判定が注入済み）',
+      mode === 'BackCompat/body/attached',
+      mode
+    )
+    const fired = await Promise.race([
+      page.ev(`(() => {
+        const w = document.querySelector('iframe').contentWindow
+        w.document.getElementById('target').dispatchEvent(new w.WheelEvent('wheel', { deltaX: -20, deltaY: 0, bubbles: true }))
+        return 'returned'
+      })()`),
+      sleep(4000).then(() => 'timeout')
+    ])
+    check('quirks mode の子フレームで wheel を受けてもレンダラが固まらない', fired === 'returned', fired)
+    await ui.ev(`window.nemo.navigate(${JSON.stringify(key)}, '${PAGES}/cache.html').then(() => 'ok')`)
+    await loaded('/cache.html')
+  }
+
   // 縦に流れているジェスチャでページが飛ばないこと（読んでいる最中の誤爆）
   await swipe(-240, 400)
   await sleep(600)

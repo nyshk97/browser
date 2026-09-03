@@ -3,7 +3,7 @@ import { foregroundTab, useCommand, useSharedState, useShortcutHint, useWindowSt
 import { PinnedTree } from './PinnedTree.js'
 import { TabRow, TAB_DRAG_TYPE, useDragEnd } from './TabRow.js'
 import { SplitRow } from './SplitRow.js'
-import { RenameInput, useDelayedClick } from './InlineRename.js'
+import { RenameInput } from './InlineRename.js'
 import { RowMenu, type RowMenuState } from './RowMenu.js'
 import {
   IconEdit,
@@ -349,8 +349,6 @@ function FavoriteGrid({
   const [iconEdit, setIconEdit] = useState<{ id: string; error?: string } | null>(null)
   const [urlEditId, setUrlEditId] = useState<string | null>(null)
   const [menu, setMenu] = useState<RowMenuState | null>(null)
-  const { schedule, cancel } = useDelayedClick()
-
   useDragEnd(useCallback(() => setDropping(false), []))
 
   const editing = favorites.find((favorite) => favorite.id === editingId) ?? null
@@ -486,21 +484,13 @@ function FavoriteGrid({
                 if (dragId && dragId !== favorite.id) void window.nemo.moveFavorite(dragId, section, index)
                 setDragId(null)
               }}
-              onClick={() => {
-                // 閉じている枠のクリックだけ遅らせる（ダブルクリックでのリネームを
-                // 拾うため。遅らせないと、名前を変えようとしただけで読み込みが走る）
-                if (tab) void window.nemo.openFavorite(favorite.id)
-                else schedule(() => void window.nemo.openFavorite(favorite.id))
-              }}
-              onDoubleClick={(event) => {
-                event.preventDefault()
-                cancel()
-                editName(favorite.id)
-              }}
+              // 開いていても閉じていても即 `openFavorite`（無ければ開く / あれば選ぶ を main 側が吸収する）。
+              // グリッドはダブルクリックでリネームしない（名前の変更は右クリックだけ）ので、
+              // ピン行のような単クリックの遅延は要らない。ダブルクリックしても 2 発目は選ぶだけで、タブは増えない
+              onClick={() => void window.nemo.openFavorite(favorite.id)}
               onContextMenu={(event) => {
                 // 右クリックで即削除はしない（取り消せない操作を1クリックに置かない）
                 event.preventDefault()
-                cancel()
                 setMenu({
                   id: favorite.id,
                   x: event.clientX,

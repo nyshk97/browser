@@ -21,7 +21,9 @@ import { afterSessionSave } from './lib/timings.mjs'
 const CDP = process.env.NEMO_CDP ?? 'http://127.0.0.1:9333'
 const PAGES = process.env.NEMO_TEST_PAGES ?? 'http://127.0.0.1:8787'
 
-/** 単クリックの遅延（`InlineRename.tsx` の CLICK_DELAY_MS）より確実に長く待つ。 */
+/** 単クリックの遅延（`InlineRename.tsx` の CLICK_DELAY_MS）。Favorites の「遅延しない」判定の閾値にも使う。 */
+const CLICK_DELAY_MS = 250
+/** 単クリックの遅延より確実に長く待つ。 */
 const CLICK_DELAY_WAIT_MS = 600
 
 let failures = 0
@@ -1124,32 +1126,80 @@ const settle = () => sleep(250)
     check('閉じている Favorite は沈んだ表示になる', closed === 2, `${closed} 個`)
   }
 
-  // --- 閉じている Favorite のセルも、ダブルクリックでタブを増やさずに編集へ入る ---
-  // ピン行と同じ規則が**グリッド側にも効いているか**を見る（別のコンポーネントなので別に見る）
+  // --- 閉じている Favorite のセルは、ダブルクリックしてもリネームに入らず開くだけ ---
+  // ピン行と違い**グリッドの導線は右クリックだけ**（別のコンポーネントなので別に見る）。
+  // ダブルクリックしても `openFavorite` が冪等なので、タブは 1 つしか増えない
+  const [firstFav, secondFav] = (await shared()).favorites
   {
     const before = (await state()).tabs.length
     await ui.ev(
-      `(() => { window.__nemoVerify.doubleClick(document.querySelector('.fav.closed')); return 'ok' })()`
+      `(() => { window.__nemoVerify.doubleClick(document.querySelector('.fav[data-id=${json(firstFav.id)}]')); return 'ok' })()`
     )
+    // 遅れて出てくる入力欄（退行）を見逃さない・タブ生成の反映前に数えないように、遅延ぶん待ってから読む
     await sleep(CLICK_DELAY_WAIT_MS)
     const editing = await ui.ev(`Boolean(document.querySelector('.fav-edit .rename'))`)
     const after = (await state()).tabs.length
-    check('閉じている Favorite のダブルクリックで編集に入る', editing === true)
+    check('閉じている Favorite のダブルクリックでは編集に入らない', editing === false)
     check(
-      'そのときタブは増えない（Favorites 側でも単クリックの遅延が効いている）',
-      after === before,
+      'そのときタブはちょうど 1 つ増える（開くだけ。2 発目は選ぶだけ）',
+      after === before + 1,
       `${before} -> ${after}`
     )
+  }
 
-    await ui.ev(`(() => {
-      const input = document.querySelector('.fav-edit .rename')
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
-      setter.call(input, 'グリッドから付けた名前')
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-      return 'ok'
-    })()`)
-    await settle()
+  // --- 閉じている Favorite の単クリックは遅延しない（押した瞬間に開く） ---
+  // `settle()`（250ms）待ちだと遅延が残っていてもタブができていて PASS してしまうので、
+  // クリック直後から細かく待って**経過時間**で見る（旧実装なら 250ms 超で FAIL）
+  {
+    const before = (await state()).tabs.length
+    await ui.ev(
+      `(() => { window.__nemoVerify.fire(document.querySelector('.fav[data-id=${json(secondFav.id)}]'), 'click', { detail: 1 }); return 'ok' })()`
+    )
+    const t0 = Date.now()
+    let elapsed = null
+    try {
+      await waitFor(ui, `window.nemo.getWindowState().then(s => s.tabs.length > ${before} ? 'ok' : '')`, {
+        timeoutMs: 3000,
+        interval: 30
+      })
+      elapsed = Date.now() - t0
+    } catch {
+      // 時間切れは check の FAIL に落とす（throw させるとスイートが止まり、修正前の FAIL を観測できない）
+    }
+    check(
+      '閉じている Favorite の単クリックは遅延しない',
+      elapsed !== null && elapsed < CLICK_DELAY_MS,
+      elapsed === null ? '3 秒待ってもタブが増えなかった' : `${elapsed}ms（閾値 ${CLICK_DELAY_MS}ms）`
+    )
+  }
+
+  // --- 右クリックの「名前を変更」からは編集に入り、定義に反映される ---
+  await ui.ev(`(() => {
+    const cell = document.querySelector('.fav[data-id=${json(firstFav.id)}]')
+    cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 80 }))
+    return 'ok'
+  })()`)
+  await settle()
+  await ui.ev(`(() => {
+    const item = [...document.querySelectorAll('.row-menu button')].find((b) => b.textContent === '名前を変更')
+    item.click()
+    return 'ok'
+  })()`)
+  await settle()
+  check(
+    'Favorite は右クリックの「名前を変更」で編集に入る',
+    (await ui.ev(`Boolean(document.querySelector('.fav-edit .rename'))`)) === true
+  )
+  await ui.ev(`(() => {
+    const input = document.querySelector('.fav-edit .rename')
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    setter.call(input, 'グリッドから付けた名前')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    return 'ok'
+  })()`)
+  await settle()
+  {
     const sh = await shared()
     check(
       'Favorites のインライン編集が定義に反映される',
@@ -1158,6 +1208,8 @@ const settle = () => sleep(250)
     )
   }
 
+  // 開いたタブを残さない（定義だけ消すと一時タブとして残り、次のブロックの先頭行がずれる）
+  await closeEphemeralTabs()
   await resetDefinitions()
 }
 

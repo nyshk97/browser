@@ -1243,6 +1243,39 @@ await resetTabs()
   )
 }
 
+/* ---- ⌘⌥↑↓ は分割ペアを「左 → 右の 2 ステップ」で数える ---- */
+{
+  await resetTabs()
+  const [a, b, c, d] = await makeTabs(4, 'rows')
+  await makeSplit(b, c)
+  /** アクティブが `key` になるまで待ち、なったかを真偽値で返す（`runCommandForVerify` は renderer の反映を待たない）。 */
+  const activeBecame = (key) =>
+    became(
+      ui,
+      `window.nemo.getWindowState().then((s) => (s.activeTabKey === ${JSON.stringify(key)} ? 'ok' : ''))`,
+      { timeoutMs: 4000, interval: 50 }
+    )
+  const label = async () => {
+    const active = (await state()).activeTabKey
+    return active === a ? 'a' : active === b ? 'left' : active === c ? 'right' : active === d ? 'd' : active
+  }
+
+  await call(`window.nemo.selectTab(${JSON.stringify(a)})`)
+  await activeBecame(a)
+  await runCommand('select-row-below')
+  check('⌘⌥↓: 上の行から入ると左ペイン', await activeBecame(b), `active=${await label()}`)
+  await runCommand('select-row-below')
+  check(
+    '⌘⌥↓: もう一度で右ペイン（同じキーでペイン間を移れる）',
+    await activeBecame(c),
+    `active=${await label()}`
+  )
+  await runCommand('select-row-below')
+  check('⌘⌥↓: さらに押すとペアの下の行へ', await activeBecame(d), `active=${await label()}`)
+  await runCommand('select-row-above')
+  check('⌘⌥↑: 下の行から入ると右ペイン', await activeBecame(c), `active=${await label()}`)
+}
+
 /* ---- ドロップ先の取り合い（ピン留めツリーと） ---- */
 {
   await resetTabs()

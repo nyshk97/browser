@@ -146,22 +146,40 @@ function StateBadge({ state }: { state: LivePullRequest['state'] }): React.JSX.E
  * 本体
  * ------------------------------------------------------------------ */
 
+/**
+ * 小見出しの開閉。**Sidebar が持つ**（⌘⌥↑↓ の行の並びが「畳んだ小見出しの行は無い」を知る必要があるため）。
+ * 起動時は両方折りたたみ・永続化しない、の規則は `Sidebar` の `useState` 側に書いてある。
+ */
+export type LiveCollapsed = Record<LivePrBucket, boolean>
+
+/**
+ * 描画される PR の行（開いている小見出しの項目だけ、review → mine の順）。
+ *
+ * `liveFolderView` が `list` でなければ空（`reconnect` 中は `items` が残っていても行は無い）。
+ * サイドバーの ⌘⌥↑↓ が「見えている行」を並べるのに使う。描画側の `groups` と同じ分岐で作る。
+ */
+export function visibleLiveRows(state: LiveFolderState | null, collapsed: LiveCollapsed): LivePullRequest[] {
+  if (!state || liveFolderView(state).kind !== 'list') return []
+  return (['review', 'mine'] as const).flatMap((bucket) =>
+    collapsed[bucket] ? [] : state.items.filter((item) => item.bucket === bucket)
+  )
+}
+
 export function LiveFolder({
   state,
-  openUrls
+  openUrls,
+  collapsed,
+  onToggle
 }: {
   state: LiveFolderState
   /** いま開いているタブの URL（一致する行をアクティブに見せる）。 */
   openUrls: Set<string>
+  collapsed: LiveCollapsed
+  onToggle: (bucket: LivePrBucket) => void
 }): React.JSX.Element {
   const [menu, setMenu] = useState<RowMenuState | null>(null)
   // 相対時刻は**1分ごとに再描画する**（`3m ago` のまま止まると表示自体が嘘になる）
   const [now, setNow] = useState(() => Date.now())
-  // **小見出しは起動のたびに両方折りたたみ**（永続化しない。PR が多いとサイドバーを占領するので普段は畳む）
-  const [collapsed, setCollapsed] = useState<Record<LivePrBucket, boolean>>({ review: true, mine: true })
-  const toggleBucket = (bucket: LivePrBucket): void =>
-    // 関数形式にする（同一タスクで 2 つ連続クリックされても片方の更新を落とさない）
-    setCollapsed((prev) => ({ ...prev, [bucket]: !prev[bucket] }))
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000)
     return () => clearInterval(timer)
@@ -230,7 +248,7 @@ export function LiveFolder({
                   count={items.length}
                   collapsed={collapsed[bucket]}
                   truncated={state.truncation[bucket] !== null}
-                  onToggle={() => toggleBucket(bucket)}
+                  onToggle={() => onToggle(bucket)}
                 />
                 {/* 内容コンテナは常に描画する（`aria-controls` の参照先を消さない）。畳んだら中の行を描画しない */}
                 <div className="lf-items" id={`lf-items-${bucket}`} hidden={collapsed[bucket]}>
@@ -352,6 +370,9 @@ function PrRow({
       type="button"
       className={classes.join(' ')}
       title={item.title}
+      // 自走検証が行を引くための手がかり（ピン留め行の `data-pin` と同じ理由）。
+      // ⌘⌥↑↓ で行に入ったときの追従スクロールもこれで引く
+      data-url={item.url}
       onClick={() => void window.nemo.liveFolderOpen(item.url)}
       onContextMenu={onContextMenu}
     >

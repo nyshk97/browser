@@ -307,6 +307,12 @@ mise run verify:only split
 - **⌘1〜9 = `tools` の Favorites の番号**（`select-favorite-N` を `runCommandForVerify` で撃つ）: ⌘1 で tools の
   1 件目・⌘2 で tools の 2 件目（messages は対象外。tools 4 件なら ⌘5 は空振り）/
   **同じ ⌘N をもう一度で直前のタブへ戻る** / 対象の無い番号は何もしない / 旧 `select-tab-N` は拒否される
+- **⌘⌥↑↓（`select-row-below` / `select-row-above` を `runCommandForVerify` で撃つ）**: tools の Favorite → 閉じた
+  messages の Favorite（その手でタブが 1 枚増える）→ ピン A → 閉じたフォルダの B を飛ばして開いたフォルダの C →
+  一時タブ 1 → 2 → 先頭へ循環 / ↑ は逆順で末尾へ循環 / **1 つの `ev` で 3 連射して 3 行進む**（毎回 state から解き直す
+  実装だと同じ行に留まる）/ フォルダを開くと B が入る / **別ウィンドウで作った共有定義の行（実体なし）を通過して
+  実体化しても次の一手はその下の行へ**（`openSecondWindow()` でそちらに `createTab` して作る。1 ウィンドウでは作れない）。
+  各手のあいだは `activeBecame` で反映を待つ（`runCommandForVerify` は renderer の反映を待たない）
 - **⌘ 長押しの番号バッジ**: `window.nemo.shortcutHintForVerify('down' | 'up' | 'blur' | 'query')` で main の
   状態機械を直接叩く（合成キーでは Meta の `before-input-event` を起こせない）。350ms 未満では出ない /
   出たら `.fav .kb` が 1〜N（tools だけ。messages には出ない）/ keyUp・blur で消える /
@@ -443,10 +449,13 @@ NEMO_VERIFY_SHOTS=<dir> mise run verify:only split   # 目視用の PNG を出�
   **`dragover` に渡す `dataTransfer` は `getData` が空を返すものにする** ——
   HTML5 では `dragover` の時点で値が読めないので、そこを再現しないと
   「`types` だけ見て素通りする」誤実装が通ってしまう。行は `data-key` で引ける
-- **キー操作（⌘W / ⌘数字 / ⌃Tab / ⌘F / ⌘⇧N）は撃てない**。メニューのアクセラレータは
-  AppKit が NSEvent の段階で食う。`window.nemo.runCommandForVerify('close-tab')` から撃つ
+- **キー操作（⌘W / ⌘数字 / ⌃Tab / ⌘⌥↑↓ / ⌘F / ⌘⇧N）は撃てない**。メニューのアクセラレータは
+  AppKit が NSEvent の段階で食う。撃てないのはキーそのもので、コマンドは
+  `window.nemo.runCommandForVerify('close-tab')` から撃つ
   （`NEMO_VERIFY_DIAGNOSTICS=1` かつ未パッケージのときだけ生える口。
   `verify-all.mjs` の `startApp()` が渡している）
+- **⌘⌥↑↓ は分割ペアを左 → 右の 2 ステップで数える**（`select-row-below` / `select-row-above`）: 上の行から ↓ で左、
+  もう一度で右、さらに ↓ でペアの下の行 / 下の行から ↑ で右。各手のあいだは `became` で `activeTabKey` の反映を待つ
 - **View の bounds は `window.nemo.splitDiagnostics()`** で読む。CDP からは測れない。
   角丸だけはここに出ないので、`NEMO_VERIFY_SHOTS` で撮った PNG を人が見る
 - **スクリーンショットは `screencapture -l`**（`scripts/lib/window-shot.mjs`）。
@@ -457,7 +466,7 @@ NEMO_VERIFY_SHOTS=<dir> mise run verify:only split   # 目視用の PNG を出�
 
 - タブ行を別のタブ行へドラッグして分割になるか（当たり判定が狭すぎないか）
 - 分割中に Bitwarden の自動入力が両ペインで効くか
-- **キーを実際に押す**（⌘W・⌘数字・⌃Tab・⌘F・⌘⇧N を分割中に）。
+- **キーを実際に押す**（⌘W・⌘数字・⌃Tab・⌘⌥↑↓・⌘F・⌘⇧N を分割中に）。
   自動検証はコマンドの口から撃っていて、**実キー入力からアクセラレータへの接続は通っていない**
 
 ## 手で CDP を叩く
@@ -884,7 +893,7 @@ mise run dev:popup
 1. **キーバインドが実際に届くか**（メニュー項目として登録しているので、メニューにも同じ表示が出る）
    - ⌘T コマンドバー / ⌘L アドレス編集 / ⌘S サイドバー開閉 / ⌘D ピン留め
    - ⌘F 検索 → ⌘G 次 → ⌘⇧G 前 / ⌘+ ⌘- ⌘0 zoom / ⌃⌘F フルスクリーン
-   - ⌘W タブを閉じる / ⌘⇧T 開き直す / ⌃Tab タブ送り / ⌘1〜⌘9
+   - ⌘W タブを閉じる / ⌘⇧T 開き直す / ⌃Tab タブ送り / ⌘⌥↑↓ サイドバーの行送り / ⌘1〜⌘9
    - ⌘⌥I ページの DevTools / ⌘⌥⇧I ブラウザ UI の DevTools
 2. **サイドバーとツールバーの見た目**（DESIGN.md との一致・favicon・未読ドット・sleep の薄さ・
    信号機とアドレスバーが同じ行に並ぶこと・**サイドバーを隠したときに信号機とボタンが重ならないこと**）
@@ -927,8 +936,12 @@ mise run dev:popup
 **小見出し（`REVIEW REQUESTED` / `CREATED`）は初期折りたたみ**で、行は開くまで DOM に無い。
 表示行を前提とする既存検査は `readExpanded`（直前に `expandAll` で全部開く）で読み、
 折りたたみ状態そのものの検査は raw の `ui.ev` で読む（`readExpanded` を通すと再展開されて検査にならない）。
-開閉は React の state で、初回マウントと再マウント（設定の再有効化・再起動）で畳まれる（通常の再描画では保つ）。
+開閉は Sidebar の React state で、畳み直る契機は起動（Sidebar の初回マウント）だけ（設定の再有効化・通常の再描画では保つ）。
 どの検査が再マウントの後に来るかを追わずに済むよう「読むたびに開き直す」。
+
+**⌘⌥↑↓ と小見出しの開閉**も自走検証が見る: 前のスイートが残したピン / Favorites を消して一時タブを 2 枚にしてから、
+`collapseAll` 後は最下段の一時タブから ↓ で最上段の一時タブへ回り PR タブが増えない / `expandAll` 後は同じ操作で
+先頭の PR 行（`.lf-row[data-url]`）に入りその PR のタブが選ばれる。開いた PR タブは実 github.com を読むので節の末尾で閉じる。
 
 見た目の自己確認は `NEMO_VERIFY_SHOTS=<dir> mise run verify:only live-folder` で
 「両方閉 / review だけ開 / 両方開」の PNG が `<dir>/live-folder-<場面>.png` に出る（判定には使わない）。

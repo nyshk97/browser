@@ -13,13 +13,21 @@ import {
   isImageFileDrag
 } from './IconEdit.js'
 import { UrlEdit } from './UrlEdit.js'
-import { LiveFolder } from './LiveFolder.js'
+import { LiveFolder, visibleLiveRows, type LiveCollapsed } from './LiveFolder.js'
 import { normalizePrUrl } from '../../shared/live-folder-schema.js'
 import { FAVORITE_SECTIONS, SHORTCUT_SECTION, isImageIcon } from '../../shared/favorites.js'
+import {
+  currentRow,
+  rowMatchesTab,
+  sidebarRows,
+  stepRow,
+  type SidebarRow
+} from '../../shared/sidebar-rows.js'
 import type {
   EphemeralTabDef,
   FavoriteItem,
   FavoriteSection,
+  LivePrBucket,
   TabState,
   UpdateState
 } from '../../shared/types.js'
@@ -36,13 +44,19 @@ export function Sidebar(): React.JSX.Element {
   // copy-url は「いま見えているページ」の URL（Peek が出ていれば Peek）
   const foreground = useMemo(() => foregroundTab(state), [state])
 
-  useCommand(
-    useCallback(
-      (command) => {
-        if (command === 'copy-url' && foreground) void window.nemo.copyUrl(foreground.key)
-      },
-      [foreground]
-    )
+  /**
+   * Live Folder の小見出しの開閉。**起動のたびに両方折りたたみ**（永続化しない。PR が多いと
+   * サイドバーを占領するので普段は畳む）。
+   *
+   * `LiveFolder` でなくここで持つのは、⌘⌥↑↓ の行の並びが「畳んだ小見出しの行は無い」を知る必要があるため。
+   * `LiveFolder` 側で持っていた頃は `liveFolderEnabled` を false → true にしたときの unmount で畳み直っていたが、
+   * 今は Sidebar が生きている限り開閉が残る（畳み直す契機は起動だけ）。
+   */
+  const [liveCollapsed, setLiveCollapsed] = useState<LiveCollapsed>({ review: true, mine: true })
+  const toggleLiveBucket = useCallback(
+    // 関数形式にする（同一タスクで 2 つ連続クリックされても片方の更新を落とさない）
+    (bucket: LivePrBucket) => setLiveCollapsed((prev) => ({ ...prev, [bucket]: !prev[bucket] })),
+    []
   )
 
   /** ピン留めに紐づいているタブ（サイドバーで「開いている」表示に使う）。 */
@@ -122,6 +136,102 @@ export function Sidebar(): React.JSX.Element {
     [ephemeralRows]
   )
 
+  /**
+   * 分割ペアの中での役割。**描画（結合行）と ⌘⌥↑↓ の並びの両方がこれを見る**（判定を 2 か所に書かない）。
+   * 右側は自分の行を持たない（左が結合行として両方を描く）。相方が見つからないときは通常の行に落とす（保険）。
+   */
+  const splitRole = useCallback(
+    (tab: TabState): { side: 'left' | 'right'; partner: TabState } | null => {
+      if (tab.splitSide === null || !tab.splitPartnerKey) return null
+      const partner = ephemeral.find((other) => other.key === tab.splitPartnerKey) ?? null
+      return partner ? { side: tab.splitSide, partner } : null
+    },
+    [ephemeral]
+  )
+
+  /** アクティブなタブ（Peek が前面でも `activeTabKey` は親なので、⌘⌥↑↓ の現在位置は必ず親の行で解ける）。 */
+  const activeTab = useMemo(() => state?.tabs.find((tab) => tab.key === state.activeTabKey) ?? null, [state])
+
+  /**
+   * ⌘⌥↑↓ が渡る「見えている行」（DESIGN.md「⌘⌥↑↓ でサイドバーの行を渡る」）。
+   * 分割ペアは左 → 右の 2 行に展開する（同じキーでペイン間も移れる）。
+   */
+  const rows = useMemo(
+    () =>
+      sidebarRows({
+        liveRows: visibleLiveRows(shared.liveFolder, liveCollapsed),
+        favorites: shared.favorites,
+        pinned: shared.pinned,
+        ephemeralRows: ephemeralRows.flatMap((row): { key: string | null; defId: string | null }[] => {
+          const tab = row.tab
+          if (!tab) return row.def ? [{ key: null, defId: row.def.id }] : []
+          const split = splitRole(tab)
+          if (split?.side === 'right') return []
+          const self = { key: tab.key, defId: tab.ephemeralId }
+          return split ? [self, { key: split.partner.key, defId: split.partner.ephemeralId }] : [self]
+        })
+      }),
+    [shared.liveFolder, shared.favorites, shared.pinned, liveCollapsed, ephemeralRows, splitRole]
+  )
+
+  /**
+   * ⌘⌥↑↓ で自分が指した行のトレイル。
+   *
+   * 選択・開く API は invoke の往復 + `pushState` 経由なので、押した直後の `state` は 1 手前のまま。
+   * 連打・キーリピートで毎回 `state` から解くと同じ行へ再実行して進まないので、
+   * 起点はトレイルの末尾（無ければ `state` のアクティブなタブの行）にする。
+   */
+  const trail = useRef<SidebarRow[]>([])
+  useEffect(() => {
+    // アクティブが変わるたびに掃除する。トレイルのどれかに一致すれば**そこまでを確定として切り落とし**
+    // （末尾はそのまま残す）、どれにも一致しなければ別経路の移動（クリック・⌃Tab）なので空にする
+    const list = trail.current
+    if (list.length === 0) return
+    const index = activeTab ? list.findIndex((row) => rowMatchesTab(row, activeTab)) : -1
+    trail.current = index < 0 ? [] : list.slice(index)
+  }, [activeTab])
+
+  const moveRow = useCallback(
+    (delta: 1 | -1) => {
+      const from = trail.current[trail.current.length - 1] ?? currentRow(rows, activeTab)
+      const target = stepRow(rows, from, delta)
+      if (!target) return
+      // 1 手目は**起点も一緒に積む**。行き先だけだと、反映待ちの間に届く push（タイトル・favicon・読み込み）で
+      // `activeTabKey` がまだ起点のままなのを掃除の effect が「別経路の移動」と見てトレイルを捨て、
+      // 連打の出だしで 1 手落ちる
+      trail.current = trail.current.length > 0 ? [...trail.current, target] : from ? [from, target] : [target]
+      switch (target.kind) {
+        case 'live':
+          void window.nemo.liveFolderOpen(target.url)
+          break
+        case 'favorite':
+          void window.nemo.openFavorite(target.id)
+          break
+        case 'pin':
+          void window.nemo.openPinned(target.id)
+          break
+        case 'ephemeral':
+          // 実体があれば選ぶだけ、無ければこのウィンドウで実体化する（クリックと同じ）
+          if (target.key) void window.nemo.selectTab(target.key)
+          else if (target.defId) void window.nemo.openEphemeral(target.defId)
+          break
+      }
+      scrollRowIntoView(target)
+    },
+    [rows, activeTab]
+  )
+
+  useCommand(
+    useCallback(
+      (command) => {
+        if (command === 'copy-url' && foreground) void window.nemo.copyUrl(foreground.key)
+        if (command === 'select-row-below') moveRow(1)
+        if (command === 'select-row-above') moveRow(-1)
+      },
+      [foreground, moveRow]
+    )
+  )
+
   /** Live Folder の行を「開いている」表示にするための URL 集合。 */
   const openLiveUrls = useMemo(() => {
     const open = new Set<string>()
@@ -159,7 +269,12 @@ export function Sidebar(): React.JSX.Element {
         */}
         {shared.liveFolder ? (
           <>
-            <LiveFolder state={shared.liveFolder} openUrls={openLiveUrls} />
+            <LiveFolder
+              state={shared.liveFolder}
+              openUrls={openLiveUrls}
+              collapsed={liveCollapsed}
+              onToggle={toggleLiveBucket}
+            />
             <div className="tabs-sep" />
           </>
         ) : null}
@@ -199,20 +314,17 @@ export function Sidebar(): React.JSX.Element {
           const tab = row.tab
           // このウィンドウに実体が無い共有定義の行（クリックで実体化・× で全ウィンドウから削除）
           if (!tab) return row.def ? <EphemeralDefRow key={row.def.id} def={row.def} /> : null
-          // 分割の右側は自分の行を持たない（左が結合行として両方を描く）。
-          // 相方が見つからないときだけ通常の行に落とす（保険）。
-          const partner = tab.splitPartnerKey
-            ? (ephemeral.find((other) => other.key === tab.splitPartnerKey) ?? null)
-            : null
-          if (tab.splitSide === 'right' && partner) return null
-          if (tab.splitSide === 'left' && partner) {
+          // 分割の右側は自分の行を持たない（左が結合行として両方を描く）。判定は `splitRole`
+          const split = splitRole(tab)
+          if (split?.side === 'right') return null
+          if (split) {
             return (
               <SplitRow
                 key={tab.key}
                 left={tab}
-                right={partner}
+                right={split.partner}
                 focusedKey={state?.activeTabKey ?? null}
-                visible={tab.key === state?.activeTabKey || partner.key === state?.activeTabKey}
+                visible={tab.key === state?.activeTabKey || split.partner.key === state?.activeTabKey}
               />
             )
           }
@@ -295,6 +407,30 @@ function ClearSeparator({ count }: { count: number }): React.JSX.Element {
       ) : null}
     </div>
   )
+}
+
+/**
+ * ⌘⌥↑↓ で入った行が画面外なら見える位置まで寄せる。
+ * 手がかりは各行が自走検証用に持っている `data-*`（無ければ何もしない）。
+ */
+function scrollRowIntoView(row: SidebarRow): void {
+  // 引用符付きの属性値なので、値は CSS 文字列として `JSON.stringify` でエスケープする（`CSS.escape` は識別子用）
+  const attr = (name: string, value: string): string => `[${name}=${JSON.stringify(value)}]`
+  const selector = (() => {
+    switch (row.kind) {
+      case 'live':
+        return `.lf-row${attr('data-url', row.url)}`
+      case 'favorite':
+        return `.fav${attr('data-id', row.id)}`
+      case 'pin':
+        return `.row.pin${attr('data-pin', row.id)}`
+      case 'ephemeral':
+        if (row.key) return `.row${attr('data-key', row.key)}, .chip${attr('data-key', row.key)}`
+        return row.defId ? `.row.remote${attr('data-def-id', row.defId)}` : null
+    }
+  })()
+  if (!selector) return
+  document.querySelector(selector)?.scrollIntoView({ block: 'nearest' })
 }
 
 /**

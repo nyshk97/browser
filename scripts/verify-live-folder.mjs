@@ -22,6 +22,7 @@ import path from 'node:path'
 import { connectUi, sleep } from './lib/cdp.mjs'
 import { readLogLines } from './lib/harness.mjs'
 import { timings } from './lib/timings.mjs'
+import { normalizePrUrl } from '../src/shared/live-folder-schema.js'
 
 const CDP = process.env.NEMO_CDP ?? 'http://127.0.0.1:9333'
 const USER_DATA = process.env.NEMO_USER_DATA_DIR ?? ''
@@ -153,7 +154,8 @@ const waitRequests = (n, timeoutMs = 9000) => until(() => total >= n, { timeoutM
 
 /* ---- 小見出しの開閉 ----
  * 小見出しは**起動のたびに両方折りたたみ**で、行は開くまで DOM に無い。
- * 開閉は React の state なので、初回マウントと再マウント（設定の再有効化・`--restart-read`）で畳まれる。
+ * 開閉は Sidebar の React state なので、畳み直る契機は起動（Sidebar の初回マウント。`--restart-read` も同じ）だけ。
+ * 設定の再有効化では `LiveFolder` が再マウントされても Sidebar は生きているので畳み直らない。
  * どの検査がどの経路の後に来るかを追うより、
  * 「行が見えている前提」の読み取りは**読むたびに開き直す**（`readExpanded`）。
  * 開閉状態そのものを検査するときは `ui.ev` を直接使う（`readExpanded` を通すと再展開されて検査にならない）。
@@ -819,6 +821,104 @@ async function main() {
   )
   await ui.ev(`window.nemo.closeTab(${JSON.stringify(noisyKey)}).then(() => 'ok')`)
   await sleep(300)
+
+  /* ---- ⌘⌥↑↓: 小見出しを畳んでいれば PR 行を飛ばし、開いていれば PR 行へ入る ---- */
+  {
+    const runCommand = (command) =>
+      ui.ev(`window.nemo.runCommandForVerify(${JSON.stringify(command)}).then((ok) => (ok ? 'ok' : 'no'))`)
+    /** アクティブが `key` になるまで待つ（`runCommandForVerify` は renderer の反映を待たない）。 */
+    const activeBecame = (key) =>
+      until(
+        async () =>
+          (await ui.ev(
+            `window.nemo.getWindowState().then((s) => (s.activeTabKey === ${JSON.stringify(key)} ? 'ok' : ''))`
+          )) === 'ok',
+        { timeoutMs: 4000, interval: 50 }
+      )
+    const activeUrlOf = () =>
+      ui.ev(
+        `window.nemo.getWindowState().then((s) => s.tabs.find((t) => t.key === s.activeTabKey)?.url ?? '')`
+      )
+    const tabCount = () => ui.ev('window.nemo.getWindowState().then((s) => s.tabs.length)')
+
+    // 前のスイート（split など）が残したピン留め / Favorites を消し、一時タブを**ちょうど 2 枚**にする
+    // （並びが一時タブだけになっていないと「最下段 → 最上段」の期待値が成立しない。
+    // 1 枚以下だと出発点と到達点が同じ行になり、何も見ずに PASS する）。
+    // **消したものは節の末尾で戻さない**（後続の ⑦ 以降は自前で状態を作る）。この節を動かすときは前後の前提を見直す
+    {
+      const sh = JSON.parse(await ui.ev('window.nemo.getSharedState().then((s) => JSON.stringify(s))'))
+      for (const node of sh.pinned)
+        await ui.ev(`window.nemo.unpin(${JSON.stringify(node.id)}).then(() => 'ok')`)
+      for (const item of sh.favorites)
+        await ui.ev(`window.nemo.removeFavorite(${JSON.stringify(item.id)}).then(() => 'ok')`)
+    }
+    for (const key of JSON.parse(
+      await ui.ev('window.nemo.getWindowState().then((s) => JSON.stringify(s.tabs.map((t) => t.key)))')
+    )) {
+      await ui.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
+    }
+    const t0 = await ui.ev(`window.nemo.createTab('about:blank', { background: true })`)
+    const t1 = await ui.ev(`window.nemo.createTab('about:blank', { background: true })`)
+    await sleep(400)
+    await collapseAll(ui)
+    const premise = JSON.parse(
+      await ui.ev(
+        `window.nemo.getSharedState().then((sh) => JSON.stringify({ favorites: sh.favorites.length, pinned: sh.pinned.length, lfRows: document.querySelectorAll('.lf-row').length, ephemeral: document.querySelectorAll('.scroll > .row:not(.new-tab)').length }))`
+      )
+    )
+    check(
+      '（前提）Favorites / ピンは 0 件・畳んだ PR 行は 0 本・一時タブは 2 行',
+      premise.favorites === 0 && premise.pinned === 0 && premise.lfRows === 0 && premise.ephemeral === 2,
+      JSON.stringify(premise)
+    )
+
+    // 畳んでいる: 最下段の一時タブから ↓ で並びの先頭（= 最上段の一時タブ）へ回り、PR タブは増えない
+    await ui.ev(`window.nemo.selectTab(${JSON.stringify(t1)}).then(() => 'ok')`)
+    await activeBecame(t1)
+    const collapsedBefore = await tabCount()
+    await runCommand('select-row-below')
+    const wrapped = await activeBecame(t0)
+    check(
+      '畳んでいる小見出しの PR 行は飛ばされ、最下段から ↓ で最上段の一時タブへ回る',
+      wrapped === true && normalizePrUrl(String(await activeUrlOf())) === null,
+      `active url=${JSON.stringify(await activeUrlOf())}`
+    )
+    check(
+      '畳んでいる間は PR タブが増えない',
+      (await tabCount()) === collapsedBefore,
+      `${collapsedBefore} -> ${await tabCount()}`
+    )
+
+    // 開いている: 同じ操作で先頭の PR 行へ入り、その PR のタブが開いて選ばれる
+    const firstPr = await readExpanded(ui, `document.querySelector('.lf-row')?.dataset.url ?? ''`)
+    await ui.ev(`window.nemo.selectTab(${JSON.stringify(t1)}).then(() => 'ok')`)
+    await activeBecame(t1)
+    const expandedBefore = await tabCount()
+    await runCommand('select-row-below')
+    const entered = await until(async () => normalizePrUrl(String(await activeUrlOf())) === firstPr, {
+      timeoutMs: 4000,
+      interval: 50
+    })
+    check(
+      '開いている小見出しなら最下段から ↓ で先頭の PR 行へ入り、その PR のタブが選ばれる',
+      entered === true && firstPr !== '',
+      `first=${JSON.stringify(firstPr)} active=${JSON.stringify(await activeUrlOf())}`
+    )
+    check(
+      'PR 行に入った手でタブが 1 枚増える',
+      (await tabCount()) === expandedBefore + 1,
+      `${expandedBefore} -> ${await tabCount()}`
+    )
+
+    // 後始末: 開いた PR タブは実 github.com を読むので必ず閉じる（残すと後続の行数がずれる）
+    for (const key of JSON.parse(
+      await ui.ev('window.nemo.getWindowState().then((s) => JSON.stringify(s.tabs.map((t) => t.key)))')
+    )) {
+      if (key !== t0 && key !== t1)
+        await ui.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
+    }
+    await sleep(300)
+  }
 
   /* ---- ⑦ 打ち切り（片方だけ 101 件以上） ---- */
   const bulk = Array.from({ length: 100 }, (_unused, index) =>

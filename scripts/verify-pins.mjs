@@ -1453,7 +1453,6 @@ const settle = () => sleep(250)
 {
   await resetDefinitions()
   await closeEphemeralTabs()
-  const settleUi = () => sleep(250)
 
   /** N 個の Favorite を作って ID の配列を返す（全部 `tools` に入る）。 */
   const makeFavorites = async (n, prefix) => {
@@ -1469,7 +1468,7 @@ const settle = () => sleep(250)
     return ids
   }
   const favs = await makeFavorites(5, 'f')
-  await settleUi()
+  await settle()
   {
     const sh = await shared()
     check(
@@ -1498,7 +1497,7 @@ const settle = () => sleep(250)
   // messages へ 2 件移す（右クリックの「Messages へ移動」と同じ API）
   await ui.ev(`window.nemo.moveFavorite(${json(favs[0])}, 'messages').then(() => 'ok')`)
   await ui.ev(`window.nemo.moveFavorite(${json(favs[1])}, 'messages').then(() => 'ok')`)
-  await settleUi()
+  await settle()
   {
     const sh = await shared()
     const messages = sh.favorites.filter((f) => f.section === 'messages').map((f) => f.id)
@@ -1586,14 +1585,14 @@ const settle = () => sleep(250)
   )
   // 同じキーをもう一度 → 直前のタブ（⌘1 で開いた tools 1 件目）へ戻る
   await ui.ev(`window.nemo.runCommandForVerify('select-favorite-2').then(String)`)
-  await settleUi()
+  await settle()
   check(
     '同じ ⌘N をもう一度押すと直前のタブへ戻る',
     (await active())?.favoriteId === favs[2],
     json((await active())?.favoriteId)
   )
   await ui.ev(`window.nemo.runCommandForVerify('select-favorite-2').then(String)`)
-  await settleUi()
+  await settle()
   check(
     'さらに押すと行ったり来たりできる',
     (await active())?.favoriteId === favs[4],
@@ -1603,7 +1602,7 @@ const settle = () => sleep(250)
   // （messages 1 件がどこかで番号に混ざっていれば 5 番目が開いてしまう）
   const beforeFive = (await state()).activeTabKey
   await ui.ev(`window.nemo.runCommandForVerify('select-favorite-5').then(String)`)
-  await settleUi()
+  await settle()
   {
     const afterFive = (await state()).activeTabKey
     check(
@@ -1615,7 +1614,7 @@ const settle = () => sleep(250)
   // 対象が無い番号は何もしない
   const beforeNine = (await state()).activeTabKey
   await ui.ev(`window.nemo.runCommandForVerify('select-favorite-9').then(String)`)
-  await settleUi()
+  await settle()
   check('対象の無い ⌘9 は何もしない', (await state()).activeTabKey === beforeNine)
   check(
     '旧 select-tab-N は知らないコマンドとして拒否される',
@@ -1632,7 +1631,7 @@ const settle = () => sleep(250)
   check('120ms ではまだ出ない', (await hint('query')) === 'false')
   await sleep(500)
   check('350ms を超えると出る', (await hint('query')) === 'true')
-  await settleUi()
+  await settle()
   check(
     'バッジは tools だけに 1〜4 の順で描かれる（messages には出ない）',
     (await badges()) === json(['1', '2', '3', '4']),
@@ -1645,7 +1644,7 @@ const settle = () => sleep(250)
     check('messages のグリッドにバッジが無い', messagesBadges === 0, `messages .kb=${messagesBadges}`)
   }
   check('keyUp で消える', (await hint('up')) === 'false')
-  await settleUi()
+  await settle()
   check('keyUp 後は DOM からも消える', (await badges()) === '[]', await badges())
   await hint('down')
   await sleep(500)
@@ -1656,21 +1655,21 @@ const settle = () => sleep(250)
   check('（再々度）出ている', (await hint('query')) === 'true')
   await sleep(5200)
   check('表示から 5 秒で自動的に消える（keyUp の取りこぼし対策）', (await hint('query')) === 'false')
-  await settleUi()
+  await settle()
   check('自動解除後は DOM からも消える', (await badges()) === '[]', await badges())
 
   /* --- グリッドへのドロップは落とした側の section に入る --- */
   await closeEphemeralTabs()
   const dropped = await ui.ev(`window.nemo.createTab('${PAGES}/index.html').then(k => k)`)
   await ui.ev(`window.nemo.renameTab(${json(dropped)}, 'ドロップ元M').then(() => 'ok')`)
-  await settleUi()
+  await settle()
   await ui.ev(
     `window.__nemoVerify.drag(
        document.querySelector('.scroll .row[title="ドロップ元M"]'),
        document.querySelector('.fav-grid[data-section="messages"]')
      )`
   )
-  await settleUi()
+  await settle()
   {
     const sh = await shared()
     const fav = sh.favorites.find((f) => f.customTitle === 'ドロップ元M')
@@ -1683,11 +1682,200 @@ const settle = () => sleep(250)
     ).catch(() => '')
     check('開いている Favorite の favicon が定義に写る', favicon === 'yes')
     await ui.ev(`window.nemo.closeTab(${json(dropped)}).then(() => 'ok')`)
-    await settleUi()
+    await settle()
     const drawn = await ui.ev(
       `(() => { const cell = document.querySelector('.fav[data-id=${JSON.stringify(fav?.id)}]'); if (!cell) return 'no-cell'; return cell.querySelector('img.fi') ? 'img' : cell.querySelector('.fi.letter') ? 'letter' : 'none' })()`
     )
     check('閉じても Favorite のセルは favicon の <img> のまま（頭文字に落ちない）', drawn === 'img', drawn)
+  }
+
+  await resetDefinitions()
+  await closeEphemeralTabs()
+}
+
+/* ------------------------------------------------------------------ *
+ * ⌘⌥↑↓ でサイドバーの行を縦に渡る（Favorites → ピン → 一時タブ、閉じたフォルダはスキップ、両端は循環）
+ * ------------------------------------------------------------------ */
+{
+  await resetDefinitions()
+  await closeEphemeralTabs()
+  const runCommand = (command) =>
+    ui.ev(`window.nemo.runCommandForVerify(${json(command)}).then((ok) => (ok ? 'ok' : 'no'))`)
+  /** アクティブなタブの `field` が `value` になるまで待ち、なったかを真偽値で返す（throw させない）。 */
+  const activeBecame = (field, value) =>
+    waitFor(
+      ui,
+      `window.nemo.getWindowState().then((s) => { const t = s.tabs.find((t) => t.key === s.activeTabKey); return t && t[${json(field)}] === ${json(value)} ? 'ok' : '' })`,
+      { timeoutMs: 4000, interval: 50 }
+    ).then(
+      () => true,
+      () => false
+    )
+  /** いまのアクティブなタブの所属（FAIL の detail 用）。 */
+  const whereNow = async () => {
+    const s = await state()
+    const t = s.tabs.find((t) => t.key === s.activeTabKey)
+    return t
+      ? json({ key: t.key, pinnedId: t.pinnedId, favoriteId: t.favoriteId, ephemeralId: t.ephemeralId })
+      : 'no-active'
+  }
+  const tabCount = () => ui.ev('window.nemo.getWindowState().then((s) => s.tabs.length)')
+
+  // Favorites: tools 1 件・messages 1 件（どちらも閉じている）
+  const makeClosedFavorite = async (query, section) => {
+    const key = await ui.ev(`window.nemo.createTab('${PAGES}/login.html?${query}').then(k => k)`)
+    await ui.ev(`window.nemo.addFavorite(${json(key)}).then(() => 'ok')`)
+    const fav = (await shared()).favorites.find((f) => f.url.endsWith(`?${query}`))
+    if (section !== 'tools')
+      await ui.ev(`window.nemo.moveFavorite(${json(fav.id)}, ${json(section)}).then(() => 'ok')`)
+    await ui.ev(`window.nemo.closeTab(${json(key)}).then(() => 'ok')`)
+    return fav.id
+  }
+  const favTools = await makeClosedFavorite('nav-f0', 'tools')
+  const favMessages = await makeClosedFavorite('nav-f1', 'messages')
+
+  // ピン留め: A（開いている）・閉じたフォルダ（B）・開いたフォルダ（C、開いている）
+  const makePin = async (query, { open }) => {
+    const key = await ui.ev(`window.nemo.createTab('${PAGES}/index.html?${query}').then(k => k)`)
+    await ui.ev(`window.nemo.pinTab(${json(key)}).then(() => 'ok')`)
+    const pin = flatten((await shared()).pinned).find((n) => n.kind === 'link' && n.url.endsWith(`?${query}`))
+    if (!open) await ui.ev(`window.nemo.closeTab(${json(key)}).then(() => 'ok')`)
+    return pin.id
+  }
+  const pinA = await makePin('nav-a', { open: true })
+  const pinB = await makePin('nav-b', { open: false })
+  const pinC = await makePin('nav-c', { open: true })
+  await ui.ev(`window.nemo.createFolder('閉じたフォルダ').then(() => 'ok')`)
+  const closedFolder = (await shared()).pinned.find(
+    (n) => n.kind === 'folder' && n.title === '閉じたフォルダ'
+  )
+  await ui.ev(`window.nemo.movePinned(${json(pinB)}, ${json(closedFolder.id)}, 0).then(() => 'ok')`)
+  await ui.ev(`window.nemo.toggleFolder(${json(closedFolder.id)}).then(() => 'ok')`)
+  await ui.ev(`window.nemo.createFolder('開いたフォルダ').then(() => 'ok')`)
+  const openFolder = (await shared()).pinned.find((n) => n.kind === 'folder' && n.title === '開いたフォルダ')
+  await ui.ev(`window.nemo.movePinned(${json(pinC)}, ${json(openFolder.id)}, 0).then(() => 'ok')`)
+
+  // 一時タブ 2 枚（作った順に並ぶ）
+  const e0 = await ui.ev(`window.nemo.createTab('${PAGES}/blank.html?nav-e0', { background: true })`)
+  const e1 = await ui.ev(`window.nemo.createTab('${PAGES}/blank.html?nav-e1', { background: true })`)
+  await settle()
+
+  {
+    const sh = await shared()
+    const shape = sh.pinned.map((n) =>
+      n.kind === 'folder' ? [n.title, n.collapsed, n.children.map((c) => c.id)] : n.id
+    )
+    const liveRows = await ui.ev(`document.querySelectorAll('.lf-row').length`)
+    check(
+      '（前提）ピンの並びが A → 閉じたフォルダ(B) → 開いたフォルダ(C) で、Live Folder の行は無い',
+      json(shape) === json([pinA, ['閉じたフォルダ', true, [pinB]], ['開いたフォルダ', false, [pinC]]]) &&
+        liveRows === 0,
+      `${json(shape)} / lf-rows=${liveRows}`
+    )
+  }
+
+  // 起点: tools の先頭 Favorite（開くとアクティブになる）
+  await ui.ev(`window.nemo.openFavorite(${json(favTools)}).then(() => 'ok')`)
+  check('（前提）起点は tools の Favorite', await activeBecame('favoriteId', favTools), await whereNow())
+
+  // 1 手ずつ縦断。最初の ↓ が閉じている messages の Favorite を実体化する手
+  const before = await tabCount()
+  await runCommand('select-row-below')
+  check(
+    '↓ で messages の閉じた Favorite へ入り、その場で開く',
+    await activeBecame('favoriteId', favMessages),
+    await whereNow()
+  )
+  const after = await tabCount()
+  check(
+    '閉じた Favorite に入った手でタブがちょうど 1 枚増える',
+    after === before + 1,
+    `${before} -> ${after}`
+  )
+  await runCommand('select-row-below')
+  check('↓ で Favorites の次はピン留め A', await activeBecame('pinnedId', pinA), await whereNow())
+  await runCommand('select-row-below')
+  check(
+    '↓ で閉じたフォルダ（B）を飛ばして開いたフォルダの C へ',
+    await activeBecame('pinnedId', pinC),
+    await whereNow()
+  )
+  await runCommand('select-row-below')
+  check('↓ でピンの次は一時タブ 1 枚目', await activeBecame('key', e0), await whereNow())
+  await runCommand('select-row-below')
+  check('↓ で一時タブ 2 枚目', await activeBecame('key', e1), await whereNow())
+  await runCommand('select-row-below')
+  check(
+    '最下段で ↓ → 先頭（tools の Favorite）へ回る',
+    await activeBecame('favoriteId', favTools),
+    await whereNow()
+  )
+  await runCommand('select-row-above')
+  check('先頭で ↑ → 最下段（一時タブ 2 枚目）へ回る', await activeBecame('key', e1), await whereNow())
+  await runCommand('select-row-above')
+  check('↑ で一時タブ 1 枚目', await activeBecame('key', e0), await whereNow())
+  await runCommand('select-row-above')
+  check('↑ で一時タブの上は開いたフォルダの C', await activeBecame('pinnedId', pinC), await whereNow())
+  await runCommand('select-row-above')
+  check('↑ でも閉じたフォルダ（B）を飛ばして A', await activeBecame('pinnedId', pinA), await whereNow())
+
+  // 連打: 1 つの式の中で 3 連射（A → C → e0 → e1。全部開いている区間なのでタブは増えない）
+  await ui.ev(`window.nemo.openPinned(${json(pinA)}).then(() => 'ok')`)
+  await activeBecame('pinnedId', pinA)
+  const rapidBefore = await tabCount()
+  await ui.ev(
+    `(() => { for (let i = 0; i < 3; i += 1) void window.nemo.runCommandForVerify('select-row-below'); return 'ok' })()`
+  )
+  check(
+    '3 連射すると 3 行進む（同じ state から解き直して同じ行に留まらない）',
+    await activeBecame('key', e1),
+    await whereNow()
+  )
+  check('連射でもタブは増えない', (await tabCount()) === rapidBefore, `${rapidBefore} -> ${await tabCount()}`)
+
+  // フォルダを開くと B が並びに入る
+  await ui.ev(`window.nemo.toggleFolder(${json(closedFolder.id)}).then(() => 'ok')`)
+  await settle()
+  await ui.ev(`window.nemo.openPinned(${json(pinA)}).then(() => 'ok')`)
+  await activeBecame('pinnedId', pinA)
+  await runCommand('select-row-below')
+  check('フォルダを開くと ↓ で中の B に入る', await activeBecame('pinnedId', pinB), await whereNow())
+  await runCommand('select-row-below')
+  check('B の次は C', await activeBecame('pinnedId', pinC), await whereNow())
+
+  // 別ウィンドウで作った共有定義（このウィンドウでは実体の無い行）を通過しても、次の一手で先頭へ飛ばない
+  {
+    const other = await openSecondWindow()
+    const remoteKey = await other.ev(
+      `window.nemo.createTab('${PAGES}/blank.html?nav-remote', { background: true })`
+    )
+    const remoteDef = await waitFor(
+      other,
+      `window.nemo.getWindowState().then((s) => s.tabs.find((t) => t.key === ${json(remoteKey)})?.ephemeralId ?? '')`
+    )
+    // remote の**後ろ**に行を 1 つ置く（remote が最下段だと「先頭へ飛ぶ」と「循環」の区別が付かない）
+    const e2 = await ui.ev(`window.nemo.createTab('${PAGES}/blank.html?nav-e2', { background: true })`)
+    await settle()
+    const defRow = await ui.ev(
+      `document.querySelector('.row.remote[data-def-id=${JSON.stringify(remoteDef)}]') ? 'yes' : 'no'`
+    )
+    check('（前提）別ウィンドウのタブがこのウィンドウでは実体の無い行として並ぶ', defRow === 'yes', defRow)
+    await ui.ev(`window.nemo.selectTab(${json(e1)}).then(() => 'ok')`)
+    await activeBecame('key', e1)
+    await runCommand('select-row-below')
+    check(
+      '↓ で実体の無い共有定義の行に入り、このウィンドウで実体化する',
+      await activeBecame('ephemeralId', remoteDef),
+      await whereNow()
+    )
+    await runCommand('select-row-below')
+    check(
+      '実体化で行の形が変わっても次の一手はその下の行へ進む（先頭へ飛ばない）',
+      await activeBecame('key', e2),
+      await whereNow()
+    )
+    await closeEphemeralTabs(other)
+    other.close()
   }
 
   await resetDefinitions()

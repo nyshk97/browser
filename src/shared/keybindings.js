@@ -69,6 +69,12 @@ export const COMMANDS = [
   { id: 'pin-tab', label: 'ピン留め / 解除', accelerator: 'CmdOrCtrl+D', menu: 'tab', needsTab: true },
   { id: 'next-tab', label: '次のタブ', accelerator: 'Control+Tab', menu: 'tab' },
   { id: 'previous-tab', label: '前のタブ', accelerator: 'Control+Shift+Tab', menu: 'tab' },
+  // ⌘⌥↑↓ はサイドバーの**見た目の並び**（Live Folder → Favorites → ピン留め → 一時タブ。閉じたフォルダ・
+  // 畳んだ小見出しは飛ばす）を 1 行ずつ渡る（Arc の Go to Next / Previous Tab）。
+  // 見た目の並びは renderer が握るので main では解かず、`nemo:command` で UI に投げる
+  // （`next-tab` は main の内部配列順で、こちらとは別物）
+  { id: 'select-row-below', label: 'サイドバーの下の行へ', accelerator: 'CmdOrCtrl+Alt+Down', menu: 'tab' },
+  { id: 'select-row-above', label: 'サイドバーの上の行へ', accelerator: 'CmdOrCtrl+Alt+Up', menu: 'tab' },
   {
     id: 'switch-tab',
     label: '直近のタブへ切り替え',

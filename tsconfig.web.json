@@ -19,6 +19,7 @@
     "src/renderer/**/*",
     "src/shared/types.ts",
     "src/shared/favorites.js",
+    "src/shared/sidebar-rows.js",
     "src/shared/live-folder-schema.js",
     "src/shared/http-auth-rules.js"
   ]

@@ -81,3 +81,14 @@ test('⌘1〜9 は Favorites の N 番目で、id / index / accelerator が揃�
   // 旧 select-tab-N は知らないコマンドとして弾かれる（設定に残っていても効かない）
   assert.equal(resolveKeybindings({ 'select-tab-1': 'CmdOrCtrl+1' }).problems[0]?.reason, 'unknown_command')
 })
+
+/* --- ⌘⌥↑↓（サイドバーの行を縦に渡る） --- */
+
+test('サイドバーの行を渡る既定は ⌘⌥↓ / ⌘⌥↑ で、アクセラレータとして妥当', () => {
+  const { bindings, problems } = resolveKeybindings({})
+  assert.equal(bindings['select-row-below'], 'CmdOrCtrl+Alt+Down')
+  assert.equal(bindings['select-row-above'], 'CmdOrCtrl+Alt+Up')
+  assert.ok(isValidAccelerator(bindings['select-row-below']))
+  assert.ok(isValidAccelerator(bindings['select-row-above']))
+  assert.deepEqual(problems, [])
+})

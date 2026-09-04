@@ -36,6 +36,9 @@ import { advanceSwitcher } from './tab-switcher.js'
 /** UI（レンダラー）に投げるコマンド。main では処理しない。 */
 const UI_COMMANDS = new Set([
   'command-bar',
+  // ⌘⌥↑↓: 行の並びを知っているのは Sidebar（Live Folder の開閉・グリッド・結合行）なので UI に任せる
+  'select-row-below',
+  'select-row-above',
   'focus-address',
   'find',
   'find-next',
@@ -61,6 +64,8 @@ const MINI_BLOCKED_COMMANDS = new Set([
   'switch-tab',
   'next-tab',
   'previous-tab',
+  'select-row-below',
+  'select-row-above',
   'show-library',
   'show-settings',
   'show-downloads'

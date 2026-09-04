@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { foregroundTab, useCommand, useSharedState, useShortcutHint, useWindowState } from '../useNemo.js'
 import { PinnedTree } from './PinnedTree.js'
 import { TabRow, TAB_DRAG_TYPE, useDragEnd } from './TabRow.js'
@@ -183,8 +183,10 @@ export function Sidebar(): React.JSX.Element {
         {/*
           ここから下が一時タブ。見出しは置かず、区切り線と「New Tab」行で
           ピン留めとの境目を示す（Arc と同じ並び）。
+          線をホバーすると右端に「↓ Clear」が出て、野良タブを全部閉じる（Arc の Clear）。
+          閉じる行が無いときはボタンを出さない（線だけ）。
         */}
-        <div className="tabs-sep" />
+        <ClearSeparator count={ephemeralRows.length} />
         <button
           type="button"
           className="row new-tab"
@@ -228,6 +230,69 @@ export function Sidebar(): React.JSX.Element {
       </div>
 
       <Footer version={shared.version} update={shared.update} />
+    </div>
+  )
+}
+
+/**
+ * ピン留めと一時タブの境界線。ホバーで右端に「↓ Clear」が出て、押すと**線の直下に小さな確認**が
+ * 浮かぶ（ホバーで出るボタンは誤タップしやすいので 1 回だけ確認する。ページの上に出る
+ * `PromptDialog` だと視線がボタンから離れるので、押した場所のすぐそばに出す）。
+ *
+ * - 中身は赤い「Close all tabs」ボタン 1 つだけ（問いの文言もキャンセルのボタンも置かない）。
+ *   ボタンにフォーカスを置くので Enter で進む。Esc・外側クリックで何もしない
+ * - 閉じる行が無いときはボタンを出さない（線だけ）
+ */
+function ClearSeparator({ count }: { count: number }): React.JSX.Element {
+  const [armed, setArmed] = useState(false)
+  // 閉じる行が無くなったら（別ウィンドウで閉じた等）確認も畳む（描画時に導出。effect で setState しない）
+  const open = armed && count > 0
+  const popoverRef = useRef<HTMLDivElement>(null)
+  const confirmRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (!open) return
+    confirmRef.current?.focus()
+    const onPointerDown = (event: MouseEvent): void => {
+      if (popoverRef.current && !popoverRef.current.contains(event.target as Node)) setArmed(false)
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setArmed(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+  return (
+    <div className={`tabs-sep clear-sep${open ? ' armed' : ''}`}>
+      {count > 0 ? (
+        <button
+          type="button"
+          className="clear-tabs"
+          title="一時タブを全部閉じる"
+          onClick={() => setArmed((value) => !value)}
+        >
+          <span className="arrow">↓</span>
+          <span>Clear</span>
+        </button>
+      ) : null}
+      {open ? (
+        <div className="clear-confirm" role="dialog" ref={popoverRef}>
+          <button
+            type="button"
+            className="danger"
+            ref={confirmRef}
+            onClick={() => {
+              setArmed(false)
+              void window.nemo.clearEphemeralTabs()
+            }}
+          >
+            Close all tabs
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -140,7 +140,7 @@ mise run verify:only split
 
 | 触ったもの | 回すもの |
 |---|---|
-| **一時タブのウィンドウ横断共有**（共有定義ストア・openEphemeral / close の波及・選択時追随（一致時は読み直さない・beforeunload 抑止・sleep 復帰・戻る・通話ガード）・ピン転換・シークレット / 小窓の除外・再起動復元） | `mise run verify:only shared-tabs`（2 ウィンドウ + 再起動 + 第 2 インスタンス + 偽 Meet を自分で立てる。60 件） |
+| **一時タブのウィンドウ横断共有**（共有定義ストア・openEphemeral / close の波及・選択時追随（一致時は読み直さない・beforeunload 抑止・sleep 復帰・戻る・通話ガード）・ピン転換・シークレット / 小窓の除外・境界線の「↓ Clear」で確認のうえ全部閉じる（キャンセルでは何も閉じない）・再起動復元） | `mise run verify:only shared-tabs`（2 ウィンドウ + 再起動 + 第 2 インスタンス + 偽 Meet を自分で立てる。74 件） |
 | **ローカルファイル（`file://`）**（`open-file` / argv / アドレスバー・⌘L コマンドバーのパス入力・file → file リンク・http / 拡張からの拒否・一時タブ定義に載せない・アドレスバーの拒否表示） | `mise run verify:only local-file`（第 2 インスタンスと `open -a <dev の Electron.app>` を自分で撃つ。25 件） |
 | ナビゲーション判定・設定スキーマ・キーバインド・ログ | `mise run check` |
 | **タブスイッチャー（⌃M）**・MRU の並び・オーバーレイの割り込み | `mise run verify:switcher` |

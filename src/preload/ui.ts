@@ -58,6 +58,7 @@ const api: NemoUiApi = {
 
   openEphemeral: (ephemeralId) => ipcRenderer.invoke('nemo:open-ephemeral', ephemeralId) as Promise<void>,
   closeEphemeral: (ephemeralId) => ipcRenderer.invoke('nemo:close-ephemeral', ephemeralId) as Promise<void>,
+  clearEphemeralTabs: () => ipcRenderer.invoke('nemo:clear-ephemeral-tabs') as Promise<void>,
   openPinned: (pinnedId) => ipcRenderer.invoke('nemo:open-pinned', pinnedId) as Promise<void>,
   pinTab: (key) => ipcRenderer.invoke('nemo:pin-tab', key) as Promise<void>,
   pinTabAt: (key, parentId, index) =>

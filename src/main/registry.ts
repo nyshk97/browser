@@ -3929,6 +3929,42 @@ export function removeEphemeralEverywhere(
 }
 
 /**
+ * 野良タブを全部閉じる（サイドバーの境界線に出る「Clear」。Arc の Clear と同じ）。
+ *
+ * - **共有定義は定義ごと全ウィンドウから消す**（⌘W / × と同じ `removeEphemeralEverywhere`。
+ *   アーカイブに記録されるのでライブラリから掘り返せる）
+ * - **このウィンドウのローカル行（`about:blank`・拡張ページ・定義の無い壊れた参照）も閉じる**
+ *   （サイドバーの一時タブの層に並ぶ行は全部対象。ピン留め / Favorites / Peek は触らない）
+ * - アクティブ・音が出ている・分割ペアも例外にしない（押した本人の明示操作。閉じた後は空状態）
+ * - **別ウィンドウで会議に参加中の定義だけは残す**（× と同じ通話ガード。ただし × と違って
+ *   そのウィンドウへフォーカスは移さない —— 一括操作の途中で別ウィンドウへ飛ばされると、
+ *   残りの行が消えたことに気づけない）
+ */
+export function clearEphemeralTabs(win: NemoWindow): { closed: number; guarded: number } {
+  let closed = 0
+  let guarded = 0
+  for (const def of [...getEphemeralTabs()]) {
+    const joined = findJoinedEphemeralInstance(def.id)
+    if (joined && joined.win !== win) {
+      guarded += 1
+      log('call.guarded', { defId: def.id, action: 'clear' })
+      continue
+    }
+    removeEphemeralEverywhere(def.id, { origin: win })
+    closed += 1
+  }
+  for (const tab of [...win.tabs]) {
+    if (tab.pinnedId !== null || tab.favoriteId !== null || tab.peekOf !== null) continue
+    if (tab.ephemeralId !== null && findEphemeralTab(tab.ephemeralId)) continue
+    if (win.findTab(tab.key) === null) continue
+    removeTab(win, tab.key)
+    closed += 1
+  }
+  log('tab.ephemeral_cleared', { windowId: win.id, closed, guarded })
+  return { closed, guarded }
+}
+
+/**
  * タブの名前を変える。定義に属するタブなら**所属定義**を、ローカルタブならタブ自身を書き換える。
  * `null` / 空文字で解除して実タイトルに戻る。
  */

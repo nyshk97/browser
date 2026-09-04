@@ -432,6 +432,106 @@ body[data-view='toolbar'] {
   background: var(--nemo-border);
 }
 
+/*
+ * ピン留めと一時タブの境界線。ホバー領域は線の上下に広げ（1px の線に当てるのは無理）、
+ * 右端に「↓ Clear」を浮かべる（Arc の Clear と同じ見せ方）。
+ * 線の本体は疑似要素で描き、**ホバー中だけ**ボタンの手前で途切れさせる。
+ * ボタンは絶対配置にして、見えていないときにレイアウト（線の長さ・行間）を変えない。
+ */
+.tabs-sep.clear-sep {
+  position: relative;
+  height: auto;
+  background: none;
+  margin: 4px 8px 0;
+  padding: 6px 0;
+}
+
+.tabs-sep.clear-sep::before {
+  content: '';
+  display: block;
+  height: 1px;
+  background: var(--nemo-border);
+  transition: margin-right 0.12s;
+}
+
+.tabs-sep.clear-sep:hover:has(.clear-tabs)::before,
+.tabs-sep.clear-sep.armed::before {
+  margin-right: 58px;
+}
+
+.tabs-sep.clear-sep .clear-tabs {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--nemo-ink-dim);
+  transition: opacity 0.12s;
+}
+
+.tabs-sep.clear-sep:hover .clear-tabs,
+.tabs-sep.clear-sep.armed .clear-tabs,
+.tabs-sep.clear-sep .clear-tabs:focus-visible {
+  opacity: 0.8;
+}
+
+.tabs-sep.clear-sep .clear-tabs:hover {
+  opacity: 1;
+  color: var(--nemo-ink);
+  background: var(--nemo-hover);
+}
+
+.tabs-sep.clear-sep .clear-tabs .arrow {
+  font-size: 12px;
+}
+
+/*
+ * Clear の確認。線の直下に右寄せで浮かべる（押した場所のすぐそばに出す。`.row-menu` と同じ器）。
+ * 中身は危険色の「Close all tabs」ボタン 1 つ。フォーカスが乗っているのが分かるように枠を出す。
+ * 問いの文言もキャンセルのボタンも置かない（Esc・外側クリックで畳む）。
+ */
+.tabs-sep.clear-sep .clear-confirm {
+  position: absolute;
+  z-index: 40;
+  right: 0;
+  top: calc(100% - 2px);
+  padding: 4px;
+  background: var(--nemo-surface);
+  border: 1px solid var(--nemo-border);
+  border-radius: var(--nemo-radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.tabs-sep.clear-sep .clear-confirm button {
+  padding: 3px 8px;
+  border-radius: 5px;
+  color: var(--nemo-ink-dim);
+}
+
+.tabs-sep.clear-sep .clear-confirm button:hover {
+  background: var(--nemo-hover);
+  color: var(--nemo-ink);
+}
+
+.tabs-sep.clear-sep .clear-confirm button.danger {
+  color: var(--nemo-danger);
+  font-weight: 600;
+}
+
+.tabs-sep.clear-sep .clear-confirm button.danger:focus-visible {
+  outline: 1px solid var(--nemo-danger);
+  outline-offset: -1px;
+}
+
 /* ------------------------------------------------------------------ *
  * 行（タブ・ピン留め・フォルダ）
  * ------------------------------------------------------------------ */

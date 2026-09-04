@@ -898,6 +898,131 @@ try {
   }
 
   /* ---------------------------------------------------------------- *
+   * 8b. 境界線の「↓ Clear」は野良タブを全部閉じる
+   * （共有定義は全ウィンドウから・ローカル行はこのウィンドウから。アクティブも例外にしない）
+   * ---------------------------------------------------------------- */
+  console.log('\n--- Clear で野良タブを全部閉じる')
+
+  {
+    const uiB2 = await openSecondWindow(uiA)
+    const keyC = await uiA.ev(
+      `window.nemo.createTab(${json(`${PAGES}/index.html?site=clear1`)}).then(k => k)`
+    )
+    await waitForDef(uiB2, 'site=clear1')
+    const defC = (await defs(uiB2)).find((d) => d.url.includes('site=clear1'))
+    const instC = await openEphemeralIn(uiB2, defC.id)
+    const blankKey = await uiA.ev(`window.nemo.createTab().then(k => k)`)
+    await sleep(500)
+    // 0 件検査の空振り防止: 閉じる前に「定義が複数・両ウィンドウに実体・A にローカル行」を見る
+    const beforeDefs = await defs(uiA)
+    const sA0 = await state(uiA)
+    const sB0 = await state(uiB2)
+    const strayOf = (s) => s.tabs.filter((t) => t.pinnedId === null && t.favoriteId === null)
+    check(
+      '閉じる前: 定義が複数あり、両ウィンドウに実体があり、A にローカル行がある',
+      beforeDefs.length >= 2 &&
+        sA0.tabs.some((t) => t.key === keyC) &&
+        sB0.tabs.some((t) => t.key === instC.key) &&
+        sA0.tabs.some((t) => t.key === blankKey && t.ephemeralId === null),
+      json({ defs: beforeDefs.length, strayA: strayOf(sA0).length, strayB: strayOf(sB0).length })
+    )
+    check(
+      'アクティブは野良タブ（Clear がアクティブを例外にしないことの前提）',
+      strayOf(sA0).some((t) => t.key === sA0.activeTabKey),
+      json(sA0.activeTabKey)
+    )
+    // サイドバーの境界線にボタンが描かれている（描画まで見る。IPC を直接叩くと UI の欠落を素通りする）
+    const hasButton = await uiA.ev(`document.querySelector('.tabs-sep.clear-sep .clear-tabs') ? 'yes' : 'no'`)
+    check('境界線に Clear ボタンが描かれている', hasButton === 'yes', hasButton)
+    // 誤タップ防止の確認（線の直下のポップオーバー）。**キャンセルでは何も閉じない**ことを先に見る
+    const clickClear = () =>
+      uiA.ev(`(document.querySelector('.tabs-sep.clear-sep .clear-tabs').click(), 'ok')`)
+    const confirmState = () =>
+      uiA
+        .ev(
+          `JSON.stringify({ open: !!document.querySelector('.clear-confirm'), focused: document.activeElement?.textContent ?? '' })`
+        )
+        .then(JSON.parse)
+    await clickClear()
+    const c1 = await waitUntil(async () => ((await confirmState()).open ? await confirmState() : null))
+    check(
+      'Clear を押すと線の直下に確認が出て、まだ何も閉じない',
+      c1 !== null && (await defs(uiA)).length === beforeDefs.length,
+      json({ confirm: c1, defs: (await defs(uiA)).length })
+    )
+    check(
+      '確認の「Close all tabs」にフォーカスが乗る（Enter で進める）',
+      c1?.focused === 'Close all tabs',
+      json(c1?.focused)
+    )
+    // キャンセルのボタンは無い。外側（New Tab 行）への mousedown で畳む
+    await uiA.ev(
+      `(document.querySelector('.row.new-tab').dispatchEvent(new MouseEvent('mousedown', { bubbles: true })), 'ok')`
+    )
+    await sleep(300)
+    check(
+      '外側をクリックすると確認が消え、定義も実体もそのまま',
+      !(await confirmState()).open &&
+        (await defs(uiA)).length === beforeDefs.length &&
+        strayOf(await state(uiA)).length === strayOf(sA0).length,
+      json({ defs: (await defs(uiA)).length, strayA: strayOf(await state(uiA)).length })
+    )
+    await clickClear()
+    await waitUntil(async () => ((await confirmState()).open ? 'ok' : null))
+    await uiA.ev(
+      `(document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })), 'ok')`
+    )
+    await sleep(300)
+    check(
+      'Esc でも確認が消える（何も閉じない）',
+      !(await confirmState()).open && (await defs(uiA)).length === beforeDefs.length
+    )
+    await clickClear()
+    await waitUntil(async () => ((await confirmState()).open ? 'ok' : null))
+    await uiA.ev(`(document.querySelector('.clear-confirm button.danger').click(), 'ok')`)
+    const cleared = await waitUntil(async () => ((await defs(uiA)).length === 0 ? 'ok' : null))
+    check('Clear で共有定義が 0 件になる', cleared !== null, json((await defs(uiA)).map((d) => d.url)))
+    const sA1 = await state(uiA)
+    const sB1 = await state(uiB2)
+    check(
+      'A の野良タブ（ローカル行含む）が全部閉じる',
+      strayOf(sA1).length === 0,
+      json(strayOf(sA1).map((t) => t.url))
+    )
+    check(
+      'B の実体も閉じる（定義ごと全ウィンドウから消える）',
+      strayOf(sB1).length === 0,
+      json(strayOf(sB1).map((t) => t.url))
+    )
+    check('閉じた後の A は空状態（アクティブ無し）', sA1.activeTabKey === null, json(sA1.activeTabKey))
+    const buttonAfter = await waitFor(
+      uiA,
+      `document.querySelector('.tabs-sep.clear-sep .clear-tabs') ? '' : 'gone'`
+    )
+    check('閉じる行が無くなるとボタンも消える（線だけ残る）', buttonAfter === 'gone', buttonAfter)
+    const clearedLog = logEvents('tab.ephemeral_cleared').at(-1) ?? null
+    check(
+      'tab.ephemeral_cleared に閉じた件数が残る（定義 + ローカル行）',
+      clearedLog !== null && clearedLog.closed === beforeDefs.length + 1 && clearedLog.guarded === 0,
+      json(clearedLog)
+    )
+    const rows = await uiA.ev(
+      `window.nemo.queryArchive('site=clear1').then(rows => JSON.stringify(rows.map(r => r.url)))`
+    )
+    check(
+      'Clear で閉じたタブもアーカイブに残る（ライブラリから掘り返せる）',
+      JSON.parse(rows).length >= 1,
+      rows
+    )
+    await closeWindowOf(uiB2)
+    // 次の節（再起動の復元）が定義とアクティブを前提にするので積み直す
+    for (const site of ['restore1', 'restore2', 'restore3']) {
+      await uiA.ev(`window.nemo.createTab(${json(`${PAGES}/index.html?site=${site}`)}).then(k => k)`)
+    }
+    await waitForDef(uiA, 'site=restore3')
+  }
+
+  /* ---------------------------------------------------------------- *
    * 9. 再起動で共有一覧とアクティブが復元される
    * ---------------------------------------------------------------- */
   console.log('\n--- 再起動をまたぐ復元')

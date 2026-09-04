@@ -934,6 +934,8 @@ export interface NemoUiApi {
   openEphemeral(ephemeralId: string): Promise<void>
   /** 一時タブの共有定義を閉じる（定義ごと削除 = 全ウィンドウから消える）。 */
   closeEphemeral(ephemeralId: string): Promise<void>
+  /** 野良タブを全部閉じる（共有定義は全ウィンドウから、ローカル行はこのウィンドウから）。確認はサイドバー側で済ませてから呼ぶ。 */
+  clearEphemeralTabs(): Promise<void>
   openPinned(pinnedId: string): Promise<void>
   pinTab(key: string): Promise<void>
   /** タブをピン留めツリーの指定位置へ置く（サイドバーへのドラッグ & ドロップ）。 */

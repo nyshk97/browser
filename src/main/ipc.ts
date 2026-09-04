@@ -11,6 +11,7 @@ import {
   createWindow,
   findWindowByUiWebContents,
   moveTabToWindow,
+  clearEphemeralTabs,
   openEphemeral,
   openFavorite,
   openPinned,
@@ -527,6 +528,15 @@ export function registerIpcHandlers(): void {
     }
     // 定義は全ウィンドウ共有なので、閉じる = 定義ごと削除（全ウィンドウから消える）
     removeEphemeralEverywhere(requireString(ephemeralId, 'ephemeralId'), { origin: win })
+  })
+
+  ipcMain.handle('nemo:clear-ephemeral-tabs', (event) => {
+    const win = requireWindow(event)
+    if (win.isPrivate) {
+      log('ipc.rejected', { reason: 'private_window', channel: 'clear-ephemeral-tabs' })
+      return
+    }
+    clearEphemeralTabs(win)
   })
 
   ipcMain.handle('nemo:open-pinned', (event, pinnedId: unknown) => {

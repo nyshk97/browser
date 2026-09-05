@@ -5,6 +5,7 @@ import { localPathToFileUrl } from './local-path.js'
 import { getSettings } from './store/settings.js'
 import { tabDisplayName } from './registry.js'
 import type { NemoWindow } from './registry.js'
+import { matchesAllTerms, splitTerms } from '../shared/query-terms.js'
 import type { PinnedNode, Suggestion } from '../shared/types.js'
 
 /**
@@ -34,14 +35,14 @@ function flattenPinned(nodes: PinnedNode[], prefix = ''): { title: string; url: 
   )
 }
 
-function matches(query: string, ...fields: string[]): boolean {
-  const needle = query.toLowerCase()
-  return fields.some((field) => field.toLowerCase().includes(needle))
-}
-
 export function suggest(win: NemoWindow, rawQuery: string): Suggestion[] {
   const query = rawQuery.trim()
   const results: Suggestion[] = []
+
+  // 空白区切りの**全語 AND・順序不問**（「github nyshk97 mobil」で該当リポジトリが出る）。
+  // 履歴（`searchHistory`）も同じ `splitTerms` で切る。
+  const terms = splitTerms(query)
+  const matches = (...fields: string[]): boolean => matchesAllTerms(terms, ...fields)
 
   if (query) {
     // Peek はコマンドバーの「開いているタブ」に出さない（一覧に無いものへ飛ばさない）
@@ -49,7 +50,7 @@ export function suggest(win: NemoWindow, rawQuery: string): Suggestion[] {
       // 専用タブの名前は**定義側が正**。タブの `customTitle` を直接見ると、
       // リネーム後も古い名前で引っかかり、新しい名前では候補に出ない。
       const label = tabDisplayName(tab)
-      if (!matches(query, label, tab.url)) continue
+      if (!matches(label, tab.url)) continue
       results.push({
         kind: 'tab',
         title: label,
@@ -62,7 +63,7 @@ export function suggest(win: NemoWindow, rawQuery: string): Suggestion[] {
 
     let count = 0
     for (const pin of flattenPinned(getPinned())) {
-      if (!matches(query, pin.title, pin.url)) continue
+      if (!matches(pin.title, pin.url)) continue
       results.push({
         kind: 'pinned',
         title: pin.title,
@@ -76,7 +77,7 @@ export function suggest(win: NemoWindow, rawQuery: string): Suggestion[] {
     count = 0
     for (const favorite of getFavorites()) {
       const label = displayName(favorite)
-      if (!matches(query, label, favorite.url)) continue
+      if (!matches(label, favorite.url)) continue
       results.push({
         kind: 'favorite',
         title: label,

@@ -503,6 +503,7 @@ await window.nemo.createTab('http://127.0.0.1:8787/iframe.html')
 await window.nemo.createWindow()
 await window.nemo.setOverlay('command-bar')   // コマンドバーを出す
 await window.nemo.suggest('git')              // 補完候補を見る
+await window.nemo.suggest('github nyshk97 mobil') // 空白区切りは全語 AND（順序不問）
 await window.nemo.reload(tabKey, { ignoreCache: true })  // ハード再読み込み（⌘⇧R / ⟳右クリックメニューと同じ経路）
 // window.nemo.reloadMenu(tabKey) は native メニューを開いて main の JS が止まるので自走検証から撃たない
 //（配線の確認は不正 key で invoke し「tab does not belong」の拒否を見る）

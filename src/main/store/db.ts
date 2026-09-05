@@ -98,8 +98,8 @@ export function hasFaviconColumn(): boolean {
  * SELECT に書く favicon の列式。
  *
  * 列が無い環境では `NULL AS favicon_url` に落とし、**呼び出し側の SQL を分岐させない**。
- * 履歴の SELECT は5本あり（`searchHistory` に1本・`queryHistory` に3本）、
- * うち FTS の JOIN だけ別名が要る。列名を直に書くと必ずどれかが漏れる。
+ * 履歴の SELECT は5本あり（`searchHistory` に2本・`queryHistory` に3本）、
+ * うち FTS の JOIN（各1本）だけ別名が要る。列名を直に書くと必ずどれかが漏れる。
  *
  * @param alias テーブル別名（`'p'` など）。省略すると修飾しない。
  */

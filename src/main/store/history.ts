@@ -1,5 +1,6 @@
 import { logError } from '../log.js'
 import { FTS_MIN_LENGTH, faviconColumn, getDb, hasFaviconColumn, hasFts } from './db.js'
+import { splitTerms } from '../../shared/query-terms.js'
 import type { HistoryEntry } from '../../shared/types.js'
 
 /**
@@ -152,24 +153,72 @@ export function getFavicons(urls: string[]): Map<string, string> {
 /**
  * コマンドバーの補完候補。
  * 訪問回数と最終訪問の新しさで並べる（頻繁に使うものが上に来る）。
+ *
+ * 入力は空白区切りの**全語 AND・順序不問**（`splitTerms`。タブ / ピン留め側の照合と同じ分割）。
+ * 3 文字以上の語は FTS5（trigram）の暗黙 AND で引き、2 文字以下の語は同じ SQL に
+ * 語ごとの LIKE を足して絞る。**1 語のクエリも FTS に載せる**（従来は LIKE 1 本だったが、
+ * trigram は 3 文字以上の部分一致・大文字小文字非区別なので LIKE と実質同等。
+ * 既定の LIKE は PK の index に乗らず全走査になるので、入力 1 文字ごとに走るここでは
+ * FTS に寄せる価値がある）。
+ *
+ * FTS が 0 件のとき・FTS が無い環境では**全語 AND の LIKE** に落ちる。両方とも
+ * `likeClauses` が組む同じ条件で、`queryHistory` の「全文 1 パターン」の形は写さない
+ * （写すと FTS で 0 件だった経路だけ AND が消え、入力によって結果が食い違う）。
  */
 export function searchHistory(query: string, limit = 8): HistoryRow[] {
   const db = getDb()
-  if (!db || !query.trim()) return []
-  const pattern = `%${query.trim().replace(/[%_\\]/g, (m) => `\\${m}`)}%`
+  const terms = splitTerms(query)
+  if (!db || terms.length === 0) return []
   try {
+    const ftsTerms = terms.filter((term) => term.length >= FTS_MIN_LENGTH)
+    const shortTerms = terms.filter((term) => term.length < FTS_MIN_LENGTH)
+    if (hasFts() && ftsTerms.length > 0) {
+      const like = likeClauses(shortTerms, 'p')
+      const rows = db
+        .prepare(
+          `SELECT p.url, p.title, p.visit_count, p.last_visited_at, ${faviconColumn('p')}
+           FROM pages_fts f JOIN pages p ON p.rowid = f.rowid
+           WHERE pages_fts MATCH ?${like.sql}
+           ORDER BY p.visit_count DESC, p.last_visited_at DESC
+           LIMIT ?`
+        )
+        .all(ftsTerms.map(ftsQuery).join(' '), ...like.params, limit) as HistoryRow[]
+      if (rows.length > 0) return rows
+      // FTS で0件でも LIKE なら拾えることがある（記号だけの語など）
+    }
+
+    const like = likeClauses(terms)
     return db
       .prepare(
         `SELECT url, title, visit_count, last_visited_at, ${faviconColumn()} FROM pages
-         WHERE url LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\'
+         WHERE 1${like.sql}
          ORDER BY visit_count DESC, last_visited_at DESC
          LIMIT ?`
       )
-      .all(pattern, pattern, limit) as HistoryRow[]
+      .all(...like.params, limit) as HistoryRow[]
   } catch (error) {
     logError('history.query_failed', error)
     return []
   }
+}
+
+/**
+ * 語ごとの `AND (url LIKE ? OR title LIKE ?)` を組む。
+ *
+ * `%` `_` `\` は**語ごとに**エスケープする（1 パターンぶんのエスケープを写すと
+ * 2 語目以降が素通りする）。`WHERE 1` / `MATCH ?` の後ろにそのまま連結できるよう
+ * 先頭に ` AND` を付けた形で返す。語が無ければ空。
+ */
+function likeClauses(terms: string[], alias?: string): { sql: string; params: string[] } {
+  const col = (name: string): string => (alias ? `${alias}.${name}` : name)
+  const sql = terms
+    .map(() => ` AND (${col('url')} LIKE ? ESCAPE '\\' OR ${col('title')} LIKE ? ESCAPE '\\')`)
+    .join('')
+  const params = terms.flatMap((term) => {
+    const pattern = `%${term.replace(/[%_\\]/g, (m) => `\\${m}`)}%`
+    return [pattern, pattern]
+  })
+  return { sql, params }
 }
 
 /**

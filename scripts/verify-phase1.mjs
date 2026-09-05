@@ -519,6 +519,56 @@ await ui.ev(`window.nemo.addFavorite(${JSON.stringify(reopened)}).then(() => 'ok
     .ev(`window.nemo.suggest('これは検索語').then(s => JSON.stringify(s))`)
     .then(JSON.parse)
   check('URL に見えない入力は検索に回る', search[0]?.kind === 'search', search[0]?.subtitle ?? '')
+
+  /* --- 空白区切りの複数語（全語 AND・順序不問） --- */
+
+  // 検査専用の URL を履歴に入れる。`recordVisit` は did-navigate 契機なので、
+  // 開いた直後に閉じると行がまだ無い。候補に出るまで待ってから閉じる
+  const multiUrl = `${PAGES}/index.html?multi=alpha-beta-gamma`
+  const suggestFor = (query) =>
+    ui.ev(`window.nemo.suggest(${JSON.stringify(query)}).then(s => JSON.stringify(s))`).then(JSON.parse)
+  const hasHistory = (items) => items.some((s) => s.kind === 'history' && s.subtitle === multiUrl)
+  const multiKey = await ui.ev(`window.nemo.createTab(${JSON.stringify(multiUrl)})`)
+  // 「候補に出る」で待つと**開いているタブの候補**で満たされて did-navigate 前に閉じてしまう
+  //（4ms 後に閉じて履歴に載らなかった実測あり）。履歴一覧の API で行の存在を待つ
+  await waitFor(
+    ui,
+    `window.nemo.queryHistory('multi=alpha').then((r) => (r.some((e) => e.url === ${JSON.stringify(multiUrl)}) ? 'ok' : ''))`
+  )
+  await ui.ev(`window.nemo.closeTab(${JSON.stringify(multiKey)}).then(() => 'ok')`)
+  await sleep(300)
+
+  {
+    const items = await suggestFor('gamma alpha')
+    check('複数語（順序逆）で履歴の候補が出る', hasHistory(items), items.map((s) => s.subtitle).join(','))
+  }
+  {
+    // 否定側は AND の担保。修正前（全文 1 パターン）でも 0 件なので PASS する
+    const items = await suggestFor('alpha zzz-none')
+    check(
+      '1 語でも当たらなければ履歴の候補に出ない（AND）',
+      !hasHistory(items),
+      items.map((s) => s.subtitle).join(',')
+    )
+  }
+  {
+    // 2 文字の語は trigram に乗らないので LIKE で絞る経路
+    const items = await suggestFor('gamma al')
+    check(
+      '2 文字の語を混ぜても履歴の候補が出る（LIKE 併用）',
+      hasHistory(items),
+      items.map((s) => s.subtitle).join(',')
+    )
+  }
+  {
+    // 開いているタブ側も同じ規則（login.html は上の検査で開いている）
+    const items = await suggestFor('login html')
+    check(
+      '複数語で開いているタブの候補が出る',
+      items.some((s) => s.kind === 'tab'),
+      items.map((s) => s.kind).join(',')
+    )
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -609,6 +659,75 @@ await ui.ev(`window.nemo.addFavorite(${JSON.stringify(reopened)}).then(() => 'ok
   const before = await cursor()
   await press('n')
   check('⌃ の付かない n は候補を動かさない', (await cursor()) === before, String(await cursor()))
+
+  /* --- Tab 補完。選択中の候補の URL を入力欄に入れる --- */
+
+  const inputState = () =>
+    overlay
+      .ev(
+        `(() => { const i = document.querySelector('.cmd input'); return JSON.stringify({ value: i.value, start: i.selectionStart }) })()`
+      )
+      .then(JSON.parse)
+  const pressTab = (shift = false) =>
+    overlay.ev(`(() => {
+      const input = document.querySelector('.cmd input')
+      const e = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: ${shift}, bubbles: true, cancelable: true })
+      input.dispatchEvent(e)
+      return e.defaultPrevented
+    })()`)
+
+  await press('p', true)
+  await press('p', true)
+  await press('p', true)
+  check('Tab の検査は先頭行（自分の入力の行）から始める', (await cursor()) === 0, String(await cursor()))
+  {
+    const prevented = await pressTab()
+    await sleep(200)
+    const after = await inputState()
+    check('自分の入力の行で Tab を押しても値は変わらない', after.value === 'cursor', after.value)
+    check('自分の入力の行でも Tab の既定動作は止める（フォーカスが逃げない）', prevented === true)
+  }
+  await press('n', true)
+  check('Tab の検査のため 1 つ下の候補へ降りた', (await cursor()) === 1, String(await cursor()))
+  {
+    const prevented = await pressTab(true)
+    await sleep(200)
+    const after = await inputState()
+    check('Shift+Tab は値を変えない', after.value === 'cursor', after.value)
+    check('Shift+Tab も既定動作は止める', prevented === true)
+  }
+  {
+    const expected = await overlay.ev(`document.querySelector('.cmd .sug.on .s')?.textContent ?? ''`)
+    const prevented = await pressTab()
+    check('候補の行で Tab は既定動作を止める', prevented === true)
+    await waitFor(overlay, `document.querySelector('.cmd input').value !== 'cursor' ? 'ok' : ''`).catch(
+      () => {}
+    )
+    const after = await inputState()
+    check(
+      '候補の行で Tab を押すとその URL が入力欄に入る',
+      after.value === expected && expected !== '',
+      `${after.value} (expected ${expected})`
+    )
+    check(
+      '入れた後のキャレットは末尾（続きを打てる）',
+      after.start === after.value.length,
+      `${after.start} / ${after.value.length}`
+    )
+    // 候補は新しい入力で再計算され、先頭が「そのまま開く」の URL 行になる。
+    // 検索行だけ副題 `.s` を描かないので、先頭行に `.s` があれば url 種別
+    await waitFor(
+      overlay,
+      `document.querySelector('.cmd .sug:first-child .s')?.textContent === ${JSON.stringify(expected)} ? 'ok' : ''`
+    ).catch(() => {})
+    const first = await overlay.ev(`document.querySelector('.cmd .sug:first-child .s')?.textContent ?? ''`)
+    check('Tab の後は先頭行がその URL を「そのまま開く」行になる', first === expected, first)
+    check(
+      'Tab の後は先頭行が選ばれている（連打で巡回しない）',
+      (await cursor()) === 0,
+      String(await cursor())
+    )
+  }
 
   /* --- 縦位置。箱の中心が画面の中心よりわずかに上に来ること --- */
 

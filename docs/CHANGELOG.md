@@ -30,6 +30,11 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 
 ## [Unreleased]
 
+### 追加
+
+- **コマンドバーの候補で Tab を押すと、その URL が入力欄に入る**。「amaz」→ ↓ → Tab で `https://www.amazon.co.jp/` が入り、続きをそこから打てる（自分の入力の行では何もしない）
+- **コマンドバーの候補を空白区切りの複数語で引ける**。「github nyshk97 mobil」で `https://github.com/nyshk97/mobile-ide` が出る（全部の語を含むものが順序を問わず当たる。開いているタブ・ピン留め・Favorites・履歴すべて）
+
 ### 変更
 
 - **⌘L で開くコマンドバーは現在の URL が全選択された状態になる**。⌘A を押さずにそのまま打ち直せる

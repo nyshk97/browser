@@ -263,13 +263,26 @@ function CommandBar({
             }
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
+              // IME 変換中の Tab は IME の候補操作なので奪わない（preventDefault もしない）
+              if (event.nativeEvent.isComposing) return
               // ↑↓ のほかに ⌃P / ⌃N でも動かせる。
               // **macOS の入力欄はこの2つを既定で行移動として食う**ので、
               // preventDefault を必ず通す（そうしないとキャレットだけ動いて候補が動かない）。
               const emacs = event.ctrlKey && !event.metaKey && !event.altKey
               const moveDown = event.key === 'ArrowDown' || (emacs && event.key.toLowerCase() === 'n')
               const moveUp = event.key === 'ArrowUp' || (emacs && event.key.toLowerCase() === 'p')
-              if (moveDown) {
+              if (event.key === 'Tab') {
+                // Tab は選択中の候補の URL を入力欄に入れる（Arc の Tab 補完）。続きはそこから打てる。
+                // **自分の入力の行（url / search）では何もしない**。位置（index 0）で見ないのは、
+                // `normalizeNavigationInput` が弾く入力ではその行が無く、先頭が本物の候補になるため。
+                // Shift+Tab は値を変えないが、既定のフォーカス移動だけは止める
+                //（オーバーレイに他のフォーカス先が無く、入力欄からキャレットが逃げる）。
+                event.preventDefault()
+                const current = items[cursor]
+                if (!event.shiftKey && current && current.kind !== 'url' && current.kind !== 'search') {
+                  setQuery(current.subtitle)
+                }
+              } else if (moveDown) {
                 event.preventDefault()
                 setCursor((current) => Math.min(current + 1, items.length - 1))
               } else if (moveUp) {

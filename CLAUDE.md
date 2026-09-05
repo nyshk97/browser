@@ -60,6 +60,12 @@ target ができた直後に繋がり、popup.js のトップレベル（リス�
 1 周無駄にした実例あり）。`waitFor(popup, "document.getElementById('messaging')?.textContent ? 'ready' : ''")`
 を `check` にして置く。
 
+**履歴に載るのを待つときは `queryHistory` で行の存在を見る。`suggest()` の候補で待たない。**
+`suggest()` は開いているタブも同じ URL で候補に出すので、履歴行を待つつもりの `waitFor` が
+**開いているタブの候補**で即満たされ、`recordVisit`（did-navigate 契機）より前に `closeTab` して
+履歴に残らない（作成から 4ms 後に閉じていた実測あり）。逆にタブを開いている間は `seen` の dedupe で
+履歴の候補は出ないので、「history 種別が出るまで待つ」も永久に満たされない。
+
 ## `log()` に新しいイベントを足すとき
 
 **detail は `sanitizeDetail`（`src/shared/log-redact.js`）を通ってから書かれる。** 型は合っていても

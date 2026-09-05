@@ -705,7 +705,14 @@ async function openCommandBar(kind) {
     .ev(
       `(() => {
         const c = document.querySelector('.cmd')
-        return JSON.stringify({ mode: c.dataset.mode, value: c.querySelector('input').value })
+        const input = c.querySelector('input')
+        return JSON.stringify({
+          mode: c.dataset.mode,
+          value: input.value,
+          focused: document.activeElement === input,
+          selectionStart: input.selectionStart,
+          selectionEnd: input.selectionEnd
+        })
       })()`
     )
     .then(JSON.parse)
@@ -747,6 +754,17 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
   {
     const opened = await openCommandBar('address-bar')
     check('⌘L のコマンドバーは現在の URL が入った状態で開く', opened.value === beforeUrl, opened.value)
+    // 開いた時点で URL が**全選択**されていること（⌘L → ⌘A を押さずに打ち直せる）。
+    // 選択は `focus-address` コマンドのハンドラでもかけるが、マウントより先にコマンドが届くと
+    // 取りこぼすので、マウント時にもかけていないとここが FAIL する
+    check(
+      '⌘L のコマンドバーは URL が全選択された状態で開く',
+      opened.focused &&
+        opened.value.length > 0 &&
+        opened.selectionStart === 0 &&
+        opened.selectionEnd === opened.value.length,
+      `focused=${opened.focused} selection=${opened.selectionStart}-${opened.selectionEnd}/${opened.value.length}`
+    )
     await ui.ev(`window.nemo.setOverlay(null).then(() => 'ok')`)
     const emptied = await openCommandBar('command-bar')
     check('⌘T のコマンドバーは空で開く', emptied.value === '', emptied.value)

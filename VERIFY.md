@@ -217,6 +217,9 @@ mise run verify:only split
 - Favorites の追加・削除
 - コマンドバーが開いているタブを候補に出す / URL でない入力は検索に回る
 - **コマンドバーの決定先**（⌘T / ＋ は新規タブ・⌘L は現在のタブ・⇧Enter はその逆）
+- **⌘L は現在の URL が全選択された状態で開く**（`selectionStart` / `selectionEnd` を読む。
+  phase1 は `setOverlay('address-bar')` だけでコマンドを送らないのでマウント時の選択を、
+  peek は `focus-address` コマンド経由の選択を見る）
 - **候補の上下移動**（↑↓ と ⌃P / ⌃N。⌃ 付きは `defaultPrevented` まで見る ——
   macOS の入力欄は ⌃P / ⌃N を行移動として食うので、止め忘れるとキャレットだけ動く）
 - **コマンドバーの縦位置**（箱の中心が画面中心より上・候補が満杯でも下がはみ出さない）。

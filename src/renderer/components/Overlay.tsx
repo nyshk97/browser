@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { foregroundTab, useCommand, useSharedState, useWindowState } from '../useNemo.js'
 import { PromptDialog } from './PromptDialog.js'
 import { Library } from './Library.js'
@@ -160,21 +160,31 @@ function CommandBar({
   // ⌘L は現在の URL を入れた状態で開く（コマンドが届く前に描画されても空欄にならないよう初期値で入れる）。
   const [query, setQuery] = useState(() => (newTab ? '' : (activeTab?.url ?? '')))
 
+  /**
+   * 入力を全選択するタイミング。マウント時（0）と、コマンドが届いて値を入れ直したとき。
+   * ⌘L の URL は**開いた瞬間に全選択**にして、⌘A を押さずに打ち直せるようにする。
+   * `setQuery` と同じ同期区間で `select()` を呼んでも DOM の値はまだ前のままで、React が
+   * 値を書き込んだ時点でキャレットが末尾に戻るので、描画後の layout effect で選ぶ。
+   */
+  const [selectTick, bumpSelect] = useReducer((n: number) => n + 1, 0)
+  useLayoutEffect(() => {
+    inputRef.current?.focus()
+    inputRef.current?.select()
+  }, [selectTick])
+
+  // コマンドは**マウントより先に届くことがある**（オーバーレイの表示とコマンドは別の IPC）。
+  // 届いても届かなくても同じ姿になるよう、初期値とマウント時の全選択に寄せ、届いた側は
+  // 値を入れ直して選び直すだけにする。
   useCommand(
     useCallback(
       (command) => {
         if (command === 'focus-address') setQuery(activeTab?.url ?? '')
         if (command === 'command-bar') setQuery('')
-        inputRef.current?.focus()
-        inputRef.current?.select()
+        bumpSelect()
       },
       [activeTab]
     )
   )
-
-  useEffect(() => {
-    inputRef.current?.focus()
-  }, [])
 
   useEffect(() => {
     let cancelled = false

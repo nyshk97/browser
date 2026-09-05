@@ -1310,6 +1310,20 @@ console.log('\n--- 前面コマンド（Peek 表示中は Peek が対象）')
     await waitFor(overlay, "document.querySelector('.cmd-input input') ? 'ok' : ''")
     const addr = await overlay.ev("document.querySelector('.cmd-input input')?.value ?? ''")
     check('⌘L のアドレスバーは Peek の URL（親ではない）', addr === peek.url, `value=${addr}`)
+    // メニューのコマンド経路（`focus-address` がマウント後に届く側）でも全選択されていること
+    const sel = await overlay
+      .ev(
+        `(() => {
+          const input = document.querySelector('.cmd-input input')
+          return JSON.stringify({ start: input.selectionStart, end: input.selectionEnd, len: input.value.length })
+        })()`
+      )
+      .then(JSON.parse)
+    check(
+      '⌘L のアドレスバーは URL が全選択されている',
+      sel.len > 0 && sel.start === 0 && sel.end === sel.len,
+      `selection=${sel.start}-${sel.end}/${sel.len}`
+    )
     await call('window.nemo.setOverlay(null)')
     await sleep(300)
 

@@ -5,8 +5,8 @@
  * 見るもの（計画の R3 / R5 / R6 / R7 / R9 / R10 / R11 に対応）:
  *
  * - 会議タブから離れると出る / 戻ると引っ込む（破棄はしない）
- * - マイク・カメラのボタンが**ページ側の属性を実際に変える**（押した結果をページで裏取り）
- * - ページ側でミュートすると小窓の表示が追従する
+ * - マイク・カメラは**表示だけで押せない**（押してもページに届かない）。ページ側で切ると小窓の表示が追従する
+ * - **背面のまま**ページ側で切っても追従する（rAF スロットリングを外している）
  * - **R3**: 会議中のタブが sleep しない（縮退中も）。会議が終われば寝る
  * - **R5**: 縮退（プローブが読めない）と、そこからの復帰。経過時間が 0 に戻らない
  * - **R7**: 開閉 10 回でページ target 数がベースへ戻る（`webContents` の閉じ漏れ）
@@ -375,26 +375,68 @@ await selectTab(parkKey)
 {
   const info = await waitBar()
   check('会議タブから離れると小窓が出る', info?.present === true, JSON.stringify(info))
-  check('縮退していない（マイク・カメラが出ている）', info?.degraded === '0', JSON.stringify(info))
+  check('縮退していない（マイク・カメラの表示が出ている）', info?.degraded === '0', JSON.stringify(info))
   check('マイクもカメラも ON として出る', info?.mic === 'true' && info?.cam === 'true', JSON.stringify(info))
   check('経過時間が出ている', elapsedSeconds(info) !== null, String(info?.elapsed))
   check('表示状態のログが shown', lastVisibility() === 'shown', String(lastVisibility()))
 }
 
 /* ------------------------------------------------------------------ *
- * 2. マイク / カメラ（**押した結果をページ側で裏取りする**）
+ * 2. マイク / カメラ（**表示だけ**。小窓から切り替える口は無い）
  * ------------------------------------------------------------------ */
 
 console.log('\n--- マイク / カメラ')
 
+{
+  // 形の検査。**同じ式で「会議へ移動」を測って陽性コントロールにする**
+  // （`webkitAppRegion` が computed style から読めない環境では両方 0 になって素通りするため）
+  const raw = await withBar((session) =>
+    session.ev(`(() => {
+      const measure = (el) => ({
+        tag: el.tagName,
+        noDrag: getComputedStyle(el).webkitAppRegion === 'no-drag'
+      })
+      const goto = document.querySelector('.call-goto')
+      return JSON.stringify({
+        goto: goto ? measure(goto) : null,
+        devices: Array.from(document.querySelectorAll('[data-device]')).map(measure)
+      })
+    })()`)
+  )
+  const shape = raw ? JSON.parse(raw) : null
+  check(
+    '（陽性コントロール）「会議へ移動」は button かつ no-drag と測れる',
+    shape?.goto?.tag === 'BUTTON' && shape.goto.noDrag === true,
+    JSON.stringify(shape)
+  )
+  check(
+    'マイク・カメラの表示は button でも no-drag でもない（掴みしろの一部）',
+    shape?.devices?.length === 2 && shape.devices.every((d) => d.tag !== 'BUTTON' && d.noDrag === false),
+    JSON.stringify(shape)
+  )
+}
+
+// 振る舞いの検査。**小窓の表示を押してもページ側に何も届かない**
 await clickBar('[data-device="mic"]')
+await sleep(1500)
+{
+  const status = await meet.status()
+  check(
+    '小窓のマイク表示を押してもページ側のクリック数が増えず、状態も変わらない',
+    status.clicks.mic === 0 && status.micMuted === 'false',
+    JSON.stringify(status)
+  )
+}
+
+// ページ側で切ると小窓が追従する（表示の経路が生きていること）
+await meet.act('mic')
 {
   const status = await waitUntil(async () => {
     const s = await meet.status()
-    return s.clicks.mic === 1 && s.micMuted === 'true' ? s : null
+    return s.micMuted === 'true' ? s : null
   })
   check(
-    '小窓のマイクボタンがページ側の data-is-muted を変える',
+    '（前提）ページ側でマイクを切れる（背面でも rAF が回っている）',
     status !== null,
     JSON.stringify(status ?? (await meet.status()))
   )
@@ -402,19 +444,26 @@ await clickBar('[data-device="mic"]')
     const value = await barInfo()
     return value?.mic === 'false' ? value : null
   })
-  check('小窓の表示がマイク OFF に追従する', info !== null, JSON.stringify(info ?? (await barInfo())))
+  check(
+    'ページ側でミュートすると小窓の表示が OFF に追従する',
+    info !== null,
+    JSON.stringify(info ?? (await barInfo()))
+  )
 }
 
-await clickBar('[data-device="cam"]')
+await meet.act('cam')
 {
-  const status = await waitUntil(async () => {
-    const s = await meet.status()
-    return s.clicks.cam === 1 && s.camMuted === 'true' ? s : null
+  const info = await waitUntil(async () => {
+    const value = await barInfo()
+    return value?.cam === 'false' ? value : null
   })
-  check('小窓のカメラボタンがページ側に届く', status !== null, JSON.stringify(status))
+  check(
+    'ページ側でカメラを切ると小窓の表示が追従する',
+    info !== null,
+    JSON.stringify(info ?? (await barInfo()))
+  )
 }
 
-// ページ側で戻すと小窓が追従する（片方向でないこと）
 await meet.act('mic')
 {
   const info = await waitUntil(async () => {
@@ -422,7 +471,7 @@ await meet.act('mic')
     return value?.mic === 'true' ? value : null
   })
   check(
-    'ページ側でミュートを解除すると小窓が追従する',
+    'ページ側でミュートを解除すると小窓が ON に戻る（片方向でない）',
     info !== null,
     JSON.stringify(info ?? (await barInfo()))
   )
@@ -486,7 +535,7 @@ await meet.act('break')
   })
   check('プローブが読めなくなると縮退する', info !== null, JSON.stringify(info ?? (await barInfo())))
   check(
-    '縮退時はマイク・カメラのボタンを出さない',
+    '縮退時はマイク・カメラの表示を出さない',
     info?.mic === null && info?.cam === null,
     JSON.stringify(info)
   )
@@ -507,7 +556,7 @@ await meet.act('repair')
   })
   check('正常値が返ると縮退から復帰する', info !== null, JSON.stringify(info ?? (await barInfo())))
   check(
-    '復帰するとマイク・カメラのボタンが戻る',
+    '復帰するとマイク・カメラの表示が戻る',
     info?.mic !== null && info?.cam !== null,
     JSON.stringify(info)
   )
@@ -810,9 +859,7 @@ console.log('\n--- R8: IPC の拒否')
 
 for (const [name, expression] of [
   ['call:getState', 'window.nemo.getCallState()'],
-  ['call:focusTab', 'window.nemo.callFocusTab()'],
-  ['call:toggleMic', 'window.nemo.callToggleMic()'],
-  ['call:toggleCam', 'window.nemo.callToggleCam()']
+  ['call:focusTab', 'window.nemo.callFocusTab()']
 ]) {
   const result = await ui.ev(`${expression}.then(() => 'allowed', (e) => 'rejected:' + String(e.message))`)
   check(`サイドバーから ${name} は弾かれる`, String(result).startsWith('rejected:'), String(result))

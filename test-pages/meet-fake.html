@@ -83,7 +83,7 @@
       const cam = document.getElementById('cam')
       const status = document.getElementById('status')
 
-      /** 押された回数。**小窓のボタンが本当にページへ届いたか**をここで裏取りする。 */
+      /** 押された回数。**小窓の表示を押してもここが増えない**ことの裏取りにも使う。 */
       window.__clicks = { mic: 0, cam: 0 }
 
       function setJoined(joined) {
@@ -117,7 +117,8 @@
           window.__clicks[name] += 1
           // **属性の書き換えは requestAnimationFrame 越しにする**（本物の Meet と同じ）。
           // 背面タブでは rAF が止まるので、ここを同期で書くと
-          // 「小窓から押しても前面に戻るまで反映されない」バグを再現できない。
+          // 「小窓が出ているあいだ Meet の DOM が凍って表示が古いまま」を再現できず、
+          // 背面スロットリング解除（call-coordinator.ts）が壊れても検査が通ってしまう。
           requestAnimationFrame(() => {
             const muted = el.getAttribute('data-is-muted') === 'true'
             el.setAttribute('data-is-muted', muted ? 'false' : 'true')

@@ -5,6 +5,9 @@
  * 直す場所を 1 か所に閉じ込めるのが目的なので、
  * セレクタも属性名も**外へ出さない**（外に出すのは意味の側だけ）。
  *
+ * **読むだけで、押さない。** 以前は小窓からマイク / カメラを `click()` で切り替えていたが、
+ * 押しても切り替わらない・遅れるが直らなかったので外した（状態の表示だけ残している）。
+ *
  * ## 真偽の向き
  *
  * Meet の DOM は `data-is-muted="true"` が「**切れている**」で、
@@ -131,45 +134,6 @@ export const PROBE_SOURCE = `(() => {
     return null
   }
 })()`
-
-/**
- * マイク / カメラを切り替える式。**隔離ワールドで評価する**。
- *
- * 押した結果は返さない（`true` = ボタンを押せた、だけ）。
- * **UI は押した直後に楽観更新してはいけない** —— Meet 側が弾くことがあるので、
- * 表示は次のプローブの結果を待つ。
- */
-export function buildToggleSource(kind: 'mic' | 'cam'): string {
-  return `(() => {
-  try {
-    const buttons = Array.prototype.slice.call(document.querySelectorAll('[data-is-muted]'))
-    if (buttons.length === 0) return false
-    const iconsOf = (el) =>
-      Array.prototype.slice
-        .call(el.querySelectorAll('i, [class*="material-icons"]'))
-        .map((node) => (node.textContent || '').trim())
-    const kindOf = (el) => {
-      const icons = iconsOf(el)
-      if (icons.indexOf('mic') !== -1 || icons.indexOf('mic_off') !== -1) return 'mic'
-      if (icons.indexOf('videocam') !== -1 || icons.indexOf('videocam_off') !== -1) return 'cam'
-      return null
-    }
-    let target = null
-    for (const el of buttons) {
-      if (kindOf(el) === ${JSON.stringify(kind)}) { target = el; break }
-    }
-    if (target === null) {
-      const index = ${kind === 'mic' ? 0 : 1}
-      target = buttons.length >= 2 ? buttons[index] : null
-    }
-    if (target === null) return false
-    target.click()
-    return true
-  } catch (error) {
-    return false
-  }
-})()`
-}
 
 /** プローブの戻り値を検証する（隔離ワールドから来る値を素通しにしない）。 */
 export function parseProbe(raw: unknown): CallProbe | null {

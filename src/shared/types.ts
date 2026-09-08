@@ -886,6 +886,8 @@ export interface AppStatus {
  *
  * **`null` は「不明」**で、`false`（切れている）とは別物。
  * プローブが読めないとき（縮退）は3つとも `null` にする。
+ *
+ * マイク / カメラは**表示だけ**（小窓から切り替える口は無い）。
  */
 export interface CallState {
   /** 表示するホスト名（`meet.google.com`）。 */
@@ -1170,10 +1172,6 @@ export interface NemoUiApi {
   getCallState(): Promise<CallState | null>
   /** 会議タブへ戻る（ウィンドウを前面に + そのタブをアクティブに）。 */
   callFocusTab(): Promise<void>
-  /** マイクを切り替える。**楽観更新しない**（結果は push を待つ）。 */
-  callToggleMic(): Promise<void>
-  /** カメラを切り替える。**楽観更新しない**。 */
-  callToggleCam(): Promise<void>
   onCallState(listener: (state: CallState) => void): () => void
 
   /* タブスイッチャー（⌃M） */

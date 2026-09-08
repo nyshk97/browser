@@ -90,7 +90,7 @@ import { clearHistory, getFavicons, queryHistory, removeHistory } from './store/
 import { clearArchive, queryArchive, removeArchived } from './store/archive.js'
 import { getAppStatus } from './app-status.js'
 import { isCallWindowContents } from './call-window.js'
-import { focusCallTarget, getCallState, toggleCallDevice } from './call-coordinator.js'
+import { focusCallTarget, getCallState } from './call-coordinator.js'
 import { checkForUpdatesManually, promptRestart } from './updater.js'
 import {
   isLiveFolderUrl,
@@ -1345,14 +1345,6 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('call:focusTab', (event) => {
     requireCallWindow(event)
     focusCallTarget()
-  })
-  ipcMain.handle('call:toggleMic', async (event) => {
-    requireCallWindow(event)
-    await toggleCallDevice('mic')
-  })
-  ipcMain.handle('call:toggleCam', async (event) => {
-    requireCallWindow(event)
-    await toggleCallDevice('cam')
   })
 }
 

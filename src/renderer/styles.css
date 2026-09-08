@@ -2864,7 +2864,7 @@ body[data-view='call'] {
   color: var(--nemo-ink);
 }
 
-/* **ここの `auto` が掴みしろ**。左右のボタン群のあいだが広く空く */
+/* **ここの `auto` が掴みしろ**。左のボタンと右の表示のあいだが広く空く */
 .call-devices {
   display: flex;
   align-items: center;
@@ -2873,8 +2873,11 @@ body[data-view='call'] {
   padding-left: 14px;
 }
 
-.call-btn {
-  -webkit-app-region: no-drag;
+/*
+ * マイク / カメラの状態表示。**押せない**ので `no-drag` にしない（掴みしろの一部）。
+ * hover で面を変えると押せるように見えるので変えない。
+ */
+.call-device {
   flex: none;
   display: flex;
   align-items: center;
@@ -2884,19 +2887,11 @@ body[data-view='call'] {
   border-radius: var(--nemo-radius);
   background: var(--nemo-surface);
   color: var(--nemo-ink);
-  cursor: pointer;
-  transition:
-    background 0.12s,
-    color 0.12s;
+  transition: color 0.12s;
 }
 
-.call-btn:hover:not(:disabled) {
-  background: var(--nemo-surface-hi);
-}
-
-.call-btn:disabled {
+.call-device.unknown {
   opacity: 0.45;
-  cursor: default;
 }
 
 /*

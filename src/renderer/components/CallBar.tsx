@@ -5,17 +5,20 @@ import type { CallState } from '../../shared/types.js'
  * 会議の小窓（DESIGN.md「会議の小窓」）。
  *
  * **このウィンドウは中身がこれ1枚だけ**（ページも他の View も無い）。
- * 置くのは **会議へ移動 / マイク / カメラ の3つだけ**。
+ * 置くのは **会議へ移動 のボタン 1 つと、マイク / カメラ の状態表示**。
  * **退出も ✕ も置かない** —— 退出は誤爆で会議を抜ける事故を原理的に消すため、
  * ✕ は「会議中はいつでも出ている」を崩さないため。
+ *
+ * **マイク / カメラは見るだけで押せない**。以前は小窓から切り替えられたが、
+ * Meet のボタンを背面から `click()` する経路は押しても切り替わらない・遅れるが直らず、
+ * 「効いていない」と思って連打する体験のほうが悪かったので外した。
+ * 切り替えは会議タブへ移動して Meet 側で行う。
  *
  * 「会議へ移動」は**ドメイン名と経過時間ごと1つのボタン**にしてある。
  * 独立した「戻る」ボタンにすると、何に戻るのかがラベルからも形からも読み取れない
  * （履歴の「戻る」と混ざる）。会議の名前を押したらその会議へ行く、なら迷わない。
  *
  * 経過時間は **`joinedAt` から renderer 側で数える**（毎秒 IPC を撃たない）。
- * トグルは**楽観更新しない** —— Meet 側で弾かれることがあるので、
- * 見た目が変わるのは main からの push が返ってからにする。
  */
 export function CallBar(): React.JSX.Element | null {
   const [state, setState] = useState<CallState | null>(null)
@@ -34,9 +37,9 @@ export function CallBar(): React.JSX.Element | null {
 
   return (
     /*
-      地は全面がドラッグ領域。**各ボタンは no-drag**（でないと押せなくなる）。
-      ボタンだけで埋めると掴む場所が無くなるので、外周の余白と
-      ボタン群のあいだの隙間を**掴みしろとして意図的に広く取る**。
+      地は全面がドラッグ領域。**押せるのは「会議へ移動」だけ**で、そこだけ no-drag。
+      マイク / カメラの表示は押せないので掴みしろの一部にする。
+      外周の余白とボタンと表示のあいだの隙間を**掴みしろとして意図的に広く取る**。
     */
     <div className="call-bar" data-degraded={state.degraded ? '1' : '0'}>
       <button
@@ -64,20 +67,12 @@ export function CallBar(): React.JSX.Element | null {
 
       {/*
         縮退（プローブが読めない）ときは**会議へ移動するボタンだけ**にする。
-        状態が分からないまま押させると、ミュートしたつもりで喋り続ける事故になる。
+        分からない状態を「ON」に見せると、ミュートしたつもりで喋り続ける事故になる。
       */}
       {!state.degraded && (
         <span className="call-devices">
-          <DeviceButton
-            kind="mic"
-            enabled={state.micEnabled}
-            onToggle={() => void window.nemo.callToggleMic()}
-          />
-          <DeviceButton
-            kind="cam"
-            enabled={state.camEnabled}
-            onToggle={() => void window.nemo.callToggleCam()}
-          />
+          <DeviceIndicator kind="mic" enabled={state.micEnabled} />
+          <DeviceIndicator kind="cam" enabled={state.camEnabled} />
         </span>
       )}
     </div>
@@ -85,37 +80,34 @@ export function CallBar(): React.JSX.Element | null {
 }
 
 /**
- * マイク / カメラのボタン。
+ * マイク / カメラの状態表示。**押せない**（`<button>` にしない）。
  *
- * `enabled === null`（不明）は押させない。`false`（切れている）とは別物で、
+ * `enabled === null`（不明）は薄く出す。`false`（切れている）とは別物で、
  * 混ぜると「不明なのに ON に見える」状態が生まれる。
  */
-function DeviceButton({
+function DeviceIndicator({
   kind,
-  enabled,
-  onToggle
+  enabled
 }: {
   kind: 'mic' | 'cam'
   enabled: boolean | null
-  onToggle: () => void
 }): React.JSX.Element {
   const label = kind === 'mic' ? 'マイク' : 'カメラ'
+  const stateText = enabled === null ? '不明' : enabled ? 'ON' : 'OFF'
   return (
-    <button
-      type="button"
-      className={`call-btn call-device${enabled === false ? ' off' : ''}`}
+    <span
+      className={`call-device${enabled === false ? ' off' : ''}${enabled === null ? ' unknown' : ''}`}
       data-device={kind}
       data-enabled={enabled === null ? 'unknown' : String(enabled)}
-      title={`${label}を${enabled === false ? 'ON' : 'OFF'}にする`}
-      aria-pressed={enabled === true}
-      disabled={enabled === null}
-      onClick={onToggle}
+      title={`${label}: ${stateText}（切り替えは会議タブで）`}
+      role="img"
+      aria-label={`${label} ${stateText}`}
     >
       <span className="call-glyph">
         {kind === 'mic' ? <MicIcon /> : <CamIcon />}
         {enabled === false && <SlashIcon />}
       </span>
-    </button>
+    </span>
   )
 }
 

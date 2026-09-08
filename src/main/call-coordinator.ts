@@ -1,14 +1,7 @@
 import { app } from 'electron'
-import { log, logError } from './log.js'
+import { log } from './log.js'
 import { selectTab, setCallWatcher, windowsById, type NemoTab } from './registry.js'
-import {
-  PROBE_SOURCE,
-  buildToggleSource,
-  isMeetUrl,
-  meetDisplayHost,
-  parseProbe,
-  type CallProbe
-} from './meet-adapter.js'
+import { PROBE_SOURCE, isMeetUrl, meetDisplayHost, parseProbe, type CallProbe } from './meet-adapter.js'
 import {
   currentCallState,
   destroyCallWindow,
@@ -140,13 +133,18 @@ function isShowable(candidate: CandidateState): boolean {
  * 会議中のタブだけ**背面スロットリングを外す**。
  *
  * Chromium は隠れたページで `requestAnimationFrame` を止める。Meet は
- * ボタンを押した結果の反映を rAF 越しに行うので、素のままだと
- * **小窓からミュートを押しても、会議タブを前面に戻すまで実際には切り替わらない**
- * （押した本人は「効いていない」と思って何度も押すことになる）。実測:
+ * 状態の変化（ミュート・カメラ・参加者タイルの増減）の DOM への反映を rAF 越しに行うので、
+ * 素のままだと**小窓が出ているあいだ（＝会議タブが隠れているあいだ）Meet の DOM が凍る**。
+ * 小窓が読んでいるのはその DOM なので、
+ * - 主催者にミュートされても小窓は ON のまま（**ミュートされたつもりが無いのに喋れない**の逆）
+ * - 主催者が会議を終了しても参加者タイルが消えず、**終わった会議の小窓が出続け、
+ *   そのタブは `isSleepExempt` で寝ない**（候補は URL でしか外れない）
+ * になる。以前は「小窓から押した結果が反映されない」が理由だったが、切り替えを外した今も
+ * **表示の鮮度と離脱の検知**のために要る。実測（背面で Meet のボタンを押したとき）:
  *
  * ```
- * 背面でクリック 3 秒後  vis=hidden  raf=1    clicks=1  muted=false  ← 効いていない
- * 前面へ戻したあと       vis=visible raf=74   clicks=1  muted=true   ← ここで初めて適用
+ * 背面でクリック 3 秒後  vis=hidden  raf=1    clicks=1  muted=false  ← DOM が動いていない
+ * 前面へ戻したあと       vis=visible raf=74   clicks=1  muted=true   ← ここで初めて反映
  * ```
  *
  * 外すのは**会議中の対象タブだけ・会議中だけ**にする。
@@ -448,28 +446,6 @@ export function focusCallTarget(): void {
   selectTab(win, target.tab.key)
   log('call.focus_tab', { key: target.tab.key, windowId: win.id })
   refreshCallCoordinator()
-}
-
-/**
- * マイク / カメラを切り替える。
- *
- * **楽観更新しない**（Meet 側で弾かれることがある）。押したあとは
- * 次のプローブを前倒しして、実際の結果が返ってから UI を書き換える。
- */
-export async function toggleCallDevice(kind: 'mic' | 'cam'): Promise<void> {
-  const target = pickTarget()
-  if (!target) return
-  const wc = target.tab.webContents
-  if (!wc) return
-  try {
-    await wc.executeJavaScriptInIsolatedWorld(CALL_WORLD_ID, [{ code: buildToggleSource(kind) }], true)
-    log('call.toggle', { kind, key: target.tab.key })
-  } catch (error) {
-    logError('call.toggle_failed', error, { kind })
-    return
-  }
-  // 結果は push を待つ（Meet の DOM に反映されるまで少しかかる）
-  target.lastProbeAt = 0
 }
 
 /* ------------------------------------------------------------------ *

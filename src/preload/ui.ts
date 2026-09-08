@@ -199,8 +199,6 @@ const api: NemoUiApi = {
 
   getCallState: () => ipcRenderer.invoke('call:getState') as Promise<CallState | null>,
   callFocusTab: () => ipcRenderer.invoke('call:focusTab') as Promise<void>,
-  callToggleMic: () => ipcRenderer.invoke('call:toggleMic') as Promise<void>,
-  callToggleCam: () => ipcRenderer.invoke('call:toggleCam') as Promise<void>,
   onCallState: (listener) => subscribe<CallState>('call:state', listener),
 
   onWindowState: (listener) => subscribe<WindowState>('nemo:window-state', listener),

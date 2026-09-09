@@ -1796,7 +1796,9 @@ export class NemoWindow {
       focusRingVisible: this.focusRingView?.getVisible() ?? false,
       peek: peekTab?.view?.getVisible() ? peekTab.view.getBounds() : null,
       peekScrim: scrim?.getVisible() ? scrim.getBounds() : null,
-      overlay: this.overlayView.getVisible() ? this.overlayView.getBounds() : null
+      overlay: this.overlayView.getVisible() ? this.overlayView.getBounds() : null,
+      focusedWebContentsId: webContentsModule.getFocusedWebContents()?.id ?? null,
+      focusedUrl: webContentsModule.getFocusedWebContents()?.getURL() ?? null
     }
   }
 
@@ -2708,7 +2710,11 @@ function waitForPeekDocument(peek: NemoTab, wc: WebContents): void {
     const win = peek.window
     if (win.isDestroyed || win.baseWindow.isDestroyed()) return
     // 親が選択中のときだけ出す（別タブへ行っていれば隠れたままにする）
-    if (win.activeTabKey === peek.peekOf?.key) selectTab(win, win.activeTabKey)
+    if (win.activeTabKey === peek.peekOf?.key) {
+      selectTab(win, win.activeTabKey)
+      // 出した Peek にキーを向ける（スクロールと Esc が Peek に効く）
+      focusForegroundPage(win)
+    }
     win.pushState()
     log('peek.revealed', { key: peek.key, windowId: win.id, reason })
   }
@@ -2725,6 +2731,23 @@ function waitForPeekDocument(peek: NemoTab, wc: WebContents): void {
  * **`loadURL` は呼ばない**。`setWindowOpenHandler` の `createWindow` から
  * 同期で使われ、読み込みは Electron が「子の browsing context」として行う（計画 R1）。
  */
+/**
+ * 前面のページ（Peek が出ていれば Peek、無ければアクティブタブ）へキーフォーカスを入れる。
+ *
+ * popup を `createWindow` で受けると、Chromium は新しい WebContents へフォーカスを移そうとするが、
+ * その View はまだウィンドウに付いていないので **first responder がどこにも無い状態**になる
+ * （実測: Peek を開いた直後の `webContents.getFocusedWebContents()` が null。リンクの
+ * クリックでも `window.open` でも同じ）。その状態で押した Esc はページの `before-input-event`
+ * にも UI View の keydown にも届かず、NSWindow の responder chain に落ちて
+ * **メインウィンドウがフルスクリーンだと解除される**（Peek は閉じない）。
+ * Peek を開く・出す・閉じるの各時点で前面のページへ入れ直す。
+ * オーバーレイ（コマンドバー・prompt 等）が出ているときはそちらがフォーカスを持つので触らない。
+ */
+function focusForegroundPage(win: NemoWindow): void {
+  if (win.isDestroyed || win.baseWindow.isDestroyed() || win.overlay !== null) return
+  win.getForegroundTab()?.webContents?.focus()
+}
+
 function openPeek(parent: NemoTab, url: string, adopt: WebContents): NemoTab | null {
   const win = parent.window
   if (win.isDestroyed || win.baseWindow.isDestroyed()) return null
@@ -2742,6 +2765,8 @@ function openPeek(parent: NemoTab, url: string, adopt: WebContents): NemoTab | n
   if (win.activeTabKey === parent.key) selectTab(win, parent.key)
   win.layout()
   syncForegroundTab(win)
+  // 中身を待っている間（placeholder）は親が前面。ここで入れ直さないと Esc が誰にも届かない
+  if (win.activeTabKey === parent.key) focusForegroundPage(win)
   win.pushState()
   log('peek.open', { key: peek.key, parent: parent.key, windowId: win.id, target: redactUrl(url) })
   return peek
@@ -2886,6 +2911,8 @@ export function removeTab(
 
   // Peek の親子を解く。**ここ1か所でやる**（呼び出し口ごとに書くと必ずどれかで漏れ、
   // `peekOf.window` と実際の所属が食い違ったまま残る）。
+  // 親は後で「フォーカスを戻す先」に使うので、解く前に控えておく
+  const peekParent = tab.peekOf
   if (tab.peekOf) {
     tab.peekOf.peek = null
     tab.peekOf = null
@@ -2952,6 +2979,9 @@ export function removeTab(
   win.applyVisibility()
   win.layout()
   syncForegroundTab(win)
+  // Peek を閉じたら親ページへキーを戻す（Peek の WebContents と一緒に first responder も
+  // 消えるので、戻さないと次の Esc がまた responder chain に落ちる）
+  if (peekParent && win.activeTabKey === peekParent.key) focusForegroundPage(win)
   win.pushState()
   notifyCall()
 }

@@ -1003,6 +1003,61 @@ console.log('\n--- sleep / archive の除外')
 }
 
 /* ------------------------------------------------------------------ *
+ * 6b. Peek のキーフォーカスと Esc
+ *
+ * popup を `createWindow` で受けた直後は first responder がどこにも無く
+ * （`getFocusedWebContents()` が null）、実キーの Esc がページにも UI にも届かずに
+ * NSWindow の responder chain へ落ちてフルスクリーンが解けていた（v1.2.13 で実機報告）。
+ * 「開いたら Peek にフォーカスがある」「Esc で閉じる」「閉じたら親に戻る」を見る。
+ * ------------------------------------------------------------------ */
+
+console.log('\n--- Peek のフォーカスと Esc')
+
+{
+  const focusedId = async () =>
+    JSON.parse(await ui.ev('window.nemo.splitDiagnostics().then((d) => JSON.stringify(d))'))
+      .focusedWebContentsId
+  const parent = await openParent('focus')
+  // リンクのクリック（実クリックに近い CDP のマウス）で開く。evUser の window.open と同じ受け皿だが、
+  // 実機で踏んだ経路に寄せる
+  const rect = JSON.parse(
+    await parent.page.ev("JSON.stringify(document.querySelector('a[target=_blank]').getBoundingClientRect())")
+  )
+  const at = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+  for (const type of ['mousePressed', 'mouseReleased']) {
+    await parent.page.send('Input.dispatchMouseEvent', { type, ...at, button: 'left', clickCount: 1 })
+  }
+  await waitFor(
+    ui,
+    `window.nemo.getWindowState().then((s) => s.tabs.some((t) => t.peekParentKey === ${JSON.stringify(parent.key)}) ? 'ok' : '')`
+  )
+  await sleep(1200)
+  const peek = peekOf(await state(), parent.key)
+  const parentWc = (await state()).tabs.find((t) => t.key === parent.key)?.webContentsId
+  check('リンクのクリックで Peek が開く（前提）', peek !== null)
+  const focusedAfterOpen = await focusedId()
+  check(
+    'Peek を開いた直後は Peek のページにキーフォーカスがある（null だと Esc が responder chain に落ちる）',
+    peek !== null && focusedAfterOpen === peek.webContentsId,
+    `focused=${focusedAfterOpen} peek=${peek?.webContentsId} parent=${parentWc}`
+  )
+  if (peek) {
+    await ui.ev(`window.nemo.pressKeyForVerify(${JSON.stringify(peek.key)}, 'Escape')`)
+    await sleep(1000)
+    check('Peek のページで Esc を押すと Peek が閉じる', peekOf(await state(), parent.key) === null)
+    const focusedAfterClose = await focusedId()
+    check(
+      'Peek を閉じたら親のページにキーフォーカスが戻る',
+      focusedAfterClose === parentWc,
+      `focused=${focusedAfterClose} parent=${parentWc}`
+    )
+  }
+  await call(`window.nemo.closeTab(${JSON.stringify(parent.key)})`)
+  parent.page.close()
+  await sleep(600)
+}
+
+/* ------------------------------------------------------------------ *
  * 7. 小窓（Little Nemo）
  * ------------------------------------------------------------------ */
 

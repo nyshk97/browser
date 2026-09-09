@@ -18,9 +18,13 @@ export function Peek(): React.JSX.Element | null {
   // Esc は main 側（ページの `before-input-event`）で拾う。
   // フォーカスは Peek のページにあることが多く、ここの keydown には来ないため。
   // ただし暗幕をクリックしてこちらにフォーカスが来ている場合もあるので、両方で受ける。
+  // **`preventDefault` は必須**（MiniBar と同じ）。呼ばないと Chromium が未処理キーとして
+  // responder chain へ撃ち返し、非同期の `closePeek` より先にメインウィンドウのフルスクリーンが解ける
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') void window.nemo.closePeek()
+      if (event.key !== 'Escape' || event.metaKey || event.ctrlKey || event.altKey) return
+      event.preventDefault()
+      void window.nemo.closePeek()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

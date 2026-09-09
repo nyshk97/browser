@@ -1245,6 +1245,9 @@ export interface SplitDiagnostics {
   peekScrim: DiagRect | null
   /** 出ていればオーバーレイ（検索バー等）。 */
   overlay: DiagRect | null
+  /** 実キーが届く先（first responder の WebContents）。どれにも無ければ `null`。 */
+  focusedWebContentsId: number | null
+  focusedUrl: string | null
 }
 
 export type PromptAnswer =

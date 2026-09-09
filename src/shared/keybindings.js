@@ -26,7 +26,8 @@ export const COMMANDS = [
   {
     id: 'new-private-window',
     label: 'シークレットウィンドウ',
-    accelerator: 'CmdOrCtrl+Shift+P',
+    // Chrome と同じ ⌘⇧N（旧「タブを新規ウィンドウへ」の空き）
+    accelerator: 'CmdOrCtrl+Shift+N',
     menu: 'file'
   },
   { id: 'close-tab', label: 'タブを閉じる', accelerator: 'CmdOrCtrl+W', menu: 'file', needsTab: true },

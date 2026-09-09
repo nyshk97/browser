@@ -1125,6 +1125,54 @@ async function miniStates() {
     `${afterClose.length} 枚`
   )
 
+  /* Esc で小窓が閉じる（Peek と同じ。拾わないと Esc が main window へ流れてフルスクリーンが解ける）
+     ページ側と上部バー側の両方で受ける。どちらも**自分の WebContents ごと消える**ので
+     応答を待たず、枚数のポーリングで見る */
+  const escKey = {
+    type: 'keyDown',
+    key: 'Escape',
+    code: 'Escape',
+    windowsVirtualKeyCode: 27,
+    nativeVirtualKeyCode: 27
+  }
+  // ⌘W の victim は target の並び順で決まる（作成順ではない）ので、古いスナップショットを
+  // 使い回さず**今開いている**小窓を撮り直して選ぶ
+  const escPageVictim = afterClose.length >= 2 ? ((await miniStates())[0] ?? null) : null
+  if (escPageVictim) {
+    // CDP の `Input.dispatchKeyEvent` はブラウザ側の前処理を飛ばして main の
+    // `before-input-event` に**届かない**（実測 0 件）ので、`sendInputEvent` の verify 経路で撃つ
+    await evSuicidal(
+      escPageVictim.session,
+      `(setTimeout(() => { void window.nemo.pressKeyForVerify(${JSON.stringify(escPageVictim.s.tabs[0].key)}, 'Escape') }, 50), 'ok')`
+    )
+    await sleep(1200)
+    const afterEscPage = await miniTargets()
+    check(
+      '小窓のページで Esc を押すとウィンドウごと閉じる',
+      afterEscPage.length === afterClose.length - 1,
+      `${afterClose.length} 枚 → ${afterEscPage.length} 枚`
+    )
+  } else {
+    check('Esc の検査に使う小窓が残っている', false, `${afterClose.length} 枚`)
+  }
+  const escBarVictim = (await miniStates())[0] ?? null
+  const beforeEscBar = await miniTargets()
+  if (escBarVictim && beforeEscBar.length >= 2) {
+    // 上部バー（UI View）の WebContents へ直接キーを入れる。ここで測れるのは
+    // 「UI View の keydown が closeTab を呼ぶ」までで、OS のフォーカスが上部バーにあるときの
+    // responder chain への撃ち返し（フルスクリーン解除）は自動では測れない（VERIFY.md の実機の項）
+    void escBarVictim.session.send('Input.dispatchKeyEvent', escKey).catch(() => null)
+    await sleep(1200)
+    const afterEscBar = await miniTargets()
+    check(
+      '小窓の上部バー（UI View）の keydown でも Esc で閉じる',
+      afterEscBar.length === beforeEscBar.length - 1,
+      `${beforeEscBar.length} 枚 → ${afterEscBar.length} 枚`
+    )
+  } else {
+    check('Esc（上部バー）の検査に使う小窓が残っている', false, `${beforeEscBar.length} 枚`)
+  }
+
   for (const m of minis) {
     try {
       m.session.close()

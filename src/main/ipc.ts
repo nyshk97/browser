@@ -423,6 +423,21 @@ export function registerIpcHandlers(): void {
       return true
     })
     /**
+     * ページの WebContents へ**実キー相当**の入力を送る（`sendInputEvent`）。
+     * CDP の `Input.dispatchKeyEvent` はブラウザ側の前処理を飛ばすので
+     * main の `before-input-event`（Peek / 小窓の Esc）に**届かない**（実測 0 件）。
+     * 送れるキーは列挙したものだけ（任意の入力を main から流し込めないようにする）
+     */
+    ipcMain.handle('nemo:press-key-for-verify', (event, key: unknown, keyName: unknown): boolean => {
+      const { tab } = requireTab(event, key)
+      if (keyName !== 'Escape') return false
+      const wc = tab.webContents
+      if (!wc || wc.isDestroyed()) return false
+      wc.sendInputEvent({ type: 'keyDown', keyCode: keyName })
+      wc.sendInputEvent({ type: 'keyUp', keyCode: keyName })
+      return true
+    })
+    /**
      * ⌘ 長押しバッジの状態機械を直接叩く。合成キーでは Meta の `before-input-event` を
      * 起こせないので、down / up / blur を名前で撃ち、戻り値で「今出ているか」を見る
      */

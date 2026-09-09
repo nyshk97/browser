@@ -97,6 +97,8 @@ const api: NemoUiApi = {
       .catch(() => undefined) as Promise<void>,
   runCommandForVerify: (command) =>
     ipcRenderer.invoke('nemo:run-command-for-verify', command).catch(() => false) as Promise<boolean>,
+  pressKeyForVerify: (key, keyName) =>
+    ipcRenderer.invoke('nemo:press-key-for-verify', key, keyName).catch(() => false) as Promise<boolean>,
   shortcutHintForVerify: (action) =>
     ipcRenderer.invoke('nemo:shortcut-hint-for-verify', action).catch(() => false) as Promise<boolean>,
 

@@ -280,8 +280,10 @@ mise run verify:only split
   ページのクリックを丸ごと遮る）。**暗幕にフォーカスがあっても ⌃M が確定できる**こと
 - 小窓: 外部 URL（**2つ目のインスタンスの argv**＝実際に踏む経路）で1枚できること /
   原則4枚で最古が閉じること / **セッションに保存されない**こと /
-  ⌘W でウィンドウごと閉じて空の小窓が残らないこと / ⌘O で通常ウィンドウのタブになり
-  **読み直さない**こと
+  ⌘W でウィンドウごと閉じて空の小窓が残らないこと / **Esc でも閉じる**こと（ページ側は
+  `pressKeyForVerify` の `sendInputEvent`、上部バー側は CDP のキー。Peek と同じ挙動で、
+  受け止めないと Esc がメインウィンドウへ流れてフルスクリーンが解ける）/
+  ⌘O で通常ウィンドウのタブになり**読み直さない**こと
 - 小窓の中の popup が**もう1枚の小窓**になり、1枚目（= 子の opener）が生きていること
 - **5段ネストさせると上限4枚を一時的に超える**こと（既存がすべて opener なので閉じる候補が無い）。
   **たった今開いた5枚目が victim に選ばれない**こと。末端を閉じたら4枚まで詰まること
@@ -519,6 +521,13 @@ await window.nemo.restartServiceWorkers()
 - **`window.open` は素の `Runtime.evaluate` では popup ブロッカーに弾かれる**。
   `userGesture: true` を付ける。付け忘れると「popup が開かない」のではなく**何も起きない**ので、
   実装のバグと見分けが付かない
+- **CDP の `Input.dispatchKeyEvent` は main の `before-input-event` に届かない**（ブラウザ側の
+  前処理を飛ばす。一時ログで実測 0 件）。Peek / 小窓の Esc のように main で拾うキーは、
+  `window.nemo.pressKeyForVerify(tabKey, 'Escape')`（`webContents.sendInputEvent`。
+  `NEMO_VERIFY_DIAGNOSTICS=1` のときだけ生える）で撃つ。UI View（React）の `keydown` は
+  CDP のキーで普通に起きるので、そちらは `Input.dispatchKeyEvent` でよい。
+  「届いているのに閉じない」と「届いていない」は症状が同じなので、迷ったらハンドラの先頭に
+  一時ログを置いて件数を見る
 - **自分が繋いでいる WebContents ごと消える操作**（小窓を閉じる ⌘W / ⌘O など）を `ev` で撃つと、
   **応答が返らず永久に待つ**。撃ちっぱなしにして時間で切り上げる
   （`Promise.race([session.ev(...), sleep(2500)])`）。ここでハングすると以降の検査が丸ごと飛ぶ
@@ -1352,15 +1361,19 @@ verify-all では `stopAll()` してから回す）。
 3. 続けてもう1本 URL を踏み、2枚目が少しずれて出ること。5本目で最古が閉じること
 4. 小窓で ⌘O を押し、メインウィンドウが前面に出て（**ここでは Space が切り替わってよい**）
    タブになること
-5. **Nemo を終了した状態から URL を踏み、小窓だけが出ること**（メインは背面で復元）。
+5. **メインウィンドウをフルスクリーンにした状態**で外部 URL を踏み、小窓のページ側・
+   上部バー側（URL をクリックした直後）それぞれで Esc を押すと**小窓だけが閉じ、
+   メインウィンドウのフルスクリーンが維持される**こと（自走検査は「閉じる」までしか見ておらず、
+   `preventDefault` を外しても PASS する。responder chain への撃ち返しはここでしか見られない）
+6. **Nemo を終了した状態から URL を踏み、小窓だけが出ること**（メインは背面で復元）。
    ログに `session.restoring ... "hidden":true` と `mini.open` が並ぶ
-6. **Dock アイコンが消えたりちらついたりしない**こと
+7. **Dock アイコンが消えたりちらついたりしない**こと
    （`setVisibleOnAllWorkspaces` を使うと process type の変換で消える。使っていないことの確認）
-7. **実 Vault の Bitwarden**（`mise run dev:nodebug`）で、**Peek のログイン画面**と小窓で
+8. **実 Vault の Bitwarden**（`mise run dev:nodebug`）で、**Peek のログイン画面**と小窓で
    自動入力が効くこと（＝拡張から見た active が Peek を指せていること）
-8. 実際の **OAuth ポップアップ**（`window.open` にサイズ指定があるもの）が Peek で開き、
+9. 実際の **OAuth ポップアップ**（`window.open` にサイズ指定があるもの）が Peek で開き、
    認証後に `window.close()` で閉じて親に結果が返ること
-9. **⌘クリック（背面タブ）**。`disposition: 'background-tab'` は修飾キー込みの実クリックでしか
+10. **⌘クリック（背面タブ）**。`disposition: 'background-tab'` は修飾キー込みの実クリックでしか
    作れず（メニューのアクセラレータと同じで CDP からは撃てない）、自走検証では見られない。
    - 通常ウィンドウで ⌘クリック → **Peek にならず背面タブに積まれる**こと
    - **小窓の中で ⌘クリック → もう1枚の小窓が開く**こと（小窓はタブを増やせないので、

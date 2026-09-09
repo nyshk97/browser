@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { prettyUrl, useWindowState } from '../useNemo.js'
 
 /**
@@ -14,6 +14,28 @@ export function MiniBar(): React.JSX.Element {
   const state = useWindowState()
   const tab = state?.tabs[0] ?? null
   const [copied, setCopied] = useState(false)
+
+  // Esc は小窓を閉じる（Peek と同じ）。主経路は main 側（ページの `before-input-event`）で、
+  // ここは URL をクリックしてコピーした直後などフォーカスが上部バー側にあるときの受け皿。
+  // 閉じるのは ⌘W と同じ `closeTab`（小窓では「ウィンドウを閉じる」に読み替えられる）。
+  //
+  // **`preventDefault` は必須**。呼ばないと Chromium が「ページが処理しなかったキー」として
+  // AppKit の responder chain へ撃ち返し、`closeTab`（非同期 IPC）でウィンドウが閉じるより先に
+  // メインウィンドウのフルスクリーンが解ける（この変更が直したい症状そのもの）。
+  // main 側にある「オーバーレイ（prompt）が出ている間は閉じない」の除外はここには無い
+  // （`WindowState` に overlay が載っていない）。prompt は `setOverlay` がフォーカスを
+  // オーバーレイへ移すので、上部バーに keydown が来ることは実用上ない
+  const tabKey = tab?.key ?? null
+  useEffect(() => {
+    if (tabKey === null) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || event.metaKey || event.ctrlKey || event.altKey) return
+      event.preventDefault()
+      void window.nemo.closeTab(tabKey)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [tabKey])
 
   const copyUrl = (): void => {
     if (!tab) return

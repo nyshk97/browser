@@ -1160,6 +1160,12 @@ export interface NemoUiApi {
    * 合成キーでは Meta の `before-input-event` を起こせない。戻り値は「今バッジが出ているか」。
    */
   shortcutHintForVerify(action: 'down' | 'up' | 'blur' | 'query'): Promise<boolean>
+  /**
+   * タブのページへ実キー相当の入力を送る（**本番では何もしない**）。
+   * CDP の `Input.dispatchKeyEvent` はブラウザ側の前処理を飛ばして main の
+   * `before-input-event` に届かないので、Peek / 小窓の Esc はここで撃つ。送れるのは Esc だけ。
+   */
+  pressKeyForVerify(key: string, keyName: 'Escape'): Promise<boolean>
 
   /** オーバーレイの現在の状態（購読より前に起きた分を取りこぼさないため）。 */
   getOverlayState(): Promise<{

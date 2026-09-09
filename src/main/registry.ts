@@ -903,15 +903,28 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
     if (leave) event.preventDefault()
   })
 
-  // Peek が出ている間の Esc は Peek を閉じる。
+  // Peek が出ている間の Esc は Peek を閉じる。小窓（Little Nemo）の Esc は小窓を閉じる。
   //
-  // フォーカスは Peek のページ側にあることが多いので、**UI View の keydown では拾えない**。
+  // フォーカスは Peek / 小窓のページ側にあることが多いので、**UI View の keydown では拾えない**。
   // ここで拾うのが唯一の経路になる。タブスイッチャー等のオーバーレイが出ている間は
   // そちらの Esc（取消）が優先なので手を出さない。
+  //
+  // 小窓で拾わないと、誰も処理しなかった Esc が AppKit の responder chain で
+  // key window（小窓 = NSPanel）から main window（メインウィンドウ）へ流れ、
+  // **メインウィンドウがフルスクリーンだと Esc のたびにフルスクリーンが解除される**。
+  // 閉じる経路は ⌘W と同じ `removeTab`（小窓ではウィンドウを閉じる読み替え）に寄せ、
+  // ⌘⇧T に積む・上限の詰め直しをここで別に書かない。
   wc.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown' || input.key !== 'Escape') return
+    // ⌘Esc / ⌃Esc / ⌥Esc は macOS のシステム操作（強制終了・入力ソース等）なので素通しする
+    if (input.meta || input.control || input.alt) return
     const current = win()
     if (current.isDestroyed || current.overlay !== null) return
+    if (current.kind === 'mini') {
+      event.preventDefault()
+      removeTab(current, tab.key)
+      return
+    }
     const peek = tab.peekOf ? tab : tab.peek
     if (!peek) return
     event.preventDefault()

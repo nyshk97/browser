@@ -66,6 +66,11 @@ target ができた直後に繋がり、popup.js のトップレベル（リス�
 履歴に残らない（作成から 4ms 後に閉じていた実測あり）。逆にタブを開いている間は `seen` の dedupe で
 履歴の候補は出ないので、「history 種別が出るまで待つ」も永久に満たされない。
 
+**main の `before-input-event` で拾うキー（Peek / 小窓の Esc 等）は CDP の `Input.dispatchKeyEvent` では撃てない。**
+ブラウザ側の前処理を飛ばすので main に届かず（一時ログで実測 0 件）、症状は実装バグと同じ FAIL になる。
+`window.nemo.pressKeyForVerify(tabKey, 'Escape')`（`sendInputEvent`。`NEMO_VERIFY_DIAGNOSTICS=1` のときだけ生える）で撃つ。
+UI View（React）の `keydown` には CDP のキーで届くので、そちらは `Input.dispatchKeyEvent` でよい。
+
 ## `log()` に新しいイベントを足すとき
 
 **detail は `sanitizeDetail`（`src/shared/log-redact.js`）を通ってから書かれる。** 型は合っていても

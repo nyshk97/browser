@@ -620,11 +620,15 @@ sqlite3 "$HOME/Library/Application Support/com.apple.TCC/TCC.db" \
 
 - `getDisplayMedia` の権限ダイアログは「**画面の共有**」の文言で出る（Electron は `media` + `mediaTypes` 空で
   投げてくるのを `display-capture` に読み替えている）。「カメラとマイク」が出たら読み替えが外れている
+- `#screen` を CDP から押すときは `Runtime.evaluate` に **`userGesture: true`** を付ける
+  （素の `ev` だと `getDisplayMedia` が `InvalidStateError` で止まりうる）
 - 拒否は `setDisplayMediaRequestHandler` の callback に **`null`**。`{}` を返すと main に
   `Video was requested, but no video stream was provided` の unhandled rejection が残り、
   verify-all の「main の例外」検査で落ちる
-- **画面収録の TCC はシステム DB 側**なので上の `sqlite3` では読めない。
-  `window.nemo.screenAccessStatusForVerify()`（= `getMediaAccessStatus('screen')`）で見る。
+- **画面収録の TCC はシステム DB 側**（`/Library/Application Support/com.apple.TCC/TCC.db`）。上の
+  ユーザー DB には無い。`sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "select client,auth_value from access where service='kTCCServiceScreenCapture';"`
+  で読め、やり直しは `tccutil reset ScreenCapture com.github.Electron`（sudo 不要）。
+  アプリからは `window.nemo.screenAccessStatusForVerify()`（= `getMediaAccessStatus('screen')`）で見る。
   **一度も聞かれていない状態でも `denied`** を返す（`not-determined` は返らない）ので、
   `getSources` の**前**にこの値で拒否してはいけない。初回の `desktopCapturer.getSources` は
   「Failed to get sources.」で**即座に**失敗し（ダイアログを待たない）、同時に OS の
@@ -678,9 +682,13 @@ NEMO_USER_DATA_DIR="$TMP" node scripts/dev.mjs --built &   # CDP は 9333
 #   await session.send('Page.enable')
 #   const r = await session.send('Page.captureScreenshot', { format: 'png' })
 # を撮る
-pkill -f "$TMP"; rm -rf "$TMP"
+pkill -f "$TMP"; pkill -f "scripts/dev.mjs"; pkill -f "MacOS/Electron"; rm -rf "$TMP"
 ```
 
+- **`pkill -f "$TMP"` だけでは helper しか死なない**（Electron 本体と `node scripts/dev.mjs` の argv に
+  `$TMP` が無い。`open -n --env` で起動したときも同じ）。親が残ると Electron が helper を作り直し、
+  次の `verify` が「Nemo が起動している」で拒否される。上のとおり親まで止めて
+  `pgrep -f 'electron@'` が 0 になったのを見る
 - `connectUi(cdp, 'toolbar')` と**ウィンドウを指定せずに繋がない**。破棄したウィンドウの
   UI ターゲットもしばらく `/json/list` に残るので、死んだ View に繋がって
   IPC が `unknown_sender` で弾かれる。`toolbar&window=<windowId>` まで指定する

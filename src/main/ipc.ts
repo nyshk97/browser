@@ -33,7 +33,8 @@ import {
   type NemoWindow,
   type OverlayKind
 } from './registry.js'
-import { isUiUrl, normalizeNavigationInput } from './security.js'
+import { isUiUrl, normalizeNavigationInput, setFakeDisplayCount } from './security.js'
+import { screenAccessStatus } from './media-access.js'
 import { runCommandForWindow, selectFavoriteByIndexIn } from './menu.js'
 import { isShortcutHintVisible, shortcutHintDown, shortcutHintHide } from './shortcut-hint.js'
 import { COMMANDS, SELECT_FAVORITE_ACCELERATORS } from '../shared/keybindings.js'
@@ -437,6 +438,16 @@ export function registerIpcHandlers(): void {
       wc.sendInputEvent({ type: 'keyUp', keyCode: keyName })
       return true
     })
+    /**
+     * 画面共有のダイアログを 2 枚以上のディスプレイで出す（主ディスプレイの複製を足す）。
+     * 検証環境のディスプレイは 1 枚しか無い。0 で戻す
+     */
+    ipcMain.handle('nemo:set-fake-displays-for-verify', (_event, count: unknown): number => {
+      if (typeof count !== 'number') throw new Error('invalid count')
+      return setFakeDisplayCount(count)
+    })
+    /** macOS の「画面収録」の許可状態（トラックが取れる環境かを検証が分けるため） */
+    ipcMain.handle('nemo:screen-access-status-for-verify', (): string => screenAccessStatus())
     /**
      * ⌘ 長押しバッジの状態機械を直接叩く。合成キーでは Meta の `before-input-event` を
      * 起こせないので、down / up / blur を名前で撃ち、戻り値で「今出ているか」を見る
@@ -1401,6 +1412,11 @@ function validateAnswer(value: unknown): PromptAnswer {
       }
     case 'system-media':
       return { kind: 'system-media', openSettings: answer['openSettings'] === true }
+    case 'display-choice': {
+      // 数値以外はキャンセル扱い（一覧に無い id は main 側で弾く）
+      const id = answer['displayId']
+      return { kind: 'display-choice', displayId: typeof id === 'number' && Number.isFinite(id) ? id : null }
+    }
     default:
       throw new Error('invalid answer')
   }

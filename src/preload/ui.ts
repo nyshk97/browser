@@ -99,6 +99,10 @@ const api: NemoUiApi = {
     ipcRenderer.invoke('nemo:run-command-for-verify', command).catch(() => false) as Promise<boolean>,
   pressKeyForVerify: (key, keyName) =>
     ipcRenderer.invoke('nemo:press-key-for-verify', key, keyName).catch(() => false) as Promise<boolean>,
+  setFakeDisplaysForVerify: (count) =>
+    ipcRenderer.invoke('nemo:set-fake-displays-for-verify', count).catch(() => 0) as Promise<number>,
+  screenAccessStatusForVerify: () =>
+    ipcRenderer.invoke('nemo:screen-access-status-for-verify').catch(() => 'unknown') as Promise<string>,
   shortcutHintForVerify: (action) =>
     ipcRenderer.invoke('nemo:shortcut-hint-for-verify', action).catch(() => false) as Promise<boolean>,
 

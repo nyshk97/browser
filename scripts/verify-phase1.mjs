@@ -1158,6 +1158,220 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
   page.close()
 }
 
+// ---- 画面共有（getDisplayMedia）----
+// macOS のピッカーは使わず、常にディスプレイ全体を渡す。2 枚以上のときだけ Nemo のダイアログで選ぶ
+// （`src/shared/display-share.js`）。検証環境のディスプレイは 1 枚なので、2 枚以上は
+// `setFakeDisplaysForVerify` で主ディスプレイの複製を足して出す。
+// トラックが実際に取れるかは macOS の「画面収録」の許可（TCC）しだいなので、
+// `screenAccessStatusForVerify` で分岐して**どちらの環境でも実際の検査**にする（skip にしない）。
+{
+  const testid = () =>
+    overlay.ev(
+      `(() => { const d = document.querySelector('[data-testid]'); return d ? d.getAttribute('data-testid') : '' })()`
+    )
+  const waitPrompt = (id, timeoutMs = 10000) =>
+    waitFor(overlay, `document.querySelector('[data-testid="${id}"]') ? '${id}' : ''`, { timeoutMs }).catch(
+      () => ''
+    )
+  const clickButton = (text) =>
+    overlay.ev(
+      `(() => { const b = [...document.querySelectorAll('button')].find(x => x.textContent.trim() === ${JSON.stringify(text)}); if (!b) return 'no-button'; b.click(); return 'ok' })()`
+    )
+  // `#screen` は userGesture 付きで押す（素の `ev` だと getDisplayMedia が InvalidStateError で止まりうる）
+  const pressShare = (page) =>
+    page.send('Runtime.evaluate', {
+      expression: "document.getElementById('screen').click()",
+      userGesture: true
+    })
+  const waitResult = (page) =>
+    waitFor(
+      page,
+      "document.getElementById('result').textContent.includes('要求中') ? '' : document.getElementById('result').textContent",
+      { timeoutMs: 15000 }
+    ).catch(() => 'timeout')
+  const countDisplayCapture = (reason) =>
+    readLogLines(process.env.NEMO_USER_DATA_DIR).filter((line) => {
+      try {
+        const entry = JSON.parse(line)
+        return (
+          entry.event === 'display_capture.request' &&
+          (reason ? entry.reason === reason : entry.allowed === true)
+        )
+      } catch {
+        return false
+      }
+    }).length
+  // 案内（画面収録の許可が無い環境）はウィンドウのキューの先頭に居座るので、出たら必ず閉じる
+  const closeSystemMediaIfAny = async () => {
+    if ((await testid()) !== 'prompt-system-media') return false
+    await clickButton('閉じる')
+    await sleep(300)
+    return true
+  }
+
+  const status = await ui.ev('window.nemo.screenAccessStatusForVerify()')
+  const granted = status === 'granted'
+  console.log(
+    `      画面収録の TCC: ${status}（${granted ? 'トラック取得まで見る' : '案内ダイアログの経路を見る'}）`
+  )
+
+  const key = await ui.ev(`window.nemo.createTab('${PAGES}/media.html').then(k => k)`)
+  await waitFor(
+    ui,
+    `window.nemo.getWindowState().then(s => s.tabs.some(t => t.key === ${JSON.stringify(key)} && !t.loading))`
+  )
+  const page = await connectTo(CDP, 'media.html')
+  await waitFor(page, "document.getElementById('screen') ? 'ready' : ''")
+
+  // 1. 権限ダイアログは「画面の共有」（getDisplayMedia は media + mediaTypes 空で届く。読み替えの検査）
+  await pressShare(page)
+  const kind = await waitPrompt('prompt-permission')
+  const title = kind ? await overlay.ev(`document.querySelector('.dialog-title b')?.textContent ?? ''`) : ''
+  check('画面共有の権限ダイアログが出る', kind === 'prompt-permission', kind || '出ない')
+  check('文言は「画面の共有」（「カメラとマイク」ではない）', title === '画面の共有', title)
+
+  // 2. 記憶せずに「許可しない」→ NotAllowedError。ダイアログは残らない
+  await overlay.ev(
+    `(() => { const c = document.querySelector('.check input'); if (c?.checked) c.click(); return 'ok' })()`
+  )
+  await clickButton('許可しない')
+  const denied = await waitResult(page)
+  check('許可しないと NotAllowedError', denied.includes('NotAllowedError'), denied.replace(/\n/g, ' / '))
+  await sleep(300)
+  check('拒否のあとダイアログが残らない', (await testid()) === '', await testid())
+
+  // 3. 記憶しなかったので、もう一度押すと権限ダイアログがもう一度出る（2. の根拠）
+  await pressShare(page)
+  check(
+    '記憶しなかった拒否は次の要求でまた聞く',
+    (await waitPrompt('prompt-permission')) === 'prompt-permission'
+  )
+  // 「今後も同じ扱い」を外して許可 → 一時的な同意だけでハンドラが通る（同じ確認が 2 回出ない）
+  await overlay.ev(
+    `(() => { const c = document.querySelector('.check input'); if (c?.checked) c.click(); return 'ok' })()`
+  )
+  await clickButton('許可する')
+  const once = await waitResult(page)
+  const secondPrompt = await waitPrompt('prompt-permission', 1500)
+  check(
+    '記憶しない許可でも「画面の共有」の確認は 1 回だけ',
+    secondPrompt === '',
+    secondPrompt || '出なかった'
+  )
+  check(
+    '1 枚のときはディスプレイ選択が出ない',
+    (await waitPrompt('prompt-display-choice', 1500)) === '',
+    '1 秒半待って prompt-display-choice が出ない'
+  )
+  if (granted) {
+    check('画面共有のトラックが取れる', once.includes('画面共有: OK'), once.replace(/\n/g, ' / '))
+    check('ログに allowed: true', countDisplayCapture(null) >= 1, `${countDisplayCapture(null)} 件`)
+  } else {
+    check(
+      '画面収録の許可が無いと案内が出る',
+      (await waitPrompt('prompt-system-media')) === 'prompt-system-media'
+    )
+    const heading = await overlay.ev(`document.querySelector('.dialog-title')?.textContent ?? ''`)
+    check('案内の見出しは「画面収録の許可が必要」', heading.includes('画面収録の許可が必要'), heading)
+    check('閉じると案内が消える', (await closeSystemMediaIfAny()) && (await testid()) === '')
+    check('ログに os_denied', countDisplayCapture('os_denied') >= 1, `${countDisplayCapture('os_denied')} 件`)
+  }
+  // 次の節のために記憶ありで許可しておく
+  await pressShare(page)
+  await waitPrompt('prompt-permission')
+  await clickButton('許可する')
+  await waitResult(page)
+  await closeSystemMediaIfAny()
+
+  // 4. 偽ディスプレイ 2 枚 → 権限は記憶済みなのでディスプレイ選択が直接出る
+  const fakeTotal = await ui.ev('window.nemo.setFakeDisplaysForVerify(2)')
+  check('偽ディスプレイを足すと 3 枚以上', fakeTotal >= 3, `${fakeTotal} 枚`)
+  await pressShare(page)
+  const choice = await waitPrompt('prompt-display-choice')
+  check(
+    '2 枚以上ならディスプレイ選択が出る（権限は聞き直さない）',
+    choice === 'prompt-display-choice',
+    choice || '出ない'
+  )
+  const buttons = JSON.parse(
+    await overlay.ev(
+      `JSON.stringify([...document.querySelectorAll('.display-choices button')].map(b => b.textContent))`
+    )
+  )
+  check(
+    '先頭は検証用ディスプレイ 1',
+    buttons[0]?.startsWith('検証用ディスプレイ 1') === true,
+    JSON.stringify(buttons)
+  )
+  check(
+    '要求元のディスプレイは末尾で印付き',
+    buttons.at(-1)?.includes('（このタブを開いている画面）') === true,
+    JSON.stringify(buttons.at(-1))
+  )
+  const focused = await overlay.ev(`document.activeElement?.textContent ?? ''`)
+  check('先頭にフォーカスがある（Enter で選べる）', focused === buttons[0], focused)
+  const fits = JSON.parse(
+    await overlay.ev(
+      `(() => { const d = document.querySelector('.dialog'); return JSON.stringify({ bottom: d.getBoundingClientRect().bottom, inner: window.innerHeight }) })()`
+    )
+  )
+  check('ダイアログが overlay に収まる', fits.bottom <= fits.inner, JSON.stringify(fits))
+  // Esc でキャンセル（UI View の keydown なので CDP のキーで届く）
+  await overlay.send('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: 'Escape',
+    code: 'Escape',
+    windowsVirtualKeyCode: 27
+  })
+  await overlay.send('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: 'Escape',
+    code: 'Escape',
+    windowsVirtualKeyCode: 27
+  })
+  const cancelled = await waitResult(page)
+  check(
+    'Esc でキャンセル → ページ側は失敗',
+    cancelled.includes('画面共有: NG'),
+    cancelled.replace(/\n/g, ' / ')
+  )
+  check('ログに cancelled', countDisplayCapture('cancelled') >= 1, `${countDisplayCapture('cancelled')} 件`)
+  await sleep(300)
+  check('キャンセルのあとダイアログが残らない', (await testid()) === '', await testid())
+
+  // 5. 先頭を選ぶ（偽の id は主ディスプレイの source に解決される）
+  const allowedBefore = countDisplayCapture(null)
+  await pressShare(page)
+  await waitPrompt('prompt-display-choice')
+  await overlay.ev(`(document.querySelector('.display-choices button').click(), 'ok')`)
+  const chosen = await waitResult(page)
+  if (granted) {
+    check(
+      '選んだディスプレイのトラックが取れる',
+      chosen.includes('画面共有: OK'),
+      chosen.replace(/\n/g, ' / ')
+    )
+    check(
+      'ログの allowed: true が増える',
+      countDisplayCapture(null) === allowedBefore + 1,
+      `${countDisplayCapture(null)} 件`
+    )
+  } else {
+    check(
+      '（許可なし）選んでも案内が出る',
+      (await waitPrompt('prompt-system-media')) === 'prompt-system-media'
+    )
+    await closeSystemMediaIfAny()
+  }
+
+  // 後始末: 偽ディスプレイを戻し、トラックを止める（収録インジケータを残さない）
+  await ui.ev('window.nemo.setFakeDisplaysForVerify(0)')
+  await page.ev(`(document.getElementById('stop').click(), 'ok')`)
+  await closeSystemMediaIfAny()
+  page.close()
+  await ui.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
+}
+
 /* ------------------------------------------------------------------ *
  * 2本指スワイプ / スーパーリロード（dev 常用で足りなかった分）
  * ------------------------------------------------------------------ */

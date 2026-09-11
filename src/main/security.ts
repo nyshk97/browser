@@ -1,4 +1,4 @@
-import { app, desktopCapturer, shell, webContents, type Session, type WebContents } from 'electron'
+import { app, desktopCapturer, screen, shell, webContents, type Session, type WebContents } from 'electron'
 import { log, logError, redactUrl } from './log.js'
 import {
   ensureSystemMediaAccess,
@@ -6,8 +6,16 @@ import {
   mediaCheckKinds,
   mediaKindsFor,
   openMediaSettings,
-  type MediaKind
+  screenAccessStatus,
+  type SettingsMediaKind
 } from './media-access.js'
+import {
+  displayLabelsForLog,
+  effectivePermission,
+  matchSourceForDisplay,
+  needsDisplayChoice,
+  orderDisplaysForShare
+} from '../shared/display-share.js'
 import { ask } from './prompts.js'
 import { handleHttpAuthLogin } from './http-auth.js'
 import { getDecision, getSchemeDecision, rememberDecision, rememberScheme } from './store/permissions.js'
@@ -18,7 +26,7 @@ import {
   normalizeNavigationInput as normalizeNavigationInputImpl,
   UI_SCHEME_URL_PREFIX
 } from '../shared/navigation-policy.js'
-import type { PermissionKind } from '../shared/types.js'
+import type { PermissionKind, ShareDisplayChoice } from '../shared/types.js'
 
 /**
  * セキュリティ境界（計画 1-0）。
@@ -217,19 +225,29 @@ async function handlePermissionRequest(
   }
 
   const origin = normalizeOrigin(details.requestingUrl ?? contents.getURL())
-  if (!origin || !ASKABLE.has(permission as PermissionKind)) {
+  // `getDisplayMedia` は `media`（`mediaTypes` 空）として届く。「画面の共有」として聞き、記憶も分ける
+  // （`shared/display-share.js`）。
+  const effective = effectivePermission(
+    permission,
+    (details as Electron.MediaAccessPermissionRequest).mediaTypes
+  )
+  if (!origin || !ASKABLE.has(effective as PermissionKind)) {
     log('permission.request', { partition: 'page', permission, allowed: false, reason: 'not_askable' })
     return false
   }
 
   const windowId = resolveWindowId(contents)
-  if (!(await decidePermission(origin, permission as PermissionKind, windowId, permissionScope))) {
+  if (!(await decidePermission(origin, effective as PermissionKind, windowId, permissionScope))) {
     return false
   }
 
+  // 画面共有はこの後 `setDisplayMediaRequestHandler` にも来る。「今後も同じ扱い」を外して許可したときに
+  // 同じ確認を続けて 2 回出さないよう、この要求ぶんの同意を短時間だけ覚える（ハンドラ側で消費する）。
+  if (effective === 'display-capture') noteDisplayCaptureConsent(contents.id, origin)
+
   // Nemo が許可した後に **OS の許可**を取る。ここを通さないと、ページは
   // 「許可されているのに無音・真っ暗」になる（`media-access.ts`）。
-  const kinds = mediaKindsFor(permission, details)
+  const kinds = mediaKindsFor(effective, details)
   if (kinds.length === 0) return true
 
   const denied = await ensureSystemMediaAccess(kinds)
@@ -275,7 +293,7 @@ async function decidePermission(
 }
 
 /** OS 側で拒まれていることを伝えて、システム設定への導線を出す。 */
-async function promptSystemMediaSettings(windowId: number | null, kind: MediaKind): Promise<void> {
+async function promptSystemMediaSettings(windowId: number | null, kind: SettingsMediaKind): Promise<void> {
   if (windowId === null) return
   const answer = await ask(windowId, { type: 'system-media', kind })
   if (answer?.kind === 'system-media' && answer.openSettings) openMediaSettings(kind)
@@ -289,39 +307,122 @@ async function promptSystemMediaSettings(windowId: number | null, kind: MediaKin
  * `setDisplayMediaRequestHandler` を設定しないと、Electron では
  * `getDisplayMedia()` が **必ず失敗する**（Meet の「画面を共有できません」はこれ）。
  *
- * macOS では OS のネイティブ共有ピッカーに任せる（`useSystemPicker`）。
- * 「どれを共有するか」をユーザーが OS のピッカーで選ぶこと自体が同意になるので、
- * 使える環境ではこのハンドラは呼ばれない。
- * 呼ばれた場合（ピッカーが使えない環境）は Nemo のダイアログで確認してから画面全体を渡す。
+ * **macOS のネイティブ共有ピッカー（`useSystemPicker`）は使わない。**
+ * 2 画面で画面全体を共有するには、共有したい側のディスプレイのバー右上「画面全体を共有」まで
+ * マウスを持っていく必要があり、しかも 10 秒以内に選ばないと `AbortError: Timeout starting video source`
+ * で落ちる（実測 10002 ms）。Meet のタブは最初のウィンドウから動かせないので、
+ * 「Meet は 1 画面目に置いたまま、もう片方を共有」が毎回この早押しになっていた。
+ *
+ * 代わりに常に**ディスプレイ全体**を渡し、2 枚以上のときだけ Nemo のダイアログでどの画面かを選ばせる
+ * （`shared/display-share.js`）。同意は `getDisplayMedia` が先に投げてくる permission 要求
+ * （`display-capture` に読み替え済み）で取っている。
+ *
+ * ピッカーをやめた代償として Nemo.app に macOS の「画面収録」の許可が要る（初回の `getSources` で OS が聞く。
+ * 許可後は再起動が要る）。
  */
 function installDisplayMediaHandler(
   session: Session,
   resolveWindowId: (contents: WebContents) => number | null,
   permissionScope: string | null
 ): void {
-  session.setDisplayMediaRequestHandler(
-    (request, callback) => {
-      void handleDisplayMediaRequest(request, resolveWindowId, permissionScope).then(callback)
-    },
-    { useSystemPicker: true }
-  )
+  session.setDisplayMediaRequestHandler((request, callback) => {
+    void handleDisplayMediaRequest(request, resolveWindowId, permissionScope).then(callback)
+  })
 }
 
-/** 要求元のフレームから、ダイアログを出すウィンドウを引く（破棄済みなら null）。 */
-function displayMediaWindowId(
-  frame: Electron.WebFrameMain,
-  resolveWindowId: (contents: WebContents) => number | null
-): number | null {
+/** 要求元のフレームの WebContents（破棄済みなら null）。 */
+function contentsFromFrame(frame: Electron.WebFrameMain): WebContents | null {
   try {
-    const contents = webContents.fromFrame(frame)
-    return contents ? resolveWindowId(contents) : null
+    return webContents.fromFrame(frame) ?? null
   } catch {
     return null
   }
 }
 
-/** 空の `Streams` を返すと、ページ側は拒否（`NotAllowedError`）になる。 */
-const DENY_DISPLAY_MEDIA: Electron.Streams = {}
+/**
+ * permission 要求で取った画面共有の同意（`contents.id|origin` → 時刻）。
+ * 「今後も同じ扱い」を外して許可したときは記憶に残らないので、直後の `setDisplayMediaRequestHandler` で
+ * 同じ確認をもう一度出さないためにここで持つ。ハンドラ側が 1 回で消費する。
+ */
+const recentDisplayCaptureConsent = new Map<string, number>()
+const DISPLAY_CAPTURE_CONSENT_TTL_MS = 30_000
+
+function noteDisplayCaptureConsent(contentsId: number, origin: string): void {
+  recentDisplayCaptureConsent.set(`${contentsId}|${origin}`, Date.now())
+}
+
+function takeDisplayCaptureConsent(contentsId: number, origin: string): boolean {
+  const key = `${contentsId}|${origin}`
+  const at = recentDisplayCaptureConsent.get(key)
+  recentDisplayCaptureConsent.delete(key)
+  // 古い同意はついでに捨てる（要求のたびに数個しか溜まらない）
+  for (const [k, t] of recentDisplayCaptureConsent) {
+    if (Date.now() - t > DISPLAY_CAPTURE_CONSENT_TTL_MS) recentDisplayCaptureConsent.delete(k)
+  }
+  return at !== undefined && Date.now() - at <= DISPLAY_CAPTURE_CONSENT_TTL_MS
+}
+
+/**
+ * 拒否は **`null`** を返す（Electron 本体の検証文言: 「streams callback must be called with null or a
+ * valid object」）。空の `{}` を返すと `Video was requested, but no video stream was provided` が
+ * main の unhandled rejection になり、ページ側も `AbortError: Invalid capture constraints` という
+ * 分かりにくいエラーになる（自走検証の「main の例外」検査で踏んだ）。型は `Streams` を要求するので cast する。
+ */
+const DENY_DISPLAY_MEDIA = null as unknown as Electron.Streams
+
+type WindowBoundsResolver = (windowId: number) => Electron.Rectangle | null
+let resolveWindowBounds: WindowBoundsResolver = () => null
+
+/**
+ * ウィンドウ ID からウィンドウの矩形を引く口（要求元のタブが乗っているディスプレイを特定するため）。
+ * `registry.ts` はこのモジュールを import しているので、逆向きの import を避けて index.ts から差す。
+ */
+export function setWindowBoundsResolver(resolver: WindowBoundsResolver): void {
+  resolveWindowBounds = resolver
+}
+
+/**
+ * 自走検証用の偽ディスプレイ（主ディスプレイの複製）。検証環境のディスプレイは 1 枚しか無いので、
+ * 2 枚以上のダイアログはこれで出す。**`NEMO_VERIFY_DIAGNOSTICS=1` かつ未パッケージのときだけ**
+ * `ipc.ts` から設定される（本番では常に 0）。偽の id は source の突き合わせで主ディスプレイに解決する。
+ */
+let fakeDisplayCount = 0
+const FAKE_DISPLAY_ID_OFFSET = 1_000_000
+
+export function setFakeDisplayCount(count: number): number {
+  fakeDisplayCount = Math.max(0, Math.min(8, Math.floor(count)))
+  return listDisplaysForShare().length
+}
+
+function listDisplaysForShare(): Omit<ShareDisplayChoice, 'isRequester'>[] {
+  const real = screen.getAllDisplays().map((d) => ({
+    id: d.id,
+    label: d.label,
+    width: d.bounds.width,
+    height: d.bounds.height
+  }))
+  if (fakeDisplayCount === 0) return real
+  const primary = screen.getPrimaryDisplay()
+  const fakes = Array.from({ length: fakeDisplayCount }, (_, i) => ({
+    id: FAKE_DISPLAY_ID_OFFSET + i + 1,
+    label: `検証用ディスプレイ ${i + 1}`,
+    width: primary.bounds.width,
+    height: primary.bounds.height
+  }))
+  return [...fakes, ...real]
+}
+
+/** 偽ディスプレイの id を、source を持つ実ディスプレイ（主）の id に戻す。 */
+function sourceDisplayId(displayId: number): number {
+  return displayId > FAKE_DISPLAY_ID_OFFSET ? screen.getPrimaryDisplay().id : displayId
+}
+
+/** 要求元のタブが乗っているディスプレイ。ウィンドウが引けなければ null。 */
+function requesterDisplayId(windowId: number | null): number | null {
+  if (windowId === null) return null
+  const bounds = resolveWindowBounds(windowId)
+  return bounds ? screen.getDisplayMatching(bounds).id : null
+}
 
 async function handleDisplayMediaRequest(
   request: Electron.DisplayMediaRequestHandlerHandlerRequest,
@@ -335,26 +436,80 @@ async function handleDisplayMediaRequest(
     return DENY_DISPLAY_MEDIA
   }
 
-  const windowId = displayMediaWindowId(frame, resolveWindowId)
+  const contents = contentsFromFrame(frame)
+  const windowId = contents ? resolveWindowId(contents) : null
 
-  if (!(await decidePermission(origin, 'display-capture', windowId, permissionScope))) {
+  // 直前の permission 要求で同意済みならもう一度は聞かない。それ以外（記憶 / 未決定）は通常の判定
+  const consented = contents !== null && takeDisplayCaptureConsent(contents.id, origin)
+  if (!consented && !(await decidePermission(origin, 'display-capture', windowId, permissionScope))) {
     return DENY_DISPLAY_MEDIA
   }
 
-  try {
-    // ピッカーが無い経路なので、選ばせずに画面全体を渡す（ウィンドウ単位は選べない）。
-    const sources = await desktopCapturer.getSources({ types: ['screen'] })
-    const video = sources[0]
-    if (!video) {
-      log('display_capture.request', { allowed: false, reason: 'no_source' })
+  const displays = orderDisplaysForShare(listDisplaysForShare(), requesterDisplayId(windowId))
+  let chosen: (typeof displays)[number] | null = displays[0] ?? null
+  if (needsDisplayChoice(displays)) {
+    if (windowId === null) {
+      log('display_capture.request', { allowed: false, reason: 'no_window' })
       return DENY_DISPLAY_MEDIA
     }
-    log('display_capture.request', { allowed: true, fallback: true })
-    return { video }
+    const answer = await ask(windowId, { type: 'display-choice', origin, displays })
+    const displayId = answer?.kind === 'display-choice' ? answer.displayId : null
+    // renderer から来る id は信用しない: 出した一覧に無ければキャンセル扱い
+    chosen = displayId === null ? null : (displays.find((d) => d.id === displayId) ?? null)
+    if (!chosen) {
+      log('display_capture.request', { allowed: false, reason: 'cancelled', displays: displays.length })
+      return DENY_DISPLAY_MEDIA
+    }
+  }
+
+  // OS の許可状態は `getSources` の**後**で見る。初回はこの呼び出しで OS の画面収録ダイアログが出る
+  // （`media-access.ts` の `screenAccessStatus`）。サムネイルは要らない（ダイアログは名前とサイズで選ぶ）
+  let sources: Electron.DesktopCapturerSource[] = []
+  try {
+    sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } })
   } catch (error) {
     logError('display_capture.failed', error, {})
+  }
+  const status = screenAccessStatus()
+  if (sources.length === 0 || status !== 'granted') {
+    log('display_capture.request', { allowed: false, reason: 'os_denied', status, sources: sources.length })
+    // 案内は待たない（ページを止めないため）
+    void promptSystemMediaSettings(windowId, 'screen')
     return DENY_DISPLAY_MEDIA
   }
+
+  if (!chosen) {
+    log('display_capture.request', { allowed: false, reason: 'no_display' })
+    return DENY_DISPLAY_MEDIA
+  }
+  let video = matchSourceForDisplay(sources, sourceDisplayId(chosen.id))
+  let reason: string | undefined
+  if (!video) {
+    if (displays.length >= 2) {
+      // 選んでいない画面を黙って渡すと漏洩になる。拒否する
+      log('display_capture.request', {
+        allowed: false,
+        reason: 'no_matching_source',
+        displays: displays.length
+      })
+      return DENY_DISPLAY_MEDIA
+    }
+    // 1 枚だけのとき、`display_id` が空で返る環境の保険
+    video = sources[0] ?? null
+    reason = 'fallback_first'
+  }
+  if (!video) {
+    log('display_capture.request', { allowed: false, reason: 'no_source' })
+    return DENY_DISPLAY_MEDIA
+  }
+  log('display_capture.request', {
+    allowed: true,
+    displays: displays.length,
+    chosen: displays.indexOf(chosen),
+    labels: displayLabelsForLog(displays),
+    ...(reason ? { reason } : {})
+  })
+  return { video }
 }
 
 /** `https://example.com` の形にする。ここを通らないものは permission を扱わない。 */

@@ -610,10 +610,31 @@ sqlite3 "$HOME/Library/Application Support/com.apple.TCC/TCC.db" \
   "select service,client,auth_value from access where client like '%nemo%';"
 ```
 
-画面共有は **macOS のネイティブ共有ピッカー**（`useSystemPicker`）に出る。
-画面上部に「ウインドウまたは画面全体を共有」のバーが出れば経路は通っている
-（`screencapture -x` で確認できる）。選ばずに放置すると
-ページ側は `AbortError: Timeout starting video source` になる。
+画面共有は **macOS のネイティブ共有ピッカーを使わず、常にディスプレイ全体を渡す**
+（`src/shared/display-share.js`。ピッカーは 2 画面で「画面全体」を選ぶのに 10 秒の早押しになっていた）。
+ディスプレイが 2 枚以上のときだけ Nemo のダイアログ（`prompt-display-choice`）でどの画面かを選ぶ。
+1 枚なら出ない。検証環境は 1 枚なので、2 枚以上は
+`window.nemo.setFakeDisplaysForVerify(2)`（`NEMO_VERIFY_DIAGNOSTICS=1` かつ未パッケージのときだけ生える。
+主ディスプレイの複製を足す。0 で戻す）で節の中から切り替える。**起動 env では渡さない**
+（`verify-all` のアプリは 1 回しか起動しないので、「1 枚のときは出ない」の検査まで 2 枚に見えてしまう）。
+
+- `getDisplayMedia` の権限ダイアログは「**画面の共有**」の文言で出る（Electron は `media` + `mediaTypes` 空で
+  投げてくるのを `display-capture` に読み替えている）。「カメラとマイク」が出たら読み替えが外れている
+- 拒否は `setDisplayMediaRequestHandler` の callback に **`null`**。`{}` を返すと main に
+  `Video was requested, but no video stream was provided` の unhandled rejection が残り、
+  verify-all の「main の例外」検査で落ちる
+- **画面収録の TCC はシステム DB 側**なので上の `sqlite3` では読めない。
+  `window.nemo.screenAccessStatusForVerify()`（= `getMediaAccessStatus('screen')`）で見る。
+  **一度も聞かれていない状態でも `denied`** を返す（`not-determined` は返らない）ので、
+  `getSources` の**前**にこの値で拒否してはいけない。初回の `desktopCapturer.getSources` は
+  「Failed to get sources.」で**即座に**失敗し（ダイアログを待たない）、同時に OS の
+  「画面収録」ダイアログ（システム設定を開く / 拒否）が出る。許可したら **Nemo の再起動**が要る
+- 許可済みだと、共有のたびに macOS が「システムプライベートウインドウピッカーをバイパスして…」の
+  確認（許可 / システム設定を開く）を出すことがある。これはピッカーを使わないアプリへの OS 側の確認で、
+  「許可」で続く（自走検証はこのダイアログに触らない。非同期で出るので検査は止まらない）
+- 自走検証（`verify:only phase1` の「画面共有」の節）は TCC が `granted` かどうかで分岐し、
+  granted ならトラック取得まで、そうでなければ `prompt-system-media`（「画面収録の許可が必要」）が出て
+  閉じられることを見る（どちらも実検査。skip にしない）
 
 **まっさらな状態（許可も拒否もしていない）の `permissions.query({name:'microphone'})` は
 `'prompt'` が正**（`permissions-query-shim` の読み替え。シークレットウィンドウは毎回この状態になる）。

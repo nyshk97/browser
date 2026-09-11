@@ -655,7 +655,33 @@ export interface ExternalProtocolPrompt {
 export interface SystemMediaPrompt {
   type: 'system-media'
   id: string
-  kind: 'microphone' | 'camera'
+  /**
+   * `screen` は画面共有（`desktopCapturer`）に要る「画面収録」。
+   * マイク・カメラと違って OS の許可ダイアログはアプリから出せず、初回の取得時に OS が出す。
+   * 許可した後は Nemo の再起動が要る（文言も別）。
+   */
+  kind: 'microphone' | 'camera' | 'screen'
+}
+
+/** 画面共有のダイアログに出すディスプレイ 1 枚。 */
+export interface ShareDisplayChoice {
+  id: number
+  label: string
+  width: number
+  height: number
+  /** 要求元のタブが乗っているディスプレイ（末尾に回して印を付ける）。 */
+  isRequester: boolean
+}
+
+/**
+ * 画面共有でどのディスプレイを渡すかを選ばせる（ディスプレイが 2 枚以上のときだけ出る）。
+ * 共有は常にディスプレイ全体（ウィンドウ単位は無い）。根拠は `shared/display-share.js`。
+ */
+export interface DisplayChoicePrompt {
+  type: 'display-choice'
+  id: string
+  origin: string
+  displays: ShareDisplayChoice[]
 }
 
 export type Prompt =
@@ -664,6 +690,7 @@ export type Prompt =
   | CertificatePrompt
   | ExternalProtocolPrompt
   | SystemMediaPrompt
+  | DisplayChoicePrompt
   | NoticePrompt
 
 /* ------------------------------------------------------------------ *
@@ -1166,6 +1193,17 @@ export interface NemoUiApi {
    * `before-input-event` に届かないので、Peek / 小窓の Esc はここで撃つ。送れるのは Esc だけ。
    */
   pressKeyForVerify(key: string, keyName: 'Escape'): Promise<boolean>
+  /**
+   * 画面共有のダイアログを検証用に 2 枚以上のディスプレイで出す（**本番では何もしない**）。
+   * 検証環境のディスプレイは 1 枚なので、主ディスプレイの複製を `count` 枚足して見せる。
+   * 0 で戻す。戻り値は今の枚数（実ディスプレイを含む）。
+   */
+  setFakeDisplaysForVerify(count: number): Promise<number>
+  /**
+   * macOS の「画面収録」の許可状態（`getMediaAccessStatus('screen')`。**本番では何もしない**）。
+   * 自走検証が「トラックが取れる環境か」「案内ダイアログが出る環境か」を分けるのに読む。
+   */
+  screenAccessStatusForVerify(): Promise<string>
 
   /** オーバーレイの現在の状態（購読より前に起きた分を取りこぼさないため）。 */
   getOverlayState(): Promise<{
@@ -1258,3 +1296,5 @@ export type PromptAnswer =
   | { kind: 'certificate'; proceed: boolean }
   | { kind: 'external-protocol'; open: boolean; remember: boolean }
   | { kind: 'system-media'; openSettings: boolean }
+  /** `displayId` が null ならキャンセル（ページ側は `NotAllowedError`）。 */
+  | { kind: 'display-choice'; displayId: number | null }

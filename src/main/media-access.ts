@@ -13,10 +13,30 @@ import { log, logError } from './log.js'
 
 export type MediaKind = 'microphone' | 'camera'
 
+/**
+ * システム設定への導線を持つ種類。`screen`（画面収録）は `MediaKind` に**入れない**:
+ * `askForMediaAccess` が受けないので `ensureSystemMediaAccess` の分岐にならず、
+ * permission 要求からも導かれない（画面共有は `desktopCapturer` の初回取得で OS が聞く）。
+ */
+export type SettingsMediaKind = MediaKind | 'screen'
+
 /** システム設定の該当ペインを開く URL。 */
-const SETTINGS_URL: Record<MediaKind, string> = {
+const SETTINGS_URL: Record<SettingsMediaKind, string> = {
   microphone: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
-  camera: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Camera'
+  camera: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Camera',
+  screen: 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
+}
+
+/**
+ * macOS の「画面収録」の許可状態。**`not-determined` は返らない**見込み
+ * （Chromium が `CGPreflightScreenCaptureAccess` の真偽値を許可 / 拒否の二択に潰す）ので、
+ * これを `desktopCapturer.getSources` の**前**に見て拒否してはいけない —— OS のダイアログが
+ * 一度も出ず、システム設定の一覧にも Nemo が載らず、永久に共有できなくなる。
+ * macOS 以外は常に granted 扱い。
+ */
+export function screenAccessStatus(): string {
+  if (process.platform !== 'darwin') return 'granted'
+  return systemPreferences.getMediaAccessStatus('screen')
 }
 
 /**
@@ -92,7 +112,7 @@ export async function ensureSystemMediaAccess(kinds: readonly MediaKind[]): Prom
 }
 
 /** システム設定の該当ペインを開く。 */
-export function openMediaSettings(kind: MediaKind): void {
+export function openMediaSettings(kind: SettingsMediaKind): void {
   void shell.openExternal(SETTINGS_URL[kind]).catch((error: unknown) => {
     logError('media.settings_open_failed', error, { kind })
   })

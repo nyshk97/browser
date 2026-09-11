@@ -20,6 +20,8 @@ export function PromptDialog({ prompt }: { prompt: Prompt }): React.JSX.Element 
       return <ExternalProtocolPrompt prompt={prompt} />
     case 'system-media':
       return <SystemMediaPrompt prompt={prompt} />
+    case 'display-choice':
+      return <DisplayChoicePrompt prompt={prompt} />
     case 'notice':
       return <NoticePrompt prompt={prompt} />
   }
@@ -101,12 +103,16 @@ function PermissionPrompt({
 
 const SYSTEM_MEDIA_LABEL: Record<string, string> = {
   microphone: 'マイク',
-  camera: 'カメラ'
+  camera: 'カメラ',
+  screen: '画面収録'
 }
 
 /**
  * macOS 側でマイク / カメラが拒否されている、という案内。
  * Nemo で許可しても OS が渡さないので、システム設定に誘導する。
+ *
+ * 画面収録（`screen`）は文言が違う: OS の「許可しますか」が同時に出ている初回にも出るので
+ * 「拒否されています」とは書かず、許可後に Nemo の再起動が要ることを伝える。
  */
 function SystemMediaPrompt({
   prompt
@@ -114,14 +120,24 @@ function SystemMediaPrompt({
   prompt: Extract<Prompt, { type: 'system-media' }>
 }): React.JSX.Element {
   const label = SYSTEM_MEDIA_LABEL[prompt.kind] ?? prompt.kind
+  const isScreen = prompt.kind === 'screen'
   return (
     <div className="dialog" data-testid="prompt-system-media">
       <div className="dialog-title">
-        macOS の設定で Nemo の<b>{label}</b>の使用が拒否されています
+        {isScreen ? (
+          <>
+            Nemo に<b>{label}</b>の許可が必要です
+          </>
+        ) : (
+          <>
+            macOS の設定で Nemo の<b>{label}</b>の使用が拒否されています
+          </>
+        )}
       </div>
       <div className="dialog-sub">
-        システム設定 &gt; プライバシーとセキュリティ &gt; {label} で Nemo をオンにしてから、
-        ページを読み込み直してください。
+        {isScreen
+          ? `システム設定 > プライバシーとセキュリティ > ${label} で Nemo をオンにして、Nemo を再起動してください。`
+          : `システム設定 > プライバシーとセキュリティ > ${label} で Nemo をオンにしてから、ページを読み込み直してください。`}
       </div>
       <div className="dialog-actions">
         <button
@@ -140,6 +156,64 @@ function SystemMediaPrompt({
           }
         >
           システム設定を開く
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 画面共有でどのディスプレイを渡すか（2 枚以上のときだけ出る。根拠は `shared/display-share.js`）。
+ *
+ * 先頭（要求元のタブが乗っていない側）に autoFocus を置き、Enter はボタン標準の動きに任せる。
+ * Esc はここで `preventDefault` してキャンセルにする —— 処理しないと Chromium が未処理キーとして
+ * NSWindow の responder chain に撃ち返し、メインウィンドウがフルスクリーンだと解けてしまう
+ * （v1.2.13 / 14 の小窓・Peek と同じ経路。`Overlay.tsx` はダイアログ中の Esc を意図的に無視している）。
+ * 修飾キー付きの Esc は macOS のシステム操作なので素通し。
+ */
+function DisplayChoicePrompt({
+  prompt
+}: {
+  prompt: Extract<Prompt, { type: 'display-choice' }>
+}): React.JSX.Element {
+  const first = useRef<HTMLButtonElement>(null)
+  useEffect(() => first.current?.focus(), [])
+  const answer = (displayId: number | null): void => {
+    void window.nemo.resolvePrompt(prompt.id, { kind: 'display-choice', displayId })
+  }
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || event.metaKey || event.ctrlKey || event.altKey) return
+      event.preventDefault()
+      void window.nemo.resolvePrompt(prompt.id, { kind: 'display-choice', displayId: null })
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [prompt.id])
+  return (
+    <div className="dialog" data-testid="prompt-display-choice">
+      <div className="dialog-title">{prompt.origin} と共有する画面を選んでください</div>
+      <div className="display-choices">
+        {prompt.displays.map((display, index) => (
+          <button
+            key={display.id}
+            type="button"
+            ref={index === 0 ? first : undefined}
+            className={index === 0 ? 'primary' : undefined}
+            data-display-id={display.id}
+            onClick={() => answer(display.id)}
+          >
+            <span className="display-name">{display.label || '名前のないディスプレイ'}</span>
+            <span className="display-meta">
+              {display.width}×{display.height}
+              {display.isRequester ? '（このタブを開いている画面）' : ''}
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="dialog-actions">
+        <button type="button" onClick={() => answer(null)}>
+          キャンセル
         </button>
       </div>
     </div>

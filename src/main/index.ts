@@ -1,7 +1,12 @@
 import { app, session } from 'electron'
 import { ElectronChromeExtensions } from 'electron-chrome-extensions'
 import { APP_ID, PAGE_PARTITION, UI_PARTITION, applyUserDataDir, channel, isDevChannel } from './paths.js'
-import { applySessionSecurityDefaults, installAuthHandler, installCertificateHandler } from './security.js'
+import {
+  applySessionSecurityDefaults,
+  installAuthHandler,
+  installCertificateHandler,
+  setWindowBoundsResolver
+} from './security.js'
 import { registerUiScheme, handleUiScheme } from './protocol.js'
 import {
   createExtensions,
@@ -186,6 +191,11 @@ app
 
     applySessionSecurityDefaults(pageSession, 'page', findWindowIdForPageContents)
     applySessionSecurityDefaults(uiSession, 'ui', findWindowIdForPageContents)
+    // 画面共有で「要求元のタブが乗っているディスプレイ」を引くため（security.ts は registry を import できない）
+    setWindowBoundsResolver((windowId) => {
+      const win = windowsById.get(windowId)
+      return win && !win.isDestroyed && !win.baseWindow.isDestroyed() ? win.baseWindow.getBounds() : null
+    })
     installCertificateHandler(findWindowIdForPageContents)
     installAuthHandler(findWindowIdForPageContents, (contents) => {
       // **strict な解決**。タブでない WebContents は自動入力の対象にしない

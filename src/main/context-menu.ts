@@ -8,6 +8,7 @@ import { log } from './log.js'
  * 項目は**ショートカットで代用できないものだけ**に絞る:
  * 戻る/進む/再読み込み/コピー系はキーで済むので載せない。
  *
+ * - リンクの上: リンクのアドレスをコピー
  * - 画像の上: 名前を付けて画像を保存 / 画像をコピー / 画像アドレスをコピー
  * - 常に: 検証（その座標の要素を DevTools で開く）
  *
@@ -17,7 +18,11 @@ import { log } from './log.js'
 export function attachContextMenu(wc: WebContents, window: () => BaseWindow | null): void {
   wc.on('context-menu', (_event, params) => {
     const template = buildContextMenuTemplate(wc, params)
-    log('context_menu.open', { mediaType: params.mediaType, items: template.length })
+    log('context_menu.open', {
+      mediaType: params.mediaType,
+      link: Boolean(params.linkURL),
+      items: template.length
+    })
     const target = window()
     if (!target || target.isDestroyed()) return
     Menu.buildFromTemplate(template).popup({ window: target })
@@ -26,9 +31,18 @@ export function attachContextMenu(wc: WebContents, window: () => BaseWindow | nu
 
 export function buildContextMenuTemplate(
   wc: WebContents,
-  params: Pick<Electron.ContextMenuParams, 'x' | 'y' | 'mediaType' | 'srcURL'>
+  params: Pick<Electron.ContextMenuParams, 'x' | 'y' | 'mediaType' | 'srcURL' | 'linkURL'>
 ): MenuItemConstructorOptions[] {
   const template: MenuItemConstructorOptions[] = []
+
+  // `<a href>` の上（画像リンクなら画像の項目より前に出す。Chrome と同じ並び）
+  if (params.linkURL) {
+    const href = params.linkURL
+    template.push(
+      { label: 'リンクのアドレスをコピー', click: () => clipboard.writeText(href) },
+      { type: 'separator' }
+    )
+  }
 
   if (params.mediaType === 'image' && params.srcURL) {
     const src = params.srcURL

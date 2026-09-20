@@ -1,5 +1,25 @@
 # Nemo
 
+## 起動中の Nemo に触らない
+
+**起動中の Nemo はユーザーの常用インスタンス。検証のために CDP で繋がない・タブを操作しない・kill しない。**
+dev 版（プロファイル `Nemo-dev`。`.nemo-run/<pid>.json` の `userData` で分かる）のことも、パッケージ版
+（`/Applications/Nemo.app`・プロファイル `Nemo`）のこともある。検証が要るときは VERIFY.md「使い捨ての userData」の手順で
+2 つ目を立てる（`extensions/` はリポジトリ内で共有なので書き換えない）。`mise run verify` が「Nemo が起動している」で
+止まり、それが `Nemo-dev` なら、依存しない作業（ドキュメント・ユニットテスト・lint）を先に済ませてから終了を頼む。
+なお **`.nemo-run` と `ps` の起動判定はリポジトリの Electron しか見ない**（`/Applications/Nemo.app` が動いていても素通りする）ので、
+「起動中でないから安全」の根拠にしない。
+
+**常用（パッケージ版）の main プロセスに `kill -USR1` を送らない。** dev では Node inspector が 9229 に開くが、
+パッケージ版（fuse `enableNodeCliInspectArguments: false`）は**ログも出さずにそのまま死ぬ**（2026-09-03 に使い捨てプロファイルの
+dist 版で実測）。固まったタブの調査は dev 版（CDP 9333）で再現し、`Debugger.enable` を先に入れてから `Debugger.pause` で取る。
+稼働中の常用版から取れるのは診断ログ（`tab.unresponsive`）と `sample <renderer pid>` のネイティブスタックまで。
+
+**ログインフォームで main が `EXC_BREAKPOINT (SIGTRAP)` で落ちるのは既知の Electron 側のバグ**（2026-09-04、Electron 41.10.6）。
+Chromium の `NOTREACHED "Unsuitable process reused for site"` = Electron #52644（再現なしで closed。43.0.0 でも発生）で、
+引き金は Bitwarden がフォーカス時に差し込む `chrome-extension://…/overlay/menu*.html` の OOPIF。2 回とも直前に Bitwarden の
+SW が入れ替わっていた。実プロファイルの複製でも再現できなかったので、同じスタックならアプリ側を掘らない。
+
 ## 自走検証を足すとき
 
 **「その検査が実際に走ったか」を実行件数で確かめる。**

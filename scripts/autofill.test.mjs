@@ -142,6 +142,7 @@ test('splitTel: 区切りを信じる / 数字だけなら桁で割る', () => {
 
 test('formatForElement: 欄の手がかりで書式を変える', () => {
   assert.equal(formatForElement('tel', VALUES, el({ placeholder: '09012345678' }), '電話番号'), '09012345678')
+  assert.equal(formatForElement('tel', VALUES, el({ placeholder: '090XXXXXXXX' }), '電話番号'), '09012345678')
   assert.equal(formatForElement('tel', VALUES, el(), '携帯電話（ハイフンなし）'), '09012345678')
   assert.equal(formatForElement('tel', VALUES, el({ maxLength: 11 }), '電話番号'), '09012345678')
   assert.equal(formatForElement('tel', VALUES, el(), '電話番号'), '090-1234-5678')
@@ -300,6 +301,28 @@ test('readJevAnswers: none・閾値未満・本人でない・形の違う答え
   const { decisions } = readJevAnswers(answers, [0, 1, 2, 3, 4, 5])
   assert.deepEqual([...decisions.keys()], [0])
   assert.equal(readJevAnswers(null, [0]).decisions.size, 0)
+})
+
+test('readJevAnswers: 2 枠以上の欄では姓・名・一括を同じ答えとみなして確率を合算する', () => {
+  // 実 Jev の答え（2026-09-27、姓 / 名の 2 枠）: family_name 0.53 / full_name 0.47、確信度 0.49
+  const answers = {
+    f0: { choice: 'family_name', confidence: 0.49, probabilities: { family_name: 0.53, full_name: 0.47 } },
+    own0: { noul: 0.95 },
+    f1: {
+      choice: 'family_name_kana',
+      confidence: 0.75,
+      probabilities: { family_name_kana: 0.77, full_name_kana: 0.21 }
+    },
+    own1: { noul: 0.95 },
+    f2: { choice: 'family_name', confidence: 0.9, probabilities: { family_name: 0.95 } },
+    own2: { noul: 0.95 }
+  }
+  const { decisions } = readJevAnswers(answers, [0, 1, 2], new Set([0, 1]))
+  assert.equal(decisions.get(0)?.option, 'full_name')
+  assert.ok((decisions.get(0)?.confidence ?? 0) >= 0.99)
+  assert.equal(decisions.get(1)?.option, 'full_name_kana')
+  assert.equal(decisions.get(2)?.option, 'family_name', '1 枠の欄は寄せない')
+  assert.equal(readJevAnswers(answers, [0], new Set()).decisions.size, 0, 'グループでなければ 0.49 は足切り')
 })
 
 test('resolveConflicts: 同じ項目は確信度の高い 1 か所に / email は重複可', () => {

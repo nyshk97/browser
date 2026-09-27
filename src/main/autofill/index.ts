@@ -125,6 +125,7 @@ async function runAutofillOnce(wc: WebContents, x: number, y: number): Promise<A
       result.jevError = 'no-key'
     } else {
       const chunks = buildJevRequests(collected, pending)
+      const groups = new Set(pending.filter((index) => (collected.fields[index]?.members.length ?? 0) > 1))
       const answers = await Promise.all(chunks.map((chunk) => askJev(key, chunk.body)))
       result.jevMs = Math.max(...answers.map((answer) => answer.ms))
       answers.forEach((answer, i) => {
@@ -134,7 +135,7 @@ async function runAutofillOnce(wc: WebContents, x: number, y: number): Promise<A
           result.jevError = answer.kind === 'http' ? `http-${answer.status}` : answer.kind
           return
         }
-        for (const [index, decision] of readJevAnswers(answer.answers, chunk.indexes).decisions) {
+        for (const [index, decision] of readJevAnswers(answer.answers, chunk.indexes, groups).decisions) {
           decisions.set(index, decision)
         }
       })

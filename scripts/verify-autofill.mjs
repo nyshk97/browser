@@ -110,7 +110,20 @@ const ANSWERS = {
   '氏名（予備）': 'full_name',
   'メール（予備）': 'email',
   '住所（予備）': 'address_full',
-  '電話（予備）': 'job_title'
+  '電話（予備）': 'job_title',
+  電話番号必須: 'tel'
+}
+/**
+ * 本物の Jev をまねた答え（見出し → [選択肢, 確率の分布]）。2 枠の氏名で 1 枠目の例「姓」に引っ張られる
+ * （2026-09-27 に実 Jev で測った値）。無ければ `ANSWERS` の選択肢を確信度 0.9 で返す
+ */
+const SPLIT_ANSWERS = {
+  氏名必須: ['family_name', { family_name: 0.53, full_name: 0.47 }, 0.49],
+  ふりがな必須: [
+    'family_name_kana',
+    { family_name_kana: 0.77, full_name_kana: 0.21, given_name_kana: 0.02 },
+    0.75
+  ]
 }
 const NOT_OWN = new Set(['ご紹介者のお名前', 'お問い合わせ内容'])
 
@@ -126,6 +139,11 @@ function jevAnswer(body) {
     if (id.startsWith('own')) {
       answers[id] = { type: 'noul', noul: NOT_OWN.has(label) ? 0.05 : 0.93 }
     } else {
+      const split = SPLIT_ANSWERS[label]
+      if (split) {
+        answers[id] = { type: 'choice', choice: split[0], confidence: split[2], probabilities: split[1] }
+        continue
+      }
       const choice = ANSWERS[label] ?? 'none'
       answers[id] = { type: 'choice', choice, confidence: 0.9, probabilities: { [choice]: 0.92 } }
     }
@@ -134,7 +152,7 @@ function jevAnswer(body) {
 }
 
 const server = http.createServer((req, res) => {
-  if (req.url === '/autofill.html' || req.url === '/autofill-efo.html') {
+  if (['/autofill.html', '/autofill-efo.html', '/autofill-kayac.html'].includes(req.url)) {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
     res.end(fs.readFileSync(path.join(projectRoot, 'test-pages', req.url.slice(1))))
     return
@@ -417,6 +435,47 @@ try {
     efo.close()
   }
 
+  /* ---- 6c. 姓名が 2 枠に分かれ、Jev が 1 枠目の例に引っ張られる形（実在の問い合わせフォームと同じ組み方） ---- */
+  {
+    const kayacKey = await ui.ev(
+      `window.nemo.createTab(${JSON.stringify(`${origin}/autofill-kayac.html`)}).then((k) => k)`
+    )
+    const kayac = await connectTo(cdp, '/autofill-kayac.html', { type: 'page' })
+    await waitFor(
+      kayac,
+      "document.readyState === 'complete' && document.querySelector('[name=tel]') ? 'ok' : ''"
+    )
+    const at = JSON.parse(
+      await kayac.ev(
+        "(() => { const r = document.querySelector('[name=tel]').getBoundingClientRect(); return JSON.stringify({ x: r.left + 5, y: r.top + 5 }) })()"
+      )
+    )
+    const kayacResult = await json(
+      `window.nemo.autofillForVerify(${JSON.stringify(kayacKey)}, ${at.x}, ${at.y})`
+    )
+    const kayacValues = JSON.parse(
+      await kayac.ev(
+        "JSON.stringify(Object.fromEntries([...document.querySelectorAll('input')].map((el) => [el.name, el.value])))"
+      )
+    )
+    const kayacWant = {
+      last_name: '山田',
+      first_name: '太郎',
+      last_name_kana: 'やまだ',
+      first_name_kana: 'たろう',
+      // 例が「090XXXXXXXX」ならハイフンなし
+      tel: '09012345678'
+    }
+    for (const [name, want] of Object.entries(kayacWant)) {
+      check(
+        `2 枠の姓名: ${name} に ${want}`,
+        kayacValues[name] === want,
+        `got=${JSON.stringify(kayacValues[name])} ${JSON.stringify(kayacResult)}`
+      )
+    }
+    kayac.close()
+  }
+
   /* ---- 7. Jev の失敗 ---- */
   const ruleOnly = {
     kana_sei: 'ヤマダ',
@@ -501,7 +560,7 @@ try {
   /* ---- 10. ログ ---- */
   const lines = readLogLines(userData)
   const runs = lines.filter((line) => line.includes('"event":"autofill.run"'))
-  check('autofill.run が実行回数ぶん出ている', runs.length === 7, `runs=${runs.length}`)
+  check('autofill.run が実行回数ぶん出ている', runs.length === 8, `runs=${runs.length}`)
   const logLeaks = SECRETS.filter((s) => lines.some((line) => line.includes(s)))
   check('診断ログに値・キー・パスフレーズが出ていない', logLeaks.length === 0, logLeaks.join(', '))
   const crashes = findUncaughtExceptions(userData)

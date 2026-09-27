@@ -189,6 +189,7 @@ export const OWNERS = new Map([
   ['src/renderer/components/Autofill.tsx', ['autofill']],
   ['test-pages/autofill.html', ['autofill']],
   ['test-pages/autofill-efo.html', ['autofill']],
+  ['test-pages/autofill-kayac.html', ['autofill']],
   ['scripts/autofill.test.mjs', ['autofill']],
   // メモリ・CPU の定期記録と UI 例外だけが読むモジュール（他のスイートは触らない）。
   // `index.ts` / `registry.ts` / `ipc.ts` / `main.tsx` に入れた配線はここに載せない（フルに倒す）

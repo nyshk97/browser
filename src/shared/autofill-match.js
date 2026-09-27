@@ -350,13 +350,27 @@ export function buildJevRequests(collected, fieldIndexes) {
  */
 
 /**
+ * 分割グループ（2 枠以上）で**同じ答えとみなす**選択肢。一括 → [一括, 部分...]。
+ *
+ * 「姓」「名」の 2 枠に分かれた氏名を聞くと、Jev は 1 枠目の例「姓」に引っ張られて
+ * `family_name` と答える（実在の問い合わせフォームで family_name 0.53 / full_name 0.47。
+ * 確信度 0.49 で足切りにも掛かった）。グループ全体としてはどれも「氏名」なので、確率を合算して一括に寄せる。
+ */
+const GROUP_EQUIVALENTS = {
+  full_name: ['full_name', 'family_name', 'given_name'],
+  full_name_kana: ['full_name_kana', 'family_name_kana', 'given_name_kana'],
+  full_name_roman: ['full_name_roman', 'family_name_roman', 'given_name_roman']
+}
+
+/**
  * Jev の答えを足切りする。形の違う答えは「決めない」に倒す（例外にしない）。
  *
  * @param {unknown} answers レスポンスの `answers`
  * @param {number[]} indexes このリクエストで聞いた欄
+ * @param {Set<number>} [groups] 分割グループ（2 枠以上）の欄。`GROUP_EQUIVALENTS` で答えを寄せる
  * @returns {{ decisions: Map<number, Decision>, rejected: number }}
  */
-export function readJevAnswers(answers, indexes) {
+export function readJevAnswers(answers, indexes, groups = new Set()) {
   /** @type {Map<number, Decision>} */
   const decisions = new Map()
   let rejected = 0
@@ -368,9 +382,23 @@ export function readJevAnswers(answers, indexes) {
       rejected += 1
       continue
     }
-    const option = choice['choice']
-    const confidence = choice['confidence']
+    let option = choice['choice']
+    let confidence = choice['confidence']
     const noul = own['noul']
+    const probabilities = choice['probabilities']
+    if (groups.has(index) && typeof option === 'string' && isRecord(probabilities)) {
+      const answered = option
+      for (const [whole, parts] of Object.entries(GROUP_EQUIVALENTS)) {
+        if (!parts.includes(answered)) continue
+        // 合算した確率を確信度の代わりにする（一括・姓・名に割れた分布は、グループとしては 1 つの答え）
+        const sum = parts.reduce((total, part) => {
+          const p = probabilities[part]
+          return total + (typeof p === 'number' ? p : 0)
+        }, 0)
+        option = whole
+        confidence = Math.max(typeof confidence === 'number' ? confidence : 0, Math.min(sum, 1))
+      }
+    }
     if (typeof option !== 'string' || !(option in JEV_OPTIONS) || option === 'none') continue
     if (typeof confidence !== 'number' || typeof noul !== 'number') {
       rejected += 1

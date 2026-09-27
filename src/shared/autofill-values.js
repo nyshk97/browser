@@ -135,11 +135,12 @@ export function formatForElement(option, values, element, hintText) {
     const digits = digitsOf(value)
     if (noHyphen || (element.maxLength !== null && element.maxLength <= 11)) return digits
     if (/\d-\d/.test(element.placeholder)) return (splitTel(value) ?? [digits]).join('-')
-    if (/^\d{10,11}$/.test(normalizeWidth(element.placeholder))) return digits
+    // 「09012345678」「090XXXXXXXX」のように区切りの無い例ならハイフンなし
+    if (/^[0-9X]{10,11}$/i.test(normalizeWidth(element.placeholder))) return digits
     return value
   }
   if (option === 'postal_code') {
-    if (noHyphen || element.maxLength === 7 || /^\d{7}$/.test(normalizeWidth(element.placeholder))) {
+    if (noHyphen || element.maxLength === 7 || /^[0-9X]{7}$/i.test(normalizeWidth(element.placeholder))) {
       return digitsOf(value)
     }
     return value

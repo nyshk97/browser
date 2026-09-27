@@ -1,0 +1,58 @@
+# フォーム自動入力の実サイト調査（scripts/autofill-survey.mjs）で開くページ。1 行 1 URL、# 以降はメモ。
+# **送信はしない**（開いて入力するだけ）。架空のプロフィールを入れる。2026-09-27 に集めた。
+
+# これまでに報告・確認したもの
+https://www.kayac.com/contact/form # th の label の for が実在しない欄を指す・姓名が 2 枠
+https://www.efo-cube.info/sample/ # th「ご住所」の中に郵便番号・都道府県… が段落で並ぶ
+https://req.qubo.jp/qubo/form/KZTxekEm # name が col__ の連番・「〒」だけの見出し
+https://corporate.irusiru.jp/contact # Brevo（sibforms.com）の iframe
+
+# 企業の問い合わせ
+https://jpn.nec.com/contact/ # 電話 3 分割・郵便番号 2 分割・都道府県 select
+https://www.kagoya.jp/inquiry/ # Mautic・name がピンイン
+https://b-risk.jp/contact/ # Contact Form 7・見積もり型
+https://open-cage.com/contact/ # Contact Form 7
+https://2inc.org/contact/ # 最小構成
+https://tcd-theme.com/contact # Contact Form 7
+https://web-soudan.co.jp/contact/ # Google フォームを iframe で遅延読み込み
+
+# SaaS の資料請求・デモ申込
+https://smarthr.jp/contact/ # Marketo
+https://www.hubspot.jp/products/get-started # HubSpot
+https://btob.medix-inc.co.jp/dlform_saaslp_service2 # HubSpot
+https://go.pardot.com/l/172242/2018-04-26/263chy # Pardot・name が数値 ID
+https://go.pardot.com/l/993142/2022-08-04/277v # Pardot・フリガナ・住所
+https://semkan.jp/document-request/ # Contact Form 7
+https://wims-saas.solty.co.jp/form/inq_products_form.html # name が T02 の連番
+
+# フォーム作成サービス
+https://form.run/@form-run-contact # formrun
+https://form.run/@cooperation-investigation # formrun
+https://tayori.com/f/trial-tayori/ # Tayori
+https://tayori.com/f/tayori-download # Tayori
+https://tayori.com/form/aac0b025a5a070a62488047c33ff67aa028743e1 # Tayori（iframe 埋め込み先の直リンク）
+https://docs.google.com/forms/d/e/1FAIpQLSda8UoyIp0n2cBZFWlx0HPRzDQrWiQjv2Lr3FcL8qdrK3GT2A/viewform # Google フォーム・年月日が number 3 つ
+https://forms.office.com/Pages/ShareFormPage.aspx?id=84DGXECbrU6dl_MHoByWM1JtvWVtS8JGkjUu_MeM0oJUOEtVVE9XNFEzTzhYMTZWS0lKODJST1FUMi4u&sharetoken=XaKNW6AXYCR3sruyQb0r # Microsoft Forms
+https://pro.form-mailer.jp/fms/6d59e0a6280818 # フォームメーラー・生年月日
+https://req.qubo.jp/qubo/form/dFbedxSP # 生年月日 select
+https://req.qubo.jp/qubo/form/XhQ6iLFL # 電話 3 分割
+https://req.qubo.jp/qubo/form/u7MTnFSf # 電話 3 分割
+
+# 採用・申込
+https://www.workman.co.jp/%E6%8E%A1%E7%94%A8%E6%83%85%E5%A0%B1/%E4%B8%AD%E9%80%94%E6%8E%A1%E7%94%A8-%E5%BF%9C%E5%8B%9F%E3%83%95%E3%82%A9%E3%83%BC%E3%83%A0 # 生年月日 select
+https://www.it-prod.co.jp/recruit/entryform/new_graduate/ # 生年月日 number 3 つ
+https://j-nets.co.jp/employform.php # 生年月日 text 3 つ
+https://recruit.decollte.co.jp/entry/career/ # 年齢 number
+https://www.exection.co.jp/recruit/careers-entry/ # 生年月日 text 1 つ
+https://jsite.mhlw.go.jp/form/pub/roudou01/mothers_kitahiro_r8 # 官公庁・電話 3 分割・生年月日 select
+https://jsite.mhlw.go.jp/form/pub/roudou14/2023_10_01sagamijigyo # 官公庁・電話 3 分割
+https://www.jmets.ac.jp/namikata/contact/index3.php # 郵便番号 2 分割・name が番号
+https://www.j-urban.jp/model_reserve/ # type=date・年代 select
+https://www.e-a-site.com/form_visit/ # 郵便番号が type=tel
+
+# EFO のデモ
+https://www.mmmmm.co.jp/efo/demo.html # 生年月日 select 2 組
+https://www.gyro-n.com/efo/sampleform/ # 郵便番号 2 分割 2 組・FAX 3 分割
+https://www.richefo.jp/demo/ # ふりがなの自動入力
+https://efo.showcase-tv.com/formassist/efo.html/ # 半角・全角の変換
+https://f-tra.com/ja/efo/demo/pc.html # zipcode・pref select

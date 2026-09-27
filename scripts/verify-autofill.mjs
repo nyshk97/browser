@@ -111,7 +111,13 @@ const ANSWERS = {
   'メール（予備）': 'email',
   '住所（予備）': 'address_full',
   '電話（予備）': 'job_title',
-  電話番号必須: 'tel'
+  電話番号必須: 'tel',
+  // autofill-patterns.html
+  '氏 名': 'full_name',
+  '氏 名（フリガナ）': 'full_name_kana',
+  // 本物の Jev は FAX に tel と答えた。聞かれたら入ってしまうので、聞かないことを見る
+  FAX番号: 'tel',
+  'ご住所（建物名まで）': 'address_full'
 }
 /**
  * 本物の Jev をまねた答え（見出し → [選択肢, 確率の分布]）。2 枠の氏名で 1 枠目の例「姓」に引っ張られる
@@ -152,9 +158,34 @@ function jevAnswer(body) {
 }
 
 const server = http.createServer((req, res) => {
-  if (['/autofill.html', '/autofill-efo.html', '/autofill-kayac.html'].includes(req.url)) {
+  const pathname = new URL(req.url, 'http://x').pathname
+  if (
+    ['/autofill.html', '/autofill-efo.html', '/autofill-kayac.html', '/autofill-patterns.html'].includes(
+      pathname
+    )
+  ) {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-    res.end(fs.readFileSync(path.join(projectRoot, 'test-pages', req.url.slice(1))))
+    res.end(fs.readFileSync(path.join(projectRoot, 'test-pages', pathname.slice(1))))
+    return
+  }
+  // iframe の埋め込みフォーム。同じオリジン（同じプロセス）と、localhost 経由の別オリジン（別プロセス。
+  // HubSpot や Brevo の埋め込みと同じ形）を 1 つずつ置く
+  if (pathname === '/autofill-iframe.html') {
+    const { port } = server.address()
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    res.end(
+      '<!doctype html><meta charset="utf-8"><title>埋め込みフォーム</title>' +
+        '<p>フォームは iframe の中にある</p>' +
+        '<iframe id="same" src="/autofill-kayac.html?same" width="600" height="300"></iframe>' +
+        `<iframe id="cross" src="http://localhost:${port}/autofill-kayac.html?cross" width="600" height="300"></iframe>` +
+        // 親が透明にした iframe（中の可視判定だけでは見抜けない。透明な iframe を重ねる手口）
+        `<iframe id="hidden" style="opacity:0" src="http://localhost:${port}/autofill-kayac.html?hidden" width="600" height="300"></iframe>` +
+        // 親が上の帯（高さ 30px）だけを見せている iframe。帯の外の欄は、中をスクロールしても見えない
+        `<div style="overflow:hidden;height:30px"><iframe id="band" src="http://localhost:${port}/autofill-kayac.html?band" width="600" height="300"></iframe></div>` +
+        // 同じ URL の iframe が 2 つ（フォーカスのある方だけに入れる）
+        '<iframe id="dup1" src="/autofill-kayac.html?dup" width="600" height="300"></iframe>' +
+        '<iframe id="dup2" src="/autofill-kayac.html?dup" width="600" height="300"></iframe>'
+    )
     return
   }
   if (req.url !== '/v1/systemone' || req.method !== 'POST') {
@@ -476,6 +507,158 @@ try {
     kayac.close()
   }
 
+  /* ---- 6d. iframe の中のフォーム（同じプロセス / 別プロセス） ---- */
+  {
+    const frameKey = await ui.ev(
+      `window.nemo.createTab(${JSON.stringify(`${origin}/autofill-iframe.html`)}).then((k) => k)`
+    )
+    const host = await connectTo(cdp, '/autofill-iframe.html', { type: 'page' })
+    await waitFor(
+      host,
+      "document.readyState === 'complete' && document.getElementById('same')?.contentDocument?.querySelector('[name=tel]') ? 'ok' : ''"
+    )
+    const port = server.address().port
+    const want = {
+      last_name: '山田',
+      first_name: '太郎',
+      last_name_kana: 'やまだ',
+      first_name_kana: 'たろう',
+      tel: '09012345678'
+    }
+    const cases = [
+      ['同じプロセスの iframe', `${origin}/autofill-kayac.html?same`],
+      ['別プロセスの iframe', `http://localhost:${port}/autofill-kayac.html?cross`]
+    ]
+    for (const [name, frameUrl] of cases) {
+      const r = await json(
+        `window.nemo.autofillForVerify(${JSON.stringify(frameKey)}, -1, -1, ${JSON.stringify(frameUrl)})`
+      )
+      const inner = await connectTo(cdp, frameUrl.split('/').pop(), {
+        type: frameUrl.startsWith(origin) ? 'page' : 'iframe'
+      }).catch(() => null)
+      const read =
+        "JSON.stringify(Object.fromEntries([...document.querySelectorAll('input')].map((el) => [el.name, el.value])))"
+      const got = frameUrl.startsWith(origin)
+        ? JSON.parse(
+            await host.ev(
+              `(() => { const document = window.document.getElementById('same').contentDocument; return ${read} })()`
+            )
+          )
+        : JSON.parse((await inner?.ev(read)) ?? '{}')
+      inner?.close()
+      check(
+        `${name}: 入った`,
+        Object.entries(want).every(([k, v]) => got[k] === v),
+        `${JSON.stringify(got)} ${JSON.stringify(r)}`
+      )
+    }
+    // 透明な iframe には入れない
+    const hiddenUrl = `http://localhost:${port}/autofill-kayac.html?hidden`
+    const hiddenResult = await json(
+      `window.nemo.autofillForVerify(${JSON.stringify(frameKey)}, -1, -1, ${JSON.stringify(hiddenUrl)})`
+    )
+    const hiddenFrame = await connectTo(cdp, 'autofill-kayac.html?hidden', { type: 'iframe' })
+    const hiddenValues = JSON.parse(
+      await hiddenFrame.ev(
+        "JSON.stringify([...document.querySelectorAll('input')].map((el) => el.value).filter(Boolean))"
+      )
+    )
+    hiddenFrame.close()
+    check(
+      '親が透明にした iframe には入れない',
+      hiddenResult?.reason === 'collect-failed' && hiddenValues.length === 0,
+      `${JSON.stringify(hiddenValues)} ${JSON.stringify(hiddenResult)}`
+    )
+
+    // 親が上の帯だけ見せている iframe: 帯の外（電話番号・ふりがな）には入らない
+    const bandUrl = `http://localhost:${port}/autofill-kayac.html?band`
+    const bandResult = await json(
+      `window.nemo.autofillForVerify(${JSON.stringify(frameKey)}, -1, -1, ${JSON.stringify(bandUrl)})`
+    )
+    const bandFrame = await connectTo(cdp, 'autofill-kayac.html?band', { type: 'iframe' })
+    const bandValues = JSON.parse(
+      await bandFrame.ev(
+        "JSON.stringify(Object.fromEntries([...document.querySelectorAll('input')].map((el) => [el.name, el.value])))"
+      )
+    )
+    bandFrame.close()
+    check(
+      '親が上の帯だけ見せている iframe では、帯の外の欄に入らない',
+      bandValues.tel === '' && bandValues.last_name_kana === '',
+      `${JSON.stringify(bandValues)} ${JSON.stringify(bandResult)}`
+    )
+
+    // 同じ URL の iframe が 2 つ: フォーカスのある方（dup2）だけに入る
+    await host.ev("document.getElementById('dup2').contentDocument.querySelector('[name=tel]').focus()")
+    const dupResult = await json(
+      `window.nemo.autofillForVerify(${JSON.stringify(frameKey)}, -1, -1, ${JSON.stringify(`${origin}/autofill-kayac.html?dup`)})`
+    )
+    const dupValues = JSON.parse(
+      await host.ev(
+        "JSON.stringify(['dup1', 'dup2'].map((id) => document.getElementById(id).contentDocument.querySelector('[name=last_name]').value))"
+      )
+    )
+    check(
+      '同じ URL の iframe が 2 つなら、フォーカスのある方だけに入る',
+      dupValues[0] === '' && dupValues[1] === '山田',
+      `${JSON.stringify(dupValues)} ${JSON.stringify(dupResult)}`
+    )
+    host.close()
+  }
+
+  /* ---- 6e. 実サイト調査で見つけた組み方（フォームごとに 1 回ずつ） ---- */
+  {
+    const patternsKey = await ui.ev(
+      `window.nemo.createTab(${JSON.stringify(`${origin}/autofill-patterns.html`)}).then((k) => k)`
+    )
+    const patterns = await connectTo(cdp, '/autofill-patterns.html', { type: 'page' })
+    await waitFor(
+      patterns,
+      "document.readyState === 'complete' && document.querySelector('[name=zip]') ? 'ok' : ''"
+    )
+    for (const anchor of ['p_name', 'z1', 'zip']) {
+      const at = JSON.parse(
+        await patterns.ev(
+          `(() => { const el = document.querySelector('[name=${anchor}]'); el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return JSON.stringify({ x: r.left + 3, y: r.top + 3 }) })()`
+        )
+      )
+      await json(`window.nemo.autofillForVerify(${JSON.stringify(patternsKey)}, ${at.x}, ${at.y})`)
+    }
+    const got = JSON.parse(
+      await patterns.ev(
+        "JSON.stringify(Object.fromEntries([...document.querySelectorAll('input')].map((el) => [el.name, el.value])))"
+      )
+    )
+    const want = {
+      p_name: '山田　太郎', // 見出しが左の td
+      p_kana: 'ヤマダ　タロウ',
+      by: '1988', // 区切りが <span>年</span> の 3 分割
+      bm: '7',
+      bd: '14',
+      tel: '090-1234-5678',
+      tel2: '090-1234-5678', // 確認用は 2 か所目にも入れる
+      kana_sei: 'やまだ', // autocomplete=family-name でも例がひらがななら、ふりがな
+      fax1: '', // FAX は入れない
+      fax2: '',
+      fax3: '',
+      z1: '100', // 3 桁 / 4 桁の 2 分割は郵便番号
+      z2: '0001',
+      zip: '1000001', // type=tel でも見出しが郵便番号なら郵便番号
+      ctel: '090-1234-5678',
+      lines: '千代田1-1 サンプルタワー 1701', // 番地と建物をまとめた欄
+      ad1: '東京都千代田区千代田1-1', // 「ご住所」「建物名称」の 2 枠
+      ad2: 'サンプルタワー 1701'
+    }
+    for (const [name, value] of Object.entries(want)) {
+      check(
+        `調査で見つけた組み方: ${name} に ${JSON.stringify(value)}`,
+        got[name] === value,
+        `got=${JSON.stringify(got[name])}`
+      )
+    }
+    patterns.close()
+  }
+
   /* ---- 7. Jev の失敗 ---- */
   const ruleOnly = {
     kana_sei: 'ヤマダ',
@@ -560,7 +743,7 @@ try {
   /* ---- 10. ログ ---- */
   const lines = readLogLines(userData)
   const runs = lines.filter((line) => line.includes('"event":"autofill.run"'))
-  check('autofill.run が実行回数ぶん出ている', runs.length === 8, `runs=${runs.length}`)
+  check('autofill.run が実行回数ぶん出ている', runs.length === 16, `runs=${runs.length}`)
   const logLeaks = SECRETS.filter((s) => lines.some((line) => line.includes(s)))
   check('診断ログに値・キー・パスフレーズが出ていない', logLeaks.length === 0, logLeaks.join(', '))
   const crashes = findUncaughtExceptions(userData)

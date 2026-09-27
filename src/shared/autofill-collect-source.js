@@ -113,6 +113,13 @@ export const AUTOFILL_PAGE_SOURCE =
       const row = cell.closest('tr')
       const th = row && row.querySelector('th')
       if (th) return clean(textWithout(th), 40)
+      // th の無い表（官公庁のフォーム等）は左隣の td が見出し
+      let prev = cell.previousElementSibling
+      while (prev && prev.tagName === 'TD' && prev.querySelector('input, select, textarea')) prev = prev.previousElementSibling
+      // 極端に長い td は見出しでない（表で組んだページの左のナビなど）。見出しの説明が続く td
+      // （「メールアドレス（参加可否連絡用）ログインの際に…」）は拾いたいので、しきい値は緩くして頭の 40 字を使う
+      const text = prev && prev.tagName === 'TD' ? clean(textWithout(prev), 201) : ''
+      if (text && text.length <= 200) return text.slice(0, 40)
     }
     if (cell && cell.tagName === 'DD') {
       let prev = cell.previousElementSibling
@@ -133,8 +140,8 @@ export const AUTOFILL_PAGE_SOURCE =
       for (let prev = node.previousSibling; prev; prev = prev.previousSibling) {
         if (prev.nodeType === Node.TEXT_NODE) {
           const t = clean(prev.textContent, 40)
-          // 「-」「〜」のような区切りは見出しにしない
-          if (t && /[\p{L}\p{N}]/u.test(t)) return { text: t, kind: 'text', heading }
+          // 「-」「〜」のような区切りは見出しにしない（「〒」は記号だが郵便番号の見出し）
+          if (t && /[\p{L}\p{N}〒]/u.test(t)) return { text: t, kind: 'text', heading }
           continue
         }
         if (prev.nodeType !== Node.ELEMENT_NODE) continue
@@ -161,7 +168,34 @@ export const AUTOFILL_PAGE_SOURCE =
     return out
   }
 
-  g.__nemoAutofillCollect = (x, y) => {
+  // region: iframe のとき、親ページで見えている範囲（iframe の表示領域の座標）。この外の欄は集めない
+  const inRegion = (el, region) => {
+    if (!region) return true
+    const r = el.getBoundingClientRect()
+    // 親で縮小されていると、中では大きくても見た目は潰れている
+    if (r.width * region.scaleX < 4 || r.height * region.scaleY < 4) return false
+    // 見えている範囲（表示領域の座標）を、**中をスクロールして届く範囲まで**文書の座標で広げる。
+    // 位置で絞るのをやめると、親が iframe の上の帯だけを見せる手口が通る（帯の外は中をスクロールしても帯に入らない）
+    const doc = document.scrollingElement || document.documentElement
+    const clips = (node) => /hidden|clip/.test(getComputedStyle(node).overflowX + ' ' + getComputedStyle(node).overflowY)
+    const scrolls = region.scrollable && !clips(document.documentElement) && !clips(document.body)
+    const maxX = scrolls ? Math.max(0, doc.scrollWidth - doc.clientWidth) : window.scrollX
+    const maxY = scrolls ? Math.max(0, doc.scrollHeight - doc.clientHeight) : window.scrollY
+    const minX = scrolls ? 0 : window.scrollX
+    const minY = scrolls ? 0 : window.scrollY
+    const left = r.left + window.scrollX
+    const top = r.top + window.scrollY
+    const w = Math.min(left + r.width, region.right + maxX) - Math.max(left, region.left + minX)
+    const h = Math.min(top + r.height, region.bottom + maxY) - Math.max(top, region.top + minY)
+    return w >= 4 && h >= 4
+  }
+
+  // 分割欄の区切りとみなす 1 文字: 文字でも数字でもない記号（「〒」は見出しなので除く）か単位。
+  // 「姓」「名」の 1 文字は区切りでなく見出し（区切り扱いにすると前の欄とまとめてしまう）
+  // 必須の印（* ※）も区切りでない
+  const SEPARATOR = /^(?:(?![〒*＊※])[^\p{L}\p{N}]|[年月日時分秒])$/u
+
+  g.__nemoAutofillCollect = (x, y, region) => {
     const active = document.activeElement
     const anchor = active && kindOf(active) ? active : document.elementFromPoint(x, y)
     // フォームが無いページはページ全体（Jev が関係ない欄を none で落とす）
@@ -172,7 +206,7 @@ export const AUTOFILL_PAGE_SOURCE =
     for (const el of root.querySelectorAll('input, select, textarea')) {
       if (els.length >= MAX_ELEMENTS) break
       const tag = kindOf(el)
-      if (!tag || !isEmpty(el) || !isVisible(el)) continue
+      if (!tag || !isEmpty(el) || !isVisible(el) || !inRegion(el, region)) continue
       els.push(el)
       const maxLength = el instanceof HTMLSelectElement ? -1 : el.maxLength
       const element = {
@@ -209,8 +243,11 @@ export const AUTOFILL_PAGE_SOURCE =
     const fields = []
     for (let i = 0; i < raw.length; ) {
       const head = raw[i]
+      // 区切りは地の文でも要素（<span>年</span>）でもよい（SEPARATOR）
       const headless = (m) =>
-        !m.label && (m.near.kind === 'control' || (m.near.kind === 'text' && m.near.text.length <= 1))
+        !m.label &&
+        (m.near.kind === 'control' ||
+          ((m.near.kind === 'text' || m.near.kind === 'element') && SEPARATOR.test(m.near.text)))
       let j = i + 1
       if (head.tag !== 'textarea' && !hasRuleToken(head.autocomplete)) {
         while (

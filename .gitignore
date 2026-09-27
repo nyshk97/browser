@@ -26,3 +26,6 @@ build/THIRD-PARTY-NOTICES.md
 
 # icns の中間生成物（mise run icons で作り直せる）
 build/*.iconset/
+
+# フォーム自動入力の実サイト調査の出力（mise run autofill:survey）
+autofill-survey.md

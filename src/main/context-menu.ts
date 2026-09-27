@@ -9,7 +9,7 @@ import { runAutofill } from './autofill/index.js'
  * 項目は**ショートカットで代用できないものだけ**に絞る:
  * 戻る/進む/再読み込み/コピー系はキーで済むので載せない。
  *
- * - 入力欄の上（メインフレームだけ）: フォーム自動入力
+ * - 入力欄の上（iframe の中も）: フォーム自動入力
  * - リンクの上: リンクのアドレスをコピー
  * - 画像の上: 名前を付けて画像を保存 / 画像をコピー / 画像アドレスをコピー
  * - 常に: 検証（その座標の要素を DevTools で開く）
@@ -24,14 +24,17 @@ export function attachContextMenu(
 ): void {
   wc.on('context-menu', (_event, params) => {
     /*
-     * **メインフレームの入力欄だけ**。iframe は isolated world で走らせる口が無く
-     * （`WebFrameMain` はメインワールドの `executeJavaScript` しか持たない）、メインワールドだと
-     * ページが可視判定を偽って見えない欄に値を入れさせられる。
+     * iframe の中の入力欄でも出す（Brevo や Google フォームなどの埋め込みフォーム）。iframe では
+     * CDP で isolated world を作って走らせる（`autofill/frame-runner.ts`。メインワールドは使わない）。
+     * **メインフレーム直下の iframe まで**（入れ子は親で可視判定ができないので `subFrameRunner` が止める）
      */
+    const frame = params.frame
     const autofill =
-      isAutofillTarget(params.formControlType) && params.frame !== null && params.frame.parent === null
+      isAutofillTarget(params.formControlType) &&
+      frame !== null &&
+      (frame.parent === null || frame.parent.parent === null)
         ? () => {
-            void runAutofill(wc, params.x, params.y).then((result) => {
+            void runAutofill(wc, params.x, params.y, frame).then((result) => {
               // 保管庫が無い / 開けないときは設定画面の「フォーム自動入力」へ
               if (
                 result.reason === 'no-vault' ||

@@ -19,6 +19,9 @@ import {
   buildFillPlan,
   buildJevRequests,
   expandGroup,
+  isConfirmField,
+  isExcluded,
+  refineOption,
   normalizeCollected,
   readJevAnswers,
   resolveConflicts,
@@ -118,6 +121,7 @@ test('deriveValues: 一括・分割・カナ・住所一括を作る', () => {
   assert.deepEqual([VALUES['tel_part1'], VALUES['tel_part2'], VALUES['tel_part3']], ['090', '1234', '5678'])
   assert.equal(VALUES['postal_code'], '100-0001', '全角・ハイフン無しでも整える')
   assert.deepEqual([VALUES['postal_code_part1'], VALUES['postal_code_part2']], ['100', '0001'])
+  assert.equal(VALUES['address_city_line1'], '千代田区千代田1-1')
   assert.equal(VALUES['address_full'], '東京都千代田区千代田1-1 サンプルタワー 1701')
   assert.deepEqual(
     [VALUES['birthday_year'], VALUES['birthday_month'], VALUES['birthday_day']],
@@ -226,7 +230,48 @@ test('ruleOption: autocomplete と type で決める / カナの見出しなら�
   )
   assert.equal(ruleOption(field({ autocomplete: 'tel-area-code', members: [0, 1, 2] })), 'tel')
   assert.equal(ruleOption(field({ autocomplete: 'off' })), null)
+  assert.equal(ruleOption(field({ nearby: '〒' })), 'postal_code', '「〒」1 文字だけの欄')
+  assert.equal(ruleOption(field({ nearby: '〒', members: [0, 1] })), 'postal_code', '「〒」の後に 2 枠')
   assert.equal(ruleOption(field({ autocomplete: 'url' })), null)
+})
+
+test('ruleOption: 実サイト調査で見つけた組み方（type=tel の郵便番号・かなの例・3 桁 / 4 桁の 2 分割）', () => {
+  assert.equal(ruleOption(field({ type: 'tel', label: '郵便番号（半角数字）' })), 'postal_code')
+  assert.equal(ruleOption(field({ type: 'tel', label: '電話番号' })), 'tel')
+  assert.equal(
+    ruleOption(field({ autocomplete: 'family-name', label: '名前の姓', placeholder: '例：みらい' })),
+    'family_name_kana'
+  )
+  assert.equal(
+    ruleOption(field({ autocomplete: 'family-name', label: '名前の姓', placeholder: '例：山田' })),
+    'family_name'
+  )
+  const els = [el({ maxLength: 3 }), el({ maxLength: 4 }), el({ maxLength: 4 }), el({ maxLength: 4 })]
+  assert.equal(ruleOption(field({ members: [0, 1] }), els), 'postal_code')
+  assert.equal(ruleOption(field({ members: [1, 2] }), els), null, '4 桁 / 4 桁は郵便番号と決めない')
+})
+
+test('refineOption / expandGroup: 番地と建物をまとめた欄・「ご住所」「建物名称」の 2 枠', () => {
+  assert.equal(refineOption('address_line2', field({ label: '番地・マンション名' })), 'address_line1_2')
+  assert.equal(refineOption('address_line1', field({ label: '番地以降' })), 'address_line1_2')
+  assert.equal(refineOption('address_line1', field({ label: '町名番地' })), 'address_line1')
+  assert.equal(refineOption('tel', field({ label: '番地・マンション名' })), 'tel')
+  assert.equal(
+    refineOption('address_line1', field({ nearby: '町名番地・建物名', autocomplete: 'address-line1' })),
+    'address_line1',
+    'address-line1 と明示された欄は番地だけ'
+  )
+  assert.deepEqual(expandGroup('address_full', 2), ['address_without_building', 'address_line2'])
+  assert.equal(VALUES['address_line1_2'], '千代田1-1 サンプルタワー 1701')
+  assert.equal(VALUES['address_without_building'], '東京都千代田区千代田1-1')
+})
+
+test('isExcluded / isConfirmField: FAX は入れない・確認用は 2 か所目にも入れる', () => {
+  assert.equal(isExcluded(field({ label: 'FAX番号' })), true)
+  assert.equal(isExcluded(field({ name: 'fax_01' })), true)
+  assert.equal(isExcluded(field({ label: '電話番号' })), false)
+  assert.equal(isConfirmField(field({ label: '携帯電話番号 確認用' })), true)
+  assert.equal(isConfirmField(field({ label: '電話番号' })), false)
 })
 
 test('expandGroup: 並び順で割り当てる / 決められない組は null', () => {
@@ -323,6 +368,15 @@ test('readJevAnswers: 2 枠以上の欄では姓・名・一括を同じ答え�
   assert.equal(decisions.get(1)?.option, 'full_name_kana')
   assert.equal(decisions.get(2)?.option, 'family_name', '1 枠の欄は寄せない')
   assert.equal(readJevAnswers(answers, [0], new Set()).decisions.size, 0, 'グループでなければ 0.49 は足切り')
+})
+
+test('resolveConflicts: 確認用の欄は取り合いに加わらず、そのまま入れる', () => {
+  const decisions = new Map([
+    [0, { option: 'tel', confidence: 1, source: 'rule' }],
+    [1, { option: 'tel', confidence: 1, source: 'rule' }]
+  ])
+  assert.deepEqual([...resolveConflicts(decisions, new Set([1])).keys()], [0, 1])
+  assert.deepEqual([...resolveConflicts(decisions).keys()], [0])
 })
 
 test('resolveConflicts: 同じ項目は確信度の高い 1 か所に / email は重複可', () => {

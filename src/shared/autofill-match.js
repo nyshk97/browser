@@ -65,6 +65,14 @@ export const JEV_OPTIONS = {
     '番地, 町名番地, 丁目・番地'
   ],
   address_line2: ['Building name, floor and room number', '建物名, マンション名, 部屋番号, ビル名'],
+  address_line1_2: [
+    'Street address and building name together in one field (after the city)',
+    '番地・建物名, 番地・マンション名, 番地以降, 町名番地・建物名'
+  ],
+  address_city_line1: [
+    'City / ward and street address together in one field, without the prefecture and without the building',
+    '市区町村番地, 市区町村・番地, 住所（都道府県以降）'
+  ],
   address_full: [
     'Whole address after the postal code in one field (prefecture to building)',
     '住所, ご住所, 所在地'
@@ -224,18 +232,67 @@ export function normalizeCollected(raw) {
 }
 
 /**
+ * 入れない欄（Jev にも聞かない）。FAX は本物の Jev が電話番号と答えるので、見出しで先に外す。
+ *
+ * @param {CollectedField} field
+ */
+export function isExcluded(field) {
+  // 「TEL/FAX」のように電話とまとめた欄は外さない（電話の欄がほかに無いフォームで電話が入らなくなる）。
+  // 電話かどうかは画面の見出しだけで見る（見出しが「FAX番号」で name が tel2 の古いフォームがある）
+  const visible = `${field.label} ${field.nearby}`
+  return /fax|ファックス|ファクス/i.test(`${visible} ${field.name}`) && !/電話|tel(?!ex)/i.test(visible)
+}
+
+/**
+ * 同じ項目を 2 か所に入れてよい欄（「電話番号（確認用）」「メールアドレス 確認」）。
+ *
+ * @param {CollectedField} field
+ */
+export function isConfirmField(field) {
+  return /確認|再入力|もう一度|confirm/i.test(`${field.label} ${field.nearby} ${field.name}`)
+}
+
+/**
+ * 例の文字列がかな（ひらがな / カタカナ）だけか（「例：やまだ」の「例：」は外す）。
+ * @param {string} placeholder
+ */
+function isKanaExample(placeholder) {
+  const example = placeholder.replace(/^例\s*[)）:：]?\s*/, '').replace(/[\s\u3000]/g, '')
+  return example.length > 0 && /^[\u3041-\u3096\u30a1-\u30faー]+$/.test(example)
+}
+
+/**
  * ルールで決まる選択肢。決まらなければ null（Jev に回す）。
  *
  * @param {CollectedField} field
+ * @param {import('./autofill-values.js').CollectedElement[]} [elements] 分割グループの桁数を見る
  * @returns {string | null}
  */
-export function ruleOption(field) {
+export function ruleOption(field, elements = []) {
   const tokens = field.autocomplete.split(/\s+/).filter(Boolean)
   const last = tokens[tokens.length - 1] ?? ''
   let option = AUTOCOMPLETE[last] ?? null
+  // 「〒」だけが手がかりの欄（`<p>〒 <input></p>`）。1 文字だと Jev は住所全体と取り違える
+  if (
+    !option &&
+    field.members.length <= 2 &&
+    [field.label, field.nearby].some((text) => /^〒[\s:：]*$/.test(text))
+  ) {
+    option = 'postal_code'
+  }
+  // 3 桁 / 4 桁の 2 分割は郵便番号（本物の Jev は見出しの無い 2 分割を電話と取り違えた）
+  if (!option && field.members.length === 2) {
+    const lengths = field.members.map((index) => elements[index]?.maxLength ?? null)
+    // ただし見出しが郵便番号以外の番号だとはっきりしている欄（「会員番号」など）は除く
+    const hints = hintText(field)
+    const otherNumber = /番号|コード|id/i.test(hints) && !/郵便|〒|zip|postal/i.test(hints)
+    if (lengths[0] === 3 && lengths[1] === 4 && !otherNumber) option = 'postal_code'
+  }
   if (!option && field.members.length === 1) {
     if (field.type === 'email') option = 'email'
-    else if (field.type === 'tel') option = 'tel'
+    // type=tel は郵便番号にも使われる（数字キーボードを出すため）。見出しが郵便番号なら郵便番号
+    else if (field.type === 'tel')
+      option = /郵便|〒|zip|postal/i.test(hintText(field)) ? 'postal_code' : 'tel'
   }
   if (!option) return null
 
@@ -250,12 +307,31 @@ export function ruleOption(field) {
    */
   if (option === 'full_name' || option === 'family_name' || option === 'given_name') {
     const hints = hintText(field)
-    if (/カナ|かな|フリガナ|ふりがな|kana/i.test(hints)) return `${option}_kana`
+    // 見出しがカナ、または例がかなだけ（「名前の姓」「例：やまだ」）ならふりがなの欄
+    if (/カナ|かな|フリガナ|ふりがな|kana/i.test(hints) || isKanaExample(field.placeholder))
+      return `${option}_kana`
     if (/ローマ字|英字|romaji|alphabet/i.test(hints)) {
       return option === 'full_name' ? 'full_name_roman' : `${option}_roman`
     }
   }
   return option
+}
+
+/**
+ * 欄の見出しを見て選択肢を直す。「番地・マンション名」「番地以降」のように**番地と建物をまとめた欄**は、
+ * autocomplete が address-line2 でも Jev が address_line1 / 2 と答えても、両方をまとめた値を入れる。
+ *
+ * @param {string} option
+ * @param {CollectedField} field
+ * @returns {string}
+ */
+export function refineOption(option, field) {
+  if (option !== 'address_line1' && option !== 'address_line2') return option
+  // サイトが番地だけ（address-line1）と明示している欄はそのまま
+  if (/(^|\s)address-line1$/.test(field.autocomplete)) return option
+  const hints = `${field.label} ${field.nearby}`
+  // 「以下」は「全角 30 文字以下」のような字数の注記にも当たるので使わない
+  return /番地/.test(hints) && /建物|マンション|ビル|以降/.test(hints) ? 'address_line1_2' : option
 }
 
 /**
@@ -276,6 +352,8 @@ export function expandGroup(option, count) {
   if (option === 'full_name' && count === 2) return ['family_name', 'given_name']
   if (option === 'full_name_kana' && count === 2) return ['family_name_kana', 'given_name_kana']
   if (option === 'full_name_roman' && count === 2) return ['family_name_roman', 'given_name_roman']
+  // 「ご住所」「建物名称」の 2 枠
+  if (option === 'address_full' && count === 2) return ['address_without_building', 'address_line2']
   return null
 }
 
@@ -414,17 +492,18 @@ export function readJevAnswers(answers, indexes, groups = new Set()) {
 }
 
 /**
- * 同じ項目を複数の欄が取り合ったら、確信度の高い 1 か所に絞る（`MULTI_USE` は除く）。
+ * 同じ項目を複数の欄が取り合ったら、確信度の高い 1 か所に絞る（`MULTI_USE` と確認用の欄は除く）。
  * ルールで決めたものは確信度 1 として扱う。
  *
  * @param {Map<number, Decision>} decisions
+ * @param {Set<number>} [confirms] 確認用の欄（`isConfirmField`）。取り合いに加わらず、そのまま入れる
  * @returns {Map<number, Decision>}
  */
-export function resolveConflicts(decisions) {
+export function resolveConflicts(decisions, confirms = new Set()) {
   /** @type {Map<string, number>} */
   const best = new Map()
   for (const [index, decision] of decisions) {
-    if (MULTI_USE.has(decision.option)) continue
+    if (MULTI_USE.has(decision.option) || confirms.has(index)) continue
     const current = best.get(decision.option)
     if (current === undefined) {
       best.set(decision.option, index)
@@ -437,7 +516,9 @@ export function resolveConflicts(decisions) {
   /** @type {Map<number, Decision>} */
   const out = new Map()
   for (const [index, decision] of decisions) {
-    if (MULTI_USE.has(decision.option) || best.get(decision.option) === index) out.set(index, decision)
+    if (MULTI_USE.has(decision.option) || confirms.has(index) || best.get(decision.option) === index) {
+      out.set(index, decision)
+    }
   }
   return out
 }

@@ -1244,12 +1244,21 @@ mise run verify:only autofill   # 保管庫・ルール・Jev（モック）・�
 - 違うパスフレーズでは既存の保管庫を上書きできない（ファイルが変わらない）
 - 表の th「ご住所」の中に「郵便番号」「都道府県」… が段落で並ぶ形（`test-pages/autofill-efo.html`。実在の EFO サンプルと同じ組み方）で住所 6 欄が入る
 - 姓名が 2 枠に分かれ、Jev が 1 枠目の例に引っ張られて `family_name` と答える形（`test-pages/autofill-kayac.html`。モックが実 Jev の分布をまねる）で、姓・名・せい・めいが入る
+- iframe の中のフォーム（同じプロセス / localhost 経由の別プロセス）で入る。別プロセスはログの `autofill.frame_attached` が `crossProcess: true`
+- **親が透明にした iframe には入れない**（親ページ側の判定を外すと 5 欄に入って FAIL することを確かめた）
+- 同じ URL の iframe が 2 つなら、フォーカスのある方だけに入る
+- 実サイト調査で見つけた組み方（`test-pages/autofill-patterns.html`）: th の無い表・<span>年</span> の区切り・確認用の電話・例がかなの姓・FAX を入れない・3 桁 / 4 桁の郵便番号・type=tel の郵便番号・番地と建物をまとめた欄・「ご住所」「建物名称」の 2 枠
 - 古い置き場所（userData の `jev-key.json`）のキーは、プロフィールを保存すると保管庫へ移って消える
 - **2 台目（`NEMO_USER_DATA_DIR` を分けて `NEMO_SLOTS_DIR` を共有）でパスフレーズを入れるだけでキーが使える**。覚える前はキーの保存を `no-passphrase` で断る
 - 設定画面に節が描かれ、項目数が出る / 診断ログに値・キー・パスフレーズが出ない
 
 **モックは罠の欄にも本物らしい項目を答える**（攻撃側のページはそう見せる）。`none` を返すと、
 可視判定が壊れていても「罠に入らない」検査が PASS する（可視判定を外すと 9 件 FAIL することを確認済み）。
+
+**実サイトでの確認**は `NEMO_SURVEY_JEV_KEY_FILE=<キーのファイル> mise run autofill:survey`（`scripts/autofill-survey-urls.txt` の 44 ページ。
+**送信はしない**・架空のプロフィール）。欄ごとに入った値と、判定の内訳（手がかり・ルールか Jev か・Jev の答えと確信度・本人性）を
+`autofill-survey.md` に出す。判定の内訳は `autofillForVerify` の戻り値にだけ入り、診断ログには出ない。
+入らない欄の報告を受けたら、その URL をリストに足して回し、内訳から原因を見る。直したら `test-pages/autofill-patterns.html` に同じ組み方を足す。
 
 **実 Jev での確認**は `scripts/verify-autofill.mjs` を複製して `NEMO_JEV_TEST_ENDPOINT` を外し、
 キーを scratchpad のファイルから読む形にして回す（2026-09-27 に値の検査が全部 PASS・Jev 291ms。

@@ -103,9 +103,9 @@ const api: NemoUiApi = {
     ipcRenderer.invoke('nemo:run-command-for-verify', command).catch(() => false) as Promise<boolean>,
   pressKeyForVerify: (key, keyName) =>
     ipcRenderer.invoke('nemo:press-key-for-verify', key, keyName).catch(() => false) as Promise<boolean>,
-  autofillForVerify: (key, x, y) =>
+  autofillForVerify: (key, x, y, frameUrl) =>
     ipcRenderer
-      .invoke('nemo:autofill-for-verify', key, x, y)
+      .invoke('nemo:autofill-for-verify', key, x, y, frameUrl ?? null)
       .catch(() => null) as Promise<AutofillRunResult | null>,
   setFakeDisplaysForVerify: (count) =>
     ipcRenderer.invoke('nemo:set-fake-displays-for-verify', count).catch(() => 0) as Promise<number>,

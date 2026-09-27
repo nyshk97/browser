@@ -190,6 +190,11 @@ export const OWNERS = new Map([
   ['test-pages/autofill.html', ['autofill']],
   ['test-pages/autofill-efo.html', ['autofill']],
   ['test-pages/autofill-kayac.html', ['autofill']],
+  ['test-pages/autofill-patterns.html', ['autofill']],
+  // 実サイト調査（自走検証ではない）。直したら自動入力のスイートで回帰を見る
+  ['scripts/autofill-survey.mjs', ['autofill']],
+  ['scripts/autofill-survey-urls.txt', ['autofill']],
+  ['src/main/autofill/frame-runner.ts', ['autofill']],
   ['scripts/autofill.test.mjs', ['autofill']],
   // メモリ・CPU の定期記録と UI 例外だけが読むモジュール（他のスイートは触らない）。
   // `index.ts` / `registry.ts` / `ipc.ts` / `main.tsx` に入れた配線はここに載せない（フルに倒す）

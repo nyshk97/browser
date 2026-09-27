@@ -81,7 +81,16 @@ export function deriveValues(profile) {
     put('postal_code_part2', postal.slice(3))
   }
 
+  if (get('address_level2') && get('address_line1'))
+    put('address_city_line1', `${get('address_level2')}${get('address_line1')}`)
+  if (get('address_line1')) {
+    put(
+      'address_line1_2',
+      get('address_line2') ? `${get('address_line1')} ${get('address_line2')}` : get('address_line1')
+    )
+  }
   const address = [get('address_level1'), get('address_level2'), get('address_line1')].join('')
+  put('address_without_building', address)
   if (address) put('address_full', get('address_line2') ? `${address} ${get('address_line2')}` : address)
 
   const birthday = /^(\d{4})-(\d{2})-(\d{2})$/.exec(get('birthday'))
@@ -253,7 +262,7 @@ function digitsOf(text) {
  */
 function wantsHiragana(hintText, placeholder) {
   if (/ふりがな|ひらがな/.test(hintText)) return true
-  const example = placeholder.replace(/[\s\u3000]/g, '')
+  const example = placeholder.replace(/^例\s*[)）:：]?\s*/, '').replace(/[\s\u3000]/g, '')
   return example.length > 0 && /^[ぁ-ゖー]+$/.test(example)
 }
 

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>申込 | 自動入力の検証（実サイト調査で見つけた組み方）</title>
+  </head>
+  <body>
+    <!--
+      scripts/autofill-survey.mjs（2026-09-27）で見つけた、入らなかった組み方を集めたページ。
+      フォームごとに自動入力を 1 回ずつ走らせる（同じ項目の取り合いを避けるため 3 つに分けている）
+    -->
+
+    <!-- A: 見出しが th でなく左の td（官公庁のフォーム）・生年月日の区切りが <span>年</span>・確認用の電話・例がひらがなの姓 -->
+    <form id="a">
+      <table>
+        <tr>
+          <td class="fm-question"><h4>氏 名</h4></td>
+          <td class="fm-answer"><input type="text" name="p_name" /></td>
+        </tr>
+        <tr>
+          <td class="fm-question"><h4>氏 名（フリガナ）</h4></td>
+          <td class="fm-answer"><input type="text" name="p_kana" /></td>
+        </tr>
+      </table>
+      <div>
+        生年月日
+        <span><input type="number" name="by" maxlength="4" /></span><span>年</span>
+        <span><input type="number" name="bm" maxlength="2" /></span><span>月</span>
+        <span><input type="number" name="bd" maxlength="2" /></span><span>日</span>
+      </div>
+      <label>電話番号 <input type="tel" name="tel" /></label>
+      <label>電話番号（確認用） <input type="tel" name="tel2" /></label>
+      <label>名前の姓 <input type="text" name="kana_sei" autocomplete="family-name" placeholder="例：やまだ" /></label>
+    </form>
+
+    <!-- B: 見出しの無い郵便番号の 2 分割（3 桁 / 4 桁。Jev は電話と取り違えた）・電話の欄が無いフォームの FAX（取り合いに負けずに入ってしまう） -->
+    <form id="b">
+      <table>
+        <tr>
+          <td>
+            <input type="text" name="z1" maxlength="3" /> - <input type="text" name="z2" maxlength="4" />
+            <span>例: 123-1234(半角数字）</span>
+          </td>
+        </tr>
+      </table>
+      <div>
+        FAX番号
+        <input type="text" name="fax1" maxlength="4" /> - <input type="text" name="fax2" maxlength="4" /> -
+        <input type="text" name="fax3" maxlength="4" />
+      </div>
+    </form>
+
+    <!-- C: 郵便番号に type=tel（数字キーボードを出すため）。電話の欄と取り合わない。
+         番地と建物をまとめた欄（autocomplete は address-line2）・「ご住所」「建物名称」の 2 枠 -->
+    <form id="c">
+      <label>郵便番号（半角数字でご入力ください） <input type="tel" name="zip" maxlength="7" /></label>
+      <label>電話番号 <input type="tel" name="ctel" /></label>
+      <label>番地・マンション名 <input type="text" name="lines" autocomplete="address-line2" /></label>
+      <div>
+        ご住所（建物名まで）
+        <input type="text" name="ad1" placeholder="ご住所" /><input type="text" name="ad2" placeholder="建物名称" />
+      </div>
+    </form>
+  </body>
+</html>

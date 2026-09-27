@@ -367,6 +367,20 @@ export interface AutofillRunResult {
   jevMs: number | null
   /** Jev を使えなかった理由（`no-key` / `timeout` / `http-401` など）。 */
   jevError?: string
+  /**
+   * 欄ごとの判定の内訳。**自走検証・実サイト調査の口（`autofillForVerify`）にだけ入る**。
+   * 見出しはページの中身なので、診断ログには載せない
+   */
+  debug?: {
+    label: string
+    nearby: string
+    section: string
+    placeholder: string
+    boxes: number
+    decided: string | null
+    source: 'rule' | 'jev' | null
+    jev: { choice: string; confidence: number; own: number } | null
+  }[]
 }
 
 /** `nemo:list-slots` の戻り。保存先は**ログに出さない**ので、ここでしか受け取れない。 */
@@ -1297,7 +1311,7 @@ export interface NemoUiApi {
    * タブのページで右クリックの「フォーム自動入力」と同じ処理を走らせる（**本番では何もしない**）。
    * ネイティブの右クリックメニューは CDP から押せないので、同じ関数を名指しで呼ぶ。
    */
-  autofillForVerify(key: string, x: number, y: number): Promise<AutofillRunResult | null>
+  autofillForVerify(key: string, x: number, y: number, frameUrl?: string): Promise<AutofillRunResult | null>
   /**
    * 画面共有のダイアログを検証用に 2 枚以上のディスプレイで出す（**本番では何もしない**）。
    * 検証環境のディスプレイは 1 枚なので、主ディスプレイの複製を `count` 枚足して見せる。

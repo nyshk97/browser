@@ -459,11 +459,23 @@ export function registerIpcHandlers(): void {
     /** 右クリックの「フォーム自動入力」と同じ処理（ネイティブのメニューは CDP から押せない） */
     ipcMain.handle(
       'nemo:autofill-for-verify',
-      async (event, key: unknown, x: unknown, y: unknown): Promise<AutofillRunResult | null> => {
+      async (
+        event,
+        key: unknown,
+        x: unknown,
+        y: unknown,
+        frameUrl: unknown
+      ): Promise<AutofillRunResult | null> => {
         const { tab } = requireTab(event, key)
         const wc = tab.webContents
         if (!wc || wc.isDestroyed() || typeof x !== 'number' || typeof y !== 'number') return null
-        return runAutofill(wc, x, y)
+        // iframe で右クリックしたときの経路（`frameUrl` の iframe で走らせる）
+        const frame =
+          typeof frameUrl === 'string'
+            ? (wc.mainFrame.framesInSubtree.find((f) => f.parent !== null && f.url === frameUrl) ?? null)
+            : null
+        if (typeof frameUrl === 'string' && !frame) return null
+        return runAutofill(wc, x, y, frame, true)
       }
     )
     /**

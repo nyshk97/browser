@@ -297,6 +297,78 @@ export interface AuthVaultLoadResult {
   authCacheCleared: boolean
 }
 
+/* ------------------------------------------------------------------ *
+ * フォーム自動入力
+ * ------------------------------------------------------------------ */
+
+/** プロフィール（`PROFILE_KEYS` の全キー。未入力は空文字列）。 */
+export type AutofillProfile = Record<string, string>
+
+/** 設定画面の状態。**プロフィールの値も Jev のキーも含まない**。 */
+export interface AutofillStatus {
+  state: 'empty' | 'ok' | 'unreadable'
+  /** 入っている項目の数と保存日時・端末（**復号せずに読める**ぶん）。 */
+  meta: AuthVaultMeta | null
+  reason: string | null
+  /** 新しい版の Nemo が書いたもの。**この間は保存も削除もさせない**。 */
+  isFutureVersion: boolean
+  hasConflictCopy: boolean
+  dir: string
+  kind: 'env' | 'icloud' | 'fallback'
+  hasPassphrase: boolean
+  encryptionAvailable: boolean
+  minPassphrase: number
+  hasJevKey: boolean
+}
+
+export type AutofillFailure =
+  | 'empty'
+  | 'unreadable'
+  | 'bad-passphrase'
+  | 'tampered'
+  | 'malformed'
+  | 'no-passphrase'
+  | 'weak-passphrase'
+  | 'no-encryption'
+  | 'write-failed'
+  | 'future-version'
+
+/** 開いた結果。**値を renderer に渡すのはこの口だけ**（設定画面で編集を開いたとき）。 */
+export type AutofillOpenResult =
+  { ok: true; profile: AutofillProfile } | { ok: false; reason: AutofillFailure; detail?: string }
+
+export interface AutofillSaveResult {
+  ok: boolean
+  reason?: AutofillFailure
+}
+
+/** 自動入力 1 回の結果（ログにも同じものを出す。**値・見出し・URL は含まない**）。 */
+export interface AutofillRunResult {
+  ok: boolean
+  reason?:
+    | 'busy'
+    | 'no-vault'
+    | 'no-passphrase'
+    | 'bad-passphrase'
+    | 'unreadable'
+    | 'no-fields'
+    | 'collect-failed'
+    | 'fill-failed'
+  /** 集めた欄の数（分割グループは 1 つと数える）。 */
+  fields: number
+  /** ルールで決めて入れた欄。 */
+  rule: number
+  /** Jev で決めて入れた欄。 */
+  jev: number
+  /** 入れなかった欄。 */
+  left: number
+  /** 実際に値を入れた入力要素の数（分割グループは要素ごとに数える）。 */
+  filled: number
+  jevMs: number | null
+  /** Jev を使えなかった理由（`no-key` / `timeout` / `http-401` など）。 */
+  jevError?: string
+}
+
 /** `nemo:list-slots` の戻り。保存先は**ログに出さない**ので、ここでしか受け取れない。 */
 export interface SlotList {
   dir: string
@@ -1120,6 +1192,29 @@ export interface NemoUiApi {
    */
   authVaultDelete(): Promise<boolean>
 
+  /* フォーム自動入力 */
+  /** 設定画面の状態。**毎回ディスクから読み直す**。値もキーも返さない。 */
+  autofillStatus(): Promise<AutofillStatus>
+  /**
+   * 保管庫を開いてプロフィールを受け取る（設定画面で編集するとき）。
+   * `passphrase` に `null` を渡すと覚えているものを使う。`remember` は入力したときだけ効く。
+   */
+  autofillOpen(passphrase: string | null, remember: boolean): Promise<AutofillOpenResult>
+  /**
+   * 保存する。**保管庫が既にあるときは、そのパスフレーズで開けることを確かめてから上書きする**
+   * （違うパスフレーズで黙って作り直さない）。
+   */
+  autofillSave(
+    profile: AutofillProfile,
+    passphrase: string | null,
+    remember: boolean
+  ): Promise<AutofillSaveResult>
+  /** 保管庫を消す（覚えているパスフレーズも消える）。 */
+  autofillDelete(): Promise<boolean>
+  /** Jev の API キーを保存する（**端末鍵が無ければ false**）。キーを返す口は無い。 */
+  saveJevKey(key: string): Promise<boolean>
+  clearJevKey(): Promise<void>
+
   /* Live Folder（GitHub の PR） */
   /** いま取得する（`transient` / `auth` のバックオフは上書きできる。`rate-limit` は不可）。 */
   liveFolderRefresh(): Promise<void>
@@ -1193,6 +1288,11 @@ export interface NemoUiApi {
    * `before-input-event` に届かないので、Peek / 小窓の Esc はここで撃つ。送れるのは Esc だけ。
    */
   pressKeyForVerify(key: string, keyName: 'Escape'): Promise<boolean>
+  /**
+   * タブのページで右クリックの「フォーム自動入力」と同じ処理を走らせる（**本番では何もしない**）。
+   * ネイティブの右クリックメニューは CDP から押せないので、同じ関数を名指しで呼ぶ。
+   */
+  autofillForVerify(key: string, x: number, y: number): Promise<AutofillRunResult | null>
   /**
    * 画面共有のダイアログを検証用に 2 枚以上のディスプレイで出す（**本番では何もしない**）。
    * 検証環境のディスプレイは 1 枚なので、主ディスプレイの複製を `count` 枚足して見せる。

@@ -9,6 +9,10 @@ import type {
   AuthVaultSavePreview,
   AuthVaultSaveResult,
   AuthVaultStatus,
+  AutofillOpenResult,
+  AutofillRunResult,
+  AutofillSaveResult,
+  AutofillStatus,
   CallState,
   GithubTokenStatus,
   HttpAuthImportResult,
@@ -99,6 +103,10 @@ const api: NemoUiApi = {
     ipcRenderer.invoke('nemo:run-command-for-verify', command).catch(() => false) as Promise<boolean>,
   pressKeyForVerify: (key, keyName) =>
     ipcRenderer.invoke('nemo:press-key-for-verify', key, keyName).catch(() => false) as Promise<boolean>,
+  autofillForVerify: (key, x, y) =>
+    ipcRenderer
+      .invoke('nemo:autofill-for-verify', key, x, y)
+      .catch(() => null) as Promise<AutofillRunResult | null>,
   setFakeDisplaysForVerify: (count) =>
     ipcRenderer.invoke('nemo:set-fake-displays-for-verify', count).catch(() => 0) as Promise<number>,
   screenAccessStatusForVerify: () =>
@@ -164,6 +172,14 @@ const api: NemoUiApi = {
       remember
     ) as Promise<AuthVaultLoadResult>,
   authVaultDelete: () => ipcRenderer.invoke('nemo:auth-vault-delete') as Promise<boolean>,
+  autofillStatus: () => ipcRenderer.invoke('nemo:autofill-status') as Promise<AutofillStatus>,
+  autofillOpen: (passphrase, remember) =>
+    ipcRenderer.invoke('nemo:autofill-open', passphrase, remember) as Promise<AutofillOpenResult>,
+  autofillSave: (profile, passphrase, remember) =>
+    ipcRenderer.invoke('nemo:autofill-save', profile, passphrase, remember) as Promise<AutofillSaveResult>,
+  autofillDelete: () => ipcRenderer.invoke('nemo:autofill-delete') as Promise<boolean>,
+  saveJevKey: (key) => ipcRenderer.invoke('nemo:jev-key-save', key) as Promise<boolean>,
+  clearJevKey: () => ipcRenderer.invoke('nemo:jev-key-clear') as Promise<void>,
   liveFolderRefresh: () => ipcRenderer.invoke('nemo:live-folder-refresh') as Promise<void>,
   liveFolderOpen: (url) => ipcRenderer.invoke('nemo:live-folder-open', url) as Promise<void>,
   saveGithubToken: (token) => ipcRenderer.invoke('nemo:github-token-save', token) as Promise<boolean>,

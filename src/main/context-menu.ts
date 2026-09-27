@@ -1,5 +1,6 @@
 import { clipboard, Menu, type BaseWindow, type MenuItemConstructorOptions, type WebContents } from 'electron'
 import { log } from './log.js'
+import { runAutofill } from './autofill/index.js'
 
 /**
  * ページ本体の右クリックメニュー。
@@ -8,6 +9,7 @@ import { log } from './log.js'
  * 項目は**ショートカットで代用できないものだけ**に絞る:
  * 戻る/進む/再読み込み/コピー系はキーで済むので載せない。
  *
+ * - 入力欄の上（メインフレームだけ）: フォーム自動入力
  * - リンクの上: リンクのアドレスをコピー
  * - 画像の上: 名前を付けて画像を保存 / 画像をコピー / 画像アドレスをコピー
  * - 常に: 検証（その座標の要素を DevTools で開く）
@@ -15,12 +17,41 @@ import { log } from './log.js'
  * 「画像を保存」は `downloadURL` で通常のダウンロード経路（`will-download`）に流す。
  * 保存先の確認・一覧への掲載は既存の handler がそのまま面倒を見る。
  */
-export function attachContextMenu(wc: WebContents, window: () => BaseWindow | null): void {
+export function attachContextMenu(
+  wc: WebContents,
+  window: () => BaseWindow | null,
+  openSettings: () => void
+): void {
   wc.on('context-menu', (_event, params) => {
-    const template = buildContextMenuTemplate(wc, params)
+    /*
+     * **メインフレームの入力欄だけ**。iframe は isolated world で走らせる口が無く
+     * （`WebFrameMain` はメインワールドの `executeJavaScript` しか持たない）、メインワールドだと
+     * ページが可視判定を偽って見えない欄に値を入れさせられる。
+     */
+    const autofill =
+      isAutofillTarget(params.formControlType) && params.frame !== null && params.frame.parent === null
+        ? () => {
+            void runAutofill(wc, params.x, params.y).then((result) => {
+              // 保管庫が無い / 開けないときは設定画面の「フォーム自動入力」へ
+              if (
+                result.reason === 'no-vault' ||
+                result.reason === 'no-passphrase' ||
+                result.reason === 'bad-passphrase'
+              ) {
+                openSettings()
+              }
+            })
+          }
+        : undefined
+    const template = buildContextMenuTemplate(wc, params, { autofill })
     log('context_menu.open', {
       mediaType: params.mediaType,
       link: Boolean(params.linkURL),
+      autofill: autofill !== undefined,
+      // 自動入力を出さなかった理由を後から追えるように（値は含まない）
+      formControlType: params.formControlType,
+      editable: params.isEditable,
+      frame: params.frame === null ? 'none' : params.frame.parent === null ? 'main' : 'sub',
       items: template.length
     })
     const target = window()
@@ -29,11 +60,32 @@ export function attachContextMenu(wc: WebContents, window: () => BaseWindow | nu
   })
 }
 
+/** 自動入力を出す入力欄の種類（収集スクリプトが扱うものと揃える）。 */
+const AUTOFILL_CONTROLS = new Set([
+  'input-text',
+  'input-email',
+  'input-telephone',
+  'input-number',
+  'input-url',
+  'input-date',
+  'select-one',
+  'text-area'
+])
+
+export function isAutofillTarget(formControlType: string | undefined): boolean {
+  return formControlType !== undefined && AUTOFILL_CONTROLS.has(formControlType)
+}
+
 export function buildContextMenuTemplate(
   wc: WebContents,
-  params: Pick<Electron.ContextMenuParams, 'x' | 'y' | 'mediaType' | 'srcURL' | 'linkURL'>
+  params: Pick<Electron.ContextMenuParams, 'x' | 'y' | 'mediaType' | 'srcURL' | 'linkURL'>,
+  actions: { autofill?: (() => void) | undefined } = {}
 ): MenuItemConstructorOptions[] {
   const template: MenuItemConstructorOptions[] = []
+
+  if (actions.autofill) {
+    template.push({ label: 'フォーム自動入力', click: actions.autofill }, { type: 'separator' })
+  }
 
   // `<a href>` の上（画像リンクなら画像の項目より前に出す。Chrome と同じ並び）
   if (params.linkURL) {

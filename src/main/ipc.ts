@@ -84,6 +84,18 @@ import {
   vaultStatus
 } from './store/auth-vault.js'
 import { diffAuthRules } from '../shared/auth-vault-diff.js'
+import {
+  autofillVaultStatus,
+  deleteAutofillVault,
+  forgetAutofillPassphrase,
+  openAutofillVault,
+  recallAutofillPassphrase,
+  rememberAutofillPassphrase,
+  saveAutofillVault
+} from './store/autofill-vault.js'
+import { clearJevKey, hasJevKey, saveJevKey } from './store/jev-key.js'
+import { runAutofill } from './autofill/index.js'
+import { normalizeProfile } from '../shared/autofill-schema.js'
 import type { ImportEntry } from '../shared/http-auth-rules.js'
 import { MAX_PASSPHRASE, MIN_PASSPHRASE, validatePassphrase } from '../shared/auth-vault-schema.js'
 import { cancelDownload, clearDownloads, revealDownload } from './downloads.js'
@@ -126,6 +138,11 @@ import type {
   AuthVaultSavePreview,
   AuthVaultSaveResult,
   AuthVaultStatus,
+  AutofillFailure,
+  AutofillOpenResult,
+  AutofillRunResult,
+  AutofillSaveResult,
+  AutofillStatus,
   CallState,
   HttpAuthImportResult,
   HttpAuthRule,
@@ -438,6 +455,16 @@ export function registerIpcHandlers(): void {
       wc.sendInputEvent({ type: 'keyUp', keyCode: keyName })
       return true
     })
+    /** 右クリックの「フォーム自動入力」と同じ処理（ネイティブのメニューは CDP から押せない） */
+    ipcMain.handle(
+      'nemo:autofill-for-verify',
+      async (event, key: unknown, x: unknown, y: unknown): Promise<AutofillRunResult | null> => {
+        const { tab } = requireTab(event, key)
+        const wc = tab.webContents
+        if (!wc || wc.isDestroyed() || typeof x !== 'number' || typeof y !== 'number') return null
+        return runAutofill(wc, x, y)
+      }
+    )
     /**
      * 画面共有のダイアログを 2 枚以上のディスプレイで出す（主ディスプレイの複製を足す）。
      * 検証環境のディスプレイは 1 枚しか無い。0 で戻す
@@ -1141,6 +1168,98 @@ export function registerIpcHandlers(): void {
     // **記憶も一緒に消す**（別のパスフレーズで作り直したときに古い記憶が初期値になる）
     if (ok) forgetPassphrase()
     return ok
+  })
+
+  /* ---- フォーム自動入力 ---- */
+
+  /** `resolvePassphrase` の自動入力版（覚えているものは自動入力の保管庫の記憶から引く）。 */
+  function resolveAutofillPassphrase(
+    value: unknown
+  ): { ok: true; passphrase: string; entered: boolean } | { ok: false; reason: AutofillFailure } {
+    if (value === null || value === undefined) {
+      const remembered = recallAutofillPassphrase()
+      if (!remembered) return { ok: false, reason: 'no-passphrase' }
+      return { ok: true, passphrase: remembered, entered: false }
+    }
+    const passphrase = credential(value, MAX_PASSPHRASE)
+    if (!validatePassphrase(passphrase).ok) return { ok: false, reason: 'weak-passphrase' }
+    return { ok: true, passphrase, entered: true }
+  }
+
+  ipcMain.handle('nemo:autofill-status', async (event): Promise<AutofillStatus> => {
+    requireWindow(event)
+    const status = await autofillVaultStatus()
+    return {
+      ...status,
+      hasPassphrase: recallAutofillPassphrase() !== null,
+      encryptionAvailable: httpAuthEncryptionAvailable(),
+      minPassphrase: MIN_PASSPHRASE,
+      hasJevKey: hasJevKey()
+    }
+  })
+
+  ipcMain.handle(
+    'nemo:autofill-open',
+    async (event, passphrase: unknown, remember: unknown): Promise<AutofillOpenResult> => {
+      requireWindow(event)
+      const resolved = resolveAutofillPassphrase(passphrase)
+      if (!resolved.ok) return { ok: false, reason: resolved.reason }
+      const opened = await openAutofillVault(resolved.passphrase)
+      if (!opened.ok) {
+        return { ok: false, reason: opened.future ? 'future-version' : opened.reason, detail: opened.detail }
+      }
+      if (remember === true && resolved.entered) rememberAutofillPassphrase(resolved.passphrase)
+      return { ok: true, profile: opened.profile }
+    }
+  )
+
+  ipcMain.handle(
+    'nemo:autofill-save',
+    async (event, profile: unknown, passphrase: unknown, remember: unknown): Promise<AutofillSaveResult> => {
+      requireWindow(event)
+      const resolved = resolveAutofillPassphrase(passphrase)
+      if (!resolved.ok) return { ok: false, reason: resolved.reason }
+      if (!httpAuthEncryptionAvailable()) return { ok: false, reason: 'no-encryption' }
+
+      /*
+       * **既にある保管庫は、同じパスフレーズで開けるときだけ上書きする。**
+       * 開けないまま書くと、別の Mac が覚えているパスフレーズでは開けない保管庫に黙って変わる
+       * （打ち間違いで全 Mac の自動入力が止まる）。作り直したいときは削除してから。
+       */
+      const current = await openAutofillVault(resolved.passphrase)
+      if (!current.ok && current.reason !== 'empty') {
+        return { ok: false, reason: current.future ? 'future-version' : current.reason }
+      }
+      const written = await saveAutofillVault(normalizeProfile(profile), resolved.passphrase, {
+        savedAt: Date.now(),
+        host: hostName(),
+        appVersion: appVersion()
+      })
+      if (!written) return { ok: false, reason: 'write-failed' }
+      if (remember === true && resolved.entered) rememberAutofillPassphrase(resolved.passphrase)
+      return { ok: true }
+    }
+  )
+
+  ipcMain.handle('nemo:autofill-delete', async (event): Promise<boolean> => {
+    requireWindow(event)
+    const status = await autofillVaultStatus()
+    // 未来の版は消させない（新しい方の Nemo からも丸ごと消える）
+    if (status.isFutureVersion) return false
+    const ok = await deleteAutofillVault()
+    if (ok) forgetAutofillPassphrase()
+    return ok
+  })
+
+  ipcMain.handle('nemo:jev-key-save', (event, key: unknown): boolean => {
+    requireWindow(event)
+    // 中身はログに出さない（長さも出さない）
+    return saveJevKey(credential(key, 512))
+  })
+
+  ipcMain.handle('nemo:jev-key-clear', (event): void => {
+    requireWindow(event)
+    clearJevKey()
   })
 
   /* ---- Live Folder（GitHub の PR） ---- */

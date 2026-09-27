@@ -42,6 +42,7 @@ export const KNOWN_TARGETS = [
   'db', // 旧スキーマの履歴 DB からの移行
   'slots', // セーブスロット（保存 / 読み込み / 移行。自分で起動する。OPT_IN_ONLY を見る）
   'auth-vault', // Basic 認証の保管庫（持ち出し。自分で起動する。OPT_IN_ONLY を見る）
+  'autofill', // フォーム自動入力（保管庫・Jev のモック。自分で起動する）
   'metrics' // メモリ・CPU の定期記録と UI 例外（自分で起動する。OPT_IN_ONLY を見る）
 ]
 
@@ -78,6 +79,8 @@ export const NEEDS_APP = [
  * `OWNERS` でスロット関連のファイルを全部拾っているので、触ったときは `--changed` で必ず回る。
  * `auth-vault` も同じ（アプリを 4 回起動し直す。**`NEEDS_APP` には入れない** ——
  * 入れると共有のアプリとページサーバまで立ち上がって、使わない起動が 1 つ増える）。
+ * `autofill` は**ここに入れない**（起動 1 回・全体で 10 秒ほどなのでフルに常設してよい）。
+ * 保管庫と同じく `NEMO_SLOTS_DIR` を自分で振るので `NEEDS_APP` には入れない。
  */
 export const OPT_IN_ONLY = ['vim-scroll', 'slots', 'auth-vault', 'metrics']
 
@@ -135,11 +138,13 @@ export const OWNERS = new Map([
   ['scripts/verify-db-migration.mjs', ['db']],
   ['scripts/verify-slots.mjs', ['slots']],
   ['scripts/verify-auth-vault.mjs', ['auth-vault']],
+  ['scripts/verify-autofill.mjs', ['autofill']],
   ['scripts/verify-metrics.mjs', ['metrics']],
   // セーブスロットだけが読むモジュール（他のスイートは触らない）。
   // `Slots.tsx` は `verify-slots.mjs` が設定画面を開いてカードの描画まで見ている
   // （IPC だけの検証だと描画例外を素通りするので、この割り当てが嘘になる）
-  ['src/main/store/slots.ts', ['slots']],
+  // 保存先の解決（`slotsDir`）を自動入力の保管庫も使う
+  ['src/main/store/slots.ts', ['slots', 'autofill']],
   // `slots-schema.js` は `normalizeFaviconUrl` を `settings-schema.js` へ、`slotHasSections` を適用経路へ
   // 出しており、Favorites の section / favicon（`pins`）にも効く
   ['src/shared/slots-schema.js', ['slots', 'pins']],
@@ -161,14 +166,30 @@ export const OWNERS = new Map([
   ['src/shared/http-auth-worker-source.js', ['http-auth']],
   ['scripts/http-auth-rules.test.mjs', ['http-auth', 'auth-vault']],
   // Basic 認証の保管庫だけが読むモジュール（他のスイートは触らない）
-  ['src/shared/auth-vault-schema.js', ['auth-vault']],
-  ['src/shared/auth-vault-crypto.js', ['auth-vault']],
+  // 封筒の検査と暗号は自動入力の保管庫も使う（`encryptEnvelope` / `normalizeVaultFile`）
+  ['src/shared/auth-vault-schema.js', ['auth-vault', 'autofill']],
+  ['src/shared/auth-vault-crypto.js', ['auth-vault', 'autofill']],
   ['src/shared/auth-vault-diff.js', ['auth-vault']],
   ['src/main/store/auth-vault.ts', ['auth-vault']],
   ['src/renderer/components/AuthVault.tsx', ['auth-vault']],
   ['scripts/auth-vault-schema.test.mjs', ['auth-vault']],
   ['scripts/auth-vault-crypto.test.mjs', ['auth-vault']],
   ['scripts/auth-vault-diff.test.mjs', ['auth-vault']],
+  // フォーム自動入力だけが読むモジュール（他のスイートは触らない）。
+  // `Autofill.tsx` は `verify-autofill.mjs` が設定画面を開いて節の描画まで見ている。
+  // `context-menu.ts` / `ipc.ts` / `registry.ts` に入れた配線はここに載せない（フルに倒す）
+  ['src/shared/autofill-schema.js', ['autofill']],
+  ['src/shared/autofill-values.js', ['autofill']],
+  ['src/shared/autofill-match.js', ['autofill']],
+  ['src/shared/autofill-collect-source.js', ['autofill']],
+  ['src/main/autofill/index.ts', ['autofill']],
+  ['src/main/autofill/jev.ts', ['autofill']],
+  ['src/main/store/autofill-vault.ts', ['autofill']],
+  ['src/main/store/jev-key.ts', ['autofill']],
+  ['src/renderer/components/Autofill.tsx', ['autofill']],
+  ['test-pages/autofill.html', ['autofill']],
+  ['test-pages/autofill-efo.html', ['autofill']],
+  ['scripts/autofill.test.mjs', ['autofill']],
   // メモリ・CPU の定期記録と UI 例外だけが読むモジュール（他のスイートは触らない）。
   // `index.ts` / `registry.ts` / `ipc.ts` / `main.tsx` に入れた配線はここに載せない（フルに倒す）
   ['src/main/metrics.ts', ['metrics']],

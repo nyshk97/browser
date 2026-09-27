@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>お問い合わせ | 自動入力の検証</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 20px;
+      }
+      label,
+      .row {
+        display: block;
+        margin: 6px 0;
+      }
+      input,
+      select,
+      textarea {
+        width: 180px;
+      }
+      .tel input {
+        width: 50px;
+      }
+      .trap-offscreen {
+        position: absolute;
+        left: -9999px;
+      }
+      .trap-clip {
+        overflow: hidden;
+        height: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- フォームの外の欄（収集の対象外） -->
+    <form id="search"><input name="q" placeholder="サイト内検索" /></form>
+
+    <form id="main">
+      <label>お名前（姓） <input name="sei" id="sei" /></label>
+      <label>お名前（名） <input name="mei" /></label>
+      <label>フリガナ（セイ） <input name="kana_sei" autocomplete="family-name" /></label>
+      <label>フリガナ（メイ） <input name="kana_mei" autocomplete="given-name" /></label>
+      <label>メールアドレス <input type="email" name="mail" /></label>
+      <label>メールアドレス（確認用） <input name="mail_confirm" /></label>
+      <table>
+        <tr class="tel">
+          <th>電話番号</th>
+          <td>
+            <!-- autocomplete="off" は日本のフォームでよく付く。ルールの値ではないのでまとめる -->
+            <input name="tel1" maxlength="4" autocomplete="off" /> -
+            <input name="tel2" maxlength="4" autocomplete="off" /> -
+            <input name="tel3" maxlength="4" autocomplete="off" />
+          </td>
+        </tr>
+      </table>
+      <!-- autocomplete を持つ欄が 1 行に並ぶ（まとめると先頭だけで決まって 2 欄とも空になる） -->
+      <table>
+        <tr>
+          <th>町名番地・建物名</th>
+          <td>
+            <input name="addr1" autocomplete="address-line1" />
+            <input name="addr2" autocomplete="address-line2" />
+          </td>
+        </tr>
+      </table>
+      <label>郵便番号 <input name="zip" autocomplete="postal-code" maxlength="7" placeholder="1234567" /></label>
+      <label
+        >都道府県
+        <select name="pref">
+          <option value="">選択してください</option>
+          <option value="13">東京都</option>
+          <option value="14">神奈川県</option>
+        </select>
+      </label>
+      <label>市区町村 <input name="city" /></label>
+      <dl>
+        <dt>生年月日</dt>
+        <dd>
+          <select name="by">
+            <option value="">--</option>
+            <option>1987</option>
+            <option>1988</option>
+          </select>
+          年
+          <select name="bm">
+            <option value="">--</option>
+            <option>6</option>
+            <option>7</option>
+          </select>
+          月
+          <select name="bd">
+            <option value="">--</option>
+            <option>1</option>
+            <option>14</option>
+          </select>
+          日
+        </dd>
+      </dl>
+      <label>会社名 <input name="company" id="company" /></label>
+      <label>部署 <input name="busho" value="営業部" /></label>
+      <label>ご紹介者のお名前 <input name="referrer" /></label>
+      <label>パスワード <input type="password" name="pw" /></label>
+      <label>お問い合わせ内容 <textarea name="body"></textarea></label>
+
+      <!-- 見えない罠（入れても送ってもいけない） -->
+      <label style="display: none">電話番号（予備） <input name="trap_display" /></label>
+      <label>氏名（予備） <input name="trap_opacity" style="opacity: 0" /></label>
+      <label class="trap-offscreen">メール（予備） <input name="trap_offscreen" /></label>
+      <div class="trap-clip"><label>住所（予備） <input name="trap_clip" /></label></div>
+      <label>電話（予備） <input name="trap_tiny" style="width: 1px; height: 1px; padding: 0; border: 0" /></label>
+    </form>
+    <p id="react-log"></p>
+    <script>
+      // React の valueTracker をまねる: メインワールドの setter を通った値は「変更なし」と見る。
+      // isolated world から native setter で入れたときだけ onChange 相当が走ることを確かめる
+      const company = document.getElementById('company')
+      const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+      let tracked = ''
+      Object.defineProperty(company, 'value', {
+        get() {
+          return proto.get.call(this)
+        },
+        set(v) {
+          tracked = v
+          proto.set.call(this, v)
+        }
+      })
+      company.addEventListener('input', () => {
+        if (company.value !== tracked) {
+          tracked = company.value
+          document.getElementById('react-log').textContent = 'changed:' + company.value
+        }
+      })
+    </script>
+  </body>
+</html>

@@ -21,6 +21,7 @@
     "src/shared/favorites.js",
     "src/shared/sidebar-rows.js",
     "src/shared/live-folder-schema.js",
-    "src/shared/http-auth-rules.js"
+    "src/shared/http-auth-rules.js",
+    "src/shared/autofill-schema.js"
   ]
 }

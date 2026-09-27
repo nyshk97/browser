@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>会員登録 | 自動入力の検証（表の中に見出しが並ぶ形）</title>
+  </head>
+  <body>
+    <!--
+      実在する EFO のサンプルフォームと同じ組み方: 表の th は「ご住所」の 1 つだけで、
+      td の中に <label>（for なし・欄を包まない）と欄が段落ごとに並ぶ。
+      th を見出しにすると 6 欄が同じ見出しになり、3 つずつまとめられて入らなかった
+    -->
+    <form>
+      <table>
+        <tr>
+          <th><span>お名前</span><span>必須</span></th>
+          <td><input type="text" name="text2" /></td>
+        </tr>
+        <tr>
+          <th><span>ご住所</span><span>必須</span></th>
+          <td>
+            <p>
+              <labe>郵便番号</labe>
+              <input type="text" name="text9" />
+              -
+              <input type="text" name="text10" />
+            </p>
+            <p>
+              <label>都道府県</label>
+              <select name="select">
+                <option value="0" selected="selected">▼選択してください</option>
+                <option value="東京都">東京都</option>
+                <option value="神奈川県">神奈川県</option>
+              </select>
+            </p>
+            <p><label>市区町村</label> <input type="text" name="text4" /></p>
+            <p><label>町名番地</label> <input type="text" name="text41" /></p>
+            <p><label>建物名　</label> <input type="text" name="text42" /></p>
+          </td>
+        </tr>
+      </table>
+    </form>
+  </body>
+</html>

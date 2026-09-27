@@ -1213,6 +1213,54 @@ mise run verify:only auth-vault   # 保存 / 差分 / 選択取り込みの通�
 - パスフレーズを打ち間違えたときに「削除して作り直す」ではなく
   **やり直しだけ**が出ること
 
+## フォーム自動入力（右クリック → Jev で欄を判定）
+
+```bash
+mise run verify:only autofill   # 保管庫・ルール・Jev（モック）・流し込みの通し（自分で起動する。10 秒ほど）
+```
+
+フルの既定にも入っている（`auth-vault` の後の最後）。
+
+**`NEMO_SLOTS_DIR` / `NEMO_HTTP_AUTH_TEST_CRYPTO=memory` / `NEMO_JEV_TEST_ENDPOINT` を必ず渡す**
+（スクリプトが渡している）。最後のを渡し忘れると**実 Jev にテスト用のキーを送る**。
+`NEMO_JEV_TEST_ENDPOINT` はパッケージ版では無視される（キーを任意のサーバへ送らせないため）。
+
+ネイティブの右クリックメニューは CDP から押せないので、**メニューと同じ `runAutofill` を
+`window.nemo.autofillForVerify(tabKey, x, y)`（`NEMO_VERIFY_DIAGNOSTICS=1` のときだけ生える）で呼ぶ**。
+
+自走検証が見るもの:
+
+- 保管庫が無いと `no-vault` で何も入れず、Jev も呼ばない（メニューからはここで設定画面が開く）
+- `autofill.json` と `jev-key.json` の**ファイル全体に平文が現れない**
+- ルール（`autocomplete` / `type`）と Jev の両方で決まった欄に、**書式まで含めて**正しい値が入る
+  （電話 3 分割・郵便番号の `maxlength=7`・都道府県 select・生年月日の年月日 select・カナ）
+- **入れてはいけない欄に入らない**: 既に値のある欄・パスワード・紹介者（本人性の noul が低い）・
+  お問い合わせ内容（`none`）・フォームの外の欄・**見えない罠 5 種**（`display:none` / `opacity:0` /
+  画面外 / `overflow:hidden` で高さ 0 / 1px）
+- **Jev に値を 1 つも送っていない**（モックが受け取った body 全体を見る。ページ自体に書いてある
+  文字列は除き、除いたあとに見た値の数を出す）。罠とフォームの外の欄も送っていない
+- React の valueTracker をまねた欄で変更イベントが拾われる（isolated world の native setter）
+- 529 → 再試行で入る / 401・タイムアウト・キー無しでもルールの欄は入る
+- 違うパスフレーズでは既存の保管庫を上書きできない（ファイルが変わらない）
+- 表の th「ご住所」の中に「郵便番号」「都道府県」… が段落で並ぶ形（`test-pages/autofill-efo.html`。実在の EFO サンプルと同じ組み方）で住所 6 欄が入る
+- 設定画面に節が描かれ、項目数が出る / 診断ログに値・キー・パスフレーズが出ない
+
+**モックは罠の欄にも本物らしい項目を答える**（攻撃側のページはそう見せる）。`none` を返すと、
+可視判定が壊れていても「罠に入らない」検査が PASS する（可視判定を外すと 9 件 FAIL することを確認済み）。
+
+**実 Jev での確認**は `scripts/verify-autofill.mjs` を複製して `NEMO_JEV_TEST_ENDPOINT` を外し、
+キーを scratchpad のファイルから読む形にして回す（2026-09-27 に値の検査が全部 PASS・Jev 291ms。
+モックが受け取ったリクエストを見る 4 件はモックに届かないので FAIL になるのが正しい）。
+
+人が見る分:
+
+- **右クリックメニューに「フォーム自動入力」が出る**のは入力欄の上だけで、iframe の中では出ない
+- 実 `safeStorage` を使う経路（パスフレーズの記憶・Jev のキー）。自走検証は差し替え backend
+- 保管庫が無い / パスフレーズを覚えていない状態でメニューを押すと設定画面が開く
+- autocomplete の無い実際の日本語フォームで、埋まった欄・空欄のまま残った欄が妥当か
+  （閾値は `src/shared/autofill-match.js` の `CHOICE_THRESHOLD` / `OWN_THRESHOLD`）
+- もう 1 台の Mac で同じパスフレーズを入れて保管庫が開けること
+
 ## Arc からの移行（Phase 2-2）
 
 ```bash

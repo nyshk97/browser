@@ -3,6 +3,7 @@ import { HTTP_AUTH_LIMITS } from '../../shared/http-auth-rules.js'
 import { useSharedState } from '../useNemo.js'
 import { Slots } from './Slots.js'
 import { AuthVault } from './AuthVault.js'
+import { Autofill } from './Autofill.js'
 import { SettingsSection } from './SettingsSection.js'
 import type {
   GithubTokenStatus,
@@ -82,6 +83,8 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
         </SettingsSection>
 
         <AuthVault />
+
+        <Autofill />
 
         <Slots />
 

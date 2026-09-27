@@ -938,7 +938,13 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
   // DevTools の中の拡張パネルに `chrome.debugger` の空実装を配る（preload はサブフレームに届かない）
   wc.on('devtools-opened', () => attachDevToolsExtensionShim(wc))
   // ページ本体の右クリック（画像の保存・検証だけ。Electron は標準では何も出さない）
-  attachContextMenu(wc, () => (win().isDestroyed ? null : win().baseWindow))
+  attachContextMenu(
+    wc,
+    () => (win().isDestroyed ? null : win().baseWindow),
+    () => {
+      if (!win().isDestroyed) win().setOverlay('settings')
+    }
+  )
 
   // ページが自分で閉じた（`window.close()`）ときの後始末。
   //

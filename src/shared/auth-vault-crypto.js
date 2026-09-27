@@ -1,6 +1,10 @@
 // @ts-check
 /**
- * Basic 認証の保管庫の暗号。
+ * パスフレーズで暗号化する保管庫の暗号（Basic 認証の保管庫・フォーム自動入力の保管庫）。
+ *
+ * 中身は `{ meta, [field]: payload }` を JSON にしたもの。`field` は保管庫ごとに決める
+ * （Basic 認証は `rules`、自動入力は `profile`）。**既存の Basic 認証の保管庫と同じ形のまま**なので、
+ * `encryptVault` / `decryptVault` は `field = 'rules'` の薄い包みにしてある。
  *
  * **renderer から import しない**（`node:crypto` が web バンドルに入る）。
  * 定数と検証は `auth-vault-schema.js` にあり、そちらは renderer も読む。
@@ -81,21 +85,22 @@ function metaMatches(outer, inner) {
 }
 
 /**
- * 保管庫のファイル本体（`{ version, data }` の `data`）を作る。
+ * 保管庫のファイル本体（`{ version, data }` の `data`）を作る。中身は任意の JSON 値。
  *
- * @param {import('./auth-vault-schema.js').VaultRule[]} rules 平文のルール
+ * @param {unknown} payload 平文の中身
+ * @param {string} field 暗号の中で中身を置くキー（保管庫ごとに固定）
  * @param {string} passphrase
  * @param {import('./auth-vault-schema.js').VaultMeta} meta
  * @returns {Promise<import('./auth-vault-schema.js').VaultFile>}
  */
-export async function encryptVault(rules, passphrase, meta) {
+export async function encryptEnvelope(payload, field, passphrase, meta) {
   const salt = randomBytes(SALT_LENGTH)
   const iv = randomBytes(IV_LENGTH)
   const key = await deriveKey(passphrase, salt, KDF_PARAMS)
 
   const cipher = createCipheriv('aes-256-gcm', key, iv)
   // メタの写しを**暗号の中にも**入れる（外側だけ書き換えられたら復号後に気づける）
-  const body = JSON.stringify({ meta, rules })
+  const body = JSON.stringify({ meta, [field]: payload })
   const ciphertext = Buffer.concat([cipher.update(Buffer.from(body, 'utf8')), cipher.final()])
 
   return {
@@ -122,14 +127,43 @@ export async function encryptVault(rules, passphrase, meta) {
  */
 
 /**
- * 保管庫を復号する。ルールの検査は `normalizeVaultPayload` の仕事なので、
- * ここは**パースとメタの突き合わせまで**を返す。
+ * @typedef {{ ok: true, payload: unknown } | { ok: false, reason: VaultDecryptError }} EnvelopeDecryptResult
+ */
+
+/**
+ * Basic 認証の保管庫を作る（`encryptEnvelope` の `field = 'rules'`）。
  *
- * @param {unknown} raw `readVersioned` が剥がしたあとの `data`
+ * @param {import('./auth-vault-schema.js').VaultRule[]} rules 平文のルール
+ * @param {string} passphrase
+ * @param {import('./auth-vault-schema.js').VaultMeta} meta
+ * @returns {Promise<import('./auth-vault-schema.js').VaultFile>}
+ */
+export function encryptVault(rules, passphrase, meta) {
+  return encryptEnvelope(rules, 'rules', passphrase, meta)
+}
+
+/**
+ * Basic 認証の保管庫を復号する（`decryptEnvelope` の `field = 'rules'`）。
+ *
+ * @param {unknown} raw
  * @param {string} passphrase
  * @returns {Promise<VaultDecryptResult>}
  */
 export async function decryptVault(raw, passphrase) {
+  const result = await decryptEnvelope(raw, 'rules', passphrase)
+  return result.ok ? { ok: true, rules: result.payload } : result
+}
+
+/**
+ * 保管庫を復号する。中身の検査は呼び出し側（`normalizeVaultPayload` 等）の仕事なので、
+ * ここは**パースとメタの突き合わせまで**を返す。
+ *
+ * @param {unknown} raw `readVersioned` が剥がしたあとの `data`
+ * @param {string} field 暗号の中で中身を置いたキー
+ * @param {string} passphrase
+ * @returns {Promise<EnvelopeDecryptResult>}
+ */
+export async function decryptEnvelope(raw, field, passphrase) {
   const file = normalizeVaultFile(raw)
   if (!file) return { ok: false, reason: 'malformed' }
 
@@ -160,5 +194,5 @@ export async function decryptVault(raw, passphrase) {
   // **外側の平文メタが書き換えられていたらここで落ちる**
   if (!metaMatches(file.meta, inner['meta'])) return { ok: false, reason: 'tampered' }
 
-  return { ok: true, rules: inner['rules'] }
+  return { ok: true, payload: inner[field] }
 }

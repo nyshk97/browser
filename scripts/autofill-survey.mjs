@@ -85,7 +85,7 @@ const DESCRIBE = String.raw`(() => {
     const label = el.labels && el.labels[0] ? clean(el.labels[0].textContent) : clean(el.getAttribute('aria-label'))
     const row = el.closest('tr, dl, .form-group, .field, li, p, div')
     const th = el.closest('td') && el.closest('tr') ? clean(el.closest('tr').querySelector('th')?.textContent) : ''
-    out.push({ type, name: clean(el.getAttribute('name')), placeholder: clean(el.getAttribute('placeholder')), label, th, row: row ? clean(row.textContent) : '', value: el instanceof HTMLSelectElement ? clean(el.selectedOptions[0]?.textContent) + (el.selectedIndex > 0 ? '' : ' (未選択)') : el.value })
+    out.push({ type, name: clean(el.getAttribute('name')), placeholder: String(el.getAttribute('placeholder') || '').replace(/[^\S\u3000]+/g, ' ').trim().slice(0, 40), label, th, row: row ? clean(row.textContent) : '', value: el instanceof HTMLSelectElement ? clean(el.selectedOptions[0]?.textContent) + (el.selectedIndex > 0 ? '' : ' (未選択)') : el.value })
   }
   return JSON.stringify(out)
 })()`

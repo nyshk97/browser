@@ -114,7 +114,7 @@ const ANSWERS = {
   電話番号必須: 'tel',
   // autofill-patterns.html
   '氏 名': 'full_name',
-  '氏 名（フリガナ）': 'full_name_kana',
+  '氏 名（全角フリガナ）': 'full_name_kana',
   // 本物の Jev は FAX に tel と答えた。聞かれたら入ってしまうので、聞かないことを見る
   FAX番号: 'tel',
   'ご住所（建物名まで）': 'address_full'
@@ -448,7 +448,7 @@ try {
       )
     )
     const efoWant = {
-      text2: '山田　太郎',
+      text2: '山田　太郎', // 例が全角空白区切りなら全角（収集で潰さない）
       text9: '100',
       text10: '0001',
       select: '東京都',
@@ -630,8 +630,8 @@ try {
       )
     )
     const want = {
-      p_name: '山田　太郎', // 見出しが左の td
-      p_kana: 'ヤマダ　タロウ',
+      p_name: '山田 太郎', // 見出しが左の td
+      p_kana: 'ヤマダ　タロウ', // 見出しに「全角」があれば姓名の区切りも全角
       by: '1988', // 区切りが <span>年</span> の 3 分割
       bm: '7',
       bd: '14',

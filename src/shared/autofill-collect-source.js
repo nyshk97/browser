@@ -35,6 +35,12 @@ export const AUTOFILL_PAGE_SOURCE =
   const TEXT_TYPES = new Set(['text', 'email', 'tel', 'number', 'url', 'date'])
 
   const clean = (value, max) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, max)
+  // placeholder は全角空白を残す（\s は U+3000 も拾う。例の姓名の区切りが全角かを formatForElement が見る）
+  const cleanKeepingFullwidthSpace = (value, max) =>
+    String(value || '')
+      .replace(/[^\S\u3000]+/g, ' ')
+      .trim()
+      .slice(0, max)
 
   // ルールで決まる autocomplete か（off / on / nope や知らない値は「無し」と同じ扱い）
   const hasRuleToken = (autocomplete) => {
@@ -212,7 +218,7 @@ export const AUTOFILL_PAGE_SOURCE =
       const element = {
         tag,
         type: tag === 'input' ? (el.getAttribute('type') || 'text').toLowerCase() : '',
-        placeholder: clean(el.getAttribute('placeholder'), 60),
+        placeholder: cleanKeepingFullwidthSpace(el.getAttribute('placeholder'), 60),
         maxLength: maxLength > 0 ? maxLength : null
       }
       if (tag === 'select') {

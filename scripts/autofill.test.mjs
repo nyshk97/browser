@@ -114,9 +114,9 @@ test('暗号の封筒: profile を入れて戻せる / パスフレーズ違い�
 /* ---------------- 値の導出 ---------------- */
 
 test('deriveValues: 一括・分割・カナ・住所一括を作る', () => {
-  assert.equal(VALUES['full_name'], '山田　太郎')
+  assert.equal(VALUES['full_name'], '山田 太郎', '既定は半角空白')
   assert.equal(VALUES['family_name_kana'], 'ヤマダ', 'ひらがなで入れてもカタカナにそろえる')
-  assert.equal(VALUES['full_name_kana'], 'ヤマダ　タロウ')
+  assert.equal(VALUES['full_name_kana'], 'ヤマダ タロウ')
   assert.equal(VALUES['full_name_roman'], 'Taro Yamada')
   assert.deepEqual([VALUES['tel_part1'], VALUES['tel_part2'], VALUES['tel_part3']], ['090', '1234', '5678'])
   assert.equal(VALUES['postal_code'], '100-0001', '全角・ハイフン無しでも整える')
@@ -162,6 +162,21 @@ test('formatForElement: 欄の手がかりで書式を変える', () => {
   assert.equal(formatForElement('gender', VALUES, el(), '性別'), '男性')
   assert.equal(formatForElement('job_title', {}, el(), '役職'), null)
   assert.equal(toHiragana('ヤマダ　タロウ'), 'やまだ　たろう')
+  // 姓名の区切り: 既定は半角、全角を求める欄だけ全角
+  assert.equal(formatForElement('full_name', VALUES, el(), 'お名前'), '山田 太郎')
+  assert.equal(formatForElement('full_name', VALUES, el({ placeholder: '山田 太郎' }), '氏名'), '山田 太郎')
+  assert.equal(formatForElement('full_name', VALUES, el(), '氏名（全角）'), '山田　太郎')
+  assert.equal(
+    formatForElement('full_name', VALUES, el({ placeholder: '例）山田　太郎' }), '氏名'),
+    '山田　太郎'
+  )
+  assert.equal(formatForElement('full_name_kana', VALUES, el(), 'フリガナ'), 'ヤマダ タロウ')
+  assert.equal(formatForElement('full_name_kana', VALUES, el(), 'フリガナ（全角カナ）'), 'ヤマダ　タロウ')
+  assert.equal(formatForElement('full_name_kana', VALUES, el(), 'ふりがな'), 'やまだ たろう')
+  assert.equal(
+    formatForElement('full_name_kana', VALUES, el({ placeholder: 'やまだ　たろう' }), 'よみ'),
+    'やまだ　たろう'
+  )
 })
 
 test('matchSelectOption: 完全一致を優先し、部分一致は 1 つに決まるときだけ', () => {

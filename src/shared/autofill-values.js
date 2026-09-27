@@ -19,8 +19,12 @@
  * @property {{ value: string, text: string }[]} [options] select の選択肢（先頭の「選択してください」も含む）
  */
 
-/** 姓と名をつなぐ空白。日本語フォームは全角の検査をすることがあるので全角にする。 */
-const NAME_SEPARATOR = '　'
+/**
+ * 姓と名をつなぐ空白。既定は半角で、全角を求める欄だけ `formatForElement` が全角に替える
+ * （`FULLWIDTH_SEPARATOR`）。
+ */
+const NAME_SEPARATOR = ' '
+const FULLWIDTH_SEPARATOR = '\u3000'
 
 /**
  * @param {Record<string, string>} profile `normalizeProfile` 済み
@@ -171,6 +175,20 @@ export function formatForElement(option, values, element, hintText) {
     }
     return value
   }
+  if (option === 'full_name' || option === 'full_name_kana') {
+    // 置換でなくつなぎ直す（姓に半角空白を含む名前で、区切りでない空白を全角にしない）
+    const [family, given] =
+      option === 'full_name'
+        ? [values['family_name'], values['given_name']]
+        : [values['family_name_kana'], values['given_name_kana']]
+    const spaced =
+      family && given && wantsFullwidthSpace(hintText, element.placeholder)
+        ? `${family}${FULLWIDTH_SEPARATOR}${given}`
+        : value
+    return option === 'full_name_kana' && wantsHiragana(hintText, element.placeholder)
+      ? toHiragana(spaced)
+      : spaced
+  }
   if (option.endsWith('_kana') && wantsHiragana(hintText, element.placeholder)) return toHiragana(value)
   if (option === 'gender') return genderText(value)
   return value
@@ -264,6 +282,18 @@ function wantsHiragana(hintText, placeholder) {
   if (/ふりがな|ひらがな/.test(hintText)) return true
   const example = placeholder.replace(/^例\s*[)）:：]?\s*/, '').replace(/[\s\u3000]/g, '')
   return example.length > 0 && /^[ぁ-ゖー]+$/.test(example)
+}
+
+/**
+ * 姓と名の間を全角空白にすべき欄か。見出しに「全角」がある（「氏名（全角）」「全角スペースで区切って」）か、
+ * 例が全角空白で区切られているとき（「山田[全角空白]太郎」のような例）。**placeholder は NFKC 前の生の文字列で見る**（NFKC は全角空白を半角にする。収集側も placeholder の全角空白は残す）。
+ * 「全角スペース不可」のような否定の言い回しでも全角にするのは割り切り（見かけたら除外を足す）。
+ * @param {string} hintText
+ * @param {string} placeholder
+ */
+function wantsFullwidthSpace(hintText, placeholder) {
+  if (/全角/.test(`${hintText} ${placeholder}`)) return true
+  return /\S\u3000+\S/.test(placeholder)
 }
 
 /** @param {string} text */

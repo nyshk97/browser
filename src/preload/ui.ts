@@ -178,8 +178,8 @@ const api: NemoUiApi = {
   autofillSave: (profile, passphrase, remember) =>
     ipcRenderer.invoke('nemo:autofill-save', profile, passphrase, remember) as Promise<AutofillSaveResult>,
   autofillDelete: () => ipcRenderer.invoke('nemo:autofill-delete') as Promise<boolean>,
-  saveJevKey: (key) => ipcRenderer.invoke('nemo:jev-key-save', key) as Promise<boolean>,
-  clearJevKey: () => ipcRenderer.invoke('nemo:jev-key-clear') as Promise<void>,
+  saveJevKey: (key) => ipcRenderer.invoke('nemo:jev-key-save', key) as Promise<AutofillSaveResult>,
+  clearJevKey: () => ipcRenderer.invoke('nemo:jev-key-clear') as Promise<AutofillSaveResult>,
   liveFolderRefresh: () => ipcRenderer.invoke('nemo:live-folder-refresh') as Promise<void>,
   liveFolderOpen: (url) => ipcRenderer.invoke('nemo:live-folder-open', url) as Promise<void>,
   saveGithubToken: (token) => ipcRenderer.invoke('nemo:github-token-save', token) as Promise<boolean>,

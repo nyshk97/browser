@@ -17,6 +17,7 @@ Phase 0（Jev API の確認）は済み。その結果はログ「試したこ�
 | 入力データ | iCloud Drive のスロットのフォルダに `autofill.json` を**パスフレーズ暗号**で置く（Basic 認証の保管庫と同じ仕組み）。**このファイルが正**で、使うたびに読み直す。パスフレーズは userData に safeStorage で記憶 |
 | Jev に送るもの | 欄の手がかり（label / name / id / placeholder / aria-label / 短い近傍テキスト / type）と項目名・説明だけ。**値は送らない** |
 | 判定の分担 | `autocomplete` 属性・`type` で決まる欄はローカル。残りを Jev に聞く。**入れるのは choice が `none` 以外・`confidence >= 0.5`・本人性 noul `>= 0.5` の欄だけ**。失敗なら空欄のまま（Phase 1 で決定） |
+| Jev の API キー | **保管庫の中**（プロフィールと一緒にパスフレーズで暗号化。中身は `{ profile, jevKey }`）。別の Mac でもパスフレーズを入れるだけで使える。保存・削除はパスフレーズを覚えている Mac でだけできる |
 | Jev の呼び方 | SDK なしの `fetch`。`model: "jev-1.13.0"` 固定。429 / 529 は `retry-after` を見て 1 回だけ再試行。全体のタイムアウト 3s |
 | 質問の書き方 | 質問文・選択肢の説明は**英語**、説明に日本語の言い回しの例を添える。欄の手がかりは原文のまま |
 | 対象の欄 | 右クリックした欄を含むフォーム（`form` が無ければページ全体）の、**可視**・有効・空の `input`（text/email/tel/number/date/url/無指定）/ `select` / `textarea`。password・hidden・file・値のある欄は触らない |
@@ -239,6 +240,9 @@ Jev の選択肢には**導出形**も並べる: 氏名一括（`full_name`）�
 
 
 ### 方針変更
+- 2026-09-27（dev 版での試用）: **Jev の API キーを保管庫の中に移した**（Mac ごとに端末鍵で持つと、別の Mac で入れ直しになる）。
+  古い置き場所（userData の `jev-key.json`）は読むだけ残し、プロフィールかキーを保存したときに保管庫へ移して消す。
+  保管庫の中身は `{ profile, jevKey }` になり、最初の形（プロフィールそのもの）も読める（`normalizeVaultContent`）
 - 2026-09-27（dev 版での試用）: **欄のすぐ前の見出し（label / span・1 文字を超える地の文）を表の見出し（th / dt）より優先**し、th / dt は `section` として Jev に別に渡す。
   分割欄にまとめるのは「続く欄が自分の見出しを持たない（label が無く、すぐ前が別の欄か 1 文字の区切り）」ときだけ。
   EFO CUBE のサンプル（th「ご住所」の中に「郵便番号」「都道府県」… が段落で並ぶ）で、th を全欄の見出しにして 3 つずつまとめてしまい、住所 6 欄が入らなかった。`test-pages/autofill-efo.html` で再現（修正前 6 件 FAIL → 修正後 67 件 PASS）

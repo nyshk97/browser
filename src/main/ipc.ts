@@ -93,9 +93,9 @@ import {
   rememberAutofillPassphrase,
   saveAutofillVault
 } from './store/autofill-vault.js'
-import { clearJevKey, hasJevKey, saveJevKey } from './store/jev-key.js'
+import { clearJevKey, hasJevKey, readJevKey } from './store/jev-key.js'
 import { runAutofill } from './autofill/index.js'
-import { normalizeProfile } from '../shared/autofill-schema.js'
+import { MAX_JEV_KEY, normalizeProfile } from '../shared/autofill-schema.js'
 import type { ImportEntry } from '../shared/http-auth-rules.js'
 import { MAX_PASSPHRASE, MIN_PASSPHRASE, validatePassphrase } from '../shared/auth-vault-schema.js'
 import { cancelDownload, clearDownloads, revealDownload } from './downloads.js'
@@ -140,6 +140,7 @@ import type {
   AuthVaultStatus,
   AutofillFailure,
   AutofillOpenResult,
+  AutofillProfile,
   AutofillRunResult,
   AutofillSaveResult,
   AutofillStatus,
@@ -1194,9 +1195,52 @@ export function registerIpcHandlers(): void {
       hasPassphrase: recallAutofillPassphrase() !== null,
       encryptionAvailable: httpAuthEncryptionAvailable(),
       minPassphrase: MIN_PASSPHRASE,
-      hasJevKey: hasJevKey()
+      hasJevKey: await autofillHasJevKey()
     }
   })
+
+  /**
+   * キーがあるか。**保管庫のキーが正**で、覚えているパスフレーズで開けるときだけ見られる
+   * （開けない Mac では「未設定」に見える）。保管庫へ移す前のキー（この Mac の userData）も数える。
+   */
+  async function autofillHasJevKey(): Promise<boolean> {
+    if (hasJevKey()) return true
+    const remembered = recallAutofillPassphrase()
+    if (!remembered) return false
+    const opened = await openAutofillVault(remembered)
+    return opened.ok && opened.jevKey !== null
+  }
+
+  /**
+   * 保管庫を書き直す共通の口。**既にある保管庫は、同じパスフレーズで開けるときだけ上書きする**
+   * （開けないまま書くと、別の Mac が覚えているパスフレーズでは開けない保管庫に黙って変わる。
+   * 打ち間違いで全 Mac の自動入力が止まる）。作り直したいときは削除してから。
+   *
+   * `update` は今の中身（無ければ null）から、書く中身を作る。書けたら**古い置き場所のキーは消す**
+   * （保管庫へ移したので、残すと 2 か所で食い違う）。
+   */
+  async function rewriteAutofillVault(
+    passphrase: string,
+    update: (
+      current: { profile: AutofillProfile; jevKey: string | null } | null
+    ) => { profile: AutofillProfile; jevKey: string | null } | null
+  ): Promise<AutofillSaveResult> {
+    if (!httpAuthEncryptionAvailable()) return { ok: false, reason: 'no-encryption' }
+    const current = await openAutofillVault(passphrase)
+    if (!current.ok && current.reason !== 'empty') {
+      return { ok: false, reason: current.future ? 'future-version' : current.reason }
+    }
+    const next = update(current.ok ? { profile: current.profile, jevKey: current.jevKey } : null)
+    if (!next) return { ok: false, reason: 'empty' }
+    const written = await saveAutofillVault(next.profile, next.jevKey, passphrase, {
+      savedAt: Date.now(),
+      host: hostName(),
+      appVersion: appVersion()
+    })
+    if (!written) return { ok: false, reason: 'write-failed' }
+    clearJevKey()
+    return { ok: true }
+  }
 
   ipcMain.handle(
     'nemo:autofill-open',
@@ -1219,25 +1263,13 @@ export function registerIpcHandlers(): void {
       requireWindow(event)
       const resolved = resolveAutofillPassphrase(passphrase)
       if (!resolved.ok) return { ok: false, reason: resolved.reason }
-      if (!httpAuthEncryptionAvailable()) return { ok: false, reason: 'no-encryption' }
-
-      /*
-       * **既にある保管庫は、同じパスフレーズで開けるときだけ上書きする。**
-       * 開けないまま書くと、別の Mac が覚えているパスフレーズでは開けない保管庫に黙って変わる
-       * （打ち間違いで全 Mac の自動入力が止まる）。作り直したいときは削除してから。
-       */
-      const current = await openAutofillVault(resolved.passphrase)
-      if (!current.ok && current.reason !== 'empty') {
-        return { ok: false, reason: current.future ? 'future-version' : current.reason }
-      }
-      const written = await saveAutofillVault(normalizeProfile(profile), resolved.passphrase, {
-        savedAt: Date.now(),
-        host: hostName(),
-        appVersion: appVersion()
-      })
-      if (!written) return { ok: false, reason: 'write-failed' }
-      if (remember === true && resolved.entered) rememberAutofillPassphrase(resolved.passphrase)
-      return { ok: true }
+      // キーは今の保管庫のものを引き継ぐ（無ければ古い置き場所のキーをここで保管庫へ移す）
+      const result = await rewriteAutofillVault(resolved.passphrase, (current) => ({
+        profile: normalizeProfile(profile),
+        jevKey: current?.jevKey ?? readJevKey()
+      }))
+      if (result.ok && remember === true && resolved.entered) rememberAutofillPassphrase(resolved.passphrase)
+      return result
     }
   )
 
@@ -1247,19 +1279,42 @@ export function registerIpcHandlers(): void {
     // 未来の版は消させない（新しい方の Nemo からも丸ごと消える）
     if (status.isFutureVersion) return false
     const ok = await deleteAutofillVault()
-    if (ok) forgetAutofillPassphrase()
+    // 記憶と古い置き場所のキーも消す（キーは保管庫の中にあったので、一緒に無くなるのが筋）
+    if (ok) {
+      forgetAutofillPassphrase()
+      clearJevKey()
+    }
     return ok
   })
 
-  ipcMain.handle('nemo:jev-key-save', (event, key: unknown): boolean => {
+  /*
+   * Jev の API キーは**保管庫の中**に入れる（別の Mac でもパスフレーズだけで使える）。
+   * 書き直しに要るので、**パスフレーズを覚えている Mac でだけ**保存・削除できる。
+   * プロフィールがまだ無ければ `empty`（先にプロフィールを作ってもらう）。
+   */
+  ipcMain.handle('nemo:jev-key-save', async (event, key: unknown): Promise<AutofillSaveResult> => {
     requireWindow(event)
     // 中身はログに出さない（長さも出さない）
-    return saveJevKey(credential(key, 512))
+    const value = credential(key, MAX_JEV_KEY).trim()
+    if (!value) return { ok: false, reason: 'malformed' }
+    const resolved = resolveAutofillPassphrase(null)
+    if (!resolved.ok) return { ok: false, reason: resolved.reason }
+    return rewriteAutofillVault(resolved.passphrase, (current) =>
+      current ? { profile: current.profile, jevKey: value } : null
+    )
   })
 
-  ipcMain.handle('nemo:jev-key-clear', (event): void => {
+  ipcMain.handle('nemo:jev-key-clear', async (event): Promise<AutofillSaveResult> => {
     requireWindow(event)
-    clearJevKey()
+    const resolved = resolveAutofillPassphrase(null)
+    if (!resolved.ok) {
+      // 保管庫を開けなくても、古い置き場所のキーは消せる
+      clearJevKey()
+      return { ok: false, reason: resolved.reason }
+    }
+    return rewriteAutofillVault(resolved.passphrase, (current) =>
+      current ? { profile: current.profile, jevKey: null } : null
+    )
   })
 
   /* ---- Live Folder（GitHub の PR） ---- */

@@ -119,7 +119,8 @@ async function runAutofillOnce(wc: WebContents, x: number, y: number): Promise<A
   })
 
   if (pending.length > 0) {
-    const key = readJevKey()
+    // 保管庫のキーが正。保管庫へ移す前のキー（この Mac の userData）も読む
+    const key = opened.jevKey ?? readJevKey()
     if (!key) {
       result.jevError = 'no-key'
     } else {

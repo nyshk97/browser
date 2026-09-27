@@ -10,6 +10,7 @@ import {
   AUTOFILL_VERSION,
   countFilled,
   normalizeProfile,
+  normalizeVaultContent,
   type AutofillProfile
 } from '../../shared/autofill-schema.js'
 import { readWithTimeout, slotsDir, type SlotsDirKind } from './slots.js'
@@ -21,6 +22,9 @@ import { getSecretBackend } from './secret-backend.js'
  * **Basic 認証の保管庫（`auth-vault.ts`）と同じ置き方**: セーブスロットのフォルダ（iCloud Drive）に
  * パスフレーズ由来の鍵で暗号化した 1 ファイルを置き、パスフレーズは `userData/` に端末鍵で覚える。
  * 暗号と封筒の検査も同じもの（`auth-vault-crypto.js` の `encryptEnvelope` / `normalizeVaultFile`）を使う。
+ *
+ * **Jev の API キーもこの保管庫に入れる**（中身は `{ profile, jevKey }`）。別の Mac でもパスフレーズを
+ * 入れるだけでキーまで使える。最初の形（プロフィールそのもの）も読める（`normalizeVaultContent`）。
  *
  * **違いはこのファイルが正であること。** Basic 認証の保管庫は持ち出し用の控えで、普段使う値は
  * 別（`store/http-auth.ts`）にある。こちらは自動入力のたびにこのファイルを読む。
@@ -146,7 +150,7 @@ export async function autofillVaultStatus(): Promise<AutofillVaultStatus> {
 }
 
 export type OpenAutofillResult =
-  | { ok: true; profile: AutofillProfile; meta: VaultMeta }
+  | { ok: true; profile: AutofillProfile; jevKey: string | null; meta: VaultMeta }
   | {
       ok: false
       reason: 'empty' | 'unreadable' | 'bad-passphrase' | 'tampered' | 'malformed'
@@ -155,7 +159,13 @@ export type OpenAutofillResult =
     }
 
 /** 復号済みの中身。**同じファイル（mtime とサイズ）と同じパスフレーズのときだけ**使い回す。 */
-let cache: { stamp: string; passphrase: string; profile: AutofillProfile; meta: VaultMeta } | null = null
+let cache: {
+  stamp: string
+  passphrase: string
+  profile: AutofillProfile
+  jevKey: string | null
+  meta: VaultMeta
+} | null = null
 
 /** パスフレーズで開く。 */
 export async function openAutofillVault(passphrase: string): Promise<OpenAutofillResult> {
@@ -169,18 +179,19 @@ export async function openAutofillVault(passphrase: string): Promise<OpenAutofil
     return { ok: false, reason: 'unreadable', detail: result.reason, future: result.future === true }
   }
   if (cache && cache.stamp === result.stamp && cache.passphrase === passphrase) {
-    return { ok: true, profile: { ...cache.profile }, meta: cache.meta }
+    return { ok: true, profile: { ...cache.profile }, jevKey: cache.jevKey, meta: cache.meta }
   }
   const decrypted = await decryptEnvelope(result.data, FIELD, passphrase)
   if (!decrypted.ok) return { ok: false, reason: decrypted.reason }
-  const profile = normalizeProfile(decrypted.payload)
-  cache = { stamp: result.stamp, passphrase, profile, meta: result.meta }
-  return { ok: true, profile: { ...profile }, meta: result.meta }
+  const { profile, jevKey } = normalizeVaultContent(decrypted.payload)
+  cache = { stamp: result.stamp, passphrase, profile, jevKey, meta: result.meta }
+  return { ok: true, profile: { ...profile }, jevKey, meta: result.meta }
 }
 
 /** 書く（tmp + rename）。上書きしてよいかの判断（パスフレーズの一致）は呼び出し側。 */
 export async function saveAutofillVault(
   profile: AutofillProfile,
+  jevKey: string | null,
   passphrase: string,
   meta: Omit<VaultMeta, 'count'>
 ): Promise<boolean> {
@@ -189,7 +200,7 @@ export async function saveAutofillVault(
   const normalized = normalizeProfile(profile)
   try {
     const full: VaultMeta = { ...meta, count: countFilled(normalized) }
-    const encrypted = await encryptEnvelope(normalized, FIELD, passphrase, full)
+    const encrypted = await encryptEnvelope({ profile: normalized, jevKey }, FIELD, passphrase, full)
     await fsp.mkdir(dir, { recursive: true })
     await fsp.writeFile(tmp, `${JSON.stringify(writeVersioned(AUTOFILL_VERSION, encrypted), null, 2)}\n`)
     await fsp.rename(tmp, file)

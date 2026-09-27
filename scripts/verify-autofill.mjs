@@ -24,6 +24,7 @@
  */
 import { createRequire } from 'node:module'
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
@@ -184,33 +185,46 @@ try {
 
   const userData = makeDir('data')
   const slotsDir = makeDir('slots')
-  // Live Folder を止める（使い捨てプロファイルでも gh の実トークンで GitHub を叩き続ける）
-  fs.writeFileSync(
-    path.join(userData, 'settings.json'),
-    JSON.stringify({ version: 1, data: { liveFolderEnabled: false } })
-  )
+  // Live Folder は `bootApp` が settings.json で止める（使い捨てプロファイルでも gh の実トークンで GitHub を叩き続ける）
 
-  const port = String(await getFreePort())
-  const cdp = `http://127.0.0.1:${port}`
-  const child = spawn(electronPath, ['out/main/index.js'], {
-    cwd: projectRoot,
-    stdio: 'inherit',
-    env: {
-      ...process.env,
-      NEMO_REMOTE_DEBUGGING_PORT: port,
-      NEMO_USER_DATA_DIR: userData,
-      NEMO_SLOTS_DIR: slotsDir,
-      NEMO_HTTP_AUTH_TEST_CRYPTO: 'memory',
-      NEMO_JEV_TEST_ENDPOINT: `${origin}/v1/systemone`,
-      NEMO_VERIFY_DIAGNOSTICS: '1',
-      NEMO_DOWNLOAD_DIR: makeDir('dl')
-    }
-  })
-  spawned.push(child)
-  await waitForHttp(`${cdp}/json/list`, {
-    child,
-    check: async (res) => (await res.json()).some((t) => t.url.startsWith('nemo://ui/'))
-  })
+  /** 1 台ぶん起動する。**`NEMO_SLOTS_DIR` を共有して `NEMO_USER_DATA_DIR` を分ければ「別の Mac」になる** */
+  const bootApp = async (dataDir) => {
+    fs.writeFileSync(
+      path.join(dataDir, 'settings.json'),
+      JSON.stringify({ version: 1, data: { liveFolderEnabled: false } })
+    )
+    const port = String(await getFreePort())
+    const cdp = `http://127.0.0.1:${port}`
+    const child = spawn(electronPath, ['out/main/index.js'], {
+      cwd: projectRoot,
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        NEMO_REMOTE_DEBUGGING_PORT: port,
+        NEMO_USER_DATA_DIR: dataDir,
+        NEMO_SLOTS_DIR: slotsDir,
+        NEMO_HTTP_AUTH_TEST_CRYPTO: 'memory',
+        NEMO_JEV_TEST_ENDPOINT: `${origin}/v1/systemone`,
+        NEMO_VERIFY_DIAGNOSTICS: '1',
+        NEMO_DOWNLOAD_DIR: makeDir('dl')
+      }
+    })
+    spawned.push(child)
+    await waitForHttp(`${cdp}/json/list`, {
+      child,
+      check: async (res) => (await res.json()).some((t) => t.url.startsWith('nemo://ui/'))
+    })
+    return cdp
+  }
+
+  /*
+   * **保管庫へ移す前のキー**（この Mac の userData に端末鍵で暗号化）を置いておく。
+   * 形式はテスト用の差し替え backend（`secret-backend.ts` の memoryBackend）と同じ
+   */
+  const legacy = `NEMOTEST1:${Buffer.from(`${createHash('sha256').update(JEV_KEY).digest('hex').slice(0, 16)}:${JEV_KEY}`).toString('base64')}`
+  fs.writeFileSync(path.join(userData, 'jev-key.json'), JSON.stringify({ encrypted: legacy }))
+
+  const cdp = await bootApp(userData)
   const ui = await connectUi(cdp)
   const json = async (expression) => JSON.parse(await ui.ev(`${expression}.then(JSON.stringify)`))
 
@@ -249,8 +263,8 @@ try {
   const initial = await json('window.nemo.autofillStatus()')
   check('保存先が env の上書きで解決されている', initial.kind === 'env', `${initial.kind} ${initial.dir}`)
   check(
-    '最初は保管庫が空でキーも無い',
-    initial.state === 'empty' && initial.hasJevKey === false,
+    '最初は保管庫が空で、古い置き場所のキーだけある',
+    initial.state === 'empty' && initial.hasJevKey === true,
     JSON.stringify(initial)
   )
   const noVault = await run()
@@ -266,13 +280,10 @@ try {
     `window.nemo.autofillSave(${JSON.stringify(PROFILE)}, ${JSON.stringify(PASSPHRASE)}, true)`
   )
   check('プロフィールを保存できた', saved.ok === true, JSON.stringify(saved))
-  const keySaved = await ui.ev(`window.nemo.saveJevKey(${JSON.stringify(JEV_KEY)})`)
-  check('Jev のキーを保存できた', keySaved === true)
   const vaultRaw = fs.readFileSync(path.join(slotsDir, 'autofill.json'), 'utf8')
-  const keyRaw = fs.readFileSync(path.join(userData, 'jev-key.json'), 'utf8')
   const leakedVault = SECRETS.filter((s) => vaultRaw.includes(s))
-  check('保管庫のファイルに平文が現れない', leakedVault.length === 0, leakedVault.join(', '))
-  check('キーのファイルにキーの平文が現れない', !keyRaw.includes(JEV_KEY))
+  check('保管庫のファイルに平文（キーを含む）が現れない', leakedVault.length === 0, leakedVault.join(', '))
+  check('保存で古い置き場所のキーは保管庫へ移って消えた', !fs.existsSync(path.join(userData, 'jev-key.json')))
   const status = await json('window.nemo.autofillStatus()')
   check(
     '状態: 19 項目・パスフレーズを覚えている・キーあり',
@@ -443,7 +454,8 @@ try {
       JSON.stringify({ kana_sei: v.kana_sei, mail: v.mail, zip: v.zip, sei: v.sei })
     )
   }
-  await ui.ev('window.nemo.clearJevKey()')
+  const cleared = await json('window.nemo.clearJevKey()')
+  check('キーを保管庫から消せた', cleared.ok === true, JSON.stringify(cleared))
   {
     const { r, v } = await scenario('キー無し', 'ok')
     check(
@@ -494,6 +506,57 @@ try {
   check('診断ログに値・キー・パスフレーズが出ていない', logLeaks.length === 0, logLeaks.join(', '))
   const crashes = findUncaughtExceptions(userData)
   check('未処理の例外が出ていない', crashes.length === 0, crashes.join(' / '))
+
+  /* ---- 11. 別の Mac（userData を分けて保管庫を共有）: パスフレーズだけでキーまで使える ---- */
+  const resaved = await json(`window.nemo.saveJevKey(${JSON.stringify(JEV_KEY)})`)
+  check('キーを保管庫に保存できた', resaved.ok === true, JSON.stringify(resaved))
+  await stopChildren(spawned.splice(0))
+
+  const secondData = makeDir('data2')
+  const cdp2 = await bootApp(secondData)
+  const ui2 = await connectUi(cdp2)
+  const json2 = async (expression) => JSON.parse(await ui2.ev(`${expression}.then(JSON.stringify)`))
+  const status2 = await json2('window.nemo.autofillStatus()')
+  check(
+    '2 台目: 保管庫は見えるが、パスフレーズを覚えるまでキーは見えない',
+    status2.state === 'ok' && status2.hasPassphrase === false && status2.hasJevKey === false,
+    JSON.stringify({ state: status2.state, pass: status2.hasPassphrase, key: status2.hasJevKey })
+  )
+  const lockedSave = await json2('window.nemo.saveJevKey("apikey_other")')
+  check(
+    '2 台目: パスフレーズを覚える前はキーを保存できない',
+    lockedSave.ok === false && lockedSave.reason === 'no-passphrase',
+    JSON.stringify(lockedSave)
+  )
+  const opened2 = await json2(`window.nemo.autofillOpen(${JSON.stringify(PASSPHRASE)}, true)`)
+  check('2 台目: パスフレーズで開けた', opened2.ok === true, JSON.stringify(opened2.ok))
+  const after2 = await json2('window.nemo.autofillStatus()')
+  check(
+    '2 台目: パスフレーズを入れただけでキーが使える',
+    after2.hasJevKey === true,
+    JSON.stringify(after2.hasJevKey)
+  )
+
+  const tabKey2 = await ui2.ev(
+    `window.nemo.createTab(${JSON.stringify(`${origin}/autofill.html`)}).then((k) => k)`
+  )
+  const page2 = await connectTo(cdp2, '/autofill.html', { type: 'page' })
+  await waitFor(page2, "document.readyState === 'complete' && document.getElementById('sei') ? 'ok' : ''")
+  const at2 = JSON.parse(
+    await page2.ev(
+      "(() => { const r = document.getElementById('sei').getBoundingClientRect(); return JSON.stringify({ x: r.left + 5, y: r.top + 5 }) })()"
+    )
+  )
+  requests.length = 0
+  const run2 = await json2(`window.nemo.autofillForVerify(${JSON.stringify(tabKey2)}, ${at2.x}, ${at2.y})`)
+  check(
+    '2 台目: 保管庫のキーで Jev を呼んで入った',
+    run2?.jev === 8 && requests[0]?.auth === `Bearer ${JEV_KEY}`,
+    JSON.stringify({ jev: run2?.jev, jevError: run2?.jevError, requests: requests.length })
+  )
+  check('2 台目: 古い置き場所にキーを作らない', !fs.existsSync(path.join(secondData, 'jev-key.json')))
+  const crashes2 = findUncaughtExceptions(secondData)
+  check('2 台目: 未処理の例外が出ていない', crashes2.length === 0, crashes2.join(' / '))
 } catch (error) {
   failures += 1
   console.error('FAIL  検証が途中で落ちた —', error?.stack ?? error)

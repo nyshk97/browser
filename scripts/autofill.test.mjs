@@ -1,6 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { countFilled, normalizeProfile, PROFILE_KEYS } from '../src/shared/autofill-schema.js'
+import {
+  countFilled,
+  normalizeProfile,
+  normalizeVaultContent,
+  PROFILE_KEYS
+} from '../src/shared/autofill-schema.js'
 import {
   deriveValues,
   formatForElement,
@@ -73,6 +78,22 @@ test('normalizeProfile: 知らないキー・文字列以外・壊れた日付�
   assert.equal(profile['gender'], '')
   assert.equal(profile['email'], '')
   assert.equal(countFilled(profile), 1)
+})
+
+test('normalizeVaultContent: キー入りの新しい形と、プロフィールだけの最初の形の両方を読む', () => {
+  const wrapped = normalizeVaultContent({ profile: { family_name: '山田' }, jevKey: ' apikey_x ' })
+  assert.equal(wrapped.profile['family_name'], '山田')
+  assert.equal(wrapped.jevKey, 'apikey_x')
+  const legacy = normalizeVaultContent({ family_name: '山田' })
+  assert.equal(legacy.profile['family_name'], '山田', '最初の形（プロフィールそのもの）も読める')
+  assert.equal(legacy.jevKey, null)
+  assert.equal(
+    normalizeVaultContent({ profile: {}, jevKey: 'x'.repeat(513) }).jevKey,
+    null,
+    '長すぎるキーは捨てる'
+  )
+  assert.equal(normalizeVaultContent({ profile: {}, jevKey: 42 }).jevKey, null)
+  assert.equal(normalizeVaultContent(null).jevKey, null)
 })
 
 test('暗号の封筒: profile を入れて戻せる / パスフレーズ違いは bad-passphrase / 平文が外に出ない', async () => {

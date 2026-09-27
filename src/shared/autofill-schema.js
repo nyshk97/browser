@@ -102,3 +102,34 @@ export function isValidDate(value) {
   const date = new Date(Date.UTC(year, month - 1, day))
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
 }
+
+/** Jev の API キーの上限。 */
+export const MAX_JEV_KEY = 512
+
+/**
+ * 保管庫の中身（暗号の中）。**Jev の API キーもここに入れる**ので、別の Mac でもパスフレーズを
+ * 入れるだけでキーまで使える（端末鍵で暗号化したキーは Mac ごとに入れ直しになる）。
+ *
+ * @typedef {object} AutofillVaultContent
+ * @property {AutofillProfile} profile
+ * @property {string | null} jevKey
+ */
+
+/**
+ * 復号した中身を正規化する。**最初の形（プロフィールそのもの）も読む**
+ * （キーを保管庫に入れる前に保存した保管庫。次に保存したときに新しい形になる）。
+ *
+ * @param {unknown} raw
+ * @returns {AutofillVaultContent}
+ */
+export function normalizeVaultContent(raw) {
+  const record = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? raw : {}
+  const content = /** @type {Record<string, unknown>} */ (record)
+  const wrapped = typeof content['profile'] === 'object' && content['profile'] !== null
+  if (!wrapped) return { profile: normalizeProfile(raw), jevKey: null }
+  const key = content['jevKey']
+  return {
+    profile: normalizeProfile(content['profile']),
+    jevKey: typeof key === 'string' && key.trim() !== '' && key.length <= MAX_JEV_KEY ? key.trim() : null
+  }
+}

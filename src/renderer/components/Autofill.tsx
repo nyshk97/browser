@@ -94,11 +94,9 @@ export function Autofill(): React.JSX.Element {
   const saveKey = (): void => {
     const key = keyDraft.trim()
     if (!key) return
-    void window.nemo.saveJevKey(key).then((saved) => {
-      setKeyDraft('')
-      setKeyMessage(
-        saved ? '保存しました。' : '保存できませんでした（この Mac では暗号化を利用できません）。'
-      )
+    void window.nemo.saveJevKey(key).then((result) => {
+      if (result.ok) setKeyDraft('')
+      setKeyMessage(result.ok ? '保管庫に保存しました。' : failureText(result.reason))
       reload()
     })
   }
@@ -112,6 +110,8 @@ export function Autofill(): React.JSX.Element {
   }
 
   const needsPassphrase = profile !== null && (creating || !status.hasPassphrase)
+  /** キーの保存・削除は保管庫の書き直しなので、パスフレーズを覚えている Mac でだけできる。 */
+  const canSaveKey = status.state === 'ok' && status.hasPassphrase && !status.isFutureVersion
 
   return (
     <SettingsSection
@@ -271,10 +271,18 @@ export function Autofill(): React.JSX.Element {
             {status.hasJevKey ? '保存済み' : '未設定（autocomplete 属性のある欄だけ入ります）'}
           </span>
         </div>
+        {!canSaveKey ? (
+          <p className="dim" data-testid="autofill-jev-locked">
+            {status.state === 'empty'
+              ? 'キーは保管庫の中に入れるので、先にプロフィールを作ってください。'
+              : 'キーは保管庫の中に入れるので、上でパスフレーズを入れて「この Mac で覚える」と保存・削除できます。'}
+          </p>
+        ) : null}
         <div className="set-row">
           <span className="set-input wide">
             <input
               type="password"
+              disabled={!canSaveKey}
               value={keyDraft}
               spellCheck={false}
               placeholder={status.hasJevKey ? '（保存済み）' : 'apikey_…'}
@@ -284,7 +292,12 @@ export function Autofill(): React.JSX.Element {
               }}
             />
           </span>
-          <button type="button" className="btn" disabled={keyDraft.trim().length === 0} onClick={saveKey}>
+          <button
+            type="button"
+            className="btn"
+            disabled={!canSaveKey || keyDraft.trim().length === 0}
+            onClick={saveKey}
+          >
             保存する
           </button>
           {status.hasJevKey ? (
@@ -292,8 +305,8 @@ export function Autofill(): React.JSX.Element {
               type="button"
               className="btn"
               onClick={() => {
-                void window.nemo.clearJevKey().then(() => {
-                  setKeyMessage('消しました。')
+                void window.nemo.clearJevKey().then((result) => {
+                  setKeyMessage(result.ok ? '消しました。' : failureText(result.reason))
                   reload()
                 })
               }}
@@ -304,7 +317,9 @@ export function Autofill(): React.JSX.Element {
         </div>
         {keyMessage ? <p className="dim">{keyMessage}</p> : null}
         <p className="dim">
-          キーは console.typesafe.ai で発行します。この Mac の端末鍵で暗号化して保存し、値はここには出ません。
+          キーは console.typesafe.ai
+          で発行します。プロフィールと一緒に保管庫へパスフレーズで暗号化して入れるので、 別の Mac
+          でもパスフレーズを入れるだけで使えます。値はここには出ません。
         </p>
       </div>
     </SettingsSection>

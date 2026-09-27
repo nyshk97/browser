@@ -1211,9 +1211,14 @@ export interface NemoUiApi {
   ): Promise<AutofillSaveResult>
   /** 保管庫を消す（覚えているパスフレーズも消える）。 */
   autofillDelete(): Promise<boolean>
-  /** Jev の API キーを保存する（**端末鍵が無ければ false**）。キーを返す口は無い。 */
-  saveJevKey(key: string): Promise<boolean>
-  clearJevKey(): Promise<void>
+  /**
+   * Jev の API キーを**保管庫の中に**保存する（別の Mac でもパスフレーズだけで使える）。
+   * パスフレーズを覚えている Mac でだけ保存できる（`no-passphrase`）。プロフィールが無ければ `empty`。
+   * キーを返す口は無い。
+   */
+  saveJevKey(key: string): Promise<AutofillSaveResult>
+  /** 保管庫からキーを消す（古い置き場所のキーも消す）。 */
+  clearJevKey(): Promise<AutofillSaveResult>
 
   /* Live Folder（GitHub の PR） */
   /** いま取得する（`transient` / `auth` のバックオフは上書きできる。`rate-limit` は不可）。 */

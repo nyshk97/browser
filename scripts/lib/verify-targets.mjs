@@ -44,6 +44,7 @@ export const KNOWN_TARGETS = [
   'auth-vault', // Basic 認証の保管庫（持ち出し。自分で起動する。OPT_IN_ONLY を見る）
   'autofill', // フォーム自動入力（保管庫・Jev のモック。自分で起動する）
   'metrics', // メモリ・CPU の定期記録と UI 例外（自分で起動する。OPT_IN_ONLY を見る）
+  'session-cookies', // セッション cookie（ログイン）の再起動をまたぐ引き継ぎ（自分で 3 回起動する）
   'agent' // Claude in Nemo（ブリッジ経由の MCP・エージェント窓。自分で起動する。OPT_IN_ONLY を見る）
 ]
 
@@ -230,7 +231,11 @@ export const OWNERS = new Map([
   ['src/main/agent/sites.ts', ['agent']],
   ['src/shared/agent-sensitive-pages.js', ['agent']],
   ['scripts/agent-sensitive-pages.test.mjs', ['agent']],
-  ['scripts/agent-log.test.mjs', ['agent']]
+  ['scripts/agent-log.test.mjs', ['agent']],
+  ['src/shared/session-cookies.js', ['session-cookies']],
+  ['src/main/store/session-cookies.ts', ['session-cookies']],
+  ['scripts/session-cookies.test.mjs', ['session-cookies']],
+  ['scripts/verify-session-cookies.mjs', ['session-cookies']]
 ])
 
 /**

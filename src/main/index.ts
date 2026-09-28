@@ -57,6 +57,7 @@ import { closeSession, initSession, markCleanExit } from './store/session.js'
 import { closeCallWindowStore, initCallWindowStore } from './store/call-window.js'
 import { closeHttpAuthStore, initHttpAuthStore } from './store/http-auth.js'
 import { initSecretBackend } from './store/secret-backend.js'
+import { closeSessionCookies, initSessionCookies } from './store/session-cookies.js'
 import { stopHttpAuthMatcher } from './http-auth-matcher.js'
 import { configureMeetTestUrlPrefix } from './meet-adapter.js'
 import { configureGithubTestEndpoint } from './live-folders/github-pr.js'
@@ -216,6 +217,9 @@ app
       return found ? { isPrivate: found.win.isPrivate, isAgent: found.win.isAgent } : null
     })
     installDownloadHandler(pageSession)
+    // 前回のセッション cookie（ログイン）を戻す。**ページを読み込む前**（ウィンドウの復元・Claude の窓より前）
+    // 戻せなくても起動は止めない（ログインし直せば済む）
+    await initSessionCookies().catch((error: unknown) => logError('session_cookies.init_failed', error))
 
     // ブラウザ UI は nemo://ui/ から配信する（file:// を使わない）
     handleUiScheme(uiSession)
@@ -455,6 +459,8 @@ app.on('before-quit', () => {
   closeSession()
   // `JsonStore` はデバウンス保存なので、flush しないと直前の変更が落ちる
   closeHttpAuthStore()
+  // セッション cookie の写しもデバウンス保存なので、ここで書き切る
+  closeSessionCookies()
   stopHttpAuthMatcher()
   closeCallWindowStore()
   closeDb()

@@ -1273,6 +1273,27 @@ mise run verify:only autofill   # 保管庫・ルール・Jev（モック）・�
   （閾値は `src/shared/autofill-match.js` の `CHOICE_THRESHOLD` / `OWN_THRESHOLD`）
 - もう 1 台の Mac で同じパスフレーズを入れて保管庫が開けること
 
+## セッション cookie（ログイン）の再起動をまたぐ引き継ぎ
+
+```bash
+mise run verify:only session-cookies   # 同じ使い捨てプロファイルで 3 回起動（1 回目は SIGKILL）。20 秒ほど
+```
+
+見ているもの（件数を出す）:
+
+- ページが受け取ったセッション cookie（HttpOnly を含む）が数秒で `session-cookies.json` に暗号化して保存される。
+  期限付きは保存しない。平文が無い・0600
+- **SIGKILL の後**の起動で、その cookie がページに送られる（ローカルの `/echo` が Cookie ヘッダをそのまま返す）
+- Claude の窓のプロファイルに仕込んだ cookie が、戻す → 写し → 正常終了で保存し直される
+- `restoreSession: false` なら戻さず、保存先を消す
+
+暗号化は `NEMO_HTTP_AUTH_TEST_CRYPTO=memory`（実 Keychain に触らない）。**期限付きの cookie は SIGKILL で消える**
+（Chromium は約 30 秒ごとにしか書かない。この機能の対象外）ので、検査の目印は正常終了する 2 回目で入れ直している。
+使い捨てのプロファイルでも起動時に GitHub の `_gh_sess` が入るので、件数は「保存した件数と同じ」で比べる。
+
+人が見る分: 常用版で、ブラウザを閉じるとログアウトされるサイト（前回の Cloudflare）にログインしてから Nemo を再起動し、
+ログインしたままであること（実 Keychain の `safeStorage` を通るのはここだけ）。
+
 ## Claude in Nemo（Claude Code から操作する）
 
 ```bash

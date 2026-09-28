@@ -542,6 +542,14 @@ try {
     if (slotsCode !== 0) exitCode = slotsCode
   }
 
+  if (want('session-cookies')) {
+    // セッション cookie の引き継ぎは**自分でアプリを起動して**確かめる（同じプロファイルで 3 回起動し、1 回は SIGKILL）
+    await stopAll()
+    console.log('\n=== セッション cookie（ログイン）の再起動をまたぐ引き継ぎ')
+    const sessionCookiesCode = await runToCompletion(process.execPath, ['scripts/verify-session-cookies.mjs'])
+    if (sessionCookiesCode !== 0) exitCode = sessionCookiesCode
+  }
+
   if (want('metrics')) {
     // メモリ・CPU の定期記録。**間隔を環境変数で縮める**ので共有アプリでは回せない。自分で起動する
     await stopAll()

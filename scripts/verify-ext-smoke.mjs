@@ -157,21 +157,34 @@ try {
 
   /* ---- 3. content script（トップ + iframe） ---- */
   await ui.ev(`window.nemo.createTab('${pages}/iframe.html').then((k) => k)`)
-  await sleep(2500)
   const page = await connectTo(cdp, '/iframe.html')
-  const marks = await page
-    .ev(
-      `(() => {
-    const top = document.documentElement.getAttribute('data-nemo-ci')
+  // **決め打ちの sleep で待たない**。トップ・iframe の content script と service worker からの返事が
+  // 揃うまで読み直す（2.5 秒待って 1 回読む作りだと、遅い CI で返事の前 / ページの読み込み前を読んで落ちた。
+  // 2026-09-28 に 2 回続けて踏んだ）。揃わずに期限が来たら、最後に読めた値で下の check が FAIL する
+  const readMarks = `(() => {
+    const root = document.documentElement
+    if (!root) return ''
+    const top = root.getAttribute('data-nemo-ci')
     // **同一オリジンの iframe だけを見る**。ページに挿さる iframe が増えたときに
     // 巻き添えで落ちないよう、このページが置いている /login.html の iframe に絞る。
     const frames = [...document.querySelectorAll('iframe[src^="/login.html"]')].map((f) => {
-      try { return f.contentDocument.documentElement.getAttribute('data-nemo-ci') } catch { return 'cross-origin' }
+      try { return f.contentDocument?.documentElement?.getAttribute('data-nemo-ci') ?? null } catch { return 'cross-origin' }
     })
-    return JSON.stringify({ top, frames, ping: document.documentElement.getAttribute('data-nemo-ci-ping') })
+    return JSON.stringify({ top, frames, ping: root.getAttribute('data-nemo-ci-ping') })
   })()`
-    )
-    .then(JSON.parse)
+  let marks = { top: null, frames: [], ping: null }
+  const marksDeadline = Date.now() + 15000
+  while (Date.now() < marksDeadline) {
+    const raw = await page.ev(readMarks).catch(() => '')
+    if (raw) marks = JSON.parse(raw)
+    const ready =
+      marks.top === 'top' &&
+      marks.frames.length > 0 &&
+      marks.frames.every((m) => m === 'frame') &&
+      marks.ping === 'true'
+    if (ready) break
+    await sleep(200)
+  }
   check('content script がトップフレームに入る', marks.top === 'top', JSON.stringify(marks))
   check(
     'content script が iframe にも入る',

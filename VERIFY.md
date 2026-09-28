@@ -32,6 +32,15 @@ mise run verify:packaged    # パッケージした .app を起動して smoke t
 自動で選ぶ（例: `SplitRow.tsx` だけ → `split` + `restart` の 50 秒ほど）。
 どれを回すか自分で分かっているときは `verify:only` で直接指定してもよい。
 
+**フルで落ちても既存の失敗のことがある**（2026-09-28 時点。HEAD でも同じ件数が落ちる）:
+
+- ディスプレイが 2 枚つながっていると、Phase 1 の画面共有まわりの 5 件（「1 枚のときはディスプレイ選択が出ない」など）が落ちる
+- フル実行のときだけ、Live Folder の 3 件（前のスイートの一時タブが残る順序依存）が落ちる。`--only live-folder` なら通る
+
+自分の変更のせいか分からない FAIL は、HEAD を worktree に出して同じスイートを回して比べる:
+`git worktree add --detach <dir> HEAD` → `node_modules`・`extensions`・`.ext-cache` を symlink →
+`node scripts/verify-all.mjs --only <名前>`（終わったら `git worktree remove --force <dir>`）
+
 `verify:changed` の決め方（逆引きは `scripts/lib/verify-targets.mjs`。ユニットテストつき）:
 
 - **担当が確定しないファイルはフルに倒す**。`src/main/registry.ts` のように複数スイートが

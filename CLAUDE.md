@@ -27,6 +27,10 @@ Chromium の `NOTREACHED "Unsuitable process reused for site"` = Electron #52644
 SW が入れ替わっていた。実プロファイルの複製でも再現できなかったので、同じスタックならアプリ側を掘らない。
 Bitwarden は 2026-09-28 に外したので、この経路はもう通らない（別の拡張の OOPIF で出たら同じバグを疑う）。
 
+## 拡張を外すとき
+
+**`extensions.lock.json` から外しただけでは、手元の `extensions/<id>/` の実体が配布物に入る**（`electron-builder.yml` の `extraResources` がフォルダーごと同梱する。読み込まれないので症状が出ない。Bitwarden を外したとき 80MB が入りかけた）。lock から外したら、dev 版が起動していないことを確かめてから実体も消し（`rm` でゴミ箱へ）、`node scripts/ext-verify.mjs` で lock と一致することを見てからリリースする。
+
 ## 自走検証を足すとき
 
 **「その検査が実際に走ったか」を実行件数で確かめる。**

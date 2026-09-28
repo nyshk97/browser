@@ -1568,11 +1568,6 @@ export class NemoWindow {
               trafficLightPosition: TRAFFIC_LIGHT_INSET
             })
 
-    // 画面共有（Meet 等）に映さない。ログイン済みの管理画面を開くことがあるため**常に付ける**
-    // （screencapture・desktopCapturer・getDisplayMedia のどれにも映らなくなることを実測。
-    // エージェント自身のスクショ = ページの CDP / capturePage は撮れる）
-    if (kind === 'agent') this.baseWindow.setContentProtection(true)
-
     // 小窓はサイドバーの代わりに上部バーを持つ（同じ `chromeView` の枠を使う）
     this.chromeView = this.createUiView(kind === 'mini' ? 'mini' : 'sidebar')
     // アドレスバーはページ領域の上（サイドバーの右）に別 View で敷く。

@@ -31,6 +31,8 @@ export const DEFAULT_SETTINGS = {
   keybindings: {},
   restoreSession: true,
   liveFolderEnabled: true,
+  agentEnabled: false,
+  agentBlockedHosts: [],
   extensions: { disabled: [] }
 }
 
@@ -67,10 +69,41 @@ export function normalizeSettings(raw) {
       typeof input['liveFolderEnabled'] === 'boolean'
         ? input['liveFolderEnabled']
         : DEFAULT_SETTINGS.liveFolderEnabled,
+    // Claude Code からの操作（`agent.sock` を開けるか）。**既定 OFF**。一度 ON にすれば以後の手作業は無い
+    agentEnabled:
+      typeof input['agentEnabled'] === 'boolean' ? input['agentEnabled'] : DEFAULT_SETTINGS.agentEnabled,
+    // Claude に開かせないホスト（既定は空。ユーザー決定 2026-09-28）。`example.com` はサブドメインも含む
+    agentBlockedHosts: normalizeBlockedHosts(input['agentBlockedHosts']),
     // ネストしたオブジェクトは**毎回ここで組み立て直す**。`updateSettings` の浅いマージで
     // `extensions` ごと置き換わっても、未指定のキーが既定値で埋まる
     extensions: normalizeExtensionSettings(input['extensions'])
   }
+}
+
+/**
+ * エージェント窓のブロックリスト。ホスト名（小文字、先頭の `*.` と末尾の `.` は落とす）だけを残す。
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+function normalizeBlockedHosts(value) {
+  if (!Array.isArray(value)) return []
+  const hosts = new Set()
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const host = item.trim().toLowerCase().replace(/^\*\./, '').replace(/\.$/, '')
+    if (/^[a-z0-9.-]+$/.test(host) && host.includes('.') && host.length <= 253) hosts.add(host)
+  }
+  return [...hosts].slice(0, 500)
+}
+
+/**
+ * ホストがブロックリストに当たるか（完全一致かサブドメイン）。
+ * @param {string} host
+ * @param {readonly string[]} blocked
+ */
+export function isBlockedAgentHost(host, blocked) {
+  const target = host.toLowerCase()
+  return blocked.some((entry) => target === entry || target.endsWith(`.${entry}`))
 }
 
 /**

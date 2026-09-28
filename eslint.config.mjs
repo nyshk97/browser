@@ -62,7 +62,7 @@ export default tseslint.config(
 
   /* ---- 検証スクリプトと shared の素の JS ---- */
   {
-    files: ['scripts/**/*.mjs', 'src/shared/**/*.js', 'eslint.config.mjs'],
+    files: ['scripts/**/*.mjs', 'src/shared/**/*.js', 'src/bridge/**/*.mjs', 'eslint.config.mjs'],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'module',

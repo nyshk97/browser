@@ -9,7 +9,8 @@
  *
  * **`verify-vim-scroll`（gg / G）・`verify-slots`（セーブスロット）・
  * `verify-auth-vault`（Basic 認証の保管庫）は既定から外れている**（`OPT_IN_ONLY`）。
- * `verify-autofill`（フォーム自動入力）は既定で回る（自分で起動する。`auth-vault` の後の最後に入る）。
+ * `verify-autofill`（フォーム自動入力）は既定で回る（自分で起動する。`auth-vault` の後に入る）。
+ * `verify-agent`（Claude in Nemo）は既定から外れている（`OPT_IN_ONLY`。自分で起動する。最後に入る）。
  * 名指し（`--only`）か `--changed` で選ばれたときだけ回る。
  * `vim-scroll` は `http-auth` の後・`restart` の前、`slots` と `auth-vault` は最後（`db` の後）に入る。
  *
@@ -565,6 +566,14 @@ try {
     console.log('\n=== フォーム自動入力')
     const autofillCode = await runToCompletion(process.execPath, ['scripts/verify-autofill.mjs'])
     if (autofillCode !== 0) exitCode = autofillCode
+  }
+
+  if (want('agent')) {
+    // Claude in Nemo も別建て。**`NEMO_AGENT_SOCKET` を自分で振る**（ブリッジを常用・dev の socket に繋がない）
+    await stopAll()
+    console.log('\n=== Claude in Nemo（ブリッジ経由の MCP・エージェント窓）')
+    const agentCode = await runToCompletion(process.execPath, ['scripts/verify-agent.mjs'])
+    if (agentCode !== 0) exitCode = agentCode
   }
 } catch (error) {
   console.error(`\n[verify] ${error instanceof Error ? error.message : String(error)}`)

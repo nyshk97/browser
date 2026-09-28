@@ -64,6 +64,7 @@ import { configureTestAuth } from './live-folders/token.js'
 import { startCallCoordinator, stopCallCoordinator } from './call-coordinator.js'
 import { markReadyWhen, setExtensionCount } from './app-status.js'
 import { initUpdater, stopUpdater } from './updater.js'
+import { startAgent, stopAgent } from './agent/index.js'
 
 applyUserDataDir()
 app.setAppUserModelId(APP_ID)
@@ -95,6 +96,18 @@ installOpenUrlHandler()
  * （CDP に到達できるものは拡張の service worker で任意の JS を実行でき、
  * アンロック済み Vault の中身に手が届く）。
  */
+//
+// **argv の `--remote-debugging-port` / `--remote-debugging-pipe` は常に消す**。
+// Chromium は argv のスイッチをそのまま受け付けるので、env だけ見ていると
+// 「落ちている Nemo を argv 付きで起動させる」経路で常用版の CDP が開く（dist で実測。pipe では拡張 SW まで届いた）。
+// fuse（EnableNodeCliInspectArguments）は Node の inspector だけで、Chromium のスイッチには効かない。
+// ready より前（main の冒頭）で消せば開かないことを素の Electron で確かめてある。
+for (const name of ['remote-debugging-port', 'remote-debugging-pipe', 'remote-debugging-address']) {
+  if (app.commandLine.hasSwitch(name)) {
+    app.commandLine.removeSwitch(name)
+    console.error(`[nemo] argv の --${name} を無視した（remote debugging は env でだけ開く）`)
+  }
+}
 const remoteDebuggingPort = process.env['NEMO_REMOTE_DEBUGGING_PORT']
 if (remoteDebuggingPort && isDevChannel) {
   app.commandLine.appendSwitch('remote-debugging-port', remoteDebuggingPort)
@@ -200,7 +213,7 @@ app
     installAuthHandler(findWindowIdForPageContents, (contents) => {
       // **strict な解決**。タブでない WebContents は自動入力の対象にしない
       const found = findTabByWebContents(contents)
-      return found ? { isPrivate: found.win.isPrivate } : null
+      return found ? { isPrivate: found.win.isPrivate, isAgent: found.win.isAgent } : null
     })
     installDownloadHandler(pageSession)
 
@@ -263,6 +276,9 @@ app
       console.error('[nemo] パッケージ版では NEMO_MEET_TEST_URL_PREFIX を無視した')
     }
     startCallCoordinator()
+    // Claude Code からの操作口（設定で許可しているときだけ socket を開く）。
+    // ツールの呼び出しは窓を作るので、ウィンドウの仕組みが揃った後に始める
+    startAgent()
 
     let extensionCount = 0
     try {
@@ -407,13 +423,16 @@ app.on('window-all-closed', () => {
 })
 
 app.on('activate', () => {
-  if (windowsById.size === 0) createWindow()
+  // エージェント窓（Claude が操作中）しか無いときも、Dock から開いたら通常ウィンドウを出す
+  if ([...windowsById.values()].every((win) => win.isDestroyed || win.isAgent)) createWindow()
 })
 
 app.on('before-quit', () => {
   // **終了で閉じたぶんは ⌘⇧T に積まない**。積むと次の起動で
   // 「閉じたタブ」の先頭が前回終了時の小窓になる。
   markQuitting()
+  // Claude Code からの操作口を先に閉じる（終了処理の最中にツールが走らないように。エージェント窓も閉じる）
+  stopAgent()
   // 正常終了。ここで書き切っておくと、次の起動が確実に最新のタブから始まる。
   markCleanExit(collectSession())
   // 終了時の負荷を 1 行残す（`metrics.sample` と同じ形。集計は両方を読む）。タイマーを止める前に取る。

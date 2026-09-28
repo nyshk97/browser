@@ -24,6 +24,7 @@ import {
   type SidebarRow
 } from '../../shared/sidebar-rows.js'
 import type {
+  AgentWindowState,
   EphemeralTabDef,
   FavoriteItem,
   FavoriteSection,
@@ -243,10 +244,39 @@ export function Sidebar(): React.JSX.Element {
   }, [state])
 
   const isPrivate = state?.isPrivate === true
+  /** Claude Code が操作するエージェント窓。定義（Favorites・ピン）を持たず、自分のタブだけを並べる。 */
+  const agent = state?.kind === 'agent' ? state.agent : null
 
   return (
-    <div className={`sidebar${isPrivate ? ' private' : ''}`}>
+    <div className={`sidebar${isPrivate ? ' private' : ''}${agent ? ' agent' : ''}`}>
       <div className="drag-strip" />
+
+      {agent ? <AgentBand agent={agent} /> : null}
+
+      {/*
+        通常窓からエージェント窓（背面・デスクトップの Space にある）へ行く入口。
+        ユーザーの番の窓は目立たせる（Claude がログイン等を頼んでいる）
+      */}
+      {!agent && shared.agentWindows.length > 0 ? (
+        <div className="agent-entries">
+          {shared.agentWindows.map((entry) => (
+            <button
+              key={entry.windowId}
+              type="button"
+              className={`agent-entry${entry.mode === 'user' ? ' user-turn' : ''}`}
+              data-agent-window={entry.windowId}
+              title="Claude のウィンドウを表示"
+              onClick={() => void window.nemo.agentShowWindow(entry.windowId)}
+            >
+              <span className="agent-dot" />
+              <span className="agent-entry-text">
+                {entry.mode === 'user' ? 'あなたの番です' : 'Claude が操作中'}
+              </span>
+              <span className="agent-label">{entry.label}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {/*
         シークレットウィンドウでは拡張がロードされない
@@ -279,21 +309,25 @@ export function Sidebar(): React.JSX.Element {
           </>
         ) : null}
 
-        <FavoriteSections favorites={shared.favorites} tabs={favoriteTabs} />
+        {agent ? null : (
+          <>
+            <FavoriteSections favorites={shared.favorites} tabs={favoriteTabs} />
 
-        {/* messages と bookmarks の間に線は引かない（ラベルだけで区切る） */}
-        <div className="label">
-          <span>bookmarks</span>
-          <button
-            type="button"
-            className="mini"
-            title="フォルダを作る"
-            onClick={() => void window.nemo.createFolder('新しいフォルダ')}
-          >
-            ＋
-          </button>
-        </div>
-        <PinnedTree nodes={shared.pinned} openIds={openPinnedIds} tabs={pinnedTabs} />
+            {/* messages と bookmarks の間に線は引かない（ラベルだけで区切る） */}
+            <div className="label">
+              <span>bookmarks</span>
+              <button
+                type="button"
+                className="mini"
+                title="フォルダを作る"
+                onClick={() => void window.nemo.createFolder('新しいフォルダ')}
+              >
+                ＋
+              </button>
+            </div>
+            <PinnedTree nodes={shared.pinned} openIds={openPinnedIds} tabs={pinnedTabs} />
+          </>
+        )}
 
         {/*
           ここから下が一時タブ。見出しは置かず、区切り線と「New Tab」行で
@@ -301,7 +335,7 @@ export function Sidebar(): React.JSX.Element {
           線をホバーすると右端に「↓ Clear」が出て、野良タブを全部閉じる（Arc の Clear）。
           閉じる行が無いときはボタンを出さない（線だけ）。
         */}
-        <ClearSeparator count={ephemeralRows.length} />
+        {agent ? <div className="tabs-sep" /> : <ClearSeparator count={ephemeralRows.length} />}
         <button
           type="button"
           className="row new-tab"
@@ -342,6 +376,100 @@ export function Sidebar(): React.JSX.Element {
       </div>
 
       <Footer version={shared.version} update={shared.update} />
+    </div>
+  )
+}
+
+/**
+ * エージェント窓の上端の帯。いま誰の番か・Claude からの依頼・［Claude に戻す］［終了］。
+ *
+ * **Claude の依頼文と Nemo が確かめた事実（origin）を分けて出す**。依頼文を書くのは Claude（= 操作中のページに
+ * 誘導されうる）なので、「どのサイトでログインを求められているか」は Nemo がドキュメント遷移で確定した origin で示す。
+ */
+function AgentBand({ agent }: { agent: AgentWindowState }): React.JSX.Element {
+  const userTurn = agent.mode === 'user'
+  return (
+    <div className={`agent-band${userTurn ? ' user-turn' : ''}`} data-agent-mode={agent.mode}>
+      <div className="agent-band-head">
+        <span className="agent-dot" />
+        <b>{userTurn ? 'あなたの番です' : 'Claude が操作中'}</b>
+        <span className="agent-label">{agent.label}</span>
+      </div>
+      {userTurn ? (
+        <>
+          {agent.requestOrigin ? (
+            <div className="agent-origin" title="Nemo が確かめたサイト">
+              {agent.requestOrigin}
+            </div>
+          ) : null}
+          {agent.request ? (
+            <div className="agent-request" title="Claude からの依頼（Claude が書いた文です）">
+              <span className="dim">Claude: </span>
+              {agent.request}
+            </div>
+          ) : null}
+          <div className="agent-hint dim">
+            終わったら Claude に「終わった」と伝えるか、ここで戻してください
+          </div>
+        </>
+      ) : (
+        <div className="agent-hint dim">
+          このウィンドウは Claude 用です（普段のログイン・拡張は使いません）
+        </div>
+      )}
+      <div className="agent-actions">
+        {userTurn ? (
+          <button type="button" className="btn primary" onClick={() => void window.nemo.agentResume()}>
+            Claude に戻す
+          </button>
+        ) : null}
+        <button type="button" className="btn" onClick={() => void window.nemo.agentEnd()}>
+          終了
+        </button>
+      </div>
+      <AgentSites />
+    </div>
+  )
+}
+
+/**
+ * エージェント用プロファイルにログイン（cookie）が残っているサイトと、サイト単位の消去。
+ * 専用プロファイルでもログインは溜まる（Google にログインすれば Gmail にも届く）ので、見えるようにしておく。
+ */
+function AgentSites(): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [sites, setSites] = useState<{ site: string; cookies: number }[] | null>(null)
+  useEffect(() => {
+    if (!open) return
+    void window.nemo.agentSites().then(setSites)
+  }, [open])
+  return (
+    <div className="agent-sites">
+      <button type="button" className="agent-sites-toggle" onClick={() => setOpen((value) => !value)}>
+        {open ? '▾' : '▸'} ログインが残っているサイト{sites ? `（${sites.length}）` : ''}
+      </button>
+      {open ? (
+        sites === null ? null : sites.length === 0 ? (
+          <div className="dim">ありません</div>
+        ) : (
+          <ul>
+            {sites.map((entry) => (
+              <li key={entry.site} data-agent-site={entry.site}>
+                <span className="agent-site-name">{entry.site}</span>
+                <span className="dim">{entry.cookies}</span>
+                <button
+                  type="button"
+                  className="mini"
+                  title="このサイトの cookie とストレージを消す（ログアウト）"
+                  onClick={() => void window.nemo.agentClearSite(entry.site).then(setSites)}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        )
+      ) : null}
     </div>
   )
 }

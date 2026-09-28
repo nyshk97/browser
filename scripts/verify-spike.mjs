@@ -6,7 +6,7 @@
  *
  * 前提:
  *   node scripts/test-server.mjs &
- *   ./node_modules/.bin/electron out/main/index.js --remote-debugging-port=9333 &
+ *   NEMO_REMOTE_DEBUGGING_PORT=9333 ./node_modules/.bin/electron out/main/index.js &（argv の --remote-debugging-port は main が消す）
  *
  * 使い方:
  *   node scripts/verify-spike.mjs                      基本セット

@@ -143,6 +143,14 @@ const api: NemoUiApi = {
   resolvePrompt: (id, answer: PromptAnswer) =>
     ipcRenderer.invoke('nemo:resolve-prompt', id, answer) as Promise<void>,
 
+  agentResume: () => ipcRenderer.invoke('nemo:agent-resume') as Promise<void>,
+  agentEnd: () => ipcRenderer.invoke('nemo:agent-end') as Promise<void>,
+  agentShowWindow: (windowId) => ipcRenderer.invoke('nemo:agent-show-window', windowId) as Promise<void>,
+  agentOpenMini: () => ipcRenderer.invoke('nemo:agent-open-mini') as Promise<boolean>,
+  agentSites: () => ipcRenderer.invoke('nemo:agent-sites') as Promise<{ site: string; cookies: number }[]>,
+  agentClearSite: (site) =>
+    ipcRenderer.invoke('nemo:agent-clear-site', site) as Promise<{ site: string; cookies: number }[]>,
+
   updateSettings: (patch) => ipcRenderer.invoke('nemo:update-settings', patch) as Promise<NemoSettings>,
 
   openExtensionOptions: (extensionId) =>

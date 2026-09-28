@@ -226,6 +226,9 @@ test('evaluateEligibility: 理由は畳まずに区別できる（診断ログ�
   // シークレットとタブでないのは**挙動が同じでも理由を分ける**。
   // 畳むとログが「シークレットだった」と嘘をつく
   assert.equal(evaluateEligibility({ ...BASE, isPrivate: true }).reason, 'private')
+  assert.equal(evaluateEligibility({ ...BASE, isAgent: true }).reason, 'agent')
+  assert.equal(evaluateEligibility({ ...BASE, isAgent: true }).canAutofill, false)
+  assert.equal(evaluateEligibility({ ...BASE, isAgent: true }).canSave, false)
   assert.equal(evaluateEligibility({ ...BASE, isTab: false }).reason, 'not-a-tab')
   assert.equal(evaluateEligibility({ ...BASE, isProxy: true }).reason, 'proxy')
   assert.equal(evaluateEligibility({ ...BASE, scheme: 'digest' }).reason, 'scheme')

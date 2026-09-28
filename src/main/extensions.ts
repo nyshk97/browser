@@ -3,7 +3,7 @@ import { ElectronChromeExtensions } from 'electron-chrome-extensions'
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { extensionsDir, extensionsLockPath, preloadDir } from './paths.js'
+import { PAGE_PARTITION, extensionsDir, extensionsLockPath, preloadDir } from './paths.js'
 import { log, logError } from './log.js'
 import { hashExtensionTree } from '../shared/tree-hash.js'
 import { artifactDirFor, validateLock } from '../shared/ext-lock.js'
@@ -19,6 +19,7 @@ import {
   findWindowByBaseWindowId,
   focusedOrFirstWindow,
   isTransferring,
+  mostRecentNormalWindow,
   removeTab,
   removeWindow,
   selectTab,
@@ -515,7 +516,10 @@ export function createExtensions(session: Electron.Session): ElectronChromeExten
       if (!requestedWindow) throw new Error('no window available')
       // 小窓がフォーカス中だと `focusedOrFirstWindow()` は小窓を返す。
       // 小窓はタブを増やせないので通常ウィンドウへ回す（拡張から見ると普通に成功する）。
-      const win = windowForNewTab(requestedWindow)
+      // **常用プロファイル以外（エージェント窓）には絶対に置かない**（セッションが違う・Claude の範囲に拡張のページを入れない）
+      const win = requestedWindow.usesMainProfile
+        ? windowForNewTab(requestedWindow)
+        : (mostRecentNormalWindow(PAGE_PARTITION) ?? createWindow(undefined, { noInitialTab: true }))
 
       // 拡張から渡された URL もナビゲーション検証を必ず通す。
       // 拡張は自分のページ（chrome-extension://<ロード済み ID>/）だけ追加で開ける。

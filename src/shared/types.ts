@@ -354,6 +354,7 @@ export interface AutofillRunResult {
     | 'no-fields'
     | 'collect-failed'
     | 'fill-failed'
+    | 'agent'
   /** 集めた欄の数（分割グループは 1 つと数える）。 */
   fields: number
   /** ルールで決めて入れた欄。 */
@@ -491,8 +492,27 @@ export interface WindowState {
   /**
    * ウィンドウの種別。
    * `mini` は小窓（Little Nemo）。サイドバーを持たず、タブは常に1つ。
+   * `agent` は Claude Code から操作するエージェント用ウィンドウ（専用セッション・拡張なし・共有状態に参加しない）。
    */
-  kind: 'normal' | 'mini'
+  kind: 'normal' | 'mini' | 'agent'
+  /** エージェント用ウィンドウのときだけ。それ以外は null。 */
+  agent: AgentWindowState | null
+}
+
+/**
+ * エージェント用ウィンドウの状態（UI の帯とサイドバーに出す）。
+ *
+ * - `claude` … Claude が操作している（ユーザーの番のタブが無い）
+ * - `user` … ユーザーの番（`request_user_action` で渡された）。Claude の入力系ツールは断る
+ */
+export interface AgentWindowState {
+  /** 窓の名前（Claude Code のプロジェクト名）。 */
+  label: string
+  mode: 'claude' | 'user'
+  /** ユーザーの番のとき、Claude からの依頼文（**Claude が書いた文**。UI では Nemo の判定と分けて出す）。 */
+  request: string | null
+  /** ユーザーの番のとき、対象タブの origin（Nemo がドキュメント遷移で確定した値）。 */
+  requestOrigin: string | null
 }
 
 export interface FindState {
@@ -524,6 +544,11 @@ export interface SharedState {
    * renderer はウィンドウローカルのタブ一覧へフォールバックする）。
    */
   ephemeralTabs: EphemeralTabDef[] | null
+  /**
+   * Claude Code が操作しているエージェント窓（通常窓のサイドバーの入口に出す）。
+   * エージェント窓・シークレット窓には空で渡す。
+   */
+  agentWindows: { windowId: number; label: string; mode: 'claude' | 'user' }[]
 }
 
 /**
@@ -933,6 +958,16 @@ export interface NemoSettings {
    */
   liveFolderEnabled: boolean
   /**
+   * Claude Code からの操作を許可する（`<userData>/agent.sock` を開く）。**既定 OFF**。
+   * OFF にすると接続中のセッションも切り、エージェント窓を閉じる。
+   */
+  agentEnabled: boolean
+  /**
+   * Claude（エージェント窓）に開かせないホスト（サブドメインも含む）。既定は空。
+   * UI には出さず、`settings.json` で編集する。ユーザーの番の間はユーザーは開ける。
+   */
+  agentBlockedHosts: string[]
+  /**
    * 拡張の端末ごとの ON/OFF。lock は「アプリに何を同梱するか」（全端末共通）、
    * ここは「この端末で何を動かすか」。新規 PC では全部 ON（`disabled: []`）。
    */
@@ -1145,6 +1180,20 @@ export interface NemoUiApi {
 
   /* ダイアログ */
   resolvePrompt(id: string, answer: PromptAnswer): Promise<void>
+
+  /* Claude in Nemo（エージェント窓） */
+  /** 「Claude に戻す」。ユーザーの番を終えて Claude の番に戻す。 */
+  agentResume(): Promise<void>
+  /** 「終了」。エージェント窓を閉じる（ユーザーが閉じたのと同じ扱い）。 */
+  agentEnd(): Promise<void>
+  /** エージェント窓を前面に出す（通常窓の入口から）。 */
+  agentShowWindow(windowId?: number): Promise<void>
+  /** 小窓の中身を Claude のウィンドウで開き直し、小窓を閉じる（開けたら true）。 */
+  agentOpenMini(): Promise<boolean>
+  /** エージェント用プロファイルに cookie が残っているサイト（エージェント窓からだけ）。 */
+  agentSites(): Promise<{ site: string; cookies: number }[]>
+  /** そのサイトの cookie・ストレージを消す（エージェント窓からだけ）。 */
+  agentClearSite(site: string): Promise<{ site: string; cookies: number }[]>
 
   /* 設定 */
   updateSettings(patch: Partial<NemoSettings>): Promise<NemoSettings>

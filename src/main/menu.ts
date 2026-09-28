@@ -22,6 +22,7 @@ import {
 } from './registry.js'
 import { checkForUpdatesManually } from './updater.js'
 import { advanceSwitcher } from './tab-switcher.js'
+import { showAgentWindow } from './agent/index.js'
 
 /**
  * メニューバーとキーバインド（計画 1-7）。
@@ -71,6 +72,22 @@ const MINI_BLOCKED_COMMANDS = new Set([
   'show-downloads'
 ])
 
+/**
+ * エージェント窓（Claude Code が操作する窓）では通さないコマンド。
+ *
+ * 定義（ピン・Favorites）・全画面・常用の履歴を前提にするものを落とす。
+ * ⌘T / ⌘L / ⌘W / 戻る / 進む / リロード / 拡大縮小は通す（引き継ぎでユーザーが手で操作するため）。
+ */
+const AGENT_BLOCKED_COMMANDS = new Set([
+  'pin-tab',
+  'add-favorite',
+  'toggle-fullscreen',
+  'reopen-tab',
+  'show-library',
+  'promote-peek',
+  'switch-tab'
+])
+
 function sendToUi(win: NemoWindow, command: string): void {
   for (const contents of [win.chromeWebContents, win.overlayWebContents]) {
     if (!contents.isDestroyed()) contents.send('nemo:command', command)
@@ -99,7 +116,12 @@ function runCommand(command: string): void {
 export function runCommandForWindow(win: NemoWindow, command: string): void {
   // 小窓（Little Nemo）はタブを1つしか持たず、サイドバーもコマンドバーも無い。
   // **経路ごとに `if` を書くのではなく、ここでまとめて弾く**（塞ぎ漏れを作らない）。
-  if (!canHostAdditionalTabs(win) && MINI_BLOCKED_COMMANDS.has(command)) {
+  if (win.isAgent) {
+    if (AGENT_BLOCKED_COMMANDS.has(command)) {
+      log('command.ignored_in_agent', { command, windowId: win.id })
+      return
+    }
+  } else if (!canHostAdditionalTabs(win) && MINI_BLOCKED_COMMANDS.has(command)) {
     log('command.ignored_in_mini', { command, windowId: win.id })
     return
   }
@@ -321,7 +343,10 @@ export function installApplicationMenu(): void {
         { type: 'separator' },
         ...itemsFor('window'),
         { type: 'separator' },
-        { role: 'front', label: 'すべてを手前に移動' }
+        { role: 'front', label: 'すべてを手前に移動' },
+        { type: 'separator' },
+        // Claude Code が操作しているウィンドウ（Claude in Nemo）。背面にあるので入口をメニューにも置く
+        { label: 'Claude のウィンドウを表示', click: () => showAgentWindow() }
       ]
     },
     { label: '開発', submenu: itemsFor('develop') }
@@ -345,7 +370,7 @@ function selectFavoriteByIndex(index: number): void {
  * （「Slack を見てすぐ作業に戻る」が同じキー 2 回で済む）。直前のタブが無ければ何もしない。
  */
 export function selectFavoriteByIndexIn(win: NemoWindow, index: number): void {
-  // 小窓はタブ 1 つ。`openFavorite` は無ければ `createTab` するので、ここで止める
+  // 小窓はタブ 1 つ・エージェント窓は定義を持たない。`openFavorite` は無ければ `createTab` するので、ここで止める
   if (!canHostAdditionalTabs(win)) return
   const item = favoritesInShortcutOrder(getFavorites())[index - 1]
   if (!item) return

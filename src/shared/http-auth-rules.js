@@ -312,6 +312,8 @@ export function matchRules(rules, url) {
  * @param {boolean} input.isProxy プロキシ認証か（#8: 対象外）
  * @param {string} input.scheme `authInfo.scheme`（`basic` のときだけ扱う）
  * @param {boolean} input.isPrivate シークレットウィンドウか（#7: 一切使わない）
+ * @param {boolean} [input.isAgent] エージェント用ウィンドウ（Claude Code が操作する窓）か。
+ *   Claude の遷移だけで保管庫の資格情報を送らない（保存もしない）
  * @param {boolean} input.isTab タブとして解決できた WebContents か（拡張の popup 等は false）
  * @param {boolean} input.isSameOrigin リクエストがタブの（遷移中を含む）URL と同一オリジンか
  * @param {boolean} input.canEncrypt 端末鍵が使えるか（#13）
@@ -322,6 +324,7 @@ export function evaluateEligibility({
   isProxy,
   scheme,
   isPrivate,
+  isAgent = false,
   isTab,
   isSameOrigin,
   canEncrypt,
@@ -332,6 +335,7 @@ export function evaluateEligibility({
   if (isProxy) reason = 'proxy'
   else if (String(scheme ?? '').toLowerCase() !== 'basic') reason = 'scheme'
   else if (isPrivate) reason = 'private'
+  else if (isAgent) reason = 'agent'
   else if (!isTab) reason = 'not-a-tab'
   else if (!isSameOrigin) reason = 'cross-origin'
   else if (isUrlTooLong) reason = 'url-too-long'

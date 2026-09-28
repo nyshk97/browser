@@ -30,6 +30,18 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 
 ## [Unreleased]
 
+### 追加
+
+- **Claude Code から Nemo を操作できるようにした（Claude in Nemo）**。Claude in Chrome の代わりに、Claude Code のセッションごとに専用の「Claude — <プロジェクト名>」ウィンドウを開いて操作する。普段のウィンドウ・ログイン・拡張には触れず、前面も奪わない。Claude Code を終えるとウィンドウは閉じる。設定（⌘,）の「Claude Code からの操作を許可」を ON にし、`claude mcp add-json` で登録して使う（docs/operations.md）
+- **ログインや 2FA を Claude から引き継げるようにした**。Claude が頼むとウィンドウの上端に「あなたの番です」と依頼が出て、Claude の入力が止まる。終わったら「Claude に戻す」を押すか、Claude に「終わった」と伝える
+- 普段のウィンドウのサイドバーとウィンドウメニューに、Claude のウィンドウへの入口を置いた（あなたの番のときは目立つ色）
+- 右クリックの「Claude のウィンドウで開く」と小窓の「Claude」ボタン（メールのログインリンクを Claude 側で開き直す）
+- Claude のウィンドウに「ログインが残っているサイト」の一覧と、サイトごとの消去を置いた
+
+### 修正
+
+- 起動引数の `--remote-debugging-port` / `--remote-debugging-pipe` で常用版の CDP が開けてしまう穴を塞いだ
+
 ## [1.2.19] - 2026-09-28
 
 ### 変更

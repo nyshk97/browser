@@ -52,6 +52,12 @@ extraResources:
     to: THIRD-PARTY-NOTICES.md
   - from: LICENSE
     to: LICENSE
+  # Claude Code ⇔ Nemo のブリッジ（Claude Code がユーザーの node で起動する）。
+  # **asar の外**に置く（外の node からは asar を読めない）。ツール定義の正本を隣に並べ、ブリッジはそれを import する
+  - from: src/bridge/nemo-mcp-bridge.mjs
+    to: nemo-mcp-bridge.mjs
+  - from: src/shared/agent-tools.js
+    to: agent-tools.js
 
 asarUnpack:
   # ネイティブモジュールは asar の中からはロードできない

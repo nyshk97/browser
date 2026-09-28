@@ -244,6 +244,51 @@ mise run ext:rollback                   # lock を git の状態に戻して再�
 node scripts/ext-webstore-key.mjs <id>  # Web Store の CRX から公開鍵を取り出す（初回のみ）
 ```
 
+## Claude Code から操作する（Claude in Nemo）
+
+Claude in Chrome の代わり。Claude Code のセッションごとに専用の「Claude — <プロジェクト名>」ウィンドウを開いて、
+そこだけを操作させる（計画: `docs/plans/2026-09-28-1126-claude-in-nemo.md`）。
+
+**有効にする（Mac ごとに 1 回）**
+
+1. Nemo の設定（⌘,）の「Claude Code からの操作を許可」を ON（`<userData>/agent.sock` を開く。既定 OFF）
+2. Claude Code に登録する（user スコープ。全プロジェクト共通）:
+
+   ```bash
+   claude mcp add-json --scope user nemo \
+     '{"type":"stdio","command":"node","args":["/Applications/Nemo.app/Contents/Resources/nemo-mcp-bridge.mjs"]}'
+   ```
+
+   ブリッジは Claude Code が起動するユーザーの node で動く（依存なし・Node 18 以降）。
+   パッケージ版は fuse で `RunAsNode` を切っているので、Nemo 本体を node として使うことはできない。
+   確認のたびに聞かれたくなければ `~/.claude/settings.json` の `permissions.allow` に `mcp__nemo` を足す。
+
+**しくみ**
+
+- Claude Code のセッション（= ブリッジ 1 本）ごとに窓 1 枚。**最初のツール呼び出しで開き、セッションが終わると閉じる**
+  （Claude Code が落ちても stdin が閉じるので閉じる）。セッション保存・履歴・一時タブの共有には入らない
+- 窓は専用のプロファイル（`persist:nemo-agent`）。**普段のログイン・拡張（Bitwarden）・履歴は見えない**。
+  引き継ぎでログインしたサイトはこのプロファイルに残る（窓の帯の「ログインが残っているサイト」から消せる）
+- 出し方: 内蔵ディスプレイのデスクトップに、全画面にせず・前面を奪わず・最背面へ出す。画面共有には映らない
+  （`setContentProtection`）。普段の窓のサイドバーの入口か、ウィンドウメニューの「Claude のウィンドウを表示」で前に出す
+- ブリッジは常用版（`Nemo`）に繋ぐ。**常用版が起動していないときだけ** dev 版（`Nemo-dev`）に繋ぐ。
+  常用版が起動していて許可が OFF なら「設定で許可してください」を返す。Nemo の再起動（更新）をまたいでも繋ぎ直す
+  （そのときタブは作り直しになるので、Claude は tabs_context からやり直す）
+
+**引き継ぎ（ログイン・2FA）**: Claude が `request_user_action` を呼ぶと、そのタブは「あなたの番」になり、
+窓の帯に依頼（Claude の文）と Nemo が確かめたサイト（origin）が出て、Dock にバッジが付く。
+その間 Claude の入力は断られる。終わったら帯の「Claude に戻す」を押すか、Claude に「終わった」と伝える。
+**窓をクリックして操作している間も、Claude の入力は断られる**（窓が key のあいだ）。
+
+**Claude に操作させないもの**（Nemo の決まり。`request_user_action` でユーザーに頼ませる）:
+
+- API トークン・鍵の発行、OAuth の同意、再認証（sudo）等の画面（`src/shared/agent-sensitive-pages.js`）
+- `settings.json` の `agentBlockedHosts` に書いたホスト（既定は空。サブドメインも含む）
+- http / https 以外（`file:` / `javascript:` / 拡張ページ）・ダウンロードの保存先の選択（`~/Downloads/Nemo Agent` に黙って保存）
+
+メールのログインリンク（マジックリンク）は普段の窓で開いてしまうので、リンクの右クリックの「Claude のウィンドウで開く」か、
+小窓のバーの「Claude」で Claude の窓へ移す。
+
 ## dev 版と常用版
 
 **表示名・bundle id・アイコン・データディレクトリをすべて分ける。**

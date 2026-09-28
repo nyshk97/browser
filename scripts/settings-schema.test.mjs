@@ -6,6 +6,7 @@ import {
   MAX_DEFINITION_DATA_FAVICON_LENGTH,
   MAX_PIN_DEPTH,
   favoritesInShortcutOrder,
+  isBlockedAgentHost,
   normalizeCustomIcon,
   normalizeDefinitionFaviconUrl,
   normalizePins,
@@ -43,6 +44,30 @@ test('検索テンプレートは https と {q} を要求する', () => {
     normalizeSettings({ searchTemplate: 'https://d.example/?q={q}' }).searchTemplate,
     'https://d.example/?q={q}'
   )
+})
+
+test('agentEnabled は既定 OFF で、壊れた値・欠けた値も OFF に落ちる', () => {
+  assert.equal(normalizeSettings({}).agentEnabled, false)
+  assert.equal(normalizeSettings({ agentEnabled: 'yes' }).agentEnabled, false)
+  assert.equal(normalizeSettings({ agentEnabled: 1 }).agentEnabled, false)
+  assert.equal(normalizeSettings({ agentEnabled: true }).agentEnabled, true)
+})
+
+test('agentBlockedHosts は既定で空、ホスト名だけを小文字で残す', () => {
+  assert.deepEqual(normalizeSettings({}).agentBlockedHosts, [])
+  assert.deepEqual(
+    normalizeSettings({
+      agentBlockedHosts: ['Mail.Google.com', '*.bank.example', 'bad host', 3, 'localhost', 'x.com.']
+    }).agentBlockedHosts,
+    ['mail.google.com', 'bank.example', 'x.com']
+  )
+})
+
+test('isBlockedAgentHost は完全一致とサブドメインだけ', () => {
+  assert.equal(isBlockedAgentHost('mail.google.com', ['mail.google.com']), true)
+  assert.equal(isBlockedAgentHost('a.mail.google.com', ['mail.google.com']), true)
+  assert.equal(isBlockedAgentHost('google.com', ['mail.google.com']), false)
+  assert.equal(isBlockedAgentHost('evilmail.google.com', ['mail.google.com']), false)
 })
 
 test('liveFolderEnabled は壊れた値・欠けた値とも既定 true に落ちる', () => {

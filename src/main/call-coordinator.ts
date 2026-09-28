@@ -188,7 +188,9 @@ function pickTarget(): CandidateState | null {
 function allTabs(): NemoTab[] {
   const tabs: NemoTab[] = []
   for (const win of windowsById.values()) {
-    if (win.isDestroyed) continue
+    // エージェント窓（Claude が操作中）の Meet は会議として扱わない
+    // （`focusCallTarget` が `app.focus({ steal: true })` で前面を奪う経路になる）
+    if (win.isDestroyed || win.isAgent) continue
     tabs.push(...win.tabs)
   }
   return tabs

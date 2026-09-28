@@ -19,6 +19,7 @@ import { autofillVaultStatus, openAutofillVault, recallAutofillPassphrase } from
 import { readJevKey } from '../store/jev-key.js'
 import { askJev } from './jev.js'
 import { mainFrameRunner, subFrameRunner, type PageRunner } from './frame-runner.js'
+import { isAgentContents } from '../agent/contents.js'
 
 /**
  * 実行中のタブ。**同じタブでの 2 回目は弾く**（収集した要素はページ側の 1 か所に持つので、
@@ -47,6 +48,22 @@ export async function runAutofill(
   frame: WebFrameMain | null = null,
   debug = false
 ): Promise<AutofillRunResult> {
+  // エージェント用ウィンドウでは動かさない（プロフィールをエージェントのページに入れない。
+  // 右クリックメニューもエージェント窓には出していないが、入口をここで一元的に閉じる）
+  if (isAgentContents(wc)) {
+    const refused: AutofillRunResult = {
+      ok: false,
+      reason: 'agent',
+      fields: 0,
+      rule: 0,
+      jev: 0,
+      left: 0,
+      filled: 0,
+      jevMs: null
+    }
+    log('autofill.run', { ...refused })
+    return refused
+  }
   if (running.has(wc)) {
     const busy: AutofillRunResult = {
       ok: false,

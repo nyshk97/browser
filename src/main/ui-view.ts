@@ -36,6 +36,8 @@ export interface CreateUiViewOptions {
    */
   windowId: number
   isPrivate?: boolean
+  /** エージェント用ウィンドウの UI（`&agent=1`）。 */
+  agent?: boolean
   /**
    * 分割ビューの**どちらのペインを担当するか**（`toolbar` のときだけ意味を持つ）。
    * 省略＝左（分割していないときの唯一のツールバーでもある）。
@@ -94,7 +96,7 @@ function lockUiNavigation(contents: WebContents, view: UiViewKind, uiUrl: string
 }
 
 export function createUiView(options: CreateUiViewOptions): WebContentsView {
-  const { view, windowId, isPrivate = false, pane, onLoad } = options
+  const { view, windowId, isPrivate = false, agent = false, pane, onLoad } = options
   // オーバーレイと Peek の暗幕は下のページを透かす必要がある
   const transparent = view === 'overlay' || view === 'peek'
   const contentsView = new WebContentsView({
@@ -112,7 +114,7 @@ export function createUiView(options: CreateUiViewOptions): WebContentsView {
 
   const uiUrl =
     `${UI_INDEX_URL}?view=${view}&window=${windowId}` +
-    `${isPrivate ? '&private=1' : ''}${pane ? `&pane=${pane}` : ''}`
+    `${isPrivate ? '&private=1' : ''}${agent ? '&agent=1' : ''}${pane ? `&pane=${pane}` : ''}`
   lockUiNavigation(contentsView.webContents, view, uiUrl)
 
   void contentsView.webContents.loadURL(uiUrl)

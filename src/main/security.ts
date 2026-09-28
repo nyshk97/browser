@@ -19,6 +19,7 @@ import {
 import { ask } from './prompts.js'
 import { handleHttpAuthLogin } from './http-auth.js'
 import { getDecision, getSchemeDecision, rememberDecision, rememberScheme } from './store/permissions.js'
+import { isAgentContents } from './agent/contents.js'
 import {
   BLANK_URL,
   isLoadedExtensionUrl as isLoadedExtensionUrlWith,
@@ -134,7 +135,7 @@ export const normalizeNavigationInput = normalizeNavigationInputImpl
  */
 export function applySessionSecurityDefaults(
   session: Session,
-  label: 'page' | 'ui',
+  label: 'page' | 'ui' | 'agent',
   resolveWindowId: (contents: WebContents) => number | null,
   /**
    * 権限の記憶をどこに置くか。`null` は常用プロファイル（永続）、
@@ -142,7 +143,14 @@ export function applySessionSecurityDefaults(
    */
   permissionScope: string | null = null
 ): void {
-  if (label === 'ui') {
+  /*
+   * エージェント用（Claude Code から操作する窓）も**全部拒否**する。
+   * - `AUTO_ALLOWED` の fullscreen は Space を切り替えて前面を奪い、clipboard-sanitized-write は
+   *   ユーザーのクリップボードを上書きした（実測）。keyboardLock / pointerLock も要らない
+   * - ASKABLE を聞くと背面の窓にダイアログが出るうえ、Claude には答えられない
+   * - 画面共有（getDisplayMedia）もハンドラを置かず失敗させる
+   */
+  if (label === 'ui' || label === 'agent') {
     session.setPermissionRequestHandler((_wc, permission, callback) => {
       log('permission.request', { partition: label, permission, allowed: false })
       callback(false)
@@ -539,14 +547,27 @@ export function normalizeOrigin(value: string | undefined | null): string | null
 export function applyWebContentsSecurityDefaults(
   contents: WebContents,
   resolveWindowId: (contents: WebContents) => number | null,
-  permissionScope: string | null = null
+  permissionScope: string | null = null,
+  options: {
+    /**
+     * エージェント用ウィンドウのページ。http / https / about:blank **だけ**を通す
+     * （拡張ページ・`chrome-extension:` のサブフレーム・file: を拒否し、外部アプリも開かない）。
+     * CDP の `Page.navigate` で拡張ページへ移ると拡張の `chrome.storage.session` を読めた（実測）ので、
+     * 拡張を載せないセッションでも方針として閉じておく。
+     */
+    agent?: boolean
+  } = {}
 ): void {
-  const policyForCurrentPage = (): NavigationPolicy => ({
-    allowExtensionPages: isLoadedExtensionUrl(contents.getURL()),
-    // Chrome と同じく file → file のトップレベル遷移だけ通す（ローカル HTML 内のリンク）。
-    // http(s) → file は今までどおり拒否。サブフレームは `isNavigableUrl` 側で弾く
-    fromFile: contents.getURL().startsWith('file:')
-  })
+  const agent = options.agent === true
+  const policyForCurrentPage = (): NavigationPolicy =>
+    agent
+      ? {}
+      : {
+          allowExtensionPages: isLoadedExtensionUrl(contents.getURL()),
+          // Chrome と同じく file → file のトップレベル遷移だけ通す（ローカル HTML 内のリンク）。
+          // http(s) → file は今までどおり拒否。サブフレームは `isNavigableUrl` 側で弾く
+          fromFile: contents.getURL().startsWith('file:')
+        }
 
   /**
    * `isMainFrame` は判定とログの両方に使う。
@@ -560,14 +581,18 @@ export function applyWebContentsSecurityDefaults(
    * どの段でどのフレームを止めたかを残して、検証から見えるようにする。
    */
   const guard = (phase: string, url: string, preventDefault: () => void, isMainFrame?: boolean): void => {
-    const policy: NavigationPolicy = { ...policyForCurrentPage(), subframe: isMainFrame === false }
+    // エージェント窓は `subframe` を立てない（= `chrome-extension:` のサブフレームも拒否する）
+    const policy: NavigationPolicy = { ...policyForCurrentPage(), subframe: !agent && isMainFrame === false }
     if (isNavigableUrl(url, policy)) return
     preventDefault()
     log('navigation.blocked', {
       phase,
       target: redactUrl(url),
-      ...(isMainFrame === undefined ? {} : { isMainFrame })
+      ...(isMainFrame === undefined ? {} : { isMainFrame }),
+      ...(agent ? { agent: true } : {})
     })
+    // エージェント窓は外部アプリを開かない（背面の窓に確認を出さない・Claude の操作で OS に渡さない）
+    if (agent) return
     // http(s) 以外は「外部アプリで開くか」を聞く経路に回す（既定は開かない）
     void maybeOpenExternal(url, resolveWindowId(contents), permissionScope)
   }
@@ -673,7 +698,9 @@ export function installCertificateHandler(resolveWindowId: (contents: WebContent
   app.on('certificate-error', (event, contents, url, error, certificate, callback) => {
     const windowId = resolveWindowId(contents)
     log('certificate.error', { target: redactUrl(url), code: error })
-    if (windowId === null) {
+    // エージェント窓（Claude Code が操作する窓）は**聞かずに拒否する**（Claude は確認に答えられず、
+    // 背面の窓に確認が残る）。先へ進むかはユーザーが通常の窓で決める
+    if (windowId === null || isAgentContents(contents)) {
       callback(false)
       return
     }
@@ -707,7 +734,7 @@ export function installCertificateHandler(resolveWindowId: (contents: WebContent
  */
 export function installAuthHandler(
   resolveWindowId: (contents: WebContents) => number | null,
-  findTab: (contents: WebContents) => { isPrivate: boolean } | null
+  findTab: (contents: WebContents) => { isPrivate: boolean; isAgent: boolean } | null
 ): void {
   app.on('login', (event, contents, details, authInfo, callback) => {
     const windowId = resolveWindowId(contents)
@@ -722,6 +749,7 @@ export function installAuthHandler(
         url: details.url,
         authInfo,
         isPrivate: tab?.isPrivate === true,
+        isAgent: tab?.isAgent === true,
         isTab: tab !== null,
         windowId
       },

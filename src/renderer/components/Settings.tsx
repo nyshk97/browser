@@ -88,6 +88,13 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
 
         <Slots />
 
+        <SettingsSection
+          title="Claude Code からの操作"
+          sub="Claude Code が Nemo の専用ウィンドウを操作できるようにします（Claude in Chrome の代わり）"
+        >
+          <AgentToggle />
+        </SettingsSection>
+
         <SettingsSection title="データ">
           <button type="button" className="btn" onClick={() => void window.nemo.openLogFolder()}>
             診断ログのフォルダを開く
@@ -95,6 +102,40 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
         </SettingsSection>
       </div>
     </div>
+  )
+}
+
+/**
+ * Claude Code からの操作（`agentEnabled`）。ON にすると `<userData>/agent.sock` を開く。
+ * OFF にすると接続中のセッションも切り、Claude 用のウィンドウを閉じる。
+ */
+function AgentToggle(): React.JSX.Element {
+  const [enabled, setEnabled] = useState<boolean | null>(null)
+  useEffect(() => {
+    void window.nemo.getSettings().then((settings) => setEnabled(settings.agentEnabled))
+  }, [])
+  const toggle = useCallback(async (next: boolean) => {
+    const settings = await window.nemo.updateSettings({ agentEnabled: next })
+    setEnabled(settings.agentEnabled)
+  }, [])
+  return (
+    <>
+      <div className="set-row" data-agent-enabled={String(enabled === true)}>
+        <label>
+          <input
+            type="checkbox"
+            checked={enabled === true}
+            disabled={enabled === null}
+            onChange={(event) => void toggle(event.target.checked)}
+          />{' '}
+          Claude Code からの操作を許可
+        </label>
+      </div>
+      <p className="dim">
+        Claude が使うのは専用のウィンドウとログイン（普段のウィンドウ・ログイン・拡張には触れません）。 登録は{' '}
+        <code>claude mcp add-json --scope user nemo</code>（docs/operations.md）。
+      </p>
+    </>
   )
 }
 

@@ -33,6 +33,14 @@ export const USER_DATA_DIR_NAME = CHANNEL_CONFIG[channel].userDataDirName
 /** Web ページ・拡張が同居するセッション。 */
 export const PAGE_PARTITION = 'persist:nemo'
 /**
+ * Claude Code から操作するエージェント用ウィンドウのセッション（永続）。
+ *
+ * **常用（`PAGE_PARTITION`）と分ける**。常用のログイン・拡張（Bitwarden の解錠状態）・
+ * 履歴にエージェントが触れないようにするため（計画 2026-09-28「Claude in Nemo」）。
+ * ログインは引き継ぎでユーザーがここに入れたぶんだけ溜まる。**拡張は載せない**。
+ */
+export const AGENT_PARTITION = 'persist:nemo-agent'
+/**
  * ブラウザ UI 専用のセッション。
  * ページと同じセッションに UI を置くと、拡張の content script が
  * ブラウザ UI 自身に注入されうるため必ず分ける。

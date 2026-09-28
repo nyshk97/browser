@@ -2537,6 +2537,137 @@ body[data-view='toolbar'] {
   font-size: 12px;
 }
 
+/* エージェント窓（Claude Code が操作する窓）。地をわずかに暖色へ寄せて、常用の窓と見分ける */
+.sidebar.agent {
+  background: #221d19;
+}
+
+.agent-band {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 10px 8px;
+  padding: 8px 10px;
+  border-radius: var(--nemo-radius);
+  background: rgba(217, 119, 87, 0.14);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.agent-band.user-turn {
+  background: rgba(210, 153, 34, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(210, 153, 34, 0.55);
+}
+
+.agent-band-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.agent-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #d97757;
+  flex: none;
+}
+
+.agent-band.user-turn .agent-dot {
+  background: var(--nemo-warn);
+}
+
+.agent-label {
+  margin-left: auto;
+  color: var(--nemo-ink-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-origin {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.agent-request {
+  word-break: break-word;
+}
+
+.agent-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.agent-sites-toggle {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--nemo-ink-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.agent-sites ul {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-sites li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 0;
+}
+
+.agent-site-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 通常窓のサイドバーの入口（エージェント窓へ行く） */
+.agent-entries {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 10px 8px;
+}
+
+.agent-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--nemo-radius);
+  background: rgba(217, 119, 87, 0.12);
+  color: var(--nemo-ink);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-entry:hover {
+  background: rgba(217, 119, 87, 0.2);
+}
+
+.agent-entry.user-turn {
+  background: rgba(210, 153, 34, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(210, 153, 34, 0.55);
+}
+
+.agent-entry.user-turn .agent-dot {
+  background: var(--nemo-warn);
+}
+
 /* ------------------------------------------------------------------ *
  * Peek（ウィンドウ内ポップアップ）
  * ------------------------------------------------------------------ */

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { prettyUrl, useWindowState } from '../useNemo.js'
+import { prettyUrl, useSharedState, useWindowState } from '../useNemo.js'
 
 /**
  * 小窓（Little Nemo）の上部バー（DESIGN.md「小窓」）。
@@ -12,6 +12,7 @@ import { prettyUrl, useWindowState } from '../useNemo.js'
  */
 export function MiniBar(): React.JSX.Element {
   const state = useWindowState()
+  const shared = useSharedState()
   const tab = state?.tabs[0] ?? null
   const [copied, setCopied] = useState(false)
 
@@ -78,6 +79,20 @@ export function MiniBar(): React.JSX.Element {
       <button type="button" className="mini-url" title="URL をコピー" onClick={copyUrl}>
         {copied ? 'コピーした' : prettyUrl(tab?.url ?? '') || '読み込み中…'}
       </button>
+      {/*
+        Claude が操作中なら、この URL を Claude のウィンドウで開き直す（メールのログインリンクを
+        Claude のプロファイルへ運ぶ。常用で踏むとログインが常用側で完了してしまう）
+      */}
+      {shared.agentWindows.length > 0 ? (
+        <button
+          type="button"
+          className="mini-open"
+          title="Claude のウィンドウで開く（ログインのリンクを Claude 側へ渡す）"
+          onClick={() => void window.nemo.agentOpenMini()}
+        >
+          Claude
+        </button>
+      ) : null}
       <button
         type="button"
         className="mini-open"

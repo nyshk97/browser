@@ -119,6 +119,12 @@ check(
     fs.existsSync(path.join(resources, 'THIRD-PARTY-NOTICES.md'))
 )
 check('UI の preload が同梱されている', /\/out\/preload\/ui\.cjs/.test(asarList))
+// Claude in Nemo のブリッジ。**外の node で動かす**ので asar の外に、ツール定義と並べて置く
+check(
+  'Claude Code のブリッジがツール定義と並んで asar の外にある',
+  fs.existsSync(path.join(resources, 'nemo-mcp-bridge.mjs')) &&
+    fs.existsSync(path.join(resources, 'agent-tools.js'))
+)
 
 /* ---- 更新 feed ---- */
 /**

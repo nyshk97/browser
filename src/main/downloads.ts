@@ -75,7 +75,17 @@ function ownedBy(id: string, scope: string | null): Entry | null {
   return entry
 }
 
-export function installDownloadHandler(pageSession: Session, scope: string | null = null): void {
+export function installDownloadHandler(
+  pageSession: Session,
+  scope: string | null = null,
+  options: {
+    /**
+     * ダイアログを出さずに `<保存先>/<fixedSubdir>/` へ保存する（エージェント用ウィンドウ）。
+     * `showSaveDialogSync` は main を止め（ユーザーの窓ごと固まる）、Claude は答えられない。
+     */
+    fixedSubdir?: string
+  } = {}
+): void {
   pageSession.on('will-download', (_event, item) => {
     const id = randomUUID()
     const host = redactUrl(item.getURL())
@@ -84,7 +94,18 @@ export function installDownloadHandler(pageSession: Session, scope: string | nul
     // 例外は `NEMO_DOWNLOAD_DIR`（自走検証）があるときだけ:
     // `showSaveDialogSync` は main を止めるので CDP からは操作できず検証が固まるし、
     // env で保存先が決まっているならユーザーに聞く意味もない。
-    if (!process.env['NEMO_DOWNLOAD_DIR']) {
+    if (options.fixedSubdir) {
+      const dir = path.join(downloadDir(), options.fixedSubdir)
+      try {
+        fs.mkdirSync(dir, { recursive: true })
+      } catch (error) {
+        logError('download.dir_failed', error, {})
+        item.cancel()
+        return
+      }
+      // ファイル名はサイトが決める。basename に落としてから重複を避ける（`../` で外へ出さない）
+      item.setSavePath(uniquePath(path.join(dir, path.basename(item.getFilename()) || 'download')))
+    } else if (!process.env['NEMO_DOWNLOAD_DIR']) {
       // 保存先を聞く。ここは OS のファイル選択なのでネイティブダイアログでよい
       // （ブラウザ UI に置き換えられる類のものではない）。
       const chosen = dialog.showSaveDialogSync({
@@ -137,6 +158,9 @@ export function installDownloadHandler(pageSession: Session, scope: string | nul
           doneState === 'completed' ? 'completed' : doneState === 'cancelled' ? 'cancelled' : 'interrupted'
       }
       log(doneState === 'completed' ? 'download.completed' : 'download.failed', { host, result: doneState })
+      // エージェント窓（Claude Code が操作する窓）が落としたもの。ファイル名とパスは出さない
+      if (options.fixedSubdir)
+        log('agent.download', { ok: doneState === 'completed', bytes: item.getReceivedBytes() })
       // **終わった時点でもう一度上限を掛ける**。
       // 上限判定は「終わっていないものは落とさない」ので、
       // 長く走っている1件は超過していても保護される。

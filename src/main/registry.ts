@@ -12,7 +12,7 @@ import {
 } from 'electron'
 import { randomUUID } from 'node:crypto'
 import type { ElectronChromeExtensions } from 'electron-chrome-extensions'
-import { PAGE_PARTITION } from './paths.js'
+import { AGENT_PARTITION, PAGE_PARTITION } from './paths.js'
 import { trackNavigationForHttpAuth } from './http-auth.js'
 import {
   BLANK_URL,
@@ -89,6 +89,7 @@ import {
 } from './live-folders/index.js'
 import { resolveReopen, resolveTabOwnership } from '../shared/tab-ownership.js'
 import type {
+  AgentWindowState,
   FavoriteItem,
   FavoriteSection,
   FindState,
@@ -292,6 +293,159 @@ function ensurePrivateSession(): string {
   privateSessionPrepared = true
   log('window.private_session_created', {})
   return PRIVATE_PARTITION
+}
+
+/* ------------------------------------------------------------------ *
+ * エージェント用ウィンドウ（Claude Code から操作する。計画 2026-09-28「Claude in Nemo」）
+ * ------------------------------------------------------------------ */
+
+/** エージェント用セッションのハンドラを登録済みか（1 つを使い回す）。 */
+let agentSessionPrepared = false
+
+/**
+ * エージェント用セッション（`persist:nemo-agent`）。**拡張はロードしない**。
+ *
+ * - 権限はすべて聞かずに拒否（ダイアログを背面の窓に出さない・クリップボードも触らせない）
+ * - ダウンロードはダイアログなしで固定フォルダ（`showSaveDialogSync` は main を止める）
+ * - ページ向けの main world シム（permissions.query / WebAuthn）は配る
+ */
+function ensureAgentSession(): string {
+  if (agentSessionPrepared) return AGENT_PARTITION
+  const agentSession = session.fromPartition(AGENT_PARTITION)
+  applySessionSecurityDefaults(agentSession, 'agent', findWindowIdForPageContents, AGENT_PARTITION)
+  registerPageShim(agentSession)
+  installDownloadHandler(agentSession, AGENT_PARTITION, { fixedSubdir: 'Nemo Agent' })
+  agentSessionPrepared = true
+  log('window.agent_session_created', {})
+  return AGENT_PARTITION
+}
+
+/** エージェント窓の既定の寸法。 */
+const AGENT_SIZE = { width: 1280, height: 860 }
+/** 2 枚目以降のずらし幅。 */
+const AGENT_CASCADE_STEP = 30
+
+/**
+ * エージェント窓の位置。**内蔵ディスプレイ**に置く（画面 2 枚のとき Studio Display は
+ * Meet の共有先なので避ける。1 枚のときも内蔵）。内蔵が無ければ主ディスプレイ。
+ */
+function agentWindowBounds(): { x: number; y: number; width: number; height: number } {
+  const displays = screen.getAllDisplays()
+  const display = displays.find((candidate) => candidate.internal) ?? screen.getPrimaryDisplay()
+  const area = display.workArea
+  const width = Math.min(AGENT_SIZE.width, area.width)
+  const height = Math.min(AGENT_SIZE.height, area.height)
+  const count = [...windowsById.values()].filter((win) => !win.isDestroyed && win.isAgent).length
+  const step = (count % 5) * AGENT_CASCADE_STEP
+  const x = Math.round(area.x + Math.max((area.width - width) / 2, 0)) + step
+  const y = Math.round(area.y + Math.max((area.height - height) / 2, 0)) + step
+  return { x, y, width, height }
+}
+
+/**
+ * エージェント窓を**前面を奪わずに**画面に出す。出し方はここ 1 か所に集める
+ * （計画 Phase 1 の全画面での実測で差し替える前提）。
+ *
+ * - `show()` / `focus()` は使わない（前面アプリを奪う。実測）
+ * - `showInactive()` は他アプリの窓の上に重なる（orderFrontRegardless）ので、
+ *   続けて `blur()`（orderOut + orderBack）で最背面へ下げる。描画は続く（実測）
+ * - それでも key が移っていたら元の窓へ戻す
+ */
+export function presentAgentWindow(win: NemoWindow): void {
+  if (win.isDestroyed || win.baseWindow.isDestroyed()) return
+  /*
+   * **全画面の Nemo 窓で作業中なら、出すのを保留する**（Phase 1 の実測）。
+   * そのとき出すと、エージェント窓は全画面の Space の中に**全画面の窓より手前で**出た（blur しても手前のまま）。
+   * 打鍵は奪わないが、作業中の画面に重なる。Nemo が前面でなくなった時点（ターミナルへ戻る等）で出すと、
+   * そのとき見えているデスクトップの Space に出る（実測）。保留中も、ツールを呼んでいる間だけの
+   * フォーカスエミュレーションで遷移・スクショ・クリック・入力が通ることを実測してある
+   */
+  const previous = BaseWindow.getFocusedWindow()
+  if (previous && previous !== win.baseWindow && !previous.isDestroyed() && previous.isFullScreen()) {
+    const target = screen.getDisplayMatching(win.baseWindow.getBounds())
+    const busy = screen.getDisplayMatching(previous.getBounds())
+    if (target.id === busy.id) {
+      deferAgentPresentation(win)
+      return
+    }
+  }
+  win.baseWindow.showInactive()
+  win.baseWindow.blur()
+  if (previous && previous !== win.baseWindow && !previous.isDestroyed() && win.baseWindow.isFocused()) {
+    previous.focus()
+    log('agent.window_key_restored', { windowId: win.id })
+  }
+  log('agent.window_presented', { windowId: win.id })
+}
+
+/** Nemo が前面でなくなってから保留中の窓を出すまでの待ち（Space の切り替えアニメーションより長く）。 */
+const AGENT_PRESENT_AFTER_RESIGN_MS = 1500
+
+/** 保留中のエージェント窓（Nemo が前面でなくなったら出す）。 */
+const deferredAgentWindows = new Set<NemoWindow>()
+let resignListenerInstalled = false
+
+function deferAgentPresentation(win: NemoWindow): void {
+  deferredAgentWindows.add(win)
+  log('agent.window_deferred', { windowId: win.id })
+  if (resignListenerInstalled) return
+  resignListenerInstalled = true
+  // macOS: アプリが前面でなくなった（ターミナル等へ移った）。
+  // **Space の切り替えが終わってから出す**。直後に出すと、切り替え中の全画面の Space の側に置かれて
+  // 移った先のデスクトップに出なかった（実測）。待つ間にまた前面へ戻ってきたら、次の機会まで保留を続ける
+  app.on('did-resign-active', () => {
+    setTimeout(() => {
+      if (BaseWindow.getFocusedWindow()) return
+      const pending = [...deferredAgentWindows]
+      deferredAgentWindows.clear()
+      for (const target of pending) {
+        if (!target.isDestroyed && !target.baseWindow.isDestroyed() && !target.baseWindow.isVisible()) {
+          presentAgentWindow(target)
+        }
+      }
+    }, AGENT_PRESENT_AFTER_RESIGN_MS)
+  })
+}
+
+/** ユーザーの操作で前面に出すときは保留を解く（`showAgentWindow`）。 */
+export function clearAgentPresentationDeferral(win: NemoWindow): void {
+  deferredAgentWindows.delete(win)
+}
+
+/**
+ * エージェント窓を開く。**最初のツール呼び出しで `agent/` が呼ぶ**（接続しただけでは開かない）。
+ */
+export function openAgentWindow(label: string): NemoWindow {
+  const win = createWindow(undefined, { kind: 'agent', agentLabel: label })
+  pushSharedToAll()
+  return win
+}
+
+/** 全ウィンドウのサイドバーへ共有データを送り直す（エージェント窓の出入り・状態の変化）。 */
+export function pushSharedToAll(): void {
+  for (const win of windowsById.values()) win.pushShared()
+}
+
+/**
+ * エージェント窓のページが開いた popup（window.open / target=_blank）を同じ窓の新しいタブに収める。
+ * `adoptMiniTab` と同じく、Electron が用意した子の WebContents をそのまま採用する（opener を保つ）。
+ */
+function adoptAgentTab(win: NemoWindow, url: string, guest: WebContents): NemoTab | null {
+  if (win.isDestroyed || win.baseWindow.isDestroyed()) return null
+  const tab = new NemoTab(win, url)
+  win.tabs.push(tab)
+  try {
+    tab.materialize({ adopt: guest })
+  } catch (error) {
+    win.tabs.splice(win.tabs.indexOf(tab), 1)
+    logError('agent.popup_adopt_failed', error, { windowId: win.id })
+    return null
+  }
+  win.layout()
+  selectTab(win, tab.key)
+  win.pushState()
+  log('agent.popup_tab', { key: tab.key, windowId: win.id, target: redactUrl(url) })
+  return tab
 }
 
 /**
@@ -621,7 +775,8 @@ export class NemoTab {
     applyWebContentsSecurityDefaults(
       wc,
       (contents) => findWindowIdForPageContents(contents),
-      this.window.isPrivate ? this.window.partition : null
+      this.window.usesMainProfile ? null : this.window.partition,
+      { agent: this.window.isAgent }
     )
     attachTabEvents(this, wc, view)
 
@@ -663,19 +818,21 @@ export class NemoTab {
       // 中で `allowFile` 無しの `resolveNavigationTarget` を通っている）の 3 系統だけ。
       // 外部 URL の小窓（`fillMiniWindow` → `new NemoTab` → ここ）もこの 1 箇所で `file:` が通る。
       // **将来ここに外部由来の値を入れる経路が増えたら `allowFile` を見直す。**
+      // エージェント窓は http/https/about:blank だけ（拡張ページも file: も開かない）
+      const agent = this.window.isAgent
       const resolved =
         resolveNavigationTarget(
           target,
-          { allowExtensionPages: isLoadedExtensionUrl(target), allowFile: true },
+          { allowExtensionPages: !agent && isLoadedExtensionUrl(target), allowFile: !agent },
           'materialize'
         ) ?? BLANK_URL
       void wc.loadURL(resolved)
     } else {
       this.pendingUrl = null
     }
-    // シークレットウィンドウのタブは拡張のタブモデルに載せない
+    // 常用プロファイル以外（シークレット・エージェント）のタブは拡張のタブモデルに載せない
     // （拡張がロードされていないセッションなので、載せても対応する tab が作れない）
-    if (!this.window.isPrivate) extensions?.addTab(wc, this.window.baseWindow)
+    if (this.window.usesMainProfile) extensions?.addTab(wc, this.window.baseWindow)
     watchPageExtensionConsole(wc)
     if (this.zoomFactor !== 1) wc.setZoomFactor(this.zoomFactor)
     return view
@@ -700,7 +857,7 @@ export class NemoTab {
     this.paneFocusOff = null
     this.window.baseWindow.contentView.removeChildView(view)
     if (!wc.isDestroyed()) {
-      if (!this.window.isPrivate) extensions?.removeTab(wc)
+      if (this.window.usesMainProfile) extensions?.removeTab(wc)
       wc.close()
     }
     log('tab.slept', { key: this.key, windowId: this.window.id })
@@ -757,9 +914,10 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
     if (current && current !== BLANK_URL) tab.url = current
   }
 
-  // シークレットウィンドウのタブは履歴に一切残さない
+  // シークレット・エージェント窓のタブは履歴に一切残さない
+  // （エージェントの訪問をユーザーの履歴・候補・定義に混ぜない）
   const remember = (fn: () => void): void => {
-    if (win().isPrivate) return
+    if (!win().recordsHistory) return
     fn()
   }
 
@@ -883,6 +1041,14 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
       return
     }
     const current = win()
+    // エージェント窓は**同期のネイティブダイアログを出さない**（main を止め、前面を奪う）。
+    // 離れるかどうかはエージェント側（ユーザーの番か・ツールの force）が決める
+    if (current.isAgent) {
+      const leaveAgent = agentHooks?.decideUnload(tab) ?? false
+      log('tab.unload_prompt', { key: tab.key, leave: leaveAgent, agent: true })
+      if (leaveAgent) event.preventDefault()
+      return
+    }
     // 裏口は必ず `!app.isPackaged` で塞ぐ（NEMO_VERIFY_DIAGNOSTICS / NEMO_VERIFY_TIMINGS と
     // 同じ規約。配布版で env 1 つで離脱確認を無効化・固定化できてはいけない）
     const verifyChoice = app.isPackaged ? undefined : process.env['NEMO_VERIFY_UNLOAD_CHOICE']
@@ -937,14 +1103,20 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
   attachShortcutHint(win, wc)
   // DevTools の中の拡張パネルに `chrome.debugger` の空実装を配る（preload はサブフレームに届かない）
   wc.on('devtools-opened', () => attachDevToolsExtensionShim(wc))
-  // ページ本体の右クリック（画像の保存・検証だけ。Electron は標準では何も出さない）
-  attachContextMenu(
-    wc,
-    () => (win().isDestroyed ? null : win().baseWindow),
-    () => {
-      if (!win().isDestroyed) win().setOverlay('settings')
-    }
-  )
+  // ページ本体の右クリック（画像の保存・検証だけ。Electron は標準では何も出さない）。
+  // **エージェント窓では出さない**（CDP の右クリックでもネイティブメニューが出て画面に残る。
+  // フォーム自動入力の項目もエージェントのページに向けない）
+  if (!win().isAgent)
+    attachContextMenu(
+      wc,
+      () => (win().isDestroyed ? null : win().baseWindow),
+      () => {
+        if (!win().isDestroyed) win().setOverlay('settings')
+      },
+      // 常用の窓のリンクを Claude のウィンドウで開く（マジックリンク型のログインの受け渡し）
+      () =>
+        agentHooks?.hasAgentWindow() ? (url: string) => agentHooks?.openUrlInAgentWindow(url) : undefined
+    )
 
   // ページが自分で閉じた（`window.close()`）ときの後始末。
   //
@@ -992,7 +1164,7 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
       // **ただし小窓の中は例外**（計画 R8）。小窓はタブを増やせないので、
       // ここへ流すと `createTab` が例外になり、⌘クリックが黙って捨てられる。
       // 小窓の中の新規 browsing context 要求は**前面・背面を問わずもう1枚の小窓**にする。
-      if (disposition === 'background-tab' && canHostAdditionalTabs(win())) {
+      if (disposition === 'background-tab' && hostsMultipleTabs(win())) {
         const newTab = createTab(win(), popupTarget, { background: true })
         log('popup.tab_created', { key: newTab.key, opener: tab.key, background: true })
         return { action: 'deny' }
@@ -1037,11 +1209,17 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
  * `window.opener.closed === true` になり **OAuth の結果を受け取れない**。
  * どちらも「古いほうを生かしたまま器を1つ増やす」形にする。
  */
-type PopupHost = { kind: 'peek'; parent: NemoTab } | { kind: 'mini'; win: NemoWindow }
+type PopupHost =
+  { kind: 'peek'; parent: NemoTab } | { kind: 'mini'; win: NemoWindow } | { kind: 'tab'; win: NemoWindow }
 
 function preparePopupHost(opener: NemoTab): PopupHost | null {
   const win = opener.window
   if (win.isDestroyed || win.baseWindow.isDestroyed()) return null
+
+  // エージェント窓の中から: **同じエージェント窓の新しいタブ**にする。
+  // Peek は `webContents.focus()` を呼ぶ（前面を奪いうる）うえ、小窓は常用のセッションで
+  // エージェントの範囲の外に出てしまう
+  if (win.isAgent) return { kind: 'tab', win }
 
   // 小窓の中から: もう1枚の小窓を開く（中身を差し替えると opener が死ぬ）
   if (!canHostAdditionalTabs(win)) {
@@ -1074,6 +1252,8 @@ function attachPopup(host: PopupHost, url: string, guest: WebContents | undefine
   try {
     if (host.kind === 'mini') {
       adoptMiniTab(host.win, url, guest)
+    } else if (host.kind === 'tab') {
+      adoptAgentTab(host.win, url, guest)
     } else {
       openPeek(host.parent, url, guest)
     }
@@ -1234,7 +1414,31 @@ function notifyCall(navigated?: NemoTab): void {
  * - `mini` … 小窓（Little Nemo）。**タブは常に1つだけ**で、サイドバーを持たない。
  *   外部アプリから踏んだ URL を「メインウィンドウを前面に出さずに」出すための器
  */
-export type WindowKind = 'normal' | 'mini'
+export type WindowKind = 'normal' | 'mini' | 'agent'
+
+/**
+ * エージェント（Claude Code からの操作口）が registry に差し込む処理。
+ *
+ * registry から `agent/` を import すると循環するので**注入で受ける**（`callWatcher` と同じ形）。
+ */
+interface AgentHooks {
+  /** エージェント窓のタブで beforeunload が出たとき、離れてよいか（同期）。 */
+  decideUnload(tab: NemoTab): boolean
+  /** エージェント窓が閉じられた（ユーザーの ✕ も含む）。 */
+  windowClosed(win: NemoWindow): void
+  /** エージェント窓のタブが閉じられた・ページが自分で閉じた。 */
+  tabRemoved(win: NemoWindow, tab: NemoTab): void
+  /** エージェント窓があるか（右クリックに「Claude のウィンドウで開く」を出すか）。 */
+  hasAgentWindow(): boolean
+  /** ユーザーの操作で URL を Claude のウィンドウで開く。 */
+  openUrlInAgentWindow(url: string): boolean
+}
+
+let agentHooks: AgentHooks | null = null
+
+export function setAgentHooks(hooks: AgentHooks): void {
+  agentHooks = hooks
+}
 
 export class NemoWindow {
   static nextId = 1
@@ -1246,6 +1450,11 @@ export class NemoWindow {
   readonly isPrivate: boolean
   /** このウィンドウのタブが使うセッション partition。 */
   readonly partition: string
+  /**
+   * エージェント窓の状態（`kind === 'agent'` のときだけ）。UI の帯に出す。
+   * 書き換えるのは `agent/` だけ（書いたら `pushState()` する）。
+   */
+  agent: AgentWindowState | null = null
   readonly baseWindow: BaseWindow
   /** サイドバー（常時表示）。 */
   readonly chromeView: WebContentsView
@@ -1291,50 +1500,78 @@ export class NemoWindow {
     bounds?: SavedWindow['bounds'],
     isPrivate = false,
     kind: WindowKind = 'normal',
-    hidden = false
+    hidden = false,
+    agentLabel: string | null = null
   ) {
     this.id = NemoWindow.nextId++
     this.kind = kind
     this.isPrivate = isPrivate
-    this.partition = isPrivate ? ensurePrivateSession() : PAGE_PARTITION
-    this.sidebarVisible = getSettings().sidebarVisible
+    this.partition =
+      kind === 'agent' ? ensureAgentSession() : isPrivate ? ensurePrivateSession() : PAGE_PARTITION
+    this.sidebarVisible = kind === 'agent' ? true : getSettings().sidebarVisible
+    if (kind === 'agent') {
+      this.agent = { label: agentLabel ?? 'Claude', mode: 'claude', request: null, requestOrigin: null }
+    }
 
     this.baseWindow =
-      kind === 'mini'
+      kind === 'agent'
         ? new BaseWindow({
-            ...miniWindowBounds(),
-            minWidth: 320,
-            minHeight: 240,
-            show: false,
-            title: 'Nemo',
-            backgroundColor: '#16161a',
-            titleBarStyle: 'hiddenInset',
-            trafficLightPosition: MINI_TRAFFIC_LIGHT_INSET,
-            // **NSPanel にするのが肝**（Phase 0 の実測）。
-            // 通常ウィンドウだと、キーフォーカスを渡すのに `app.focus({ steal: true })` が要り、
-            // それを撃つと**メインウィンドウの Space へ画面ごと切り替わる**。
-            // panel（nonactivating panel）なら「アプリを前面に出さずにキーを受け取る」が成立し、
-            // フルスクリーンの Space の上にも出る。メニューのアクセラレータも届く。
-            //
-            // `setVisibleOnAllWorkspaces` は**呼ばない**。呼ぶと process type が変換されて
-            // **Dock アイコンが消える**うえ、panel には不要（全 Space 追従は panel の性質として付いてくる）。
-            type: 'panel'
-          })
-        : new BaseWindow({
-            width: bounds?.width ?? 1280,
-            height: bounds?.height ?? 860,
-            ...(bounds ? { x: bounds.x, y: bounds.y } : {}),
-            // 外部 URL で叩き起こされたときは**背面で**復元する。
-            // `show: false` で作って後から `showInactive()` する
-            // （最初から見せると、その時点で Space が切り替わる）。
-            show: !hidden,
+            ...agentWindowBounds(),
             minWidth: 640,
             minHeight: 480,
-            title: isPrivate ? 'Nemo（シークレット）' : 'Nemo',
-            backgroundColor: isPrivate ? '#1b1524' : '#16161a',
+            // 出し方は `presentAgentWindow` に集める（show しない・前面を奪わない）
+            show: false,
+            // **全画面にしない**（ページの requestFullscreen で Space が切り替わり前面を奪われた。実測）
+            fullscreenable: false,
+            // **既定は key になれない**。全画面の常用窓が key のときに showInactive すると
+            // key がこの窓へ移り、ユーザーの打鍵が見えない窓に入った（実測）。
+            // ユーザーが実クリックしたときだけ focusable にする（`agent/window-focus.ts`）
+            focusable: false,
+            title: `Claude — ${agentLabel ?? 'Claude'}`,
+            backgroundColor: '#16161a',
             titleBarStyle: 'hiddenInset',
             trafficLightPosition: TRAFFIC_LIGHT_INSET
           })
+        : kind === 'mini'
+          ? new BaseWindow({
+              ...miniWindowBounds(),
+              minWidth: 320,
+              minHeight: 240,
+              show: false,
+              title: 'Nemo',
+              backgroundColor: '#16161a',
+              titleBarStyle: 'hiddenInset',
+              trafficLightPosition: MINI_TRAFFIC_LIGHT_INSET,
+              // **NSPanel にするのが肝**（Phase 0 の実測）。
+              // 通常ウィンドウだと、キーフォーカスを渡すのに `app.focus({ steal: true })` が要り、
+              // それを撃つと**メインウィンドウの Space へ画面ごと切り替わる**。
+              // panel（nonactivating panel）なら「アプリを前面に出さずにキーを受け取る」が成立し、
+              // フルスクリーンの Space の上にも出る。メニューのアクセラレータも届く。
+              //
+              // `setVisibleOnAllWorkspaces` は**呼ばない**。呼ぶと process type が変換されて
+              // **Dock アイコンが消える**うえ、panel には不要（全 Space 追従は panel の性質として付いてくる）。
+              type: 'panel'
+            })
+          : new BaseWindow({
+              width: bounds?.width ?? 1280,
+              height: bounds?.height ?? 860,
+              ...(bounds ? { x: bounds.x, y: bounds.y } : {}),
+              // 外部 URL で叩き起こされたときは**背面で**復元する。
+              // `show: false` で作って後から `showInactive()` する
+              // （最初から見せると、その時点で Space が切り替わる）。
+              show: !hidden,
+              minWidth: 640,
+              minHeight: 480,
+              title: isPrivate ? 'Nemo（シークレット）' : 'Nemo',
+              backgroundColor: isPrivate ? '#1b1524' : '#16161a',
+              titleBarStyle: 'hiddenInset',
+              trafficLightPosition: TRAFFIC_LIGHT_INSET
+            })
+
+    // 画面共有（Meet 等）に映さない。ログイン済みの管理画面を開くことがあるため**常に付ける**
+    // （screencapture・desktopCapturer・getDisplayMedia のどれにも映らなくなることを実測。
+    // エージェント自身のスクショ = ページの CDP / capturePage は撮れる）
+    if (kind === 'agent') this.baseWindow.setContentProtection(true)
 
     // 小窓はサイドバーの代わりに上部バーを持つ（同じ `chromeView` の枠を使う）
     this.chromeView = this.createUiView(kind === 'mini' ? 'mini' : 'sidebar')
@@ -1383,12 +1620,31 @@ export class NemoWindow {
     })
   }
 
+  /** エージェント（Claude Code）から操作する窓か。 */
+  get isAgent(): boolean {
+    return this.kind === 'agent'
+  }
+
+  /**
+   * 常用プロファイル（`persist:nemo`）の窓か。**拡張のタブモデルに載せるかはこれで決める**
+   * （拡張は常用プロファイルにしかロードしない。シークレット・エージェントは載せない）。
+   */
+  get usesMainProfile(): boolean {
+    return this.partition === PAGE_PARTITION
+  }
+
+  /** 履歴・候補・favicon・⌘⇧T・アーカイブに残すか（シークレットとエージェントは残さない）。 */
+  get recordsHistory(): boolean {
+    return !this.isPrivate && !this.isAgent
+  }
+
   /** UI View を作る（生成とナビゲーション防御は `ui-view.ts` に寄せてある）。 */
   private createUiView(view: UiViewKind, pane?: 'right'): WebContentsView {
     return createUiView({
       view,
       windowId: this.id,
       isPrivate: this.isPrivate,
+      agent: this.isAgent,
       ...(pane ? { pane } : {}),
       onLoad: () => this.onUiViewLoaded(view)
     })
@@ -1557,7 +1813,7 @@ export class NemoWindow {
    * 常用は `null`、シークレットは自分の partition。
    */
   get downloadScope(): string | null {
-    return this.isPrivate ? this.partition : null
+    return this.usesMainProfile ? null : this.partition
   }
 
   get sidebarWidth(): number {
@@ -1842,7 +2098,12 @@ export class NemoWindow {
     if (this.overlay === kind) return
     this.overlay = kind
     this.layout()
-    if (kind) this.overlayWebContents.focus()
+    // **エージェント窓はユーザーが操作している（key）ときだけ**フォーカスを動かす。
+    // `webContents.focus()` は前面アプリを奪うことがある（実測）。ダイアログが出た瞬間に
+    // 背面のエージェント窓がユーザーの作業を奪わないようにする
+    if (this.isAgent && !this.baseWindow.isFocused()) {
+      // 何もしない
+    } else if (kind) this.overlayWebContents.focus()
     // Peek が出ているならフォーカスは Peek へ返す（⌘L → Esc で裏の親ページに
     // キー入力が入るのを防ぐ）
     else this.getForegroundTab()?.webContents?.focus()
@@ -2020,7 +2281,8 @@ export class NemoWindow {
       fullScreen: this.baseWindow.isDestroyed() ? false : this.baseWindow.isFullScreen(),
       find: foreground?.find ?? null,
       isPrivate: this.isPrivate,
-      kind: this.kind
+      kind: this.kind,
+      agent: this.agent ? { ...this.agent } : null
     }
   }
 
@@ -2043,17 +2305,31 @@ export class NemoWindow {
    * 出さないのではなく**データごと渡さない**）。
    */
   sharedState(): SharedState {
+    // エージェント窓は共有状態に一切参加しない（Favorites・ピン・Live Folder・一時タブの定義を
+    // データごと渡さない。renderer はウィンドウローカルのタブ一覧へフォールバックする）
+    const shares = this.usesMainProfile
     return {
-      favorites: getFavorites(),
-      pinned: getPinned(),
+      favorites: this.isAgent ? [] : getFavorites(),
+      pinned: this.isAgent ? [] : getPinned(),
       downloads: listDownloads(this.downloadScope),
       version: app.getVersion(),
       update: getUpdateState(),
-      liveFolder: this.isPrivate ? null : getLiveFolderState(),
-      extensions: getLoadedExtensions(),
+      liveFolder: shares ? getLiveFolderState() : null,
+      // エージェント窓のツールバーには拡張のアイコンを出さない（拡張をロードしていないセッション）
+      extensions: this.isAgent ? [] : getLoadedExtensions(),
       // シークレットは共有に参加しない（`liveFolder` と同じくデータごと渡さない。
       // renderer はウィンドウローカルのタブ一覧へフォールバックする）
-      ephemeralTabs: this.isPrivate ? null : getEphemeralTabs()
+      ephemeralTabs: shares ? getEphemeralTabs() : null,
+      // 通常窓のサイドバーに「Claude が操作中」の入口を出す（背面にあるエージェント窓へ行く導線）
+      agentWindows: shares
+        ? [...windowsById.values()]
+            .filter((win) => !win.isDestroyed && win.isAgent && win.agent)
+            .map((win) => ({
+              windowId: win.id,
+              label: win.agent?.label ?? '',
+              mode: win.agent?.mode ?? 'claude'
+            }))
+        : []
     }
   }
 
@@ -2135,7 +2411,7 @@ export class NemoWindow {
       const wc = tab.webContents
       if (tab.view) this.baseWindow.contentView.removeChildView(tab.view)
       if (wc) {
-        if (!this.isPrivate) extensions?.removeTab(wc)
+        if (this.usesMainProfile) extensions?.removeTab(wc)
         wc.close()
       }
       tab.view = null
@@ -2177,6 +2453,10 @@ export class NemoWindow {
     normalWindowMru = normalWindowMru.filter((id) => id !== this.id)
     // 最後のシークレットウィンドウが閉じたら中身を消す（UI で約束している挙動）
     if (this.isPrivate) endPrivateSessionIfUnused()
+    if (this.isAgent) {
+      agentHooks?.windowClosed(this)
+      pushSharedToAll()
+    }
     scheduleSessionSave()
   }
 
@@ -2240,6 +2520,11 @@ export function focusedOrFirstWindow(): NemoWindow | null {
   for (const win of windowsById.values()) {
     if (!win.isDestroyed && win.baseWindow.isFocused()) return win
   }
+  // フォーカス中の窓が無いときは**エージェント窓以外**を先に返す
+  // （背面のエージェント窓に ⌘T・ダイアログ・拡張の新規タブが向かないように）
+  for (const win of windowsById.values()) {
+    if (!win.isDestroyed && !win.isAgent) return win
+  }
   for (const win of windowsById.values()) {
     if (!win.isDestroyed) return win
   }
@@ -2294,11 +2579,23 @@ export function canHostAdditionalTabs(win: NemoWindow): boolean {
 }
 
 /**
+ * そのウィンドウがタブを複数持てるか（**器としての性質**）。
+ *
+ * `canHostAdditionalTabs` は「外（他の窓・拡張・ピン・共有定義）から来るタブの受け皿になるか」で
+ * 通常ウィンドウだけ。エージェント窓はタブを複数持つが、外からの受け皿にはならない
+ * （Claude とユーザーが自分で開くタブだけを持つ）。
+ */
+export function hostsMultipleTabs(win: NemoWindow): boolean {
+  return win.kind === 'normal' || win.kind === 'agent'
+}
+
+/**
  * 新しいタブを置くべきウィンドウ。
  * 小窓は自分では持てないので、通常ウィンドウの MRU 先頭へ回す（無ければ作る）。
+ * エージェント窓は自分に置く（ユーザーがエージェント窓で ⌘T / ⌘⇧T した）。
  */
 export function windowForNewTab(win: NemoWindow): NemoWindow {
-  if (canHostAdditionalTabs(win)) return win
+  if (canHostAdditionalTabs(win) || win.isAgent) return win
   const target = mostRecentNormalWindow(win.partition)
   if (target) return target
   return createWindow(undefined, { isPrivate: win.isPrivate, noInitialTab: true })
@@ -2363,9 +2660,14 @@ export function createTab(win: NemoWindow, url: string = BLANK_URL, options: Cre
   }
   // 小窓は常に1タブ。**呼び出し口ごとに塞ぐのではなく、ここで最後に必ず弾く**
   // （メニュー・IPC・拡張・ページ内 popup と入口が多く、どれかで必ず漏れる）。
-  if (!canHostAdditionalTabs(win) && win.tabs.length > 0) {
+  if (!hostsMultipleTabs(win) && win.tabs.length > 0) {
     log('tab.create_rejected', { windowId: win.id, reason: 'window_cannot_host' })
     throw new Error('window cannot host additional tabs')
+  }
+  // エージェント窓のタブは定義（ピン・Favorites・共有の一時タブ）に属さない。
+  // 拡張ページ・file: も開かない（ナビゲーション方針と揃える）
+  if (win.isAgent) {
+    options = { ...options, pinnedId: null, favoriteId: null, ephemeralId: null, allowFile: false }
   }
 
   const previousActiveKey = win.activeTabKey
@@ -2374,7 +2676,10 @@ export function createTab(win: NemoWindow, url: string = BLANK_URL, options: Cre
   const target =
     resolveNavigationTarget(
       url,
-      { allowExtensionPages: isLoadedExtensionUrl(url), allowFile: options.allowFile === true },
+      {
+        allowExtensionPages: !win.isAgent && isLoadedExtensionUrl(url),
+        allowFile: options.allowFile === true
+      },
       'createTab'
     ) ?? BLANK_URL
 
@@ -2459,7 +2764,7 @@ let syncingExtensionSelection = false
  * 呼び返される、といった経路で静かにズレるので、**毎回ここで再計算する**。
  */
 export function syncForegroundTab(win: NemoWindow): void {
-  if (win.isDestroyed || win.isPrivate) return
+  if (win.isDestroyed || !win.usesMainProfile) return
   if (syncingExtensionSelection) return
   // awaiting の Peek は前面にしない（切り替えは dom-ready 後の reveal() が
   // 親を選択中のとき selectTab 経由でここを呼び直すことに依存している）
@@ -2751,6 +3056,8 @@ function waitForPeekDocument(peek: NemoTab, wc: WebContents): void {
  */
 function focusForegroundPage(win: NemoWindow): void {
   if (win.isDestroyed || win.baseWindow.isDestroyed() || win.overlay !== null) return
+  // エージェント窓はユーザーが操作していないなら触らない（`webContents.focus()` は前面を奪いうる）
+  if (win.isAgent && !win.baseWindow.isFocused()) return
   win.getForegroundTab()?.webContents?.focus()
 }
 
@@ -2866,7 +3173,8 @@ const CLOSED_TAB_LIMIT = 25
  */
 function rememberClosedTab(win: NemoWindow, tab: NemoTab, archiveReason: ArchiveReason): void {
   // シークレットのタブは ⌘⇧T の対象にしない（閉じたら跡形もなく消えるのが約束）
-  if (!/^https?:\/\//.test(tab.url) || win.isPrivate) return
+  // エージェント窓のタブも積まない（エージェントの訪問をユーザーの ⌘⇧T・アーカイブに混ぜない）
+  if (!/^https?:\/\//.test(tab.url) || !win.recordsHistory) return
   closedTabs.push({
     url: tab.url,
     title: tab.title,
@@ -2892,7 +3200,7 @@ export function removeTab(
 ): void {
   // タブを1つしか持てない器（小窓）では「タブを閉じる」＝「ウィンドウを閉じる」。
   // ここで読み替えないと**空の小窓が残る**（⌘W で中身だけ消えた抜け殻になる）。
-  if (!canHostAdditionalTabs(win) && win.findTab(key) !== null) {
+  if (!hostsMultipleTabs(win) && win.findTab(key) !== null) {
     closeTemporaryWindow(win, 'user')
     return
   }
@@ -2954,11 +3262,12 @@ export function removeTab(
   const wc = tab.webContents
   if (tab.view) win.baseWindow.contentView.removeChildView(tab.view)
   if (wc) {
-    if (!win.isPrivate) extensions?.removeTab(wc)
+    if (win.usesMainProfile) extensions?.removeTab(wc)
     wc.close()
   }
   tab.view = null
   log('tab.remove', { key, windowId: win.id })
+  if (win.isAgent) agentHooks?.tabRemoved(win, tab)
   if (win.previousTabKey === key) win.previousTabKey = null
 
   if (win.activeTabKey === key) {
@@ -3070,7 +3379,7 @@ export function moveTabToWindow(tab: NemoTab, target: NemoWindow): boolean {
   }
   if (source.tabs.indexOf(tab) === -1) return false
   // 移す先がタブを増やせない器（小窓）なら受け付けない
-  if (!canHostAdditionalTabs(target) && target.tabs.length > 0) {
+  if (!hostsMultipleTabs(target) && target.tabs.length > 0) {
     log('tab.move_rejected', { key: tab.key, reason: 'target_cannot_host' })
     return false
   }
@@ -3140,7 +3449,7 @@ function transferOne(tab: NemoTab, source: NemoWindow, target: NemoWindow): void
     // **シークレットのタブは拡張のタブモデルに載っていない**ので触らない。
     // 渡すと `Invalid WebContents argument. Its session must match ...` で投げる
     // （main の例外ハンドラに落ちるだけで移動自体は済むため、気づきにくい）。
-    if (!target.isPrivate) {
+    if (target.usesMainProfile) {
       transferringWebContents.add(wc.id)
       try {
         extensions?.removeTab(wc)
@@ -3166,6 +3475,8 @@ export interface CreateWindowOptions {
   kind?: WindowKind
   /** 表示せずに作る（コールドスタートで通常ウィンドウを背面に復元するとき）。 */
   hidden?: boolean
+  /** エージェント窓の名前（`kind: 'agent'` のときだけ）。 */
+  agentLabel?: string
 }
 
 export function createWindow(initialUrl?: string, options: CreateWindowOptions = {}): NemoWindow {
@@ -3173,7 +3484,8 @@ export function createWindow(initialUrl?: string, options: CreateWindowOptions =
     options.bounds,
     options.isPrivate === true,
     options.kind ?? 'normal',
-    options.hidden === true
+    options.hidden === true,
+    options.agentLabel ?? null
   )
   windowsById.set(win.id, win)
   log('window.create', {
@@ -3191,6 +3503,8 @@ export function createWindow(initialUrl?: string, options: CreateWindowOptions =
     if (options.hidden === true && win.kind === 'normal' && !win.baseWindow.isDestroyed()) {
       win.baseWindow.showInactive()
     }
+    // エージェント窓は必ず前面を奪わずに出す（`show: false` で作ってある）
+    if (win.isAgent) presentAgentWindow(win)
   })
 
   return win
@@ -3683,6 +3997,8 @@ export function pinTabInto(tab: NemoTab, parentId: string | null, index: number)
  * **常に登録 URL を開く**（前回そのピンで見ていた URL は覚えない）。
  */
 export function openPinned(win: NemoWindow, pinnedId: string): void {
+  // エージェント窓は定義を持たない（サイドバーにも出していない。IPC の口も閉じる）
+  if (win.isAgent) return
   const node = findPinned(pinnedId)
   if (!node || node.kind !== 'link') return
   const existing = win.normalTabs.find((tab) => tab.pinnedId === pinnedId)
@@ -3695,6 +4011,7 @@ export function openPinned(win: NemoWindow, pinnedId: string): void {
 
 /** `openPinned` と対称。Favorite 定義をそのウィンドウで開く。 */
 export function openFavorite(win: NemoWindow, favoriteId: string): void {
+  if (win.isAgent) return
   const item = findFavorite(favoriteId)
   if (!item) return
   const existing = win.normalTabs.find((tab) => tab.favoriteId === favoriteId)
@@ -4176,7 +4493,9 @@ function sweepSleep(): void {
   if (minutes <= 0) return
   const threshold = Date.now() - minutes * 60_000
   for (const win of windowsById.values()) {
-    if (win.isDestroyed) continue
+    // エージェント窓は寝かせない（WebContents を捨てると Claude の操作対象と debugger が消える。
+    // 窓の寿命は接続と揃えて `agent/` が持つ）
+    if (win.isDestroyed || win.isAgent) continue
     let slept = false
     const visible = win.visibleTabKeys
     for (const tab of win.normalTabs) {
@@ -4247,8 +4566,9 @@ function sweepArchive(): void {
   }
 
   // --- 定義を持たないウィンドウローカルのタブ（about:blank・拡張ページ等）は従来どおり ---
+  // エージェント窓は対象外（アーカイブに記録しない。寿命は接続と揃えて `agent/` が持つ）
   for (const win of [...windowsById.values()]) {
-    if (win.isDestroyed || win.isPrivate) continue
+    if (win.isDestroyed || win.isPrivate || win.isAgent) continue
     const visible = win.visibleTabKeys
     for (const tab of [...win.normalTabs]) {
       if (tab.pinnedId !== null || tab.favoriteId !== null || tab.ephemeralId !== null) continue

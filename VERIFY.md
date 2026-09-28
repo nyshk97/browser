@@ -1273,6 +1273,57 @@ mise run verify:only autofill   # 保管庫・ルール・Jev（モック）・�
   （閾値は `src/shared/autofill-match.js` の `CHOICE_THRESHOLD` / `OWN_THRESHOLD`）
 - もう 1 台の Mac で同じパスフレーズを入れて保管庫が開けること
 
+## Claude in Nemo（Claude Code から操作する）
+
+```bash
+mise run verify:only agent      # 偽の Claude Code がブリッジ経由で使い捨ての Nemo を操作する（自分で起動する。1 分ほど）
+node --test scripts/agent-sensitive-pages.test.mjs   # Claude に操作させないページの判定
+```
+
+フルの既定からは外れている（`OPT_IN_ONLY`。アプリを 2 回起動する）。`src/main/agent/**`・ブリッジ・ツール定義は
+`OWNERS` で拾うので、触ったときは `mise run verify:changed` で回る。
+
+**スクリプトが Claude Code の代わりをする**: `src/bridge/nemo-mcp-bridge.mjs` を stdio で起動して JSON-RPC を流す。
+ブリッジには `NEMO_AGENT_SOCKET` を渡し、**使い捨ての Nemo の socket にだけ繋ぐ**（常用・dev の socket には繋がない）。
+Nemo 側の socket の差し替え（`NEMO_AGENT_SOCKET`）は未パッケージのときだけ効く。
+unix socket のパスは 104 バイトまでなので、使い捨ての置き場は `os.tmpdir()` 直下の短い名前にする。
+
+自走検証が見るもの（65 件）:
+
+- ブリッジだけで initialize / tools/list が返り、定義の正本（`src/shared/agent-tools.js`）と一致する。未知のメソッドは -32601
+- 最初のツール呼び出しでエージェント窓が開く（`agent=1` の UI）・窓の名前はプロジェクト名
+- navigate / screenshot（JPEG・長辺 1568 以下）/ read_page（ref）/ get_page_text / クリック / type（日本語）/ key（cmd+a）/
+  form_input（select のラベル・checkbox）/ javascript_tool（トップレベル await）/ console / network / file_upload / ダウンロード
+- JS の confirm はネイティブの窓を出さずに保留し、ツール結果に出る。保留中もスクショは撮れ、handle_dialog で答えられる
+- beforeunload は既定で残り、force で離れる / target=_blank は同じ窓の新しいタブ / 閉じたタブの tabId は「tabs_context から」
+- **安全の線**: `javascript:` / `file:` / 拡張ページ / `data:` の navigate を断る（外すと `file:///etc/hosts` が開いて FAIL することを確認済み）・
+  cmd+v を断る・**ユーザーが入れたパスワードが read_page / get_page_text に出ず、javascript_tool が断られる**
+  （伏せ字と taint を外すと 2 件 FAIL することを確認済み）・OAuth の同意 / トークン発行の画面は navigate も入力も断る
+  （離れる navigate はできる）・ブロックリスト
+- 引き継ぎ: request_user_action の後は入力を断り、帯に「あなたの番です」と origin と依頼文、普段の窓のサイドバーに入口が出る。
+  resume と「Claude に戻す」ボタンで戻る
+- ログインが残っているサイトの一覧・サイト単位の消去（cookie が消える）。通常窓からは呼べない
+- 履歴・候補・セッション保存に入らない
+- stdin を閉じる（Claude Code が終わる）と窓が閉じる / Nemo が落ちている間もブリッジは生きていて、戻ったら繋ぎ直す /
+  設定 OFF で接続が切れ、窓が閉じ、socket が消える
+- 診断ログに入力値・URL のパスが出ない
+
+**パッケージ版の通し**は、dist の `Nemo.app` を使い捨ての `NEMO_USER_DATA_DIR`（`settings.json` で `agentEnabled: true`・
+Live Folder OFF）と `--use-mock-keychain` で起動し、`Contents/Resources/nemo-mcp-bridge.mjs` を `NEMO_AGENT_SOCKET=<userData>/agent.sock` で
+動かして tabs_context → navigate → screenshot → read_page を流す（2026-09-28 に example.com で通った）。
+
+人が見る分（自走検証で測れないもの）:
+
+- **普段の Nemo が全画面で key のとき**、Claude の窓が出ても打鍵を奪わない・Space が切り替わらない（Space の切り替えを伴うので自動では測らない）。
+  2026-09-28 に実装で確かめた手順: 使い捨ての Nemo の通常窓を `runCommandForVerify('toggle-fullscreen')` で全画面にし、ブリッジで tabs_context を呼ぶ →
+  エージェント窓が画面に出ない（保留）こと・その間も navigate / スクショが通ること → `open -a Finder` で前面を移して 3 秒後、
+  エージェント窓がデスクトップの Space に出ることを CGWindowList で見る（前面が Finder のまま）
+- 画面 1 枚 / 2 枚それぞれで窓の出る場所（内蔵のデスクトップ）。Meet で Studio Display を共有中に Claude の窓が映らない
+- 実サイトで引き継ぎを通す（Claude が操作 → ログインで止まる → 窓をクリックしてログイン・2FA → ターミナルで「続けて」→ Claude が再開）
+- Claude の窓をクリックすると操作できる（focusable が切り替わる）・ターミナルへ戻ると Claude が続けられる
+- Claude Code を 2 セッション同時に使い、窓が別々に出てそれぞれ終了時に閉じる
+- 右クリックの「Claude のウィンドウで開く」と小窓の「Claude」ボタン
+
 ## Arc からの移行（Phase 2-2）
 
 ```bash

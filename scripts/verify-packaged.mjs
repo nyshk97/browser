@@ -43,6 +43,21 @@ function checkExtensionShim(userDataDir) {
   )
 }
 
+/**
+ * argv の `--remote-debugging-port` で CDP が開いていないこと。
+ * 起動（初期化 / UI 表示）を確かめた後に呼ぶ。開くならこの時点で開いている。
+ */
+async function checkArgvDebuggingClosed() {
+  const reached = await fetch(`http://127.0.0.1:${argvDebugPort}/json/version`)
+    .then((res) => `HTTP ${res.status}`)
+    .catch(() => null)
+  check(
+    'argv の --remote-debugging-port では CDP が開かない',
+    reached === null,
+    reached ? `${reached} で応答した` : '接続できない（期待どおり）'
+  )
+}
+
 const channel = process.argv[2] === 'stable' ? 'stable' : 'dev'
 const productName = channel === 'stable' ? 'Nemo' : 'Nemo Dev'
 
@@ -76,6 +91,9 @@ if (strays.length > 0) {
 }
 
 const debugPort = String(await getFreePort())
+// argv で渡す remote debugging のポート。**開いてはいけない**（main が removeSwitch で消す）。
+// env（dev 版だけ開く）とは別のポートにして、どちらが開いたかを取り違えない。
+const argvDebugPort = String(await getFreePort())
 const pagesPort = String(await getFreePort())
 const cdp = `http://127.0.0.1:${debugPort}`
 const pages = `http://127.0.0.1:${pagesPort}`
@@ -107,7 +125,9 @@ try {
   })
 
   const executable = path.join(appPath, 'Contents', 'MacOS', productName)
-  const app = start(executable, [], {
+  // **わざと argv で remote debugging を渡す**。Chromium は argv のスイッチを受け付けるので、
+  // main が消していなければ常用版でも CDP が開く（dist 1.2.19 で実測した穴）
+  const app = start(executable, [`--remote-debugging-port=${argvDebugPort}`], {
     env: {
       ...process.env,
       // **常用版は remote debugging を開かない**（アプリ側が無視する）。
@@ -138,6 +158,7 @@ try {
      */
     await waitForLogEvent(userDataDir, 'app.initialized', { child: app, timeoutMs: 150000 })
     check('パッケージした .app が起動して初期化まで進む', true)
+    await checkArgvDebuggingClosed()
 
     const loaded = countLogEvents(userDataDir, 'extension.loaded')
     check('lock された拡張がパッケージ後もロードされる', loaded > 0, `${loaded} 件`)
@@ -157,6 +178,7 @@ try {
       throw new Error(`${error.message}（pid ${app.pid} / 生存: ${isChildAlive(app)} / .app: ${appPath}）`)
     })
     check('パッケージした .app が起動してブラウザ UI を表示する', true)
+    await checkArgvDebuggingClosed()
 
     const ui = await connectUi(cdp)
 

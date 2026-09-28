@@ -43,7 +43,8 @@ export const KNOWN_TARGETS = [
   'slots', // セーブスロット（保存 / 読み込み / 移行。自分で起動する。OPT_IN_ONLY を見る）
   'auth-vault', // Basic 認証の保管庫（持ち出し。自分で起動する。OPT_IN_ONLY を見る）
   'autofill', // フォーム自動入力（保管庫・Jev のモック。自分で起動する）
-  'metrics' // メモリ・CPU の定期記録と UI 例外（自分で起動する。OPT_IN_ONLY を見る）
+  'metrics', // メモリ・CPU の定期記録と UI 例外（自分で起動する。OPT_IN_ONLY を見る）
+  'agent' // Claude in Nemo（ブリッジ経由の MCP・エージェント窓。自分で起動する。OPT_IN_ONLY を見る）
 ]
 
 /** アプリとページサーバを立てる必要があるもの（migration / db は自分で起動する）。 */
@@ -81,8 +82,11 @@ export const NEEDS_APP = [
  * 入れると共有のアプリとページサーバまで立ち上がって、使わない起動が 1 つ増える）。
  * `autofill` は**ここに入れない**（起動 1 回・全体で 10 秒ほどなのでフルに常設してよい）。
  * 保管庫と同じく `NEMO_SLOTS_DIR` を自分で振るので `NEEDS_APP` には入れない。
+ *
+ * `agent` も同じ（アプリを 2 回起動し、ブリッジを 2 本立てる。1 分ほどかかる）。
+ * `src/main/agent/**`・ブリッジ・ツール定義は `OWNERS` で拾うので、触ったときは `--changed` で必ず回る。
  */
-export const OPT_IN_ONLY = ['vim-scroll', 'slots', 'auth-vault', 'metrics']
+export const OPT_IN_ONLY = ['vim-scroll', 'slots', 'auth-vault', 'metrics', 'agent']
 
 /**
  * `restart` に相乗りしているスイート。**選んだら `restart` を随伴させる**。
@@ -209,7 +213,24 @@ export const OWNERS = new Map([
   ['scripts/metrics-report.test.mjs', ['metrics']],
   // gg / G だけが読む shared のモジュール（他のスイートは触らない）
   ['src/shared/vim-scroll.js', ['vim-scroll']],
-  ['scripts/vim-scroll.test.mjs', ['vim-scroll']]
+  ['scripts/vim-scroll.test.mjs', ['vim-scroll']],
+  // Claude in Nemo だけが読むモジュール（新規ファイル。registry / index / ipc 等への配線は載せない = フルに倒す）
+  ['scripts/verify-agent.mjs', ['agent']],
+  ['src/bridge/nemo-mcp-bridge.mjs', ['agent']],
+  ['src/shared/agent-tools.js', ['agent']],
+  ['src/shared/agent-page-source.js', ['agent']],
+  ['src/main/agent/connection.ts', ['agent']],
+  // 自動入力の入口（`autofill/index.ts`）もエージェント窓の判定に使う
+  ['src/main/agent/contents.ts', ['agent', 'autofill']],
+  ['src/main/agent/index.ts', ['agent']],
+  ['src/main/agent/keys.ts', ['agent']],
+  ['src/main/agent/page.ts', ['agent']],
+  ['src/main/agent/server.ts', ['agent']],
+  ['src/main/agent/tools.ts', ['agent']],
+  ['src/main/agent/sites.ts', ['agent']],
+  ['src/shared/agent-sensitive-pages.js', ['agent']],
+  ['scripts/agent-sensitive-pages.test.mjs', ['agent']],
+  ['scripts/agent-log.test.mjs', ['agent']]
 ])
 
 /**

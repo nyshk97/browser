@@ -229,6 +229,8 @@ export interface LoginContext {
   url: string
   authInfo: Electron.AuthInfo
   isPrivate: boolean
+  /** エージェント用ウィンドウのタブか（Claude の遷移だけで保管庫の資格情報を送らない）。 */
+  isAgent: boolean
   /** タブとして厳密に解決できたか。できなければ自動入力しない。 */
   isTab: boolean
   /** 手動ダイアログの宛先。 */
@@ -249,6 +251,7 @@ export async function resolveCredential(
     isProxy: ctx.authInfo.isProxy,
     scheme: ctx.authInfo.scheme,
     isPrivate: ctx.isPrivate,
+    isAgent: ctx.isAgent,
     // タブとして解決できない WebContents（拡張の popup など）は自動入力しない。
     // **シークレットと畳まない**（挙動は同じでも、ログが「シークレットだった」と嘘をつく）
     isTab: ctx.isTab,

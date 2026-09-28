@@ -131,6 +131,8 @@ export function Toolbar({ pane = 'left' }: { pane?: 'left' | 'right' }): React.J
   const activeTab: TabState | null = useMemo(() => paneTab(state, pane), [state, pane])
 
   const isPrivate = state?.isPrivate === true
+  /** エージェント窓（Claude Code が操作する窓）。拡張をロードしていないのでアイコンを出さない。 */
+  const isAgent = state?.kind === 'agent'
   const sidebarVisible = state?.sidebarVisible !== false
   /** 分割中か（✕ を出すかどうかの判定に使う）。 */
   const inSplit = activeTab?.splitSide !== null && activeTab?.splitSide !== undefined
@@ -303,7 +305,9 @@ export function Toolbar({ pane = 'left' }: { pane?: 'left' | 'right' }): React.J
       */}
       {pane === 'left' ? (
         <>
-          {isPrivate ? null : <browser-action-list ref={actionListRef} partition={PAGE_PARTITION} />}
+          {isPrivate || isAgent ? null : (
+            <browser-action-list ref={actionListRef} partition={PAGE_PARTITION} />
+          )}
           <button
             type="button"
             className="icon"

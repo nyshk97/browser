@@ -20,7 +20,9 @@ import { runAutofill } from './autofill/index.js'
 export function attachContextMenu(
   wc: WebContents,
   window: () => BaseWindow | null,
-  openSettings: () => void
+  openSettings: () => void,
+  /** エージェント窓があるときだけ関数を返す（リンクを Claude のウィンドウで開く）。 */
+  openInAgent: () => ((url: string) => void) | undefined = () => undefined
 ): void {
   wc.on('context-menu', (_event, params) => {
     /*
@@ -46,7 +48,7 @@ export function attachContextMenu(
             })
           }
         : undefined
-    const template = buildContextMenuTemplate(wc, params, { autofill })
+    const template = buildContextMenuTemplate(wc, params, { autofill, openInAgent: openInAgent() })
     log('context_menu.open', {
       mediaType: params.mediaType,
       link: Boolean(params.linkURL),
@@ -82,7 +84,7 @@ export function isAutofillTarget(formControlType: string | undefined): boolean {
 export function buildContextMenuTemplate(
   wc: WebContents,
   params: Pick<Electron.ContextMenuParams, 'x' | 'y' | 'mediaType' | 'srcURL' | 'linkURL'>,
-  actions: { autofill?: (() => void) | undefined } = {}
+  actions: { autofill?: (() => void) | undefined; openInAgent?: ((url: string) => void) | undefined } = {}
 ): MenuItemConstructorOptions[] {
   const template: MenuItemConstructorOptions[] = []
 
@@ -93,10 +95,12 @@ export function buildContextMenuTemplate(
   // `<a href>` の上（画像リンクなら画像の項目より前に出す。Chrome と同じ並び）
   if (params.linkURL) {
     const href = params.linkURL
-    template.push(
-      { label: 'リンクのアドレスをコピー', click: () => clipboard.writeText(href) },
-      { type: 'separator' }
-    )
+    template.push({ label: 'リンクのアドレスをコピー', click: () => clipboard.writeText(href) })
+    const openInAgent = actions.openInAgent
+    if (openInAgent && /^https?:\/\//.test(href)) {
+      template.push({ label: 'Claude のウィンドウで開く', click: () => openInAgent(href) })
+    }
+    template.push({ type: 'separator' })
   }
 
   if (params.mediaType === 'image' && params.srcURL) {

@@ -17,6 +17,7 @@ import {
   openPinned,
   removeEphemeralEverywhere,
   pinTabInto,
+  closeTemporaryWindow,
   removeFavoriteEverywhere,
   promoteForegroundView,
   removeTab,
@@ -130,6 +131,8 @@ import { matchHttpAuthRules } from './http-auth-matcher.js'
 import { getTimings } from './timings.js'
 import { HTTP_AUTH_LIMITS, importMultipass, validateHttpAuthPattern } from '../shared/http-auth-rules.js'
 import { windowsById } from './registry.js'
+import { endFromUi, openUrlInAgentWindow, resumeFromUi, showAgentWindow } from './agent/index.js'
+import { clearAgentSite, listAgentSites } from './agent/sites.js'
 import type {
   AppStatus,
   AuthVaultFailure,
@@ -393,8 +396,9 @@ export function registerIpcHandlers(): void {
   // シナリオの検証機構として使っている（内部の `moveTabToWindow` は mini の ⌘O 昇格でも使う）
   ipcMain.handle('nemo:move-tab-to-new-window', (event, key: unknown) => {
     const { win, tab } = requireTab(event, key)
-    // 1枚しか無いタブを別ウィンドウへ動かしても意味がないので何もしない
-    if (win.normalTabs.length <= 1) return
+    // 1枚しか無いタブを別ウィンドウへ動かしても意味がないので何もしない。
+    // エージェント窓のタブは外へ出さない（セッションが違い、Claude の範囲を外れる）
+    if (win.normalTabs.length <= 1 || win.isAgent) return
     // 移動先も同じ性質にする。通常ウィンドウを作ると partition が違って
     // registry が移動を拒否し、**空のウィンドウだけが増える**
     const target = createWindow(undefined, { isPrivate: win.isPrivate })
@@ -579,8 +583,8 @@ export function registerIpcHandlers(): void {
    */
   ipcMain.handle('nemo:open-ephemeral', (event, ephemeralId: unknown) => {
     const win = requireWindow(event)
-    if (win.isPrivate) {
-      log('ipc.rejected', { reason: 'private_window', channel: 'open-ephemeral' })
+    if (!win.usesMainProfile) {
+      log('ipc.rejected', { reason: 'not_main_profile', channel: 'open-ephemeral' })
       return
     }
     openEphemeral(win, requireString(ephemeralId, 'ephemeralId'))
@@ -588,8 +592,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('nemo:close-ephemeral', (event, ephemeralId: unknown) => {
     const win = requireWindow(event)
-    if (win.isPrivate) {
-      log('ipc.rejected', { reason: 'private_window', channel: 'close-ephemeral' })
+    if (!win.usesMainProfile) {
+      log('ipc.rejected', { reason: 'not_main_profile', channel: 'close-ephemeral' })
       return
     }
     // 定義は全ウィンドウ共有なので、閉じる = 定義ごと削除（全ウィンドウから消える）
@@ -598,8 +602,8 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('nemo:clear-ephemeral-tabs', (event) => {
     const win = requireWindow(event)
-    if (win.isPrivate) {
-      log('ipc.rejected', { reason: 'private_window', channel: 'clear-ephemeral-tabs' })
+    if (!win.usesMainProfile) {
+      log('ipc.rejected', { reason: 'not_main_profile', channel: 'clear-ephemeral-tabs' })
       return
     }
     clearEphemeralTabs(win)
@@ -867,6 +871,40 @@ export function registerIpcHandlers(): void {
   })
 
   /* ---- ダイアログ ---- */
+  /* ---- Claude in Nemo（エージェント窓の帯のボタン・通常窓からの入口） ---- */
+  ipcMain.handle('nemo:agent-resume', (event) => {
+    const win = requireWindow(event)
+    if (win.isAgent) resumeFromUi(win)
+  })
+  ipcMain.handle('nemo:agent-end', (event) => {
+    const win = requireWindow(event)
+    if (win.isAgent) endFromUi(win)
+  })
+  ipcMain.handle('nemo:agent-sites', (event) => {
+    const win = requireWindow(event)
+    if (!win.isAgent) throw new Error('エージェント窓からだけ呼べる')
+    return listAgentSites()
+  })
+  ipcMain.handle('nemo:agent-clear-site', async (event, site: unknown) => {
+    const win = requireWindow(event)
+    if (!win.isAgent) throw new Error('エージェント窓からだけ呼べる')
+    await clearAgentSite(requireString(site, 'site'))
+    return listAgentSites()
+  })
+  /** 小窓の中身を Claude のウィンドウで開き直して小窓を閉じる（マジックリンクの受け渡し。ユーザー操作だけ）。 */
+  ipcMain.handle('nemo:agent-open-mini', (event) => {
+    const win = requireWindow(event)
+    const tab = win.tabs[0]
+    if (win.kind !== 'mini' || !tab) return false
+    if (!openUrlInAgentWindow(tab.url)) return false
+    closeTemporaryWindow(win, 'user')
+    return true
+  })
+  ipcMain.handle('nemo:agent-show-window', (event, windowId: unknown) => {
+    requireWindow(event)
+    showAgentWindow(typeof windowId === 'number' ? windowId : undefined)
+  })
+
   ipcMain.handle('nemo:resolve-prompt', (event, id: unknown, answer: unknown) => {
     const win = requireWindow(event)
     answerPrompt(win.id, requireString(id, 'id'), validateAnswer(answer))

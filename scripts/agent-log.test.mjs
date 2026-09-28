@@ -12,7 +12,7 @@ const DETAILS = {
   'agent.connected': { conn: 1 },
   'agent.tool': { conn: 1, tool: 'navigate', ok: true, ms: 12 },
   'agent.disconnected': { conn: 1, reason: 'closed' },
-  'agent.handoff': { conn: 1, to: 'claude', via: 'button' },
+  'agent.handoff': { conn: 1, to: 'claude' },
   'agent.window_presented': { windowId: 2 },
   'agent.window_deferred': { windowId: 2 },
   'agent.window_user_focus': { windowId: 2 },

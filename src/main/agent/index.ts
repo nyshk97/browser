@@ -88,11 +88,6 @@ export function stopAgent(): void {
   stopAgentServer()
 }
 
-/** エージェント窓の「Claude に戻す」ボタン。 */
-export function resumeFromUi(win: NemoWindow): void {
-  connectionForWindow(win)?.takeTurnBack('button')
-}
-
 /** エージェント窓の「終了」ボタン（ユーザーが閉じたのと同じ扱い）。 */
 export function endFromUi(win: NemoWindow): void {
   if (win.isAgent) removeWindow(win)

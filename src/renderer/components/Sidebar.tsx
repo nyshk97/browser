@@ -383,7 +383,10 @@ export function Sidebar(): React.JSX.Element {
 
 /**
  * エージェント窓の上端の状態バー（1 行）。Claude の作業中 / 待機中 / あなたの番と［終了］。
- * あなたの番のときだけ、下に依頼のカード（Nemo が確かめたサイト・Claude の依頼文・［Claude に戻す］）を開く。
+ * あなたの番のときだけ、下に依頼のカード（Nemo が確かめたサイト・Claude の依頼文・再開の案内）を開く。
+ *
+ * **再開の手段はチャットの「done」だけ**。Claude は依頼の後ターンを終えて止まっていて、Nemo から Claude Code を起こす手段は無い。
+ * 以前あった［Claude に戻す］は Nemo の番を戻すだけで Claude は動き出さず、「押したのに止まったまま」になるので置かない。
  *
  * **Claude の依頼文と Nemo が確かめた事実（origin）を分けて出す**。依頼文を書くのは Claude（= 操作中のページに
  * 誘導されうる）なので、「どのサイトでログインを求められているか」は Nemo がドキュメント遷移で確定した origin で示す。
@@ -430,12 +433,7 @@ function AgentBand({ agent }: { agent: AgentWindowState }): React.JSX.Element {
               {agent.request}
             </div>
           ) : null}
-          <div className="agent-ask-actions">
-            <button type="button" className="btn primary" onClick={() => void window.nemo.agentResume()}>
-              Claude に戻す
-            </button>
-            <span className="dim">or チャットで「done」</span>
-          </div>
+          <div className="agent-ask-hint dim">終わったらチャットで「done」</div>
         </div>
       ) : null}
     </div>

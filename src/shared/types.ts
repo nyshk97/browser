@@ -1186,8 +1186,6 @@ export interface NemoUiApi {
   resolvePrompt(id: string, answer: PromptAnswer): Promise<void>
 
   /* Claude in Nemo（エージェント窓） */
-  /** 「Claude に戻す」。ユーザーの番を終えて Claude の番に戻す。 */
-  agentResume(): Promise<void>
   /** 「終了」。エージェント窓を閉じる（ユーザーが閉じたのと同じ扱い）。 */
   agentEnd(): Promise<void>
   /** エージェント窓を前面に出す（通常窓の入口から）。 */

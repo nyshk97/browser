@@ -16,7 +16,7 @@ import { getSettings } from '../store/settings.js'
  *
  * 入力系（クリック・キー・遷移・値の設定・JS 実行・アップロード・ダイアログへの応答）は、
  * 次のときに断る（読み取り系は通す）:
- * - そのタブが「ユーザーの番」（`request_user_action` の後、resume / 「Claude に戻す」まで）
+ * - そのタブが「ユーザーの番」（`request_user_action` の後、resume まで）
  * - ユーザーがいまエージェント窓を操作している（窓が key）
  * - JS ダイアログの横取りが効いていない（Electron の更新で内部イベントが変わった。fail closed）
  */
@@ -177,7 +177,7 @@ export async function runTool(
       case 'resize_window':
         return await resizeWindow(conn, args)
       case 'resume':
-        conn.takeTurnBack('tool')
+        conn.takeTurnBack()
         return text(
           'Claude の番に戻しました。screenshot でユーザーが何をしたかを確かめてから続けてください。'
         )
@@ -271,7 +271,7 @@ async function runTabTool(
       conn.giveTurnToUser(tab, message)
       return text(
         'ユーザーの番にしました（Nemo の Claude 用ウィンドウに依頼文を出し、Dock にバッジを付けました）。' +
-          'ユーザーにチャットで同じことを伝えて止まってください。ユーザーが終わったと言ったら resume を呼んでから続けてください。'
+          'ユーザーにチャットで同じことを伝え、終わったらチャットで「done」と返してもらうよう頼んで止まってください。ユーザーが終わったと言ったら resume を呼んでから続けてください。'
       )
     }
     default:

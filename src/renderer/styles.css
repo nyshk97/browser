@@ -2657,18 +2657,6 @@ body[data-view='toolbar'] {
   word-break: break-word;
 }
 
-.agent-ask-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.agent-ask-actions .btn {
-  margin-top: 0;
-  flex: none;
-  white-space: nowrap;
-}
-
 /* サイドバーの最下部（フッターの上）: cookie が残っているサイト */
 .agent-sites {
   flex: none;

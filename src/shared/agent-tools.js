@@ -270,7 +270,7 @@ export const AGENT_TOOLS = [
   {
     name: 'request_user_action',
     description:
-      'Hand the tab to the user (login, 2FA, CAPTCHA, payment, any decision). Shows your message in the Nemo window and makes it the user\'s turn: input tools are refused until the user presses "Claude に戻す" or you call resume after the user tells you they are done.',
+      'Hand the tab to the user (login, 2FA, CAPTCHA, payment, any decision). Shows your message in the Nemo window and makes it the user\'s turn (input tools are refused until you call resume). After calling it, tell the user in chat and stop; they reply "done" in chat when finished, then call resume.',
     inputSchema: {
       type: 'object',
       properties: {

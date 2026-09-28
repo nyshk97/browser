@@ -1321,8 +1321,8 @@ unix socket のパスは 104 バイトまでなので、使い捨ての置き場
   cmd+v を断る・**ユーザーが入れたパスワードが read_page / get_page_text に出ず、javascript_tool が断られる**
   （伏せ字と taint を外すと 2 件 FAIL することを確認済み）・OAuth の同意 / トークン発行の画面は navigate も入力も断る
   （離れる navigate はできる）・ブロックリスト
-- 引き継ぎ: request_user_action の後は入力を断り、帯に「あなたの番です」と origin と依頼文・「or チャットで「done」」、
-  普段の窓のサイドバーに入口が出る。resume と「Claude に戻す」ボタンで戻る
+- 引き継ぎ: request_user_action の後は入力を断り、帯に「あなたの番です」と origin と依頼文・「終わったらチャットで「done」」、
+  普段の窓のサイドバーに入口が出る。resume で戻る（窓に番を戻すボタン・IPC は無い）
 - 状態バー: ツールの直後は作業中（`data-agent-phase="busy"`）で今の動作が出て、止まると待機中に落ちる
 - cookie が残っているサイトの一覧（サイドバー最下部）を**描画から**開き、× → 「消す」の 2 段で消える（× だけでは消えない）。
   通常窓からは呼べない

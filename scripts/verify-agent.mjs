@@ -479,11 +479,11 @@ try {
   )
   const band = await agentSidebar.ev("document.querySelector('.agent-band')?.innerText ?? ''")
   check(
-    '帯に「あなたの番です」と Nemo が確かめた origin・Claude の依頼文・「or チャットで「done」」が出る',
+    '帯に「あなたの番です」と Nemo が確かめた origin・Claude の依頼文・「終わったらチャットで「done」」が出る',
     band.includes('あなたの番です') &&
       band.includes(origin) &&
       band.includes('ログインしてください') &&
-      band.includes('or チャットで「done」'),
+      band.includes('終わったらチャットで「done」'),
     band.replace(/\s+/g, ' ').slice(0, 160)
   )
   // 通常窓のサイドバーにも入口が出て、ユーザーの番は目立たせる
@@ -497,15 +497,12 @@ try {
     "document.querySelector('.agent-band')?.dataset.agentMode === 'claude' ? 'ok' : ''"
   )
   check('帯は Claude の番に戻る', true)
-  // 「Claude に戻す」ボタン（UI の IPC）でも戻る
-  await bridge.call('request_user_action', { tabId, message: 'もう一度' })
-  await agentSidebar.ev("window.nemo.agentResume().then(() => 'ok')")
-  const clickAfterButton = await bridge.call('computer', {
-    tabId,
-    action: 'left_click',
-    coordinate: [10, 10]
-  })
-  check('「Claude に戻す」ボタンでも戻る', !clickAfterButton.isError, clickAfterButton.text.slice(0, 80))
+  // 窓の側に番を戻すボタン・IPC は無い（再開はチャットの「done」→ resume だけ。番だけ戻しても Claude は動き出さない）
+  check(
+    '依頼カードに「Claude に戻す」ボタンが無く、UI に番を戻す口も無い',
+    !band.includes('Claude に戻す') &&
+      (await agentSidebar.ev("typeof window.nemo.agentResume === 'undefined' ? 'none' : 'exists'")) === 'none'
+  )
 
   /* ---- 4. 安全の線: Claude に操作させないページ・ブロックリスト ---- */
   const oauthUrl = `${origin}/authorize?client_id=a&redirect_uri=https%3A%2F%2Fx.example&response_type=code`

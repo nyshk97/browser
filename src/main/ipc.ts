@@ -131,7 +131,7 @@ import { matchHttpAuthRules } from './http-auth-matcher.js'
 import { getTimings } from './timings.js'
 import { HTTP_AUTH_LIMITS, importMultipass, validateHttpAuthPattern } from '../shared/http-auth-rules.js'
 import { windowsById } from './registry.js'
-import { endFromUi, openUrlInAgentWindow, resumeFromUi, showAgentWindow } from './agent/index.js'
+import { endFromUi, openUrlInAgentWindow, showAgentWindow } from './agent/index.js'
 import { clearAgentSite, listAgentSites } from './agent/sites.js'
 import type {
   AppStatus,
@@ -872,10 +872,6 @@ export function registerIpcHandlers(): void {
 
   /* ---- ダイアログ ---- */
   /* ---- Claude in Nemo（エージェント窓の帯のボタン・通常窓からの入口） ---- */
-  ipcMain.handle('nemo:agent-resume', (event) => {
-    const win = requireWindow(event)
-    if (win.isAgent) resumeFromUi(win)
-  })
   ipcMain.handle('nemo:agent-end', (event) => {
     const win = requireWindow(event)
     if (win.isAgent) endFromUi(win)

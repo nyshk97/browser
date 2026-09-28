@@ -24,7 +24,8 @@ import { isBlockedForAgent, runTool, type ToolResult } from './tools.js'
  * - 窓は**最初のツール呼び出しで**開く（接続しただけでは開かない）。接続が切れたら閉じる
  * - tabId は接続ごとの不透明なトークン。呼ばれるたびに「この接続の窓のタブで、WebContents が生きている」を確かめる
  * - 「ユーザーの番」（`request_user_action`）の間は、そのタブへの入力系ツールを断る。
- *   解除は窓の「Claude に戻す」か、ユーザーが終わったと言った後の `resume`（blur による自動再開はしない）
+ *   解除はユーザーがチャットで終わったと言った後の `resume` だけ（blur による自動再開はしない。窓のボタンも置かない:
+ *   Nemo から Claude Code を起こせないので、番だけ戻しても Claude は動き出さない）
  */
 
 /** agent セッションの WebContents → 操作口。`web-contents-created` で作る（popup の子も含む）。 */
@@ -402,7 +403,7 @@ export class AgentConnection {
     log('agent.handoff', { conn: this.id, to: 'user' })
   }
 
-  takeTurnBack(source: 'tool' | 'button'): void {
+  takeTurnBack(): void {
     const hadTurn = this.userTurns.size > 0
     const keys = [...this.userTurns.keys()]
     this.userTurns.clear()
@@ -413,7 +414,7 @@ export class AgentConnection {
     }
     this.syncWindowState()
     updateDockBadge()
-    if (hadTurn) log('agent.handoff', { conn: this.id, to: 'claude', via: source })
+    if (hadTurn) log('agent.handoff', { conn: this.id, to: 'claude' })
   }
 
   /** 窓の帯（UI）に出す状態を書き直す。 */

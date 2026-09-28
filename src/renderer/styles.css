@@ -2542,28 +2542,59 @@ body[data-view='toolbar'] {
   background: #221d19;
 }
 
+/* エージェント窓の上端: 1 行の状態バー + あなたの番のときだけ依頼カード */
 .agent-band {
   display: flex;
   flex-direction: column;
   gap: 6px;
   margin: 0 10px 8px;
-  padding: 8px 10px;
-  border-radius: var(--nemo-radius);
-  background: rgba(217, 119, 87, 0.14);
-  font-size: 11px;
-  line-height: 1.5;
 }
 
-.agent-band.user-turn {
+.agent-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 4px 0 10px;
+  border-radius: var(--nemo-radius);
+  background: var(--nemo-surface);
+  font-size: 12px;
+}
+
+.agent-status.user {
   background: rgba(210, 153, 34, 0.22);
   box-shadow: inset 0 0 0 1px rgba(210, 153, 34, 0.55);
 }
 
-.agent-band-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.agent-status-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-status-text small {
+  margin-left: 5px;
+  color: var(--nemo-ink-dim);
+  font-size: 11px;
+}
+
+.agent-end {
+  flex: none;
+  padding: 2px 7px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--nemo-ink-dim);
+  font: inherit;
   font-size: 12px;
+  cursor: pointer;
+}
+
+.agent-end:hover {
+  background: var(--nemo-hover);
+  color: var(--nemo-ink);
 }
 
 .agent-dot {
@@ -2574,8 +2605,26 @@ body[data-view='toolbar'] {
   flex: none;
 }
 
-.agent-band.user-turn .agent-dot {
+.agent-dot.busy {
+  animation: agent-pulse 1.1s ease-in-out infinite;
+}
+
+.agent-dot.idle {
+  background: #6b6b76;
+}
+
+.agent-dot.user {
   background: var(--nemo-warn);
+}
+
+@keyframes agent-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(217, 119, 87, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(217, 119, 87, 0);
+  }
 }
 
 .agent-label {
@@ -2584,6 +2633,17 @@ body[data-view='toolbar'] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.agent-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--nemo-radius);
+  background: rgba(210, 153, 34, 0.1);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .agent-origin {
@@ -2597,9 +2657,26 @@ body[data-view='toolbar'] {
   word-break: break-word;
 }
 
-.agent-actions {
+.agent-ask-actions {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-ask-actions .btn {
+  margin-top: 0;
+  flex: none;
+  white-space: nowrap;
+}
+
+/* サイドバーの最下部（フッターの上）: cookie が残っているサイト */
+.agent-sites {
+  flex: none;
+  max-height: 40%;
+  overflow-y: auto;
+  padding: 8px 12px 6px;
+  border-top: 1px solid var(--nemo-border);
+  font-size: 11px;
 }
 
 .agent-sites-toggle {
@@ -2612,6 +2689,14 @@ body[data-view='toolbar'] {
   cursor: pointer;
 }
 
+.agent-sites-toggle:hover {
+  color: var(--nemo-ink);
+}
+
+.agent-sites-empty {
+  padding: 2px 4px;
+}
+
 .agent-sites ul {
   margin: 4px 0 0;
   padding: 0;
@@ -2622,7 +2707,13 @@ body[data-view='toolbar'] {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 1px 0;
+  height: 24px;
+  padding: 0 2px 0 4px;
+  border-radius: 5px;
+}
+
+.agent-sites li:hover {
+  background: var(--nemo-hover);
 }
 
 .agent-site-name {
@@ -2630,6 +2721,43 @@ body[data-view='toolbar'] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
+}
+
+.agent-site-count {
+  color: var(--nemo-ink-dim);
+}
+
+.agent-site-x {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--nemo-ink-dim);
+  font-size: 13px;
+  cursor: pointer;
+  visibility: hidden;
+}
+
+.agent-sites li:hover .agent-site-x {
+  visibility: visible;
+}
+
+.agent-site-x:hover {
+  background: var(--nemo-surface-hi);
+  color: var(--nemo-ink);
+}
+
+.agent-site-confirm {
+  padding: 1px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: rgba(255, 107, 107, 0.16);
+  color: var(--nemo-danger);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
 }
 
 /* 通常窓のサイドバーの入口（エージェント窓へ行く） */

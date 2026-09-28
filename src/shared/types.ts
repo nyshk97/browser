@@ -513,6 +513,10 @@ export interface AgentWindowState {
   request: string | null
   /** ユーザーの番のとき、対象タブの origin（Nemo がドキュメント遷移で確定した値）。 */
   requestOrigin: string | null
+  /** Claude のツールが実行中か（止まってから少しの間も true。false なら状態バーは「待機中」）。 */
+  busy: boolean
+  /** 実行中のツールの文言（Nemo が作る。`agent-activity.js`）。 */
+  activity: string | null
 }
 
 export interface FindState {

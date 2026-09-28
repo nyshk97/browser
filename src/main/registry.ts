@@ -1510,7 +1510,14 @@ export class NemoWindow {
       kind === 'agent' ? ensureAgentSession() : isPrivate ? ensurePrivateSession() : PAGE_PARTITION
     this.sidebarVisible = kind === 'agent' ? true : getSettings().sidebarVisible
     if (kind === 'agent') {
-      this.agent = { label: agentLabel ?? 'Claude', mode: 'claude', request: null, requestOrigin: null }
+      this.agent = {
+        label: agentLabel ?? 'Claude',
+        mode: 'claude',
+        request: null,
+        requestOrigin: null,
+        busy: false,
+        activity: null
+      }
     }
 
     this.baseWindow =

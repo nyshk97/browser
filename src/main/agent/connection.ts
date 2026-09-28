@@ -13,6 +13,7 @@ import {
   type NemoTab,
   type NemoWindow
 } from '../registry.js'
+import { agentActivityLabel } from '../../shared/agent-activity.js'
 import { AGENT_PROTOCOL_VERSION, AGENT_TOOL_NAMES } from '../../shared/agent-tools.js'
 import { AgentPage } from './page.js'
 import { isBlockedForAgent, runTool, type ToolResult } from './tools.js'
@@ -126,6 +127,9 @@ interface Call {
 
 let nextConnectionId = 1
 
+/** ツールが止まってから状態バーを「待機中」に落とすまで（ms）。 */
+const AGENT_IDLE_AFTER_MS = 2500
+
 export class AgentConnection {
   readonly id = nextConnectionId++
   label = 'Claude'
@@ -144,6 +148,13 @@ export class AgentConnection {
   private readonly uploadDirs: string[] = []
   /** タブごとの直列化（同じタブへの呼び出しを重ねない。サブエージェントは接続を共有する）。 */
   private readonly tabLocks = new Map<string, Promise<unknown>>()
+  /** 実行中のツールの数（状態バーの「作業中」。引き継ぎのツールは数えない）。 */
+  private toolsInFlight = 0
+  /** 今やっていること（Nemo が作る文言。`agent-activity.js`）。 */
+  private activity: string | null = null
+  private busy = false
+  /** ツールが止まってから「待機中」に落とすまでの猶予（ツールの合間でちらつかせない）。 */
+  private idleTimer: NodeJS.Timeout | null = null
 
   constructor(private readonly socket: net.Socket) {
     connections.add(this)
@@ -207,6 +218,10 @@ export class AgentConnection {
       return
     }
     const started = Date.now()
+    const activity = AGENT_TOOL_NAMES.includes(message.name)
+      ? agentActivityLabel(message.name, message.arguments ?? {})
+      : null
+    if (activity) this.beginActivity(activity)
     let result: ToolResult
     try {
       if (!AGENT_TOOL_NAMES.includes(message.name)) throw new Error(`Unknown tool: ${message.name}`)
@@ -216,6 +231,8 @@ export class AgentConnection {
         content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
         isError: true
       }
+    } finally {
+      if (activity) this.endActivity()
     }
     log('agent.tool', {
       conn: this.id,
@@ -224,6 +241,30 @@ export class AgentConnection {
       ms: Date.now() - started
     })
     this.write({ id: message.id, type: 'result', result })
+  }
+
+  /* ---------------- 状態バーの「作業中 / 待機中」 ---------------- */
+
+  private beginActivity(activity: string): void {
+    this.toolsInFlight += 1
+    if (this.idleTimer) clearTimeout(this.idleTimer)
+    this.idleTimer = null
+    if (this.busy && this.activity === activity) return
+    this.busy = true
+    this.activity = activity
+    this.syncWindowState()
+  }
+
+  private endActivity(): void {
+    this.toolsInFlight = Math.max(0, this.toolsInFlight - 1)
+    if (this.toolsInFlight > 0 || this.disposed) return
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null
+      if (this.toolsInFlight > 0) return
+      this.busy = false
+      this.activity = null
+      this.syncWindowState()
+    }, AGENT_IDLE_AFTER_MS)
   }
 
   /* ---------------- 窓とタブ ---------------- */
@@ -390,14 +431,19 @@ export class AgentConnection {
     } catch {
       // 読めない URL は引き継いだ時点の値のまま
     }
+    const mode = first ? 'user' : 'claude'
+    // 通常窓の入口（共有状態）が見るのは名前と番だけ。作業中 / 待機中の切り替えでは全窓へ配らない
+    const sharedChanged = win.agent?.mode !== mode || win.agent?.label !== this.label
     win.agent = {
       label: this.label,
-      mode: first ? 'user' : 'claude',
+      mode,
       request: first?.message ?? null,
-      requestOrigin: first ? origin : null
+      requestOrigin: first ? origin : null,
+      busy: this.busy,
+      activity: this.busy ? this.activity : null
     }
     win.pushState()
-    pushSharedToAll()
+    if (sharedChanged) pushSharedToAll()
   }
 
   /* ---------------- file_upload のステージング ---------------- */
@@ -433,6 +479,8 @@ export class AgentConnection {
     if (this.disposed) return
     this.disposed = true
     connections.delete(this)
+    if (this.idleTimer) clearTimeout(this.idleTimer)
+    this.idleTimer = null
     const win = this.window
     this.window = null
     if (win && !win.isDestroyed) removeWindow(win)

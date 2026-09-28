@@ -479,9 +479,12 @@ try {
   )
   const band = await agentSidebar.ev("document.querySelector('.agent-band')?.innerText ?? ''")
   check(
-    '帯に「あなたの番です」と Nemo が確かめた origin・Claude の依頼文が出る',
-    band.includes('あなたの番です') && band.includes(origin) && band.includes('ログインしてください'),
-    band.replace(/\s+/g, ' ').slice(0, 120)
+    '帯に「あなたの番です」と Nemo が確かめた origin・Claude の依頼文・「or チャットで「done」」が出る',
+    band.includes('あなたの番です') &&
+      band.includes(origin) &&
+      band.includes('ログインしてください') &&
+      band.includes('or チャットで「done」'),
+    band.replace(/\s+/g, ' ').slice(0, 160)
   )
   // 通常窓のサイドバーにも入口が出て、ユーザーの番は目立たせる
   await waitFor(ui, "document.querySelector('.agent-entry.user-turn') ? 'ok' : ''")
@@ -539,19 +542,63 @@ try {
     back.text.slice(0, 80)
   )
 
-  /* ---- 2. ログインが残っているサイトの一覧と消去 ---- */
+  /* ---- 2. 状態バーの作業中 / 待機中 ---- */
+  await bridge.call('computer', { tabId, action: 'screenshot' })
+  // ツールが止まってから 2.5 秒は作業中のまま（ツールの合間でちらつかせない）ので、返った直後は作業中が見える
+  const busyText = await agentSidebar.ev(
+    "(() => { const b = document.querySelector('.agent-band'); return b?.dataset.agentPhase + '|' + (b?.querySelector('.agent-status')?.innerText ?? '') })()"
+  )
+  check(
+    '状態バー: ツールの直後は作業中で、今の動作（スクリーンショット）が出る',
+    busyText.startsWith('busy|') && busyText.includes('スクリーンショット'),
+    busyText.replace(/\s+/g, ' ')
+  )
+  await waitFor(
+    agentSidebar,
+    "document.querySelector('.agent-band')?.dataset.agentPhase === 'idle' ? 'ok' : ''"
+  )
+  const idleText = await agentSidebar.ev("document.querySelector('.agent-status')?.innerText ?? ''")
+  check(
+    '状態バー: ツールが止まると待機中に落ちる',
+    idleText.includes('待機中'),
+    idleText.replace(/\s+/g, ' ')
+  )
+
+  /* ---- 2. cookie が残っているサイトの一覧と消去 ---- */
   const sites = await agentSidebar.ev('window.nemo.agentSites().then(JSON.stringify)').then(JSON.parse)
   check(
-    'ログインが残っているサイトに 127.0.0.1 が出る',
+    'cookie が残っているサイトに 127.0.0.1 が出る',
     sites.some((entry) => entry.site === '127.0.0.1' && entry.cookies >= 1),
     JSON.stringify(sites)
   )
-  const afterClear = await agentSidebar
-    .ev("window.nemo.agentClearSite('127.0.0.1').then(JSON.stringify)")
-    .then(JSON.parse)
+  // サイドバー最下部の一覧を描画から操作する（× → 同じ場所の「消す」の 2 段）
+  await agentSidebar.ev("document.querySelector('.agent-sites-toggle').click(), 'ok'")
+  await waitFor(agentSidebar, "document.querySelector('[data-agent-site=\"127.0.0.1\"]') ? 'ok' : ''")
+  const toggleText = await agentSidebar.ev("document.querySelector('.agent-sites-toggle')?.innerText ?? ''")
+  check(
+    '一覧の見出しは「cookie が残っているサイト（件数）」',
+    /cookie が残っているサイト（\d+）/.test(toggleText),
+    toggleText
+  )
+  await agentSidebar.ev(
+    "document.querySelector('[data-agent-site=\"127.0.0.1\"] .agent-site-x').click(), 'ok'"
+  )
+  const armedText = await waitFor(
+    agentSidebar,
+    "document.querySelector('[data-agent-site=\"127.0.0.1\"] .agent-site-confirm')?.innerText ?? ''"
+  )
+  const siteRemains = (await agentSidebar.ev('window.nemo.agentSites().then(JSON.stringify)')).includes(
+    '127.0.0.1'
+  )
+  check('× を押しただけでは消えず、「消す」の確認に変わる', armedText === '消す' && siteRemains, armedText)
+  await agentSidebar.ev(
+    "document.querySelector('[data-agent-site=\"127.0.0.1\"] .agent-site-confirm').click(), 'ok'"
+  )
+  await waitFor(agentSidebar, "document.querySelector('[data-agent-site=\"127.0.0.1\"]') ? '' : 'ok'")
+  const afterClear = await agentSidebar.ev('window.nemo.agentSites().then(JSON.stringify)').then(JSON.parse)
   const cookieAfter = await bridge.call('javascript_tool', { tabId, text: 'document.cookie' })
   check(
-    'サイト単位で消すと cookie が無くなる',
+    '「消す」を押すと、そのサイトの行と cookie が無くなる',
     !afterClear.some((entry) => entry.site === '127.0.0.1') &&
       !cookieAfter.isError &&
       !cookieAfter.text.includes('agent_sid'),

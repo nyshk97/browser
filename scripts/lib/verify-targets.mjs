@@ -232,6 +232,8 @@ export const OWNERS = new Map([
   ['src/shared/agent-sensitive-pages.js', ['agent']],
   ['scripts/agent-sensitive-pages.test.mjs', ['agent']],
   ['scripts/agent-log.test.mjs', ['agent']],
+  ['src/shared/agent-activity.js', ['agent']],
+  ['scripts/agent-activity.test.mjs', ['agent']],
   ['src/shared/session-cookies.js', ['session-cookies']],
   ['src/main/store/session-cookies.ts', ['session-cookies']],
   ['scripts/session-cookies.test.mjs', ['session-cookies']],

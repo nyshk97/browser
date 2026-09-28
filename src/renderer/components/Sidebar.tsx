@@ -375,31 +375,53 @@ export function Sidebar(): React.JSX.Element {
         })}
       </div>
 
+      {agent ? <AgentSites refreshKey={agent.mode} /> : null}
       <Footer version={shared.version} update={shared.update} />
     </div>
   )
 }
 
 /**
- * エージェント窓の上端の帯。いま誰の番か・Claude からの依頼・［Claude に戻す］［終了］。
+ * エージェント窓の上端の状態バー（1 行）。Claude の作業中 / 待機中 / あなたの番と［終了］。
+ * あなたの番のときだけ、下に依頼のカード（Nemo が確かめたサイト・Claude の依頼文・［Claude に戻す］）を開く。
  *
  * **Claude の依頼文と Nemo が確かめた事実（origin）を分けて出す**。依頼文を書くのは Claude（= 操作中のページに
  * 誘導されうる）なので、「どのサイトでログインを求められているか」は Nemo がドキュメント遷移で確定した origin で示す。
+ * 作業中の文言（`activity`）も Nemo がツール名から作ったもので、Claude の文ではない。
  */
 function AgentBand({ agent }: { agent: AgentWindowState }): React.JSX.Element {
   const userTurn = agent.mode === 'user'
+  const phase = userTurn ? 'user' : agent.busy ? 'busy' : 'idle'
   return (
-    <div className={`agent-band${userTurn ? ' user-turn' : ''}`} data-agent-mode={agent.mode}>
-      <div className="agent-band-head">
-        <span className="agent-dot" />
-        <b>{userTurn ? 'あなたの番です' : 'Claude が操作中'}</b>
-        <span className="agent-label">{agent.label}</span>
+    <div className="agent-band" data-agent-mode={agent.mode} data-agent-phase={phase}>
+      <div
+        className={`agent-status ${phase}`}
+        title={`${agent.label} — Claude 専用のウィンドウです（普段のログイン・拡張は使いません）`}
+      >
+        <span className={`agent-dot ${phase}`} />
+        <span className="agent-status-text">
+          {userTurn ? (
+            <b>あなたの番です</b>
+          ) : (
+            <>
+              Claude<small>{agent.busy ? (agent.activity ?? '作業中') : '待機中'}</small>
+            </>
+          )}
+        </span>
+        <button
+          type="button"
+          className="agent-end"
+          title="Claude のセッションを終える（このウィンドウを閉じる）"
+          onClick={() => void window.nemo.agentEnd()}
+        >
+          終了
+        </button>
       </div>
       {userTurn ? (
-        <>
+        <div className="agent-ask">
           {agent.requestOrigin ? (
             <div className="agent-origin" title="Nemo が確かめたサイト">
-              {agent.requestOrigin}
+              {agent.requestOrigin.replace(/^https:\/\//, '')}
             </div>
           ) : null}
           {agent.request ? (
@@ -408,63 +430,90 @@ function AgentBand({ agent }: { agent: AgentWindowState }): React.JSX.Element {
               {agent.request}
             </div>
           ) : null}
-          <div className="agent-hint dim">
-            終わったら Claude に「終わった」と伝えるか、ここで戻してください
+          <div className="agent-ask-actions">
+            <button type="button" className="btn primary" onClick={() => void window.nemo.agentResume()}>
+              Claude に戻す
+            </button>
+            <span className="dim">or チャットで「done」</span>
           </div>
-        </>
-      ) : (
-        <div className="agent-hint dim">
-          このウィンドウは Claude 用です（普段のログイン・拡張は使いません）
         </div>
-      )}
-      <div className="agent-actions">
-        {userTurn ? (
-          <button type="button" className="btn primary" onClick={() => void window.nemo.agentResume()}>
-            Claude に戻す
-          </button>
-        ) : null}
-        <button type="button" className="btn" onClick={() => void window.nemo.agentEnd()}>
-          終了
-        </button>
-      </div>
-      <AgentSites />
+      ) : null}
     </div>
   )
 }
 
 /**
- * エージェント用プロファイルにログイン（cookie）が残っているサイトと、サイト単位の消去。
+ * エージェント用プロファイルに cookie が残っているサイトと、サイト単位の消去（サイドバーの最下部）。
  * 専用プロファイルでもログインは溜まる（Google にログインすれば Gmail にも届く）ので、見えるようにしておく。
+ * cookie があってもログインしているとは限らない（開いただけで付く cookie もある）ので、「ログイン」とは書かない。
+ *
+ * 消すのは 2 段: 行にカーソルを乗せると × → 押すと同じ場所に「消す」（`ClearSeparator` と同じく、押した場所で確認する）。
  */
-function AgentSites(): React.JSX.Element {
+function AgentSites({ refreshKey }: { refreshKey: string }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const [sites, setSites] = useState<{ site: string; cookies: number }[] | null>(null)
+  const [armed, setArmed] = useState<string | null>(null)
+  // 件数は畳んでいても出す。開いたとき・番が変わったとき（ログインの後）に取り直す
   useEffect(() => {
-    if (!open) return
     void window.nemo.agentSites().then(setSites)
-  }, [open])
+  }, [open, refreshKey])
+  useEffect(() => {
+    if (!armed) return
+    const onPointerDown = (event: MouseEvent): void => {
+      const row = (event.target as HTMLElement).closest?.('[data-agent-site]')
+      if (row?.getAttribute('data-agent-site') !== armed) setArmed(null)
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setArmed(null)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [armed])
   return (
     <div className="agent-sites">
       <button type="button" className="agent-sites-toggle" onClick={() => setOpen((value) => !value)}>
-        {open ? '▾' : '▸'} ログインが残っているサイト{sites ? `（${sites.length}）` : ''}
+        {open ? '▾' : '▸'} cookie が残っているサイト{sites ? `（${sites.length}）` : ''}
       </button>
       {open ? (
         sites === null ? null : sites.length === 0 ? (
-          <div className="dim">ありません</div>
+          <div className="dim agent-sites-empty">ありません</div>
         ) : (
           <ul>
             {sites.map((entry) => (
-              <li key={entry.site} data-agent-site={entry.site}>
+              <li
+                key={entry.site}
+                data-agent-site={entry.site}
+                className={armed === entry.site ? 'armed' : undefined}
+              >
                 <span className="agent-site-name">{entry.site}</span>
-                <span className="dim">{entry.cookies}</span>
-                <button
-                  type="button"
-                  className="mini"
-                  title="このサイトの cookie とストレージを消す（ログアウト）"
-                  onClick={() => void window.nemo.agentClearSite(entry.site).then(setSites)}
-                >
-                  ×
-                </button>
+                {armed === entry.site ? (
+                  <button
+                    type="button"
+                    className="agent-site-confirm"
+                    onClick={() => {
+                      setArmed(null)
+                      void window.nemo.agentClearSite(entry.site).then(setSites)
+                    }}
+                  >
+                    消す
+                  </button>
+                ) : (
+                  <>
+                    <span className="agent-site-count">{entry.cookies}</span>
+                    <button
+                      type="button"
+                      className="agent-site-x"
+                      title="このサイトの cookie とストレージを消す（ログアウト）"
+                      onClick={() => setArmed(entry.site)}
+                    >
+                      ×
+                    </button>
+                  </>
+                )}
               </li>
             ))}
           </ul>

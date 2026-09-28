@@ -2322,14 +2322,15 @@ export class NemoWindow {
       // シークレットは共有に参加しない（`liveFolder` と同じくデータごと渡さない。
       // renderer はウィンドウローカルのタブ一覧へフォールバックする）
       ephemeralTabs: shares ? getEphemeralTabs() : null,
-      // 通常窓のサイドバーに「Claude が操作中」の入口を出す（背面にあるエージェント窓へ行く導線）
+      // 通常窓のサイドバーに「別ウィンドウで作業中」の入口を出す（背面にあるエージェント窓へ行く導線）
       agentWindows: shares
         ? [...windowsById.values()]
             .filter((win) => !win.isDestroyed && win.isAgent && win.agent)
             .map((win) => ({
               windowId: win.id,
               label: win.agent?.label ?? '',
-              mode: win.agent?.mode ?? 'claude'
+              mode: win.agent?.mode ?? 'claude',
+              busy: win.agent?.busy ?? false
             }))
         : []
     }

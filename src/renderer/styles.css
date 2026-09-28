@@ -2580,6 +2580,10 @@ body[data-view='toolbar'] {
   font-size: 11px;
 }
 
+.agent-status-text .agent-wait {
+  margin-left: 5px;
+}
+
 .agent-end {
   flex: none;
   padding: 2px 7px;
@@ -2699,13 +2703,65 @@ body[data-view='toolbar'] {
   background: rgba(217, 119, 87, 0.2);
 }
 
+.agent-entry.idle {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.agent-entry.idle:hover {
+  background: rgba(255, 255, 255, 0.09);
+}
+
 .agent-entry.user-turn {
   background: rgba(210, 153, 34, 0.22);
   box-shadow: inset 0 0 0 1px rgba(210, 153, 34, 0.55);
 }
 
-.agent-entry.user-turn .agent-dot {
-  background: var(--nemo-warn);
+/* 状態の文言は削らない。狭いときはプロジェクト名（.agent-label）の側を … にする */
+.agent-entry-text {
+  flex: none;
+  white-space: nowrap;
+}
+
+.agent-entry .agent-label {
+  min-width: 0;
+}
+
+/* 左の放射マーク: 作業中はオレンジで回る / 待機中は灰 / 操作待ちは黄 */
+.agent-spark {
+  flex: none;
+  color: #d97757;
+}
+
+.agent-entry.busy .agent-spark {
+  animation: agent-spin 3s linear infinite;
+}
+
+.agent-entry.idle .agent-spark {
+  color: #6b6b76;
+}
+
+.agent-entry.user-turn .agent-spark {
+  color: var(--nemo-warn);
+}
+
+@keyframes agent-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 右端の ↗: ふだんは薄く、ホバーで濃くして右上へ少し動かす（押すと別のウィンドウへ行く） */
+.agent-jump {
+  flex: none;
+  opacity: 0.55;
+  transition:
+    opacity 0.15s,
+    transform 0.15s;
+}
+
+.agent-entry:hover .agent-jump {
+  opacity: 1;
+  transform: translate(1px, -1px);
 }
 
 /* ------------------------------------------------------------------ *
@@ -2827,6 +2883,10 @@ body[data-view='toolbar'] {
   .peek-loading-dots i {
     animation: none;
     opacity: 0.6;
+  }
+
+  .agent-entry.busy .agent-spark {
+    animation: none;
   }
 }
 

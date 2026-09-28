@@ -552,7 +552,7 @@ export interface SharedState {
    * Claude Code が操作しているエージェント窓（通常窓のサイドバーの入口に出す）。
    * エージェント窓・シークレット窓には空で渡す。
    */
-  agentWindows: { windowId: number; label: string; mode: 'claude' | 'user' }[]
+  agentWindows: { windowId: number; label: string; mode: 'claude' | 'user'; busy: boolean }[]
 }
 
 /**

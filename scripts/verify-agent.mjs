@@ -9,12 +9,13 @@
  *
  * 見るもの:
  *   1. initialize / tools/list がブリッジだけで返り、定義の正本（agent-tools.js）と一致する
- *   2. 最初のツール呼び出しでエージェント窓が開き、**セッション保存・履歴・拡張のタブモデルに入らない**
+ *   2. 最初のツール呼び出しでエージェント窓が開き、**セッション保存・履歴・拡張のタブモデルに入らない**。
+ *      窓の状態バーと通常窓の入口が、ツールの直後は作業中・止まると待機中になる
  *   3. 各ツール（navigate / screenshot / read_page / クリック / 入力 / キー / form_input / JS / console / network /
  *      ダイアログ / 離脱確認 / popup / file_upload / ダウンロード / タブの開閉）
  *   4. 安全の線: http(s) 以外の遷移を拒否（javascript: を含む）・クリップボードのキーを拒否・
  *      ユーザーが入力したパスワードが read_page / get_page_text に出ず javascript_tool が断られる
- *   5. 引き継ぎ: request_user_action の後は入力系が断られ、帯に「あなたの番です」が出る。resume で戻る
+ *   5. 引き継ぎ: request_user_action の後は入力系が断られ、帯に「操作待ち」・通常窓の入口に「別ウィンドウで操作待ち」が出る。resume で戻る
  *   6. 切断で窓が閉じる / Nemo の再起動をまたいでブリッジが繋ぎ直す / 設定 OFF で接続が切れて socket が消える
  *   7. 診断ログにページ由来の値が出ていない / 未処理の例外が無い
  *
@@ -479,8 +480,8 @@ try {
   )
   const band = await agentSidebar.ev("document.querySelector('.agent-band')?.innerText ?? ''")
   check(
-    '帯に「あなたの番です」と Nemo が確かめた origin・Claude の依頼文・「終わったらチャットで「done」」が出る',
-    band.includes('あなたの番です') &&
+    '帯に「操作待ち」と Nemo が確かめた origin・Claude の依頼文・「終わったらチャットで「done」」が出る',
+    band.includes('操作待ち') &&
       band.includes(origin) &&
       band.includes('ログインしてください') &&
       band.includes('終わったらチャットで「done」'),
@@ -488,7 +489,12 @@ try {
   )
   // 通常窓のサイドバーにも入口が出て、ユーザーの番は目立たせる
   await waitFor(ui, "document.querySelector('.agent-entry.user-turn') ? 'ok' : ''")
-  check('通常窓のサイドバーに「あなたの番です」の入口が出る', true)
+  const entryUser = await ui.ev("document.querySelector('.agent-entry')?.innerText ?? ''")
+  check(
+    '通常窓のサイドバーに「別ウィンドウで操作待ち」の入口が目立つ形で出る',
+    entryUser.includes('別ウィンドウで操作待ち'),
+    entryUser.replace(/\s+/g, ' ')
+  )
   const resumed = await bridge.call('resume')
   const clickAfter = await bridge.call('computer', { tabId, action: 'left_click', coordinate: [10, 10] })
   check('resume の後は入力できる', !resumed.isError && !clickAfter.isError, clickAfter.text.slice(0, 80))
@@ -559,6 +565,38 @@ try {
     '状態バー: ツールが止まると待機中に落ちる',
     idleText.includes('待機中'),
     idleText.replace(/\s+/g, ' ')
+  )
+
+  /* ---- 2. 通常窓の入口も状態バーと同じ作業中 / 待機中 ---- */
+  // 入口は main の共有状態経由（全窓へ配る）で、状態バーとは別の経路。作業中に上がって待機中に落ちるまでを見る
+  const entryState =
+    "(() => { const e = document.querySelector('.agent-entry'); return e ? e.dataset.agentPhase + '|' + e.innerText : '' })()"
+  const entryIdleBefore = await waitFor(
+    ui,
+    `(() => { const s = ${entryState}; return s.startsWith('idle|') ? s : '' })()`
+  )
+  await bridge.call('computer', { tabId, action: 'screenshot' })
+  const entryBusy = await waitFor(
+    ui,
+    `(() => { const s = ${entryState}; return s.startsWith('busy|') ? s : '' })()`,
+    {
+      timeoutMs: 2000,
+      interval: 50
+    }
+  )
+  check(
+    '通常窓の入口: ツールの直後は「別ウィンドウで作業中」',
+    entryIdleBefore.startsWith('idle|') && entryBusy.includes('別ウィンドウで作業中'),
+    `前: ${entryIdleBefore.replace(/\s+/g, ' ')} → ${entryBusy.replace(/\s+/g, ' ')}`
+  )
+  const entryIdle = await waitFor(
+    ui,
+    `(() => { const s = ${entryState}; return s.startsWith('idle|') ? s : '' })()`
+  )
+  check(
+    '通常窓の入口: ツールが止まると「別ウィンドウで待機中」に落ちる',
+    entryIdle.includes('別ウィンドウで待機中'),
+    entryIdle.replace(/\s+/g, ' ')
   )
 
   /* ---- 2. Claude in Nemo の cookie 等を全て削除（設定画面） ---- */

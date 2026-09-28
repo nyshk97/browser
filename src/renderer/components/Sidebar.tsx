@@ -255,26 +255,37 @@ export function Sidebar(): React.JSX.Element {
 
       {/*
         通常窓からエージェント窓（背面・デスクトップの Space にある）へ行く入口。
+        **この窓ではなく別のウィンドウの話**だと文言と ↗ で示す（「Claude が操作中」だけだと、
+        見ている窓を操作されているように読めた）。状態は Claude の窓の状態バーと同じ 3 つ。
         ユーザーの番の窓は目立たせる（Claude がログイン等を頼んでいる）
       */}
       {!agent && shared.agentWindows.length > 0 ? (
         <div className="agent-entries">
-          {shared.agentWindows.map((entry) => (
-            <button
-              key={entry.windowId}
-              type="button"
-              className={`agent-entry${entry.mode === 'user' ? ' user-turn' : ''}`}
-              data-agent-window={entry.windowId}
-              title="Claude のウィンドウを表示"
-              onClick={() => void window.nemo.agentShowWindow(entry.windowId)}
-            >
-              <span className="agent-dot" />
-              <span className="agent-entry-text">
-                {entry.mode === 'user' ? 'あなたの番です' : 'Claude が操作中'}
-              </span>
-              <span className="agent-label">{entry.label}</span>
-            </button>
-          ))}
+          {shared.agentWindows.map((entry) => {
+            const phase = entry.mode === 'user' ? 'user' : entry.busy ? 'busy' : 'idle'
+            return (
+              <button
+                key={entry.windowId}
+                type="button"
+                className={`agent-entry ${phase === 'user' ? 'user-turn' : phase}`}
+                data-agent-window={entry.windowId}
+                data-agent-phase={phase}
+                title={
+                  phase === 'user'
+                    ? `Claude があなたの操作を待っています（Claude — ${entry.label} のウィンドウを表示）`
+                    : `Claude のウィンドウ（Claude — ${entry.label}）を表示`
+                }
+                onClick={() => void window.nemo.agentShowWindow(entry.windowId)}
+              >
+                <AgentSpark />
+                <span className="agent-entry-text">
+                  別ウィンドウで{phase === 'user' ? <b>操作待ち</b> : phase === 'busy' ? '作業中' : '待機中'}
+                </span>
+                <span className="agent-label">{entry.label}</span>
+                <AgentJumpArrow />
+              </button>
+            )
+          })}
         </div>
       ) : null}
 
@@ -380,8 +391,47 @@ export function Sidebar(): React.JSX.Element {
   )
 }
 
+/** 通常窓の入口の左のマーク（放射）。作業中だけ回り、色は状態に合わせる（CSS）。 */
+function AgentSpark(): React.JSX.Element {
+  return (
+    <svg className="agent-spark" width="13" height="13" viewBox="0 0 13 13" aria-hidden="true">
+      <g fill="currentColor">
+        {[0, 30, 60, 90, 120, 150].map((angle) => (
+          <rect
+            key={angle}
+            x="5.9"
+            y="0.5"
+            width="1.2"
+            height="12"
+            rx="0.6"
+            transform={`rotate(${angle} 6.5 6.5)`}
+          />
+        ))}
+      </g>
+    </svg>
+  )
+}
+
 /**
- * エージェント窓の上端の状態バー（1 行）。Claude の作業中 / 待機中 / あなたの番と［終了］。
+ * 通常窓の入口の右端の ↗（押すと別のウィンドウへ行く）。
+ * 「外部リンク」によくある箱の角は**付けない**。この大きさだと角が左下向きの矢印に見える（モックで踏んだ）。
+ */
+function AgentJumpArrow(): React.JSX.Element {
+  return (
+    <svg className="agent-jump" width="11" height="11" viewBox="0 0 11 11" fill="none" aria-hidden="true">
+      <path
+        d="M3.5 2h5.5v5.5M9 2 2 9"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
+/**
+ * エージェント窓の上端の状態バー（1 行）。Claude の作業中 / 待機中 / 操作待ち（あなたの番）と［終了］。
  * あなたの番のときだけ、下に依頼のカード（Nemo が確かめたサイト・Claude の依頼文・再開の案内）を開く。
  *
  * **再開の手段はチャットの「done」だけ**。Claude は依頼の後ターンを終えて止まっていて、Nemo から Claude Code を起こす手段は無い。
@@ -403,7 +453,9 @@ function AgentBand({ agent }: { agent: AgentWindowState }): React.JSX.Element {
         <span className={`agent-dot ${phase}`} />
         <span className="agent-status-text">
           {userTurn ? (
-            <b>あなたの番です</b>
+            <>
+              Claude<b className="agent-wait">操作待ち</b>
+            </>
           ) : (
             <>
               Claude<small>{agent.busy ? (agent.activity ?? '作業中') : '待機中'}</small>

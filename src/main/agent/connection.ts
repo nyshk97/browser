@@ -433,8 +433,13 @@ export class AgentConnection {
       // 読めない URL は引き継いだ時点の値のまま
     }
     const mode = first ? 'user' : 'claude'
-    // 通常窓の入口（共有状態）が見るのは名前と番だけ。作業中 / 待機中の切り替えでは全窓へ配らない
-    const sharedChanged = win.agent?.mode !== mode || win.agent?.label !== this.label
+    // 通常窓の入口（共有状態）が見るのは名前・番・作業中か。今の動作（activity）の変化では全窓へ配らない
+    // （作業中 / 待機中の切り替えは AGENT_IDLE_AFTER_MS で間引かれていて、一続きの作業で 2 回）。
+    // ユーザーの番の間は入口が busy を使わないので配らない（Claude の番に戻るときは mode の変化で配る）
+    const sharedChanged =
+      win.agent?.mode !== mode ||
+      win.agent?.label !== this.label ||
+      (mode === 'claude' && win.agent?.busy !== this.busy)
     win.agent = {
       label: this.label,
       mode,

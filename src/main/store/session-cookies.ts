@@ -179,6 +179,12 @@ function removeFile(): void {
   }
 }
 
+/** そのプロファイルの写しを空にして保存し直す（Claude in Nemo の全消去）。 */
+export function forgetSessionCookies(label: ProfileLabel): void {
+  mirrors.get(label)?.clear()
+  scheduleSave()
+}
+
 /** 終了時（`before-quit`）。溜まっている変更を同期で書き切る。 */
 export function closeSessionCookies(): void {
   if (timer) clearTimeout(timer)

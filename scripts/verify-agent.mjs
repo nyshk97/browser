@@ -561,57 +561,59 @@ try {
     idleText.replace(/\s+/g, ' ')
   )
 
-  /* ---- 2. cookie が残っているサイトの一覧と消去 ---- */
-  const sites = await agentSidebar.ev('window.nemo.agentSites().then(JSON.stringify)').then(JSON.parse)
+  /* ---- 2. Claude in Nemo の cookie 等を全て削除（設定画面） ---- */
+  const readCookie = () => bridge.call('javascript_tool', { tabId, text: 'document.cookie' })
+  const cookieBefore = await readCookie()
+  check('（前提）Claude のタブに cookie がある', cookieBefore.text.includes('agent_sid'), cookieBefore.text)
   check(
-    'cookie が残っているサイトに 127.0.0.1 が出る',
-    sites.some((entry) => entry.site === '127.0.0.1' && entry.cookies >= 1),
-    JSON.stringify(sites)
+    'Claude のウィンドウのサイドバーに cookie のサイト一覧が無い',
+    (await agentSidebar.ev("document.querySelector('.agent-sites') ? 'exists' : 'none'")) === 'none'
   )
-  // サイドバー最下部の一覧を描画から操作する（× → 同じ場所の「消す」の 2 段）
-  await agentSidebar.ev("document.querySelector('.agent-sites-toggle').click(), 'ok'")
-  await waitFor(agentSidebar, "document.querySelector('[data-agent-site=\"127.0.0.1\"]') ? 'ok' : ''")
-  const toggleText = await agentSidebar.ev("document.querySelector('.agent-sites-toggle')?.innerText ?? ''")
+  const fromAgent = await agentSidebar.ev(
+    "window.nemo.agentClearData().then(() => 'allowed', () => 'refused')"
+  )
+  check('Claude のウィンドウからは消せない（設定画面からだけ）', fromAgent === 'refused')
+  // 設定画面は通常窓のオーバーレイ（agent=1 の付かない view=overlay）。描画からボタンを押す
+  await ui.ev("window.nemo.setOverlay('settings').then(() => 'ok')")
+  let overlayTarget = null
+  for (let i = 0; i < 50 && !overlayTarget; i += 1) {
+    overlayTarget = (await listTargets(app.cdp)).find(
+      (t) => t.url.includes('view=overlay') && !t.url.includes('agent=1')
+    )
+    if (!overlayTarget) await sleep(200)
+  }
+  const settingsView = await connect(overlayTarget.webSocketDebuggerUrl)
+  const clearButton = "document.querySelector('.agent-clear-data button')"
+  const clearLabel = await waitFor(settingsView, `${clearButton}?.innerText ?? ''`)
   check(
-    '一覧の見出しは「cookie が残っているサイト（件数）」',
-    /cookie が残っているサイト（\d+）/.test(toggleText),
-    toggleText
+    '設定画面に「Claude in Nemo の cookie 等を全て削除」がある',
+    clearLabel === 'Claude in Nemo の cookie 等を全て削除',
+    clearLabel
   )
-  // 行にはサイト名だけを出す（cookie の件数は出さない。ボタンの文字は除いて見る）
-  const rowText = await agentSidebar.ev(
-    "[...document.querySelector('[data-agent-site=\"127.0.0.1\"]').childNodes].filter((n) => n.nodeName !== 'BUTTON').map((n) => n.textContent).join('')"
+  await settingsView.ev(`${clearButton}.click(), 'ok'`)
+  const armedLabel = await waitFor(
+    settingsView,
+    `${clearButton}?.dataset.armed === 'true' ? ${clearButton}.innerText : ''`
   )
+  const cookieArmed = await readCookie()
   check(
-    'サイトの行はサイト名だけ（cookie の件数を出さない）',
-    rowText === '127.0.0.1',
-    JSON.stringify(rowText)
+    '1 回目の押下では消えず、「削除する」の確認に変わる',
+    armedLabel.startsWith('削除する') && cookieArmed.text.includes('agent_sid'),
+    `${armedLabel} / ${cookieArmed.text}`
   )
-  await agentSidebar.ev(
-    "document.querySelector('[data-agent-site=\"127.0.0.1\"] .agent-site-x').click(), 'ok'"
+  await settingsView.ev(`${clearButton}.click(), 'ok'`)
+  const clearedMessage = await waitFor(
+    settingsView,
+    "document.querySelector('.agent-clear-message')?.innerText ?? ''"
   )
-  const armedText = await waitFor(
-    agentSidebar,
-    "document.querySelector('[data-agent-site=\"127.0.0.1\"] .agent-site-confirm')?.innerText ?? ''"
-  )
-  const siteRemains = (await agentSidebar.ev('window.nemo.agentSites().then(JSON.stringify)')).includes(
-    '127.0.0.1'
-  )
-  check('× を押しただけでは消えず、「消す」の確認に変わる', armedText === '消す' && siteRemains, armedText)
-  await agentSidebar.ev(
-    "document.querySelector('[data-agent-site=\"127.0.0.1\"] .agent-site-confirm').click(), 'ok'"
-  )
-  await waitFor(agentSidebar, "document.querySelector('[data-agent-site=\"127.0.0.1\"]') ? '' : 'ok'")
-  const afterClear = await agentSidebar.ev('window.nemo.agentSites().then(JSON.stringify)').then(JSON.parse)
-  const cookieAfter = await bridge.call('javascript_tool', { tabId, text: 'document.cookie' })
+  const cookieAfter = await readCookie()
   check(
-    '「消す」を押すと、そのサイトの行と cookie が無くなる',
-    !afterClear.some((entry) => entry.site === '127.0.0.1') &&
-      !cookieAfter.isError &&
-      !cookieAfter.text.includes('agent_sid'),
-    `${JSON.stringify(afterClear)} / ${cookieAfter.text}`
+    'もう一度押すと消え、Claude のタブの cookie が無くなる',
+    clearedMessage === '削除しました。' && !cookieAfter.isError && !cookieAfter.text.includes('agent_sid'),
+    `${clearedMessage} / ${cookieAfter.text}`
   )
-  const normalSites = await ui.ev('window.nemo.agentSites().then(() => "allowed", () => "refused")')
-  check('サイトの一覧は通常窓からは呼べない', normalSites === 'refused')
+  settingsView.close()
+  await ui.ev("window.nemo.setOverlay(null).then(() => 'ok')")
 
   /* ---- 2. 共有状態に入らない ---- */
   const suggestions = await ui.ev(

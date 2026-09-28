@@ -228,7 +228,6 @@ export const OWNERS = new Map([
   ['src/main/agent/page.ts', ['agent']],
   ['src/main/agent/server.ts', ['agent']],
   ['src/main/agent/tools.ts', ['agent']],
-  ['src/main/agent/sites.ts', ['agent']],
   ['src/shared/agent-sensitive-pages.js', ['agent']],
   ['scripts/agent-sensitive-pages.test.mjs', ['agent']],
   ['scripts/agent-log.test.mjs', ['agent']],

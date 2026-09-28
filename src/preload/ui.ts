@@ -146,9 +146,7 @@ const api: NemoUiApi = {
   agentEnd: () => ipcRenderer.invoke('nemo:agent-end') as Promise<void>,
   agentShowWindow: (windowId) => ipcRenderer.invoke('nemo:agent-show-window', windowId) as Promise<void>,
   agentOpenMini: () => ipcRenderer.invoke('nemo:agent-open-mini') as Promise<boolean>,
-  agentSites: () => ipcRenderer.invoke('nemo:agent-sites') as Promise<{ site: string; cookies: number }[]>,
-  agentClearSite: (site) =>
-    ipcRenderer.invoke('nemo:agent-clear-site', site) as Promise<{ site: string; cookies: number }[]>,
+  agentClearData: () => ipcRenderer.invoke('nemo:agent-clear-data') as Promise<number>,
 
   updateSettings: (patch) => ipcRenderer.invoke('nemo:update-settings', patch) as Promise<NemoSettings>,
 

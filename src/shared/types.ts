@@ -1192,10 +1192,8 @@ export interface NemoUiApi {
   agentShowWindow(windowId?: number): Promise<void>
   /** 小窓の中身を Claude のウィンドウで開き直し、小窓を閉じる（開けたら true）。 */
   agentOpenMini(): Promise<boolean>
-  /** エージェント用プロファイルに cookie が残っているサイト（エージェント窓からだけ）。 */
-  agentSites(): Promise<{ site: string; cookies: number }[]>
-  /** そのサイトの cookie・ストレージを消す（エージェント窓からだけ）。 */
-  agentClearSite(site: string): Promise<{ site: string; cookies: number }[]>
+  /** Claude in Nemo のプロファイルの cookie・サイトデータを全て消す（設定画面から。消したあとの cookie の件数を返す）。 */
+  agentClearData(): Promise<number>
 
   /* 設定 */
   updateSettings(patch: Partial<NemoSettings>): Promise<NemoSettings>

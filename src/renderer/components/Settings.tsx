@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { HTTP_AUTH_LIMITS } from '../../shared/http-auth-rules.js'
 import { useSharedState } from '../useNemo.js'
 import { Slots } from './Slots.js'
@@ -135,7 +135,62 @@ function AgentToggle(): React.JSX.Element {
         Claude が使うのは専用のウィンドウとログイン（普段のウィンドウ・ログイン・拡張には触れません）。 登録は{' '}
         <code>claude mcp add-json --scope user nemo</code>（docs/operations.md）。
       </p>
+      <AgentClearData />
     </>
+  )
+}
+
+/**
+ * Claude in Nemo のプロファイルの cookie・サイトデータを全て消す。元に戻せないので 2 段にする
+ * （1 回目で同じ場所が「削除する」に変わり、もう一度押すと消す。Esc・ほかの場所のクリックで戻る）。
+ */
+function AgentClearData(): React.JSX.Element {
+  const [armed, setArmed] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (!armed) return
+    const onPointerDown = (event: MouseEvent): void => {
+      if (event.target !== buttonRef.current) setArmed(false)
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setArmed(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [armed])
+  return (
+    <div className="set-row agent-clear-data">
+      <button
+        ref={buttonRef}
+        type="button"
+        className={`btn${armed ? ' danger' : ''}`}
+        data-armed={String(armed)}
+        onClick={() => {
+          if (!armed) {
+            setMessage(null)
+            setArmed(true)
+            return
+          }
+          setArmed(false)
+          void window.nemo.agentClearData().then(
+            () => setMessage('削除しました。'),
+            () => setMessage('削除できませんでした。')
+          )
+        }}
+      >
+        {armed ? '削除する（元に戻せません）' : 'Claude in Nemo の cookie 等を全て削除'}
+      </button>
+      <p className="dim">
+        Claude が操作するウィンドウの cookie
+        とサイトデータ（ログインを含む）を消します。普段のウィンドウには影響しません。
+      </p>
+      {message ? <p className="dim agent-clear-message">{message}</p> : null}
+    </div>
   )
 }
 

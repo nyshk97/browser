@@ -1,7 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { app, dialog, type WebContents } from 'electron'
+import { app, dialog, session, type WebContents } from 'electron'
 import { log } from '../log.js'
+import { AGENT_PARTITION } from '../paths.js'
+import { forgetSessionCookies } from '../store/session-cookies.js'
 import {
   clearAgentPresentationDeferral,
   createTab,
@@ -86,6 +88,27 @@ export function startAgent(): void {
 
 export function stopAgent(): void {
   stopAgentServer()
+}
+
+/**
+ * Claude in Nemo のプロファイル（`persist:nemo-agent`）の cookie・サイトデータを全て消す（設定画面のボタン）。
+ *
+ * 引き継ぎでユーザーが入れたログインは、専用プロファイルでも残り続ける（再起動もまたぐ）。
+ * 何か変なことが起きたときに、Claude が使えるログインをまとめて無くす逃げ道。普段のプロファイルには触れない。
+ * 以前はサイト単位の一覧と消去を置いていたが、広告の第三者 cookie で埋まって判断に使えなかったので全消去だけにした。
+ * 開いている Claude のタブは表示が残るが、次の通信からはログアウトした状態になる。
+ * @returns 消したあとに残っている cookie の件数（0 のはず。検証用）
+ */
+export async function clearAgentData(): Promise<number> {
+  const agentSession = session.fromPartition(AGENT_PARTITION)
+  // dataTypes を省くと cookie・localStorage・IndexedDB・キャッシュ・Service Worker 等の全種
+  await agentSession.clearData()
+  await agentSession.clearAuthCache()
+  // 再起動をまたいで戻すための控え（session-cookies.json）からも落とす
+  forgetSessionCookies('agent')
+  const left = (await agentSession.cookies.get({})).length
+  log('agent.data_cleared', { left })
+  return left
 }
 
 /** エージェント窓の「終了」ボタン（ユーザーが閉じたのと同じ扱い）。 */

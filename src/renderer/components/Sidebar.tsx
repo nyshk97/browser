@@ -375,7 +375,6 @@ export function Sidebar(): React.JSX.Element {
         })}
       </div>
 
-      {agent ? <AgentSites refreshKey={agent.mode} /> : null}
       <Footer version={shared.version} update={shared.update} />
     </div>
   )
@@ -435,85 +434,6 @@ function AgentBand({ agent }: { agent: AgentWindowState }): React.JSX.Element {
           ) : null}
           <div className="agent-ask-hint dim">終わったらチャットで「done」</div>
         </div>
-      ) : null}
-    </div>
-  )
-}
-
-/**
- * エージェント用プロファイルに cookie が残っているサイトと、サイト単位の消去（サイドバーの最下部）。
- * 専用プロファイルでもログインは溜まる（Google にログインすれば Gmail にも届く）ので、見えるようにしておく。
- * cookie があってもログインしているとは限らない（開いただけで付く cookie もある）ので、「ログイン」とは書かない。
- *
- * 消すのは 2 段: 行にカーソルを乗せると × → 押すと同じ場所に「消す」（`ClearSeparator` と同じく、押した場所で確認する）。
- */
-function AgentSites({ refreshKey }: { refreshKey: string }): React.JSX.Element {
-  const [open, setOpen] = useState(false)
-  const [sites, setSites] = useState<{ site: string; cookies: number }[] | null>(null)
-  const [armed, setArmed] = useState<string | null>(null)
-  // 件数は畳んでいても出す。開いたとき・番が変わったとき（ログインの後）に取り直す
-  useEffect(() => {
-    void window.nemo.agentSites().then(setSites)
-  }, [open, refreshKey])
-  useEffect(() => {
-    if (!armed) return
-    const onPointerDown = (event: MouseEvent): void => {
-      const row = (event.target as HTMLElement).closest?.('[data-agent-site]')
-      if (row?.getAttribute('data-agent-site') !== armed) setArmed(null)
-    }
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setArmed(null)
-    }
-    document.addEventListener('mousedown', onPointerDown)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown)
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [armed])
-  return (
-    <div className="agent-sites">
-      <button type="button" className="agent-sites-toggle" onClick={() => setOpen((value) => !value)}>
-        {open ? '▾' : '▸'} cookie が残っているサイト{sites ? `（${sites.length}）` : ''}
-      </button>
-      {open ? (
-        sites === null ? null : sites.length === 0 ? (
-          <div className="dim agent-sites-empty">ありません</div>
-        ) : (
-          <ul>
-            {sites.map((entry) => (
-              <li
-                key={entry.site}
-                data-agent-site={entry.site}
-                className={armed === entry.site ? 'armed' : undefined}
-              >
-                <span className="agent-site-name">{entry.site}</span>
-                {armed === entry.site ? (
-                  <button
-                    type="button"
-                    className="agent-site-confirm"
-                    onClick={() => {
-                      setArmed(null)
-                      void window.nemo.agentClearSite(entry.site).then(setSites)
-                    }}
-                  >
-                    消す
-                  </button>
-                ) : (
-                  // cookie の件数は出さない（多くてもログインしているとは限らず、見ても判断に使えない）
-                  <button
-                    type="button"
-                    className="agent-site-x"
-                    title="このサイトの cookie とストレージを消す（ログアウト）"
-                    onClick={() => setArmed(entry.site)}
-                  >
-                    ×
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        )
       ) : null}
     </div>
   )

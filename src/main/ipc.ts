@@ -131,8 +131,7 @@ import { matchHttpAuthRules } from './http-auth-matcher.js'
 import { getTimings } from './timings.js'
 import { HTTP_AUTH_LIMITS, importMultipass, validateHttpAuthPattern } from '../shared/http-auth-rules.js'
 import { windowsById } from './registry.js'
-import { endFromUi, openUrlInAgentWindow, showAgentWindow } from './agent/index.js'
-import { clearAgentSite, listAgentSites } from './agent/sites.js'
+import { clearAgentData, endFromUi, openUrlInAgentWindow, showAgentWindow } from './agent/index.js'
 import type {
   AppStatus,
   AuthVaultFailure,
@@ -876,16 +875,11 @@ export function registerIpcHandlers(): void {
     const win = requireWindow(event)
     if (win.isAgent) endFromUi(win)
   })
-  ipcMain.handle('nemo:agent-sites', (event) => {
+  // 設定画面（通常窓のオーバーレイ）から。Claude 自身の窓からは消させない（MCP からは届かない口だが、窓の UI からも塞ぐ）
+  ipcMain.handle('nemo:agent-clear-data', (event) => {
     const win = requireWindow(event)
-    if (!win.isAgent) throw new Error('エージェント窓からだけ呼べる')
-    return listAgentSites()
-  })
-  ipcMain.handle('nemo:agent-clear-site', async (event, site: unknown) => {
-    const win = requireWindow(event)
-    if (!win.isAgent) throw new Error('エージェント窓からだけ呼べる')
-    await clearAgentSite(requireString(site, 'site'))
-    return listAgentSites()
+    if (win.isAgent) throw new Error('設定画面からだけ呼べる')
+    return clearAgentData()
   })
   /** 小窓の中身を Claude のウィンドウで開き直して小窓を閉じる（マジックリンクの受け渡し。ユーザー操作だけ）。 */
   ipcMain.handle('nemo:agent-open-mini', (event) => {

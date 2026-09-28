@@ -2657,91 +2657,19 @@ body[data-view='toolbar'] {
   word-break: break-word;
 }
 
-/* サイドバーの最下部（フッターの上）: cookie が残っているサイト */
-.agent-sites {
-  flex: none;
-  max-height: 40%;
-  overflow-y: auto;
-  padding: 8px 12px 6px;
-  border-top: 1px solid var(--nemo-border);
-  font-size: 11px;
+/* 設定画面: Claude in Nemo の cookie 等の全削除（ボタンと説明を縦に積む） */
+.set-row.agent-clear-data {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
 }
 
-.agent-sites-toggle {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--nemo-ink-dim);
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
+.set-row.agent-clear-data .btn {
+  margin-top: 0;
 }
 
-.agent-sites-toggle:hover {
-  color: var(--nemo-ink);
-}
-
-.agent-sites-empty {
-  padding: 2px 4px;
-}
-
-.agent-sites ul {
-  margin: 4px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.agent-sites li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 24px;
-  padding: 0 2px 0 4px;
-  border-radius: 5px;
-}
-
-.agent-sites li:hover {
-  background: var(--nemo-hover);
-}
-
-.agent-site-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-}
-
-.agent-site-x {
-  width: 22px;
-  height: 22px;
-  border: 0;
-  border-radius: 5px;
-  background: none;
-  color: var(--nemo-ink-dim);
-  font-size: 13px;
-  cursor: pointer;
-  visibility: hidden;
-}
-
-.agent-sites li:hover .agent-site-x {
-  visibility: visible;
-}
-
-.agent-site-x:hover {
-  background: var(--nemo-surface-hi);
-  color: var(--nemo-ink);
-}
-
-.agent-site-confirm {
-  padding: 1px 8px;
-  border: 0;
-  border-radius: 5px;
-  background: rgba(255, 107, 107, 0.16);
-  color: var(--nemo-danger);
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
+.set-row.agent-clear-data p {
+  margin: 0;
 }
 
 /* 通常窓のサイドバーの入口（エージェント窓へ行く） */

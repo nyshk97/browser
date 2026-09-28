@@ -341,7 +341,9 @@ try {
       'GitHub の PR',
       'Basic 認証',
       'Basic 認証の引き継ぎ',
+      'フォーム自動入力',
       'ブックマークの引き継ぎ',
+      'Claude Code からの操作',
       'データ'
     ]
     check(

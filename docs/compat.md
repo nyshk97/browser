@@ -14,7 +14,6 @@ Nemo は Electron と `electron-chrome-extensions` の組み合わせが壊れ�
 | React | 19.2.8 | |
 | `better-sqlite3` | **13.0.3** | prebuild が Node-API なので **Electron 向けの rebuild が不要**（下記） |
 | `electron-builder` | 26.15.3 | fuses の書き換えも任せる |
-| Bitwarden 拡張 | **2026.8.0** | `bitwarden/clients` の `dist-chrome-2026.8.0.zip` |
 | Keepa 拡張 | **5.64** | Chrome Web Store の CRX（`chrome-web-store` ソース）。Amazon 商品ページで価格推移グラフの iframe（`keepa.com/keepaBox.html`）が描画されるところまで確認（2026-08-29） |
 | GraphQL Network Inspector 拡張 | **2.26.1** | Chrome Web Store の CRX。DevTools の「GraphQL Network」パネルに HTTP 経由の GraphQL（Query / Mutation）が並ぶところまで確認（2026-08-29）。**WebSocket（Subscriptions）タブは常に空**（`chrome.debugger` が Nemo のスタブなので） |
 
@@ -29,10 +28,10 @@ Phase 0 では **41 系の最新（41.10.6）を採用**し、42 以降には上
 Electron を上げる PR では次を必ず通す（Phase 1-10 / Phase 2-6）:
 
 1. CI 必須の拡張互換 smoke test（資格情報なし・決定的）
-2. Bitwarden での最終確認（保護 workflow）
+2. workflow `自走検証（Electron・依存の更新）`（verify-all）と、実機での kypr の確認（Touch ID の解除・自動入力・コピー）
 3. 通ったらこの表を更新する。**落ちたら Electron は据え置く**
 
-## 検証済みの動作（Electron 41.10.6 + ece 4.9.0 + Bitwarden 2026.8.0）
+## 検証済みの動作（Electron 41.10.6 + ece 4.9.0。当時は Bitwarden 2026.8.0 で確認。Bitwarden は 2026-09-28 に外した）
 
 - 拡張の読み込み（lock された unpacked artifact に `manifest.key` を注入した状態）
 - MV3 service worker の起動
@@ -82,8 +81,10 @@ isUVPAA() が true になった時点でシムは自動的に素通しになる�
 プロファイルで `https://example.com` を開き、CDP から
 `navigator.credentials.get({ publicKey: { challenge: new Uint8Array(32), rpId: 'example.com', timeout: 8000 } })`
 を isolated world（シムが見えない）で撃って 12 秒後も pending かを見れば再確認できる。
-Bitwarden 拡張のパスキー（`registerContentScripts` の world MAIN で page script を注入）は
-この件と無関係に動く。
+**Bitwarden 拡張は外した（2026-09-28）ので、いまの Nemo にはパスキーで答えられるものが無い**
+（シムが即座に NotAllowedError を返し、多くのサイトはパスワードでのログインに落ちる）。
+パスキーは kypr の次の段階で Nemo に入れる。それまでパスキーしか登録していないアカウントには Nemo から入れない。
+拡張のパスキー（`registerContentScripts` の world MAIN で page script を注入する形）はこの件と無関係に動く。
 
 ## Phase 1 で分かった癖
 
@@ -128,7 +129,7 @@ macOS が起動時に **SIGKILL する（出力も残らない）**。
 ### `chrome.runtime.onInstalled` が発火しない
 
 自作のテスト拡張で確認した。初回セットアップを `onInstalled` に置いている拡張は
-その処理が走らない。Bitwarden は動いているので実害は出ていないが、既知の欠落として記録する。
+その処理が走らない。当時使っていた Bitwarden（2026-09-28 に外した）では実害は出ていなかったが、既知の欠落として記録する。
 
 ### 権限要求は「アクティブなタブから」でないとダイアログまで届かない
 
@@ -213,4 +214,4 @@ Web Store の CRX 取得 URL は**常に最新版**を返す（版の指定は�
 - 両拡張ライブラリの preload script が成果物に含まれることを検査する → `mise run package` が自動で見る
 - `mise run verify:ext`（CI 必須・資格情報なし）を通す
 - `mise run verify:packaged` でパッケージ成果物の起動確認をする
-- Bitwarden での最終確認（保護 workflow / 実機）
+- workflow `自走検証（Electron・依存の更新）` と、実機での kypr の確認

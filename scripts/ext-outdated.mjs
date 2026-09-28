@@ -109,7 +109,7 @@ if (asJson) {
     if (result.outdated) {
       info(`${result.name}: ${result.current} → ${result.latest} が出ている`)
       info(`  更新するなら: mise run ext:update ${result.latest}`)
-      info('  更新後に mise run verify:ext と Bitwarden の実機確認を通す。戻すなら mise run ext:rollback')
+      info('  更新後に mise run verify:ext と実機での確認を通す。戻すなら mise run ext:rollback')
     } else {
       info(`${result.name}: ${result.current}（最新）`)
     }

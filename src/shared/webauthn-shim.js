@@ -44,7 +44,7 @@
  *   ようにしても isUVPAA() は false のままなので、そのときは hybrid を UI_ONLY から外す
  *   別のゲートが要る（今は入れていない）
  * - **isUVPAA() は preload の時点（ページ・拡張のスクリプトより前）で native を捕まえて使う**。
- *   Bitwarden の passkey 用 page script（`fido2-page-script.js`、MAIN world）は native が
+ *   パスキーを扱う拡張の page script（例: Bitwarden の `fido2-page-script.js`、MAIN world。Bitwarden は 2026-09-28 に外した）は native が
  *   false だと `PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable` を
  *   **true に差し替える**ので、呼び出し時に読むと Bitwarden 注入後は必ず素通しになり、
  *   Bitwarden が保管庫に無い・キャンセル等で native へ fallback したときにまた宙吊りになる。

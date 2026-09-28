@@ -22,6 +22,8 @@ export default tseslint.config(
       '.ext-cache/**',
       'node_modules/**',
       'test-pages/**',
+      // kypr からコピーしたコード（kypr 側で lint している。手で直さない）
+      'src/vendor/**',
       '*.tsbuildinfo'
     ]
   },

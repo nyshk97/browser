@@ -24,7 +24,6 @@ mise run verify:ext         # 拡張互換 smoke（自作テスト拡張・資�
 mise run verify:ext-idle    # 上に service worker の idle 停止をまたぐ確認を足す（+2分ほど）
 mise run package            # パッケージして成果物を検査（fuses・ネイティブモジュール・notice）
 mise run verify:packaged    # パッケージした .app を起動して smoke test
-mise run verify:ext-update  # 版を上げ下げしても拡張の設定が残ることを実物で検証
 ```
 
 **ふだんの往復は `mise run verify:changed`、コミット前に 1 回だけ `mise run verify`**。
@@ -152,7 +151,8 @@ mise run verify:only split
 | **会議の小窓（Meet の通話コントロール）**・`meet-adapter.ts`・sleep の除外 | `mise run verify:only call restart` + 下の「会議の小窓（実機）」 |
 | **Live Folder（GitHub の PR）**・取得のバックオフ・トークン | `mise run verify:only live-folder restart` + 下の「Live Folder（GitHub の PR）」 |
 | **拡張アイコンの popup の位置**（ツールバーの View オフセット） | `mise run verify:ext` |
-| 拡張まわり・Electron のバージョン | `mise run verify:ext`（+ 実機で Bitwarden）。拡張の端末ごと ON/OFF・DevTools パネルへの `chrome.*` 補完（`chrome.debugger` / `webRequest` の tabId）もここ |
+| 拡張まわり・Electron のバージョン | `mise run verify:ext`（+ 実機で実物の拡張）。拡張の端末ごと ON/OFF・DevTools パネルへの `chrome.*` 補完（`chrome.debugger` / `webRequest` の tabId）もここ |
+| **kypr（パスワードマネージャー）**・解除 / Touch ID / ロック・同期・照合・入力（ポップアップ / ⌘⇧L / 欄の下の候補）・作成 / 編集 / ゴミ箱・コピー | `mise run verify:only kypr`（模擬サーバーと差し替えで 4 回起動する。68 件）+ 下の「kypr」 |
 | パッケージング・ネイティブ依存・fuses | `mise run package` → `mise run verify:packaged` |
 | 履歴 / アーカイブ・シークレット・設定画面 | `mise run verify`（`verify-phase2.mjs` が含まれる） |
 | **履歴 DB のスキーマ**（列追加・インデックス） | `mise run verify:db-migration` |
@@ -177,7 +177,7 @@ mise run verify:only split
   （`active: false` でアクティブタブが変わらないこと・View が表示されないこと・`windowId` の対応・`remove` での後始末）
 - 拡張から渡された URL がナビゲーション検証を通ること（`file:` は拒否 / 自分の拡張ページは許可）
 - **拡張のインライン UI（`web_accessible_resources` の iframe）がページ内で動くこと**
-  （`verify:ext`）。Bitwarden のオートフィル候補がこの経路。次の 5 つを**組で**見る:
+  （`verify:ext`）。パスワードマネージャー拡張のインライン候補などがこの経路。次の 5 つを**組で**見る:
   - 公開したページが iframe の中で走る（`load` ではなく **nonce の postMessage** で判定する。
     `load` はエラードキュメントでも発火するので証明にならない）
   - **公開していないページは Chromium に拒否される**（`net::ERR_BLOCKED_BY_CLIENT`）。
@@ -473,7 +473,7 @@ NEMO_VERIFY_SHOTS=<dir> mise run verify:only split   # 目視用の PNG を出�
 ### 人が見る分
 
 - タブ行を別のタブ行へドラッグして分割になるか（当たり判定が狭すぎないか）
-- 分割中に Bitwarden の自動入力が両ペインで効くか
+- 分割中に kypr の自動入力が両ペインで効くか
 - **キーを実際に押す**（⌘W・⌘数字・⌃Tab・⌘⌥↑↓・⌘F・⌘⇧N を分割中に）。
   自動検証はコマンドの口から撃っていて、**実キー入力からアクセラレータへの接続は通っていない**
 
@@ -705,7 +705,6 @@ pkill -f "$TMP"; pkill -f "scripts/dev.mjs"; pkill -f "MacOS/Electron"; rm -rf "
 ```bash
 mise run ext:fetch              # lock どおりに展開する
 mise run ext:verify             # ツリー hash / version / manifest.key / アーカイブ sha256 を照合する
-mise run verify:ext-update      # 版を上げ下げしても chrome.storage が残ることを実物で自動検証する（一時領域で完結）
 mise run ext:update 2026.7.0    # 別バージョンへ張り替える（こちらはリポジトリの lock を書き換える）
 mise run ext:rollback           # lock を git の状態に戻して再展開（要コミット済み。キャッシュから復元するのでオフラインでも戻せる）
 mise run ext:update 2026.8.0    # git を使わずに戻すならこちら
@@ -867,37 +866,31 @@ popup が開いて `chrome.*` が使える / オプションページを Nemo �
 
 ## Phase 0 受け入れテスト（人間の操作が要る分）
 
-### 実 Vault を入れるなら `mise run dev:nodebug` を使う
+### 実アカウントで拡張にログインするなら `mise run dev:nodebug` を使う
 
 `mise run dev` は remote debugging（CDP）を 9333 で開ける。
 **CDP に到達できるものは拡張の service worker で任意の JS を実行でき、
-アンロック済み Vault の中身に手が届く**（自走検証がまさにそれをやっている）。
+ログイン済みの拡張の中身に手が届く**（自走検証がまさにそれをやっている）。
 実アカウントでログインするときは `mise run dev:nodebug` で起動し、CDP を閉じておく。
 
 - `mise run verify` は使い捨てのデータディレクトリ（`/tmp/nemo-verify-*`）を毎回作って回すので、
-  実 Vault の入ったプロファイルには触らない。手で CDP つきの検証をするときは
-  `NEMO_USER_DATA_DIR=$(mktemp -d)` を付けて実 Vault のプロファイルから隔離する
-- 終わったら popup の Settings → Log out でログアウトする
+  実アカウントの入ったプロファイルには触らない。手で CDP つきの検証をするときは
+  `NEMO_USER_DATA_DIR=$(mktemp -d)` を付けて実アカウントのプロファイルから隔離する
 - dev 版のデータを消すなら `rm -rf ~/Library/Application\ Support/Nemo-dev`
   （常用版の `Nemo/` とは別のディレクトリなので、消しても常用環境には影響しない）
-- **Bitwarden の内部で何が止まっているかを見るなら `NEMO_EXT_CONSOLE=1 mise run dev:nodebug`**。
+- **拡張の内部で何が止まっているかを見るなら `NEMO_EXT_CONSOLE=1 mise run dev:nodebug`**。
   拡張の service worker / content script の console（warning / error）が診断ログに
   `extension.sw_console` / `extension.page_console` として残る（URL はオリジンまで伏せる。
-  本文にメール等が載りうるので常用版では出ない dev 用スイッチ）。CDP を開かずに実 Vault で使える。
+  本文にメール等が載りうるので常用版では出ない dev 用スイッチ）。CDP を開かずに実アカウントで使える。
   読むのは `~/Library/Application Support/Nemo-dev/logs/` の最新ファイル
 
-### Bitwarden の「popup では動くのに SW 側の表示が古い」を切り分ける
+### 拡張の「popup では動くのに SW 側の表示が古い」を切り分ける
 
 - まず SW の状態が古いと疑う（アイコン・インラインメニュー・バッジは SW が描く。popup は自分で storage を読む）。
   SW が idle 停止（30〜50 秒）→再起動で直るなら、他コンテキストの変更が SW に届いていない
 - 拡張の設定値の有無を `Local Extension Settings` の LevelDB で見るとき、**`.ldb` は snappy 圧縮なので
   `strings` に出ないことは「無い」の証明にならない**（`.log` だけ平文）。SW の `chrome.storage.local.get(null)` か
   popup の設定画面で見る
-- ログインなしで測れるもの: 使い捨てプロファイルに実 artifact を積み、SW に CDP で `chrome.runtime.onMessage` /
-  `onConnect` / `storage.onChanged` のフックを仕込む（`sender.tab` / `frameId` / `tabs.sendMessage(frameId)` /
-  拡張 iframe の読み込み / onChanged の経路）。ログアウト状態では Bitwarden 内部のゲート
-  （`Autofill monitoring disabled`）で止まるので、content script の挙動は `chrome.scripting.executeScript` で
-  overlay 版 bootstrap を手で注入し、`collectPageDetailsImmediately` を送ってから欄にフォーカスする
 - CDP を SW に繋いだままだと SW は idle 停止しない。停止をまたぐ検証は繋がずに `/json/list` から消えるのを待つ
 
 ### popup がおかしいとき
@@ -905,7 +898,7 @@ popup が開いて `chrome.*` が使える / オプションページを Nemo �
 拡張の popup はタブではないので ⌘⌥I の対象にならず、メニューから DevTools を開こうとすると
 blur で popup 自体が閉じる。`mise run dev:popup` で起動すると **popup の生成と同時に
 DevTools が開く**（`PopupView` は DevTools が開いていれば閉じない）。CDP は開かないので
-実 Vault のままで使える。
+実アカウントのままで使える。
 
 ```bash
 mise run dev:popup
@@ -917,23 +910,20 @@ mise run dev:popup
 
 ### 手順
 
+Bitwarden 拡張は外した（2026-09-28）。実物の拡張で人が見るのは次のとおり（パスワードの自動入力は下の「kypr」）。
+
 1. `mise run dev:nodebug` で Nemo を起動する（テストページのサーバも一緒に立つ）
-2. ツールバーの Bitwarden アイコンから popup を開く
-3. テスト用アカウントでログインし、Vault をアンロックする
-4. `http://127.0.0.1:8787/login.html?site=a` を開き、自動入力を試す
-   - ページ下部の「username: 入力あり(N文字) / password: …」表示で入力の有無が分かる
-5. `http://127.0.0.1:8787/iframe.html` で iframe 内のフォームに自動入力できるか見る
-6. `?site=a` と `?site=b` を別タブ・別ウィンドウで開き、**対象タブを取り違えないか**見る
-7. Nemo を再起動し、Vault のアンロック状態と拡張の設定が期待どおりか見る
-8. 数分放置して service worker が idle 停止した後、popup と自動入力が動くか見る
+2. 実物の拡張（Keepa 等）が対象のページで動くか見る
+3. Nemo を再起動し、拡張の設定が期待どおり残っているか見る
+4. 数分放置して service worker が idle 停止した後も動くか見る
    （`/json/list` に `service_worker` が出なくなったら停止している。ツールバーの `↺SW` で明示的に起こせる）
-9. `mise run ext:update <別バージョン>` → 再起動 → **ログインし直しを求められないこと** → 自動入力が動くか
+5. `mise run ext:update <別バージョン>` → 再起動 → 設定が残っているか
    → `mise run ext:update <元のバージョン>`（またはコミット済みなら `mise run ext:rollback`）で戻す
-10. ⌘⌥I で DevTools が開くか
+6. ⌘⌥I で DevTools が開くか
 
 ## Phase 1 で人が見る分
 
-自走検証でカバーできないもの（見た目・キー入力・実 Vault）だけ手で見る。
+自走検証でカバーできないもの（見た目・キー入力・実アカウント）だけ手で見る。
 
 1. **キーバインドが実際に届くか**（メニュー項目として登録しているので、メニューにも同じ表示が出る）
    - ⌘T コマンドバー / ⌘L アドレス編集 / ⌘S サイドバー開閉 / ⌘D ピン留め
@@ -964,8 +954,7 @@ mise run dev:popup
      **端に着いたらそのまま払い続けて戻れること**
    - ページを読んでいる最中の斜めスクロールで飛ばないこと
 5. **動画サイトの全画面**（ページからの全画面要求）
-6. **実 Vault の Bitwarden で自動入力が動くこと**（`mise run dev:nodebug` で起動する）
-7. **拡張を更新した後も実 Vault で自動入力が動くこと**
+6. **kypr で自動入力が動くこと**（下の「kypr」）
 
 ## Live Folder（GitHub の PR）
 
@@ -1294,6 +1283,49 @@ mise run verify:only session-cookies   # 同じ使い捨てプロファイルで
 人が見る分: 常用版で、ブラウザを閉じるとログアウトされるサイト（前回の Cloudflare）にログインしてから Nemo を再起動し、
 ログインしたままであること（実 Keychain の `safeStorage` を通るのはここだけ）。
 
+## kypr（パスワードマネージャー）
+
+自走検証（`mise run verify:only kypr` = `scripts/verify-kypr.mjs`）が**大半を見る**。
+**本物の kypr のサーバー・実 Keychain・実 Touch ID・実クリップボードには触らない**:
+`NEMO_KYPR_TEST_SERVER`（`scripts/lib/kypr-mock-server.mjs` の模擬サーバー）・`NEMO_HTTP_AUTH_TEST_CRYPTO=memory`・
+`NEMO_KYPR_TEST_TOUCHID=ok|fail|unavailable`・`NEMO_KYPR_TEST_CLIPBOARD=memory`（どれも `!app.isPackaged` のときだけ効く）。
+検証モード（`NEMO_VERIFY_DIAGNOSTICS=1`）で `NEMO_KYPR_TEST_SERVER` を渡し忘れると kypr は起動しない（本番に届かない）。
+
+保管庫は検証が kypr のクライアント（`src/vendor/kypr`。Web と同じコード）で模擬サーバーに作り、
+「別の端末」として Node 側でも開いて、Nemo が書いたものを復号して照合する。
+
+自走検証が見るもの: ログイン前 / 違うパスワード / 解除・Touch ID の鍵の保存・バッジの件数・ポップアップの一覧
+（パスワードとカード番号が入っていないこと）・入力（別オリジンの iframe は iframe の URL で照合し、トップ向けは入れない・
+見えない欄には入れない）・⌘⇧L（1 件なら入れる / 2 件以上はポップアップ）・コピーと自動消去・下書き・作成 / 編集
+（知らないキーが残る）/ カードの整形・競合・ゴミ箱 / 復元 / 完全削除・セッション切れの再ログイン・オフラインの読み取り専用・
+Touch ID の解除と失敗・サーバーが覚えた鍵を拒否したとき・前回より弱い KDF パラメータ・欄の下の候補（スクリプトの focus では
+出ない / 出た直後の押下を無視 / スクロールで閉じる / ロック中）・シークレットウィンドウ・使わないときのロック・
+宛先の渡し忘れで起動しない・userData に平文が無いこと。エージェント窓に出ないことは `verify:only agent` が見る。
+
+コピー元（kypr の `packages/`）を直したら、kypr で `mise run export-nemo` を実行してコピーし直し、
+`node --test scripts/kypr-vendor.test.mjs`（テストベクタ）→ `mise run verify:only kypr` を回す。
+
+### 本物の kypr の Worker と突き合わせる（手元）
+
+模擬サーバーは本物（`~/kypr/apps/api`）と同じ応答の形にしてあるが、ずれていないかは本物で確かめる。
+
+1. `~/kypr` で `mise run build && mise run db-migrate-local && mise run dev-api`（8797 番。`SETUP_TOKEN` は `apps/api/.dev.vars`）
+2. ブラウザで `http://localhost:8797` を開き、使い捨てのマスターパスワードで保管庫を作ってアイテムを足す
+3. Nemo を使い捨ての userData で、宛先を向けて起動する:
+   `NEMO_USER_DATA_DIR=$(mktemp -d) NEMO_KYPR_TEST_SERVER=http://localhost:8797 NEMO_HTTP_AUTH_TEST_CRYPTO=memory mise run dev:build`
+4. ツールバーの 🔑 からログイン → 一覧・入力・作成・編集が Web と行き来できるか（Web で作ったものが Nemo に、Nemo で作ったものが Web に出る）
+
+### 人が見る分（常用版）
+
+- 設定の「kypr」でマスターパスワードを入れてログインし、Touch ID を有効にする（**マスターパスワードは自分で入力する**）
+- 実際の Touch ID: 解除できる・失敗が続くとマスターパスワードに回る・蓋を閉じて外部キーボードのときはマスターパスワードになる
+  （画面が 1 枚のときと 2 枚のときの両方）
+- 画面ロック・スリープのあとにロックされている（`powerMonitor` の `lock-screen` / `suspend`。自走検証では撃てない）
+- 実サイトで: バッジの件数・欄の下の候補（位置がずれない。ページのズームを変えても・分割中・Peek の中でも）・⌘⇧L・ポップアップ
+- iframe のログイン（Apple ID のサインインなど）を ⌘⇧L で入れる
+- カードの番号・期限・セキュリティコードをコピーして決済フォームに貼れる。30 秒でクリップボードから消える
+- マスターパスワードで解除したとき、診断ログに `kypr.kdf_worker_fallback` が出ていない（出ていれば鍵の導出が main で回っている）
+
 ## Claude in Nemo（Claude Code から操作する）
 
 ```bash
@@ -1535,8 +1567,7 @@ verify-all では `stopAll()` してから回す）。
    ログに `session.restoring ... "hidden":true` と `mini.open` が並ぶ
 7. **Dock アイコンが消えたりちらついたりしない**こと
    （`setVisibleOnAllWorkspaces` を使うと process type の変換で消える。使っていないことの確認）
-8. **実 Vault の Bitwarden**（`mise run dev:nodebug`）で、**Peek のログイン画面**と小窓で
-   自動入力が効くこと（＝拡張から見た active が Peek を指せていること）
+8. **kypr** で、**Peek のログイン画面**と小窓で自動入力が効くこと
 9. 実際の **OAuth ポップアップ**（`window.open` にサイズ指定があるもの）が Peek で開き、
    認証後に `window.close()` で閉じて親に結果が返ること
 10. **⌘クリック（背面タブ）**。`disposition: 'background-tab'` は修飾キー込みの実クリックでしか

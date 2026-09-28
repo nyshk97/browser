@@ -4,6 +4,7 @@ import { useSharedState } from '../useNemo.js'
 import { Slots } from './Slots.js'
 import { AuthVault } from './AuthVault.js'
 import { Autofill } from './Autofill.js'
+import { KyprSettings } from './KyprSettings.js'
 import { SettingsSection } from './SettingsSection.js'
 import type {
   GithubTokenStatus,
@@ -81,6 +82,8 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
         >
           <HttpAuthRules />
         </SettingsSection>
+
+        <KyprSettings />
 
         <AuthVault />
 

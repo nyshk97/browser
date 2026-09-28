@@ -3493,3 +3493,280 @@ body[data-view='call'] {
 .autofill-field .vault-input {
   margin-top: 2px;
 }
+
+/* ------------------------------------------------------------------ *
+ * kypr（パスワードマネージャー）: ポップアップ・ログイン欄の下の候補
+ * ------------------------------------------------------------------ */
+
+.toolbar .kypr-icon .count {
+  position: absolute;
+  right: -2px;
+  bottom: 0;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--nemo-accent);
+  color: #fff;
+  font-size: 9px;
+  line-height: 13px;
+  text-align: center;
+}
+
+.toolbar .kypr-icon .count.locked {
+  background: transparent;
+  font-size: 8px;
+}
+
+.kypr-panel {
+  height: 100%;
+}
+
+.kypr-title {
+  font-weight: 600;
+}
+
+.kypr-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--nemo-surface-hi);
+  color: var(--nemo-ink-dim);
+}
+
+.kypr-tag.warn {
+  color: var(--nemo-warn);
+}
+
+.kypr-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+  font-size: 12px;
+}
+
+.kypr-note {
+  color: var(--nemo-ink-dim);
+  font-size: 12px;
+  margin: 2px 0;
+}
+
+.kypr-error {
+  color: var(--nemo-danger);
+  font-size: 12px;
+  margin: 2px 0;
+}
+
+.kypr-unlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kypr-password,
+.kypr-search {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.kypr-password input,
+.kypr-search input,
+.kypr-edit-input input,
+.kypr-edit-field textarea {
+  flex: 1;
+  min-width: 0;
+  background: var(--nemo-surface);
+  border-radius: var(--nemo-radius);
+  padding: 6px 8px;
+}
+
+.kypr-password .btn,
+.kypr-search .btn {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.kypr-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--nemo-ink-dim);
+}
+
+.kypr-section h4 {
+  margin: 4px 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--nemo-ink-dim);
+}
+
+.kypr-filters,
+.kypr-new,
+.kypr-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.kypr-new .btn,
+.kypr-actions .btn {
+  margin-top: 0;
+}
+
+.kypr-filter {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: var(--nemo-ink-dim);
+}
+
+.kypr-filter.on {
+  background: var(--nemo-surface-hi);
+  color: var(--nemo-ink);
+}
+
+.kypr-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--nemo-radius);
+}
+
+.kypr-row:hover {
+  background: var(--nemo-hover);
+}
+
+.kypr-row.deleted {
+  opacity: 0.6;
+}
+
+.kypr-row-main,
+.kypr-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 5px 6px;
+  text-align: left;
+}
+
+.kypr-kind {
+  width: 18px;
+  text-align: center;
+  flex: 0 0 auto;
+}
+
+.kypr-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.kypr-row-name,
+.kypr-row-sub {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.kypr-row-sub {
+  color: var(--nemo-ink-dim);
+  font-size: 11px;
+}
+
+.kypr-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.kypr-detail-name {
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.kypr-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--nemo-border);
+}
+
+.kypr-field.notes {
+  align-items: flex-start;
+}
+
+.kypr-field-label {
+  width: 96px;
+  flex: 0 0 auto;
+  color: var(--nemo-ink-dim);
+  font-size: 11px;
+}
+
+.kypr-field-value {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  display: flex;
+  flex-direction: column;
+}
+
+.kypr-field-value.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.kypr-field-value.pre {
+  white-space: pre-wrap;
+}
+
+.kypr-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kypr-edit-input {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.kypr-edit-field textarea {
+  resize: vertical;
+  color: var(--nemo-ink);
+  font: inherit;
+}
+
+/* ログイン欄の下の候補。View ごとこの大きさなので、余白は View の外に出さない */
+.kypr-inline {
+  background: #232329;
+  border: 1px solid #3a3a44;
+  border-radius: var(--nemo-radius);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  padding: 3px;
+  height: 100%;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.kypr-inline-row {
+  width: 100%;
+  height: 40px;
+  border-radius: 5px;
+}
+
+.kypr-inline-row:hover {
+  background: var(--nemo-hover);
+}

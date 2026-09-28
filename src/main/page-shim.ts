@@ -28,3 +28,18 @@ export function registerPageShim(session: Electron.Session): void {
   }
   log('page.shim_registered', { exists })
 }
+
+/**
+ * kypr の見張り（ログイン欄へのユーザーの操作によるフォーカスを main に知らせる。`src/preload/kypr-page.ts`）を配る。
+ * 通常のページセッションとシークレットに配る。**エージェント用のセッションには配らない**（kypr を使わせない）。
+ */
+export function registerKyprPagePreload(session: Electron.Session): void {
+  const filePath = path.join(preloadDir, 'kypr-page.cjs')
+  const exists = fs.existsSync(filePath)
+  if (exists) {
+    session.registerPreloadScript({ id: 'nemo-kypr-page', type: 'frame', filePath })
+  } else {
+    logError('kypr.page_preload_missing', new Error('kypr-page.cjs が無い'), { path: filePath })
+  }
+  log('kypr.page_preload_registered', { exists })
+}

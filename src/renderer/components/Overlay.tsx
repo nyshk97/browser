@@ -4,6 +4,7 @@ import { PromptDialog } from './PromptDialog.js'
 import { Library } from './Library.js'
 import { Favicon } from './Sidebar.js'
 import { Settings } from './Settings.js'
+import { KyprInline, KyprPanel } from './Kypr.js'
 import type { Prompt, Suggestion, SwitcherState, WindowState } from '../../shared/types.js'
 
 /**
@@ -91,6 +92,9 @@ export function Overlay(): React.JSX.Element | null {
   if (kind === 'downloads') return <Downloads onClose={close} />
   if (kind === 'library') return <Library onClose={close} />
   if (kind === 'settings') return <Settings onClose={close} />
+  if (kind === 'kypr') return <KyprPanel onClose={close} />
+  // ページのフォーカスを奪わない（main が focus しない）。押したときだけこの View にフォーカスが来る
+  if (kind === 'kypr-inline') return <KyprInline />
   return null
 }
 

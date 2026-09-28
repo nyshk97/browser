@@ -23,7 +23,8 @@ import {
   resolveNavigationTarget
 } from './security.js'
 import { watchPageExtensionConsole } from './extension-console.js'
-import { registerPageShim } from './page-shim.js'
+import { registerKyprPagePreload, registerPageShim } from './page-shim.js'
+import { kyprBadge } from './kypr/index.js'
 import { log, logError } from './log.js'
 import { startMetricsSampling, stopMetricsSampling } from './metrics.js'
 import { createUiView, disposeUiView, type UiViewKind } from './ui-view.js'
@@ -257,7 +258,7 @@ export function isTransferring(contents: WebContents): boolean {
  *
  * **拡張はロードしない**。`electron-chrome-extensions` は
  * non-persistent セッションに拡張を載せられない（README の Limitations）。
- * つまりシークレットウィンドウでは Bitwarden の自動入力が使えない。UI に必ず出す。
+ * つまりシークレットウィンドウでは拡張が動かない。UI に必ず出す。
  */
 const PRIVATE_PARTITION = 'nemo-private'
 
@@ -287,6 +288,8 @@ function ensurePrivateSession(): string {
   // 配り漏れると Google Meet の初回詰み（query granted + label 空 → デバイス無し扱い）を
   // 毎回踏む（実際に配り漏れたままリリースされていた）。
   registerPageShim(privateSession)
+  // kypr はシークレットウィンドウでも使える（ログイン欄の下の候補の見張りを配る）
+  registerKyprPagePreload(privateSession)
   // ダウンロードもここで登録する。付けないと `will-download` に誰も応えず、
   // 保存先が決まらないまま失敗する（Nemo のダウンロード一覧にも出ない）。
   installDownloadHandler(privateSession, PRIVATE_PARTITION)
@@ -560,6 +563,9 @@ export type OverlayKind =
   | 'library'
   | 'settings'
   | 'tab-switcher'
+  // kypr（パスワードマネージャー）: ツールバーのアイコンのポップアップ / ログイン欄の下の候補
+  | 'kypr'
+  | 'kypr-inline'
   | null
 
 /**
@@ -575,9 +581,23 @@ function overlayBounds(
   kind: Exclude<OverlayKind, null>,
   content: { width: number; height: number },
   sidebarWidth: number,
-  pageTop: number
+  pageTop: number,
+  kyprAnchor: Electron.Rectangle | null = null
 ): Electron.Rectangle {
   switch (kind) {
+    // ツールバーの右上のアイコンの下に開く（拡張のポップアップと同じ位置・同じくらいの大きさ）
+    case 'kypr': {
+      const width = 380
+      return {
+        x: Math.max(content.width - width - 12, 0),
+        y: pageTop + 4,
+        width,
+        height: Math.max(Math.min(580, content.height - pageTop - 16), 200)
+      }
+    }
+    // ログイン欄の下（位置は `kypr/inline.ts` がページの欄の位置から決める）
+    case 'kypr-inline':
+      return kyprAnchor ?? { x: 0, y: 0, width: 1, height: 1 }
     // モーダル。背景を暗くするため全面を覆う。
     // タブスイッチャーもカードのクリックを受けるので同じく全面に敷く
     case 'command-bar':
@@ -1491,6 +1511,8 @@ export class NemoWindow {
   previousTabKey: string | null = null
   sidebarVisible: boolean
   overlay: OverlayKind = null
+  /** kypr の候補（`kypr-inline`）を出す位置。ウィンドウの座標。 */
+  kyprAnchor: Electron.Rectangle | null = null
   private destroyed = false
   private uiReady = false
   private pendingAfterReady: (() => void)[] = []
@@ -1993,7 +2015,9 @@ export class NemoWindow {
     if (this.overlay) {
       // 第4引数は**ページの上端**。分割中は外周余白のぶん下がるので、そのぶんを渡す
       // （渡さないと検索バー・ダイアログ・ダウンロードがツールバーに掛かる）。
-      this.overlayView.setBounds(overlayBounds(this.overlay, { width, height }, sidebar, pageBounds.y))
+      this.overlayView.setBounds(
+        overlayBounds(this.overlay, { width, height }, sidebar, pageBounds.y, this.kyprAnchor)
+      )
       this.overlayView.setVisible(true)
       // オーバーレイは必ず最前面にする（タブを作ると子 View の順序が変わる）
       this.baseWindow.contentView.removeChildView(this.overlayView)
@@ -2085,7 +2109,7 @@ export class NemoWindow {
     // 権限・認証・証明書のダイアログはページ側から出る。
     // ここを塞ぐと callback が永久に解決せず、小窓のページが黙って止まる。
     if (this.overlay) {
-      this.overlayView.setBounds(overlayBounds(this.overlay, { width, height }, 0, 0))
+      this.overlayView.setBounds(overlayBounds(this.overlay, { width, height }, 0, 0, this.kyprAnchor))
       this.overlayView.setVisible(true)
       this.baseWindow.contentView.removeChildView(this.overlayView)
       this.baseWindow.contentView.addChildView(this.overlayView)
@@ -2095,11 +2119,18 @@ export class NemoWindow {
   }
 
   setOverlay(kind: OverlayKind): void {
-    // 小窓が出せるのはダイアログだけ（コマンドバー・ライブラリ・設定は持たない）
-    if (this.kind === 'mini' && kind !== null && kind !== 'prompt') return
+    // 小窓が出せるのはダイアログと kypr の候補だけ（コマンドバー・ライブラリ・設定は持たない）
+    if (this.kind === 'mini' && kind !== null && kind !== 'prompt' && kind !== 'kypr-inline') return
     if (this.overlay === kind) return
     this.overlay = kind
     this.layout()
+    // kypr の候補は**ページのフォーカスを奪わない**（欄に打ち続けられるように。押したときだけ候補の View に移る）
+    if (kind === 'kypr-inline') {
+      this.overlayWebContents.send('nemo:overlay', kind)
+      this.pushState()
+      overlayChangeListener?.(this, kind)
+      return
+    }
     // **エージェント窓はユーザーが操作している（key）ときだけ**フォーカスを動かす。
     // `webContents.focus()` は前面アプリを奪うことがある（実測）。ダイアログが出た瞬間に
     // 背面のエージェント窓がユーザーの作業を奪わないようにする
@@ -2284,8 +2315,17 @@ export class NemoWindow {
       find: foreground?.find ?? null,
       isPrivate: this.isPrivate,
       kind: this.kind,
-      agent: this.agent ? { ...this.agent } : null
+      agent: this.agent ? { ...this.agent } : null,
+      // エージェント用ウィンドウには kypr を出さない（アイコンも候補も）
+      kypr: this.isAgent ? null : kyprBadge(foreground?.webContents?.getURL() ?? null)
     }
+  }
+
+  /** ウィンドウの中身の大きさ（kypr の候補の位置合わせに使う）。 */
+  contentSize(): { width: number; height: number } {
+    if (this.baseWindow.isDestroyed()) return { width: 0, height: 0 }
+    const { width, height } = this.baseWindow.getContentBounds()
+    return { width, height }
   }
 
   pushState(): void {
@@ -2761,7 +2801,7 @@ let syncingExtensionSelection = false
  *
  * **Nemo のサイドバーで選択されているタブ**（`activeTabKey`）と
  * **chrome から見た active タブ**は意図的に別物にする。Peek が出ているなら
- * 「今いるページ」は Peek なので、Bitwarden の自動入力はそちらに効いてほしい。
+ * 「今いるページ」は Peek なので、拡張の自動入力（パスワードマネージャー等）はそちらに効いてほしい。
  *
  * 「開いた瞬間に1回撃つ」では足りない。別タブへ行って戻る・拡張から `selectTab` が
  * 呼び返される、といった経路で静かにズレるので、**毎回ここで再計算する**。

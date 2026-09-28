@@ -486,7 +486,7 @@ export interface WindowState {
   /**
    * シークレットウィンドウか。
    * ページは**メモリ上だけのセッション**に置かれ、拡張はロードされない
-   * （＝ Bitwarden の自動入力が使えない）。UI にその旨を出すために持つ。
+   * （＝ 拡張が動かない）。UI にその旨を出すために持つ。
    */
   isPrivate: boolean
   /**
@@ -497,6 +497,145 @@ export interface WindowState {
   kind: 'normal' | 'mini' | 'agent'
   /** エージェント用ウィンドウのときだけ。それ以外は null。 */
   agent: AgentWindowState | null
+  /**
+   * ツールバーの kypr のアイコン（前面のタブのトップの URL に合うログインの件数）。
+   * エージェント用ウィンドウでは null（アイコンを出さない）。
+   */
+  kypr: KyprBadge | null
+}
+
+/* ---------------- kypr（パスワードマネージャー） ---------------- */
+
+/**
+ * - `disabled` … 使えない（自走検証で宛先を渡していない等）
+ * - `signed-out` … この Mac でまだログインしていない（キャッシュが無い）
+ * - `locked` / `unlocked`
+ */
+export type KyprState = 'disabled' | 'signed-out' | 'locked' | 'unlocked'
+
+export interface KyprBadge {
+  state: KyprState
+  /** 合うログインの件数（`unlocked` のときだけ意味がある）。 */
+  count: number
+}
+
+export interface KyprStatus {
+  state: KyprState
+  /** サーバーに届かずキャッシュから開いている（書き込めない）。 */
+  readOnly: boolean
+  /** 向けているサーバーのオリジン（表示用）。 */
+  server: string | null
+  disabledReason: string | null
+  /** この Mac で Touch ID が使えるか。 */
+  touchIdAvailable: boolean
+  /** Touch ID で解除するための鍵を覚えているか。 */
+  touchIdEnrolled: boolean
+  /** 最後に同期した時刻（ms）。 */
+  lastSyncAt: number | null
+  /** キャッシュにあるアイテムの数（ロック中も分かる）。 */
+  itemCount: number
+}
+
+export type KyprItemKind = 'login' | 'card' | 'note' | 'unknown' | 'error'
+
+/** 一覧に出す 1 行。**パスワード・カード番号・セキュリティコード・メモの本文は入れない**。 */
+export interface KyprSummary {
+  id: string
+  kind: KyprItemKind
+  name: string
+  /** ログインはユーザー名、カードは「ブランド •••• 下 4 桁」、それ以外は空。 */
+  subtitle: string
+  /** ログインの最初の URI のホスト（無ければ null）。 */
+  host: string | null
+  deleted: boolean
+}
+
+export interface KyprPanelData {
+  status: KyprStatus
+  /** 入れる先のフレームの URL（http / https のページでなければ null）。 */
+  page: { url: string; host: string } | null
+  /** このページに合うログイン。 */
+  matches: KyprSummary[]
+  /** すべてのアイテム（ゴミ箱の中も含む。絞り込みは renderer）。 */
+  items: KyprSummary[]
+}
+
+/** 詳細・編集で渡す平文。**開いたときだけ**渡す。 */
+export interface KyprItemDetail {
+  id: string
+  kind: KyprItemKind
+  deleted: boolean
+  /** 知らない種類・隔離したものは編集させない。 */
+  editable: boolean
+  /**
+   * 平文（ログイン・カード・メモ）。知らない種類は null。
+   * **詳細（`kyprItem`）ではパスワード・カード番号・セキュリティコードを空にして渡す**（有るものは `secrets` に名前だけ入る）。
+   * 値は「表示」を押したとき（`kyprReveal`）か、編集を開いたとき（`kyprItemForEdit`）だけ渡す
+   */
+  item: Record<string, unknown> | null
+  /** 値が入っている秘密の項目の名前（`password` / `number` / `code`）。 */
+  secrets: string[]
+  /** 隔離したときの理由（`tampered` など）。 */
+  error: string | null
+}
+
+/** 作成・更新で renderer から受け取る項目（知っている項目だけ。main が検査して既存の項目に重ねる）。 */
+export interface KyprItemInput {
+  /** 既存のアイテムを更新するとき。新規は null。 */
+  id: string | null
+  type: 'login' | 'card' | 'note'
+  fields: Record<string, unknown>
+}
+
+export type KyprUnlockFailure =
+  | 'disabled'
+  | 'bad-password'
+  | 'locked'
+  | 'no-account'
+  | 'offline-no-cache'
+  | 'weaker-params'
+  | 'invalid-params'
+  | 'tampered'
+  | 'malformed'
+  | 'temporary'
+  | 'no-device-keys'
+  | 'touch-id-failed'
+
+export type KyprUnlockResult = { ok: true } | { ok: false; reason: KyprUnlockFailure; retryAfter?: number }
+
+export type KyprActionResult =
+  | { ok: true; id?: string }
+  | {
+      ok: false
+      reason:
+        | 'locked'
+        | 'read-only'
+        | 'conflict'
+        | 'purged'
+        | 'not-found'
+        | 'invalid'
+        | 'offline'
+        | 'session-expired'
+        | 'no-target'
+        | 'url-mismatch'
+        | 'agent'
+        | 'failed'
+    }
+
+/** 新規作成の下書き（今のページから）。 */
+export interface KyprDraft {
+  name: string
+  uri: string
+  username: string
+  password: string
+}
+
+/** 入力欄の下の候補。 */
+export interface KyprInlineState {
+  locked: boolean
+  rows: KyprSummary[]
+  /** 出した時刻（出た直後のクリックを無視するため）。 */
+  shownAt: number
 }
 
 /**
@@ -1157,7 +1296,7 @@ export interface NemoUiApi {
   setSidebarVisible(visible: boolean): Promise<void>
   /** オーバーレイ（コマンドバー / 検索バー / ダウンロード）の表示切り替え。 */
   setOverlay(
-    kind: 'command-bar' | 'address-bar' | 'find' | 'downloads' | 'library' | 'settings' | null
+    kind: 'command-bar' | 'address-bar' | 'find' | 'downloads' | 'library' | 'settings' | 'kypr' | null
   ): Promise<void>
   toggleDevTools(key: string): Promise<void>
   copyUrl(key: string): Promise<void>
@@ -1283,6 +1422,39 @@ export interface NemoUiApi {
   /** 保管庫からキーを消す（古い置き場所のキーも消す）。 */
   clearJevKey(): Promise<AutofillSaveResult>
 
+  /* kypr（パスワードマネージャー）。**鍵は main だけが持つ**。平文は開いたアイテムの分だけ返す */
+  kyprStatus(): Promise<KyprStatus>
+  /** ポップアップの中身（このページに合うログインと、全件の一覧）。 */
+  kyprPanel(): Promise<KyprPanelData>
+  /** マスターパスワードで解除する（初回のログインも同じ）。`rememberTouchId` なら Touch ID 用に鍵を覚える。 */
+  kyprSignIn(password: string, rememberTouchId: boolean): Promise<KyprUnlockResult>
+  kyprUnlockTouchId(): Promise<KyprUnlockResult>
+  kyprLock(): Promise<void>
+  /** ログアウト（キャッシュと覚えた鍵を消す）。 */
+  kyprSignOut(): Promise<void>
+  kyprSync(): Promise<KyprActionResult>
+  /** 詳細。秘密の項目は空にして返す（`secrets` に名前だけ）。 */
+  kyprItem(id: string): Promise<KyprItemDetail | null>
+  /** 秘密の項目を 1 つだけ取る（詳細で「表示」を押したとき）。 */
+  kyprReveal(id: string, field: string): Promise<string | null>
+  /** 編集を開いたとき（秘密の項目も含めて全部）。 */
+  kyprItemForEdit(id: string): Promise<KyprItemDetail | null>
+  /** main がクリップボードに書く（30 秒で消す）。値は renderer を通さない。 */
+  kyprCopy(id: string, field: string): Promise<boolean>
+  /** 前面のタブに入れる（入れる先のフレームの URL で照合し直す）。 */
+  kyprFill(id: string): Promise<KyprActionResult>
+  kyprDraft(): Promise<KyprDraft>
+  kyprSave(input: KyprItemInput): Promise<KyprActionResult>
+  kyprTrash(id: string): Promise<KyprActionResult>
+  kyprRestore(id: string): Promise<KyprActionResult>
+  kyprPurge(id: string): Promise<KyprActionResult>
+  kyprGeneratePassword(length: number, sets: string[]): Promise<string>
+  kyprInlineState(): Promise<KyprInlineState | null>
+  kyprInlinePick(id: string): Promise<KyprActionResult>
+  kyprInlineDismiss(): Promise<void>
+  /** 候補の中身が変わった（出し直した）ときに呼ばれる。 */
+  onKyprInline(callback: () => void): () => void
+
   /* Live Folder（GitHub の PR） */
   /** いま取得する（`transient` / `auth` のバックオフは上書きできる。`rate-limit` は不可）。 */
   liveFolderRefresh(): Promise<void>
@@ -1360,6 +1532,8 @@ export interface NemoUiApi {
    * タブのページで右クリックの「フォーム自動入力」と同じ処理を走らせる（**本番では何もしない**）。
    * ネイティブの右クリックメニューは CDP から押せないので、同じ関数を名指しで呼ぶ。
    */
+  /** kypr のコピーの確認（`NEMO_KYPR_TEST_CLIPBOARD=memory` のときだけ値が返る）。 */
+  kyprClipboardForVerify(): Promise<string | null>
   autofillForVerify(key: string, x: number, y: number, frameUrl?: string): Promise<AutofillRunResult | null>
   /**
    * 画面共有のダイアログを検証用に 2 枚以上のディスプレイで出す（**本番では何もしない**）。

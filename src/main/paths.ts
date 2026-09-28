@@ -35,7 +35,7 @@ export const PAGE_PARTITION = 'persist:nemo'
 /**
  * Claude Code から操作するエージェント用ウィンドウのセッション（永続）。
  *
- * **常用（`PAGE_PARTITION`）と分ける**。常用のログイン・拡張（Bitwarden の解錠状態）・
+ * **常用（`PAGE_PARTITION`）と分ける**。常用のログイン・拡張の状態・
  * 履歴にエージェントが触れないようにするため（計画 2026-09-28「Claude in Nemo」）。
  * ログインは引き継ぎでユーザーがここに入れたぶんだけ溜まる。**拡張は載せない**。
  */

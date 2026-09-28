@@ -8,3 +8,5 @@ pnpm-lock.yaml
 *.md
 docs/
 test-pages/
+# kypr からコピーしたコード（kypr 側の整形のまま。コピーし直すたびに差分が出ないように）
+src/vendor/

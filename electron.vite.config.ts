@@ -76,7 +76,9 @@ export default defineConfig(({ command }) => {
             ui: resolve('src/preload/ui.ts'),
             // 拡張ページ向けの chrome.* 補完（`src/main/index.ts` が pageSession に登録する）
             // frame と service worker の両方に同じファイルを配る（分けると共有 chunk を require できない）
-            'extension-shim': resolve('src/preload/extension-shim.ts')
+            'extension-shim': resolve('src/preload/extension-shim.ts'),
+            // kypr: ログイン欄の下の候補のための見張り（ページのセッションに配る。`page-shim.ts`）
+            'kypr-page': resolve('src/preload/kypr-page.ts')
           },
           output: {
             // sandbox: true の preload は ESM をロードできないため CJS で出す

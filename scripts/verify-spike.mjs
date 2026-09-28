@@ -14,6 +14,11 @@
  *   node scripts/verify-spike.mjs --storage-read       再起動後に印が残っているか見る
  *   node scripts/verify-spike.mjs --extension-info     ロード中の拡張の ID / version を出す
  */
+import fs from 'node:fs'
+import path from 'node:path'
+import { extensionIdFromPublicKey } from './lib/crx.mjs'
+import { projectRoot } from './lib/harness.mjs'
+
 const CDP = process.env.NEMO_CDP ?? 'http://127.0.0.1:9333'
 const PAGES = process.env.NEMO_TEST_PAGES ?? 'http://127.0.0.1:8787'
 
@@ -122,11 +127,12 @@ function activeContentsId(state) {
  * 起こす手段はアプリが持っている `restartServiceWorkers()` を使う。
  */
 async function swSession() {
-  // **自作テスト拡張（lock の先頭）の SW を名指しで選ぶ**。`find` で
+  // **自作テスト拡張（`test-extension/`）の SW を名指しで選ぶ**。`find` で
   // 「最初に見つかったもの」を拾うと、SW の起動順しだいで --storage-write と
   // --storage-read が**別の拡張**に繋がり、「chrome.storage.local が再起動をまたいで残る」が
-  // {} で落ちる（順序依存のフレーク）。API 検査もこの拡張の permissions が前提
-  const TEST_EXTENSION_ID = 'nngceckbapebfimnlniiiahkandclblb'
+  // {} で落ちる（順序依存のフレーク）。API 検査もこの拡張の permissions が前提。
+  // ID は `make-test-extension.mjs` と同じく、コミットした公開鍵から導く
+  const TEST_EXTENSION_ID = testExtensionId()
   const pick = (list) => list.find((x) => x.type === 'service_worker' && x.url.includes(TEST_EXTENSION_ID))
   let t = pick(await targets())
   if (!t) {
@@ -140,6 +146,12 @@ async function swSession() {
   }
   if (!t) throw new Error('拡張の service worker が起動していない（起こしても出てこない）')
   return connect(t.webSocketDebuggerUrl)
+}
+
+/** 自作テスト拡張の ID（`test-extension.key.json` の公開鍵から導く）。 */
+function testExtensionId() {
+  const { publicKey } = JSON.parse(fs.readFileSync(path.join(projectRoot, 'test-extension.key.json'), 'utf8'))
+  return extensionIdFromPublicKey(publicKey)
 }
 
 /** 指定 URL のページに接続し、reload して execution context を集める。 */
@@ -439,8 +451,7 @@ await sleep(2500)
   const after = (await ui2.ev('window.nemo.getWindowState()')).tabs.length
   check('拡張からの file: URL はタブにならない', after === before, `${rejected} / tabs ${before} -> ${after}`)
 
-  const own =
-    await sw.ev(`chrome.tabs.create({ url: chrome.runtime.getURL('popup/index.html'), active: false })
+  const own = await sw.ev(`chrome.tabs.create({ url: chrome.runtime.getURL('popup.html'), active: false })
     .then(t => ({ id: t.id }), e => ({ error: String(e && e.message) }))`)
   await sleep(2000)
   check('拡張は自分の chrome-extension:// ページを開ける', typeof own?.id === 'number', JSON.stringify(own))

@@ -96,6 +96,28 @@ import {
 } from './store/autofill-vault.js'
 import { clearJevKey, hasJevKey, readJevKey } from './store/jev-key.js'
 import { runAutofill } from './autofill/index.js'
+import {
+  copyKyprField,
+  generateKyprPassword,
+  kyprClipboardForVerify,
+  kyprItem,
+  kyprItemAction,
+  kyprMatches,
+  kyprStatus,
+  kyprSummaries,
+  lockKypr,
+  revealKyprField,
+  saveKyprItem,
+  signInKypr,
+  signOutKypr,
+  syncKypr,
+  syncKyprIfStale,
+  touchKypr,
+  unlockKyprWithTouchId
+} from './kypr/index.js'
+import { fillKyprLogin, kyprDraftFrom, kyprTargetUrl } from './kypr/fill.js'
+import { hideKyprInline, kyprInlineState, kyprInlineTarget } from './kypr/inline.js'
+
 import { MAX_JEV_KEY, normalizeProfile } from '../shared/autofill-schema.js'
 import type { ImportEntry } from '../shared/http-auth-rules.js'
 import { MAX_PASSPHRASE, MIN_PASSPHRASE, validatePassphrase } from '../shared/auth-vault-schema.js'
@@ -132,6 +154,16 @@ import { getTimings } from './timings.js'
 import { HTTP_AUTH_LIMITS, importMultipass, validateHttpAuthPattern } from '../shared/http-auth-rules.js'
 import { windowsById } from './registry.js'
 import { clearAgentData, endFromUi, openUrlInAgentWindow, showAgentWindow } from './agent/index.js'
+import type {
+  KyprActionResult,
+  KyprDraft,
+  KyprInlineState,
+  KyprItemDetail,
+  KyprItemInput,
+  KyprPanelData,
+  KyprStatus,
+  KyprUnlockResult
+} from '../shared/types.js'
 import type {
   AppStatus,
   AuthVaultFailure,
@@ -495,6 +527,11 @@ export function registerIpcHandlers(): void {
      * ⌘ 長押しバッジの状態機械を直接叩く。合成キーでは Meta の `before-input-event` を
      * 起こせないので、down / up / blur を名前で撃ち、戻り値で「今出ているか」を見る
      */
+    // kypr のコピーの確認（検証ではメモリ上のクリップボードに差し替えている。実物は読まない）
+    ipcMain.handle('nemo:kypr-clipboard-for-verify', (event): string | null => {
+      requireWindow(event)
+      return kyprClipboardForVerify()
+    })
     ipcMain.handle('nemo:shortcut-hint-for-verify', (event, action: unknown): boolean => {
       const win = requireWindow(event)
       if (action === 'down') shortcutHintDown(win)
@@ -763,10 +800,21 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('nemo:set-overlay', (event, kind: unknown) => {
     const win = requireWindow(event)
-    const allowed = ['command-bar', 'address-bar', 'find', 'downloads', 'library', 'settings'] as const
+    // `kypr-inline` は renderer から開かせない（ページの欄の位置は main だけが知っている）
+    const allowed = [
+      'command-bar',
+      'address-bar',
+      'find',
+      'downloads',
+      'library',
+      'settings',
+      'kypr'
+    ] as const
     if (kind !== null && !allowed.includes(kind as (typeof allowed)[number])) {
       throw new Error('invalid overlay')
     }
+    // kypr はエージェント用ウィンドウでは開かない
+    if (kind === 'kypr' && win.isAgent) throw new Error('invalid overlay')
     win.setOverlay(kind as OverlayKind)
   })
 
@@ -1312,6 +1360,146 @@ export function registerIpcHandlers(): void {
       return result
     }
   )
+
+  /* ---------------- kypr（パスワードマネージャー） ---------------- */
+  // **鍵と平文は main だけが持つ**。renderer には一覧に要る項目と、開いたアイテムの分だけ返す。
+  // エージェント用ウィンドウからは使わせない（アイコンも出さないが、入口をここでも閉じる）
+
+  const requireKyprWindow = (event: IpcMainInvokeEvent): NemoWindow => {
+    const win = requireWindow(event)
+    if (win.isAgent) {
+      log('ipc.rejected', { reason: 'kypr_in_agent', windowId: win.id })
+      throw new Error('kypr is not available in agent windows')
+    }
+    return win
+  }
+  const foregroundContents = (win: NemoWindow): Electron.WebContents | null => {
+    const wc = win.getForegroundTab()?.webContents
+    return wc && !wc.isDestroyed() ? wc : null
+  }
+  const idOf = (value: unknown): string => requireString(value, 'kypr item id')
+
+  ipcMain.handle('nemo:kypr-status', (event): KyprStatus => {
+    requireKyprWindow(event)
+    return kyprStatus()
+  })
+  ipcMain.handle('nemo:kypr-panel', async (event): Promise<KyprPanelData> => {
+    const win = requireKyprWindow(event)
+    touchKypr()
+    syncKyprIfStale()
+    const status = kyprStatus()
+    const wc = foregroundContents(win)
+    const url = status.state === 'unlocked' && wc ? await kyprTargetUrl(wc) : wc ? wc.getURL() : null
+    const page = url && /^https?:/.test(url) ? { url, host: new URL(url).hostname } : null
+    return {
+      status,
+      page,
+      matches: page && status.state === 'unlocked' ? kyprMatches(page.url) : [],
+      items: kyprSummaries()
+    }
+  })
+  ipcMain.handle(
+    'nemo:kypr-sign-in',
+    async (event, password: unknown, remember: unknown): Promise<KyprUnlockResult> => {
+      requireKyprWindow(event)
+      if (typeof password !== 'string') return { ok: false, reason: 'bad-password' }
+      return signInKypr(password, remember === true)
+    }
+  )
+  ipcMain.handle('nemo:kypr-unlock-touch-id', async (event): Promise<KyprUnlockResult> => {
+    requireKyprWindow(event)
+    return unlockKyprWithTouchId()
+  })
+  ipcMain.handle('nemo:kypr-lock', (event): void => {
+    requireKyprWindow(event)
+    lockKypr('user')
+  })
+  ipcMain.handle('nemo:kypr-sign-out', async (event): Promise<void> => {
+    requireKyprWindow(event)
+    await signOutKypr()
+  })
+  ipcMain.handle('nemo:kypr-sync', async (event): Promise<KyprActionResult> => {
+    requireKyprWindow(event)
+    return syncKypr()
+  })
+  ipcMain.handle('nemo:kypr-item', (event, id: unknown): KyprItemDetail | null => {
+    requireKyprWindow(event)
+    return kyprItem(idOf(id))
+  })
+  ipcMain.handle('nemo:kypr-reveal', (event, id: unknown, field: unknown): string | null => {
+    requireKyprWindow(event)
+    return revealKyprField(idOf(id), requireString(field, 'kypr field'))
+  })
+  ipcMain.handle('nemo:kypr-item-for-edit', (event, id: unknown): KyprItemDetail | null => {
+    requireKyprWindow(event)
+    return kyprItem(idOf(id), true)
+  })
+  ipcMain.handle('nemo:kypr-copy', (event, id: unknown, field: unknown): boolean => {
+    requireKyprWindow(event)
+    return copyKyprField(idOf(id), requireString(field, 'kypr field'))
+  })
+  ipcMain.handle('nemo:kypr-fill', async (event, id: unknown): Promise<KyprActionResult> => {
+    const win = requireKyprWindow(event)
+    const wc = foregroundContents(win)
+    if (!wc) return { ok: false, reason: 'no-target' }
+    const result = await fillKyprLogin(wc, idOf(id))
+    // 入れたらポップアップを閉じてページへ戻す
+    if (result.ok && win.overlay === 'kypr') win.setOverlay(null)
+    return result
+  })
+  ipcMain.handle('nemo:kypr-draft', async (event): Promise<KyprDraft> => {
+    const win = requireKyprWindow(event)
+    return kyprDraftFrom(foregroundContents(win))
+  })
+  ipcMain.handle('nemo:kypr-save', async (event, input: unknown): Promise<KyprActionResult> => {
+    requireKyprWindow(event)
+    if (typeof input !== 'object' || input === null) return { ok: false, reason: 'invalid' }
+    const raw = input as Record<string, unknown>
+    const id = raw['id'] === null ? null : typeof raw['id'] === 'string' ? raw['id'] : undefined
+    if (
+      id === undefined ||
+      typeof raw['type'] !== 'string' ||
+      typeof raw['fields'] !== 'object' ||
+      raw['fields'] === null
+    )
+      return { ok: false, reason: 'invalid' }
+    return saveKyprItem({
+      id,
+      type: raw['type'] as KyprItemInput['type'],
+      fields: raw['fields'] as Record<string, unknown>
+    })
+  })
+  for (const action of ['trash', 'restore', 'purge'] as const) {
+    ipcMain.handle(`nemo:kypr-${action}`, async (event, id: unknown): Promise<KyprActionResult> => {
+      requireKyprWindow(event)
+      return kyprItemAction(idOf(id), action)
+    })
+  }
+  ipcMain.handle('nemo:kypr-generate', (event, length: unknown, sets: unknown): string => {
+    requireKyprWindow(event)
+    const list = Array.isArray(sets) ? sets.filter((s): s is string => typeof s === 'string') : []
+    return generateKyprPassword(typeof length === 'number' ? length : 20, list)
+  })
+  ipcMain.handle('nemo:kypr-inline-state', (event): KyprInlineState | null => {
+    const win = requireKyprWindow(event)
+    if (win.overlay !== 'kypr-inline') return null
+    return kyprInlineState(win)
+  })
+  ipcMain.handle('nemo:kypr-inline-pick', async (event, id: unknown): Promise<KyprActionResult> => {
+    const win = requireKyprWindow(event)
+    const target = kyprInlineTarget(win)
+    const tab = target ? win.findTab(target.tabKey) : null
+    const wc = tab?.webContents
+    hideKyprInline(win)
+    // 候補を出したときと同じタブ・同じページのときだけ入れる（遷移していたら入れない）
+    if (!target || !wc || wc.isDestroyed() || wc.getURL() !== target.url)
+      return { ok: false, reason: 'no-target' }
+    return fillKyprLogin(wc, idOf(id), { mainOnly: true })
+  })
+  ipcMain.handle('nemo:kypr-inline-dismiss', (event): void => {
+    const win = requireKyprWindow(event)
+    hideKyprInline(win)
+  })
 
   ipcMain.handle('nemo:autofill-delete', async (event): Promise<boolean> => {
     requireWindow(event)

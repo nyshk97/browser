@@ -293,7 +293,7 @@ test('検証スクリプトは「止める前に配列から外す」書き方�
   // 「途中の停止失敗 → 最後の後片付けが空配列を見て成功扱い →
   //  使用中の一時ディレクトリを削除」という事故を踏んだ。
   // 実行時のテストで再現しづらいので、危険な書き方そのものを禁止する。
-  for (const name of ['verify-all.mjs', 'verify-ext-update.mjs']) {
+  for (const name of ['verify-all.mjs']) {
     const source = fs.readFileSync(path.join(projectRoot, 'scripts', name), 'utf8')
 
     assert.doesNotMatch(source, /spawned\.splice\(/, `${name}: spawned を splice している`)

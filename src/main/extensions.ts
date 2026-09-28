@@ -50,7 +50,7 @@ export interface LockedExtension {
   unpackedRoot?: string
   /**
    * ツールバーにアイコン（browser action）を出すか。省略時は出さない。
-   * クリックして使う拡張（Bitwarden）だけ true にする。ページ側で勝手に働く拡張
+   * クリックして使う拡張だけ true にする。ページ側で勝手に働く拡張
    * （Keepa 等）はアイコンが要らないので出さない。ロードの可否には関係しない。
    */
   showInToolbar?: boolean

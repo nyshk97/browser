@@ -66,6 +66,9 @@ import { startCallCoordinator, stopCallCoordinator } from './call-coordinator.js
 import { markReadyWhen, setExtensionCount } from './app-status.js'
 import { initUpdater, stopUpdater } from './updater.js'
 import { startAgent, stopAgent } from './agent/index.js'
+import { registerKyprPagePreload } from './page-shim.js'
+import { initKypr, onKyprChange } from './kypr/index.js'
+import { installKyprInline } from './kypr/inline.js'
 
 applyUserDataDir()
 app.setAppUserModelId(APP_ID)
@@ -233,6 +236,8 @@ app
     // electron-chrome-extensions の preload が最後に `Object.freeze(chrome)` するので、
     // 後から登録すると生やせない（Electron に順序の明示的な保証は無いので smoke で固定している）
     registerExtensionShim(pageSession)
+    // kypr: ログイン欄の下の候補の見張り（シークレットのセッションには registry が配る）
+    registerKyprPagePreload(pageSession)
 
     // 拡張のロードより先に生成する（ロードイベントを取りこぼさないため）
     const extensions = createExtensions(pageSession)
@@ -241,6 +246,12 @@ app
     watchExtensionConsole(pageSession)
     watchExtensionPopups(extensions)
 
+    initKypr()
+    installKyprInline()
+    // 解除・ロック・同期で、ツールバーの件数（バッジ）を全ウィンドウで出し直す
+    onKyprChange(() => {
+      for (const win of windowsById.values()) if (!win.isDestroyed) win.pushState()
+    })
     registerIpcHandlers()
     installApplicationMenu()
     watchKeybindingChanges()

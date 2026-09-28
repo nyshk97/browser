@@ -54,6 +54,8 @@ GPL-3.0 と衝突するライセンス（AGPL・独自の商用ライセンス�
 | 出どころ | 使っている場所 | ライセンス | 判断 |
 |---|---|---|---|
 | [Lucide](https://lucide.dev/) の `fish-symbol` | `src/renderer/components/EmptyState.tsx`（タブが無いときのマーク） | ISC | 著作権表示の保持だけが条件。GPL-3.0 と衝突しない |
+| [Public Suffix List](https://publicsuffix.org/) | `src/vendor/kypr/client/psl-data.ts`（kypr の URL の照合。kypr から生成物ごとコピー） | MPL-2.0 | GPL-3.0 と両立する（MPL-2.0 の Secondary License）。ファイルの先頭に MPL の表示を残し、notice にも載せる（`license-report.mjs` の `EMBEDDED`） |
+| kypr（自作のパスワードマネージャー。private リポジトリ）の暗号・同期のコード | `src/vendor/kypr/` | GPL-3.0-only | 作者が同じなので Nemo と同じライセンスで置く（`src/vendor/kypr/VENDORED.md`） |
 
 Lucide の著作権表示:
 

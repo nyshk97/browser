@@ -109,7 +109,7 @@ if (popupDevTools) env.NEMO_POPUP_DEVTOOLS = '1'
 if (debugPort) {
   env.NEMO_REMOTE_DEBUGGING_PORT = debugPort
 } else {
-  // remote debugging を開けない。実 Vault の Bitwarden を入れて触るときはこちらを使う。
+  // remote debugging を開けない。実アカウントでログインした拡張を触るときはこちらを使う。
   // CDP が開いていると、そこに到達できるものは拡張の service worker で任意の JS を実行でき、
   // アンロック済み Vault の中身に手が届く（自走検証はまさにそれを使っている）。
   delete env.NEMO_REMOTE_DEBUGGING_PORT
@@ -129,7 +129,9 @@ console.log(`[dev]   テストページ    http://127.0.0.1:${pagesPort}/`)
 if (debugPort) {
   console.log(`[dev]   remote debugging http://127.0.0.1:${debugPort}/json/list`)
   console.log(`[dev]   自走検証        mise run verify （別ターミナルなら pnpm verify:spike）`)
-  console.log('[dev]   ⚠ CDP が開いている。実 Vault の Bitwarden を入れるなら mise run dev:nodebug を使う')
+  console.log(
+    '[dev]   ⚠ CDP が開いている。実アカウントでログインした拡張を触るなら mise run dev:nodebug を使う'
+  )
 } else {
   console.log('[dev]   remote debugging 無効（--no-debug）。自走検証は使えない')
 }

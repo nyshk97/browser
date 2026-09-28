@@ -16,7 +16,15 @@
     "allowJs": true,
     "checkJs": true,
     "isolatedModules": true,
-    "noEmit": true
+    "noEmit": true,
+    // kypr からコピーしたコード（src/vendor/kypr）は `.ts` 拡張子付きで import する（素の Node からも読むため）
+    "allowImportingTsExtensions": true
   },
-  "include": ["src/main/**/*", "src/preload/**/*", "src/shared/**/*", "electron.vite.config.ts"]
+  "include": [
+    "src/main/**/*",
+    "src/preload/**/*",
+    "src/shared/**/*",
+    "src/vendor/**/*",
+    "electron.vite.config.ts"
+  ]
 }

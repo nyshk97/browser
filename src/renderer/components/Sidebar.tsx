@@ -292,13 +292,13 @@ export function Sidebar(): React.JSX.Element {
       {/*
         シークレットウィンドウでは拡張がロードされない
         （electron-chrome-extensions は non-persistent セッションに拡張を載せられない）。
-        つまり Bitwarden の自動入力が効かない。**黙って効かないのが一番困る**ので必ず出す。
+        つまり拡張が効かない。**黙って効かないのが一番困る**ので必ず出す。
       */}
       {isPrivate ? (
         <div className="private-note">
           <b>シークレットウィンドウ</b>
           <span>履歴・cookie を残さない。閉じると跡形もなく消える</span>
-          <span>拡張は動かない（Bitwarden の自動入力は使えない）</span>
+          <span>拡張は動かない（kypr は使える）</span>
         </div>
       ) : null}
 

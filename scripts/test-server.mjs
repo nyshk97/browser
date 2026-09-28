@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Phase 0 の受け入れテスト用のローカルサーバ。
- * Bitwarden の自動入力は http://localhost でも動くが、実サイトに近い条件で見たいので
+ * パスワードの自動入力は http://localhost でも動くが、実サイトに近い条件で見たいので
  * 既定は 127.0.0.1:8787 で配信する。
  */
 import http from 'node:http'

@@ -23,6 +23,24 @@ import {
 import { checkForUpdatesManually } from './updater.js'
 import { advanceSwitcher } from './tab-switcher.js'
 import { showAgentWindow } from './agent/index.js'
+import { kyprMatches, kyprState } from './kypr/index.js'
+import { quickFillKypr } from './kypr/fill.js'
+
+/**
+ * ⌘⇧L。入れる先のフレームに合うログインが 1 件ならそのまま入れる。0 件・2 件以上・ロック中はポップアップを開く
+ * （小窓はポップアップを持たないので、1 件のときだけ入れる）。
+ */
+async function kyprShortcut(win: NemoWindow): Promise<void> {
+  const state = kyprState()
+  if (state === 'disabled') return
+  const wc = win.getForegroundTab()?.webContents
+  if (state === 'unlocked' && wc && !wc.isDestroyed()) {
+    const result = await quickFillKypr(wc, kyprMatches)
+    log('kypr.shortcut', { filled: result?.ok === true, reason: result && !result.ok ? result.reason : null })
+    if (result?.ok) return
+  }
+  if (win.kind !== 'mini' && !win.isDestroyed) win.setOverlay(win.overlay === 'kypr' ? null : 'kypr')
+}
 
 /**
  * メニューバーとキーバインド（計画 1-7）。
@@ -79,6 +97,8 @@ const MINI_BLOCKED_COMMANDS = new Set([
  * ⌘T / ⌘L / ⌘W / 戻る / 進む / リロード / 拡大縮小は通す（引き継ぎでユーザーが手で操作するため）。
  */
 const AGENT_BLOCKED_COMMANDS = new Set([
+  // kypr はエージェント用ウィンドウでは使わせない
+  'kypr-fill',
   'pin-tab',
   'add-favorite',
   'toggle-fullscreen',
@@ -150,6 +170,9 @@ export function runCommandForWindow(win: NemoWindow, command: string): void {
   const foreground = win.getForegroundTab()
 
   switch (command) {
+    case 'kypr-fill':
+      void kyprShortcut(win)
+      return
     case 'new-window':
       createWindow()
       return

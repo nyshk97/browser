@@ -1,7 +1,7 @@
 # Nemo
 
 Arc の代替として自分用に作ったブラウザ。**2026-08 から常用している。**
-Electron + `BaseWindow` + タブごとの `WebContentsView` で、Chrome 拡張（Bitwarden 等）がそのまま動く。
+Electron + `BaseWindow` + タブごとの `WebContentsView` で、Chrome 拡張（Keepa 等）がそのまま動く。
 
 ![Nemo](docs/images/readme.png)
 

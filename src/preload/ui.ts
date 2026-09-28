@@ -20,6 +20,13 @@ import type {
   HttpAuthTestResult,
   HttpAuthWriteResult,
   HistoryEntry,
+  KyprActionResult,
+  KyprDraft,
+  KyprInlineState,
+  KyprItemDetail,
+  KyprPanelData,
+  KyprStatus,
+  KyprUnlockResult,
   LoadedExtensionInfo,
   NemoSettings,
   NemoUiApi,
@@ -111,6 +118,8 @@ const api: NemoUiApi = {
     ipcRenderer.invoke('nemo:set-fake-displays-for-verify', count).catch(() => 0) as Promise<number>,
   screenAccessStatusForVerify: () =>
     ipcRenderer.invoke('nemo:screen-access-status-for-verify').catch(() => 'unknown') as Promise<string>,
+  kyprClipboardForVerify: () =>
+    ipcRenderer.invoke('nemo:kypr-clipboard-for-verify').catch(() => null) as Promise<string | null>,
   shortcutHintForVerify: (action) =>
     ipcRenderer.invoke('nemo:shortcut-hint-for-verify', action).catch(() => false) as Promise<boolean>,
 
@@ -183,6 +192,36 @@ const api: NemoUiApi = {
   autofillSave: (profile, passphrase, remember) =>
     ipcRenderer.invoke('nemo:autofill-save', profile, passphrase, remember) as Promise<AutofillSaveResult>,
   autofillDelete: () => ipcRenderer.invoke('nemo:autofill-delete') as Promise<boolean>,
+
+  kyprStatus: () => ipcRenderer.invoke('nemo:kypr-status') as Promise<KyprStatus>,
+  kyprPanel: () => ipcRenderer.invoke('nemo:kypr-panel') as Promise<KyprPanelData>,
+  kyprSignIn: (password, rememberTouchId) =>
+    ipcRenderer.invoke('nemo:kypr-sign-in', password, rememberTouchId) as Promise<KyprUnlockResult>,
+  kyprUnlockTouchId: () => ipcRenderer.invoke('nemo:kypr-unlock-touch-id') as Promise<KyprUnlockResult>,
+  kyprLock: () => ipcRenderer.invoke('nemo:kypr-lock') as Promise<void>,
+  kyprSignOut: () => ipcRenderer.invoke('nemo:kypr-sign-out') as Promise<void>,
+  kyprSync: () => ipcRenderer.invoke('nemo:kypr-sync') as Promise<KyprActionResult>,
+  kyprItem: (id) => ipcRenderer.invoke('nemo:kypr-item', id) as Promise<KyprItemDetail | null>,
+  kyprReveal: (id, field) => ipcRenderer.invoke('nemo:kypr-reveal', id, field) as Promise<string | null>,
+  kyprItemForEdit: (id) =>
+    ipcRenderer.invoke('nemo:kypr-item-for-edit', id) as Promise<KyprItemDetail | null>,
+  kyprCopy: (id, field) => ipcRenderer.invoke('nemo:kypr-copy', id, field) as Promise<boolean>,
+  kyprFill: (id) => ipcRenderer.invoke('nemo:kypr-fill', id) as Promise<KyprActionResult>,
+  kyprDraft: () => ipcRenderer.invoke('nemo:kypr-draft') as Promise<KyprDraft>,
+  kyprSave: (input) => ipcRenderer.invoke('nemo:kypr-save', input) as Promise<KyprActionResult>,
+  kyprTrash: (id) => ipcRenderer.invoke('nemo:kypr-trash', id) as Promise<KyprActionResult>,
+  kyprRestore: (id) => ipcRenderer.invoke('nemo:kypr-restore', id) as Promise<KyprActionResult>,
+  kyprPurge: (id) => ipcRenderer.invoke('nemo:kypr-purge', id) as Promise<KyprActionResult>,
+  kyprGeneratePassword: (length, sets) =>
+    ipcRenderer.invoke('nemo:kypr-generate', length, sets) as Promise<string>,
+  kyprInlineState: () => ipcRenderer.invoke('nemo:kypr-inline-state') as Promise<KyprInlineState | null>,
+  kyprInlinePick: (id) => ipcRenderer.invoke('nemo:kypr-inline-pick', id) as Promise<KyprActionResult>,
+  kyprInlineDismiss: () => ipcRenderer.invoke('nemo:kypr-inline-dismiss') as Promise<void>,
+  onKyprInline: (callback) => {
+    const listener = (): void => callback()
+    ipcRenderer.on('nemo:kypr-inline', listener)
+    return () => ipcRenderer.removeListener('nemo:kypr-inline', listener)
+  },
   saveJevKey: (key) => ipcRenderer.invoke('nemo:jev-key-save', key) as Promise<AutofillSaveResult>,
   clearJevKey: () => ipcRenderer.invoke('nemo:jev-key-clear') as Promise<AutofillSaveResult>,
   liveFolderRefresh: () => ipcRenderer.invoke('nemo:live-folder-refresh') as Promise<void>,

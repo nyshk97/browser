@@ -267,6 +267,20 @@ try {
     Boolean(agentUi) && !before.some((t) => t.url.includes('agent=1'))
   )
   check('窓の名前はプロジェクト名', ctxJson?.window === 'Claude — agent-verify-project', ctxJson?.window)
+  // kypr（パスワードマネージャー）はエージェント窓では使わせない（ツールバーのアイコンの元になる状態を渡さない・IPC も断る）
+  if (agentUi) {
+    const agentSession = await connect(agentUi.webSocketDebuggerUrl)
+    await waitFor(agentSession, "typeof window.nemo === 'object' ? 'ok' : ''")
+    const agentState = JSON.parse(await agentSession.ev('window.nemo.getWindowState().then(JSON.stringify)'))
+    const kyprCall = await agentSession.ev(
+      "window.nemo.kyprStatus().then(() => 'allowed', (e) => 'rejected: ' + String(e && e.message).slice(-60))"
+    )
+    check(
+      'エージェント窓には kypr を出さない（状態は null・IPC は断る）',
+      agentState.kind === 'agent' && agentState.kypr === null && kyprCall.startsWith('rejected'),
+      `kind=${agentState.kind} kypr=${JSON.stringify(agentState.kypr)} ipc=${kyprCall}`
+    )
+  }
   const tabId = ctxJson?.tabs?.[0]?.tabId
 
   /* ---- 3. 遷移と読み取り ---- */

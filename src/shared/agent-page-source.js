@@ -9,7 +9,7 @@
  *
  * 持つもの（document ごと。遷移すると world ごと消える）:
  * - ref の表（`ref_N` → WeakRef<Element>）。read_page が振り、computer / form_input が引く
- * - **秘密の値**。Claude が操作していない間（= ユーザーの操作・Bitwarden 等の自動入力）に
+ * - **秘密の値**。Claude が操作していない間（= ユーザーの操作・パスワードマネージャー等の自動入力）に
  *   パスワード系の欄へ入った値を覚え、read_page / get_page_text / スクショの伏せ字に使う。
  *   キー入力を経ない自動入力（untrusted な input / change）も拾う（`before-input-event` だけだと取りこぼす。実測）
  * - taint（この document でユーザーがパスワード系の欄に入力した）。javascript_tool を断る根拠

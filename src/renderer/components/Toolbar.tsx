@@ -16,7 +16,7 @@ const PAGE_PARTITION = 'persist:nemo'
  */
 function toolbarActionFilterCss(extensions: readonly LoadedExtensionInfo[]): string {
   const shown = extensions.filter((extension) => extension.enabled && extension.showInToolbar)
-  // 対象が 0 件（Bitwarden を OFF にした端末など）は要素ごと畳む（幅 0 の要素が gap を 1 つぶん食う）
+  // 対象が 0 件（アイコンを出す拡張が無い・OFF にした端末など）は要素ごと畳む（幅 0 の要素が gap を 1 つぶん食う）
   if (shown.length === 0) return ':host { display: none !important; }'
   const keep = shown.map((extension) => `:not(#${extension.id})`).join('')
   return `.action${keep} { display: none !important; }`
@@ -308,6 +308,31 @@ export function Toolbar({ pane = 'left' }: { pane?: 'left' | 'right' }): React.J
           {isPrivate || isAgent ? null : (
             <browser-action-list ref={actionListRef} partition={PAGE_PARTITION} />
           )}
+          {/*
+            kypr（パスワードマネージャー）。拡張のアイコンの並びとは別の要素にする（拡張が 0 件で畳まれても残る）。
+            シークレットウィンドウでも出す。エージェント用ウィンドウでは main が null を渡す
+          */}
+          {state?.kypr && state.kypr.state !== 'disabled' ? (
+            <button
+              type="button"
+              className="icon kypr-icon"
+              title={
+                state.kypr.state === 'unlocked'
+                  ? `kypr（このページに合うログイン ${state.kypr.count} 件。⌘⇧L）`
+                  : 'kypr（ロック中。⌘⇧L）'
+              }
+              onClick={() => void window.nemo.setOverlay('kypr')}
+            >
+              🔑
+              {state.kypr.state === 'unlocked' ? (
+                state.kypr.count > 0 ? (
+                  <span className="count">{state.kypr.count > 9 ? '9+' : state.kypr.count}</span>
+                ) : null
+              ) : (
+                <span className="count locked">🔒</span>
+              )}
+            </button>
+          ) : null}
           <button
             type="button"
             className="icon"

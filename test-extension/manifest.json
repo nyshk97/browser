@@ -3,7 +3,7 @@
   "name": "Nemo CI Test Extension",
   "version": "1.0.0",
   "description": "Nemo の拡張サポートを CI で検証するための最小 MV3 拡張。資格情報を必要とせず、結果が決定的になるようにしてある。",
-  "permissions": ["tabs", "storage", "webRequest"],
+  "permissions": ["tabs", "storage", "webRequest", "alarms", "notifications"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
   "background": {
     "service_worker": "background.js"

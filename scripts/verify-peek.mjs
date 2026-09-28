@@ -20,7 +20,7 @@
  *   Phase 0 のスパイクで測ってあるが、実ターミナルでの確認は人が行う
  * - **⌘クリックの背面タブ**。`disposition: 'background-tab'` は合成キーでしか作れず、
  *   メニューのアクセラレータと同じで CDP からは撃てない
- * - **実 Vault の Bitwarden**での自動入力
+ * - 実サイトのログイン画面での自動入力（kypr）
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'

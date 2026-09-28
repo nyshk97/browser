@@ -1,0 +1,117 @@
+{
+  "description": "kypr crypto v1 のテストベクタ。仕様は docs/crypto-spec.md。バイト列は hex、封筒の中は base64",
+  "kdf": [
+    {
+      "password": "correct horse battery staple",
+      "kdf": {
+        "alg": "argon2id",
+        "v": 19,
+        "m": 65536,
+        "t": 3,
+        "p": 1,
+        "salt": "AAECAwQFBgcICQoLDA0ODw=="
+      },
+      "inputUtf8Hex": "636f727265637420686f727365206261747465727920737461706c65",
+      "normalizedUtf8Hex": "636f727265637420686f727365206261747465727920737461706c65",
+      "masterKey": "0d1a3c6523c8f06e4e0af9c515aa5b5448cfebd6838f2d52c3d8b6ef8ddc3c2e",
+      "authKey": "796a5d1fba102bd0fe7d9fd976308363fe7124a3816d346301b7cf6e4d70bc0a",
+      "wrapKey": "758423bd868fd69a13a5de616e7735ebb4a5eb425913882c7fc74cf2382a7f94"
+    },
+    {
+      "password": "パスワード🔑です",
+      "kdf": {
+        "alg": "argon2id",
+        "v": 19,
+        "m": 65536,
+        "t": 3,
+        "p": 1,
+        "salt": "8OHSw7Sllod4aVpLPC0eDw=="
+      },
+      "inputUtf8Hex": "e38391e382b9e383afe383bce38389f09f9491e381a7e38199",
+      "normalizedUtf8Hex": "e38391e382b9e383afe383bce38389f09f9491e381a7e38199",
+      "masterKey": "4166f8cafc2d06541f037dc1e62111952b99955bc40ce6b93efbc947bbd75d8d",
+      "authKey": "ab414c9c702806e1f58ffc5fd25facb6a4b428e48b9748044973b00e648e169a",
+      "wrapKey": "0457692e0d95613283e90447a9c5fdfa383df9a6f9c72ecea7d2c6c930636ab5"
+    },
+    {
+      "password": "がぎ café",
+      "passwordNfc": "がぎ café",
+      "kdf": {
+        "alg": "argon2id",
+        "v": 19,
+        "m": 65536,
+        "t": 3,
+        "p": 1,
+        "salt": "EREREREREREREREREREREQ=="
+      },
+      "inputUtf8Hex": "e3818be38299e3818e2063616665cc81",
+      "normalizedUtf8Hex": "e3818ce3818e20636166c3a9",
+      "masterKey": "45f3bf8640db5b93c5dfd73f86862f057709d5170a1d7c33ec2677c563b74be2",
+      "authKey": "c23a83568991f7a072facc38d813bc7748fcdd47763d43e48c2519998d9191df",
+      "wrapKey": "185d13587b5a6ace7a9b4ef293e6e21e441337961a585d3ebb1714bde1023483"
+    },
+    {
+      "password": "  spaces  ",
+      "kdf": {
+        "alg": "argon2id",
+        "v": 19,
+        "m": 131072,
+        "t": 4,
+        "p": 1,
+        "salt": "IiIiIiIiIiIiIiIiIiIiIg=="
+      },
+      "inputUtf8Hex": "20207370616365732020",
+      "normalizedUtf8Hex": "20207370616365732020",
+      "masterKey": "5b5154afd4e14e3bb12be87df53e5af77c7c3b2cf07c1377754dbe5f1151a936",
+      "authKey": "70b180f1758d69114789efbfb05c318e861a954ac4b785dbc2b757c863b51c0b",
+      "wrapKey": "0c26bbb2de897ed729db9c5ca271a3013906ebb7489c53dd4738b8b97d52c035"
+    }
+  ],
+  "wrap": {
+    "wrapKey": "758423bd868fd69a13a5de616e7735ebb4a5eb425913882c7fc74cf2382a7f94",
+    "vaultKey": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+    "nonce": "0c0c0c0c0c0c0c0c0c0c0c0c",
+    "envelope": {
+      "v": 1,
+      "alg": "A256GCM",
+      "n": "DAwMDAwMDAwMDAwM",
+      "c": "Wpv2cAy4A2y0oZyaTQoe4/a4nRsMyoa9SnE7f5Z300Y2ewj/0aoxZ0OlNMJPYm61"
+    }
+  },
+  "item": {
+    "vaultKey": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+    "id": "3f2b8c1e-6d4a-4e2f-9b7c-1a2b3c4d5e6f",
+    "nonce": "000000000000000000000001",
+    "plaintext": "{\"id\":\"3f2b8c1e-6d4a-4e2f-9b7c-1a2b3c4d5e6f\",\"type\":\"login\",\"schema\":1,\"name\":\"例のサイト\",\"username\":\"alice@example.com\",\"password\":\"p@ss wörd\",\"uris\":[{\"uri\":\"https://example.com/login\",\"match\":null}],\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-28T00:00:00.000Z\",\"updatedAt\":\"2026-09-28T00:00:00.000Z\"}",
+    "envelope": {
+      "v": 1,
+      "alg": "A256GCM",
+      "n": "AAAAAAAAAAAAAAAB",
+      "c": "/4v7mVow4wnVOzaAgwS985Q6Wupwi/EKPUWVbe6+BaCem/FK+/5l/Dtc+LM4liP/0eUSqJyvlrG2qHpWM3F77tNruLIJXa58JMF/WuHcRvIyBjCR0CORqfawvYq2FR9VHjcP+tI4xY9epRqIQnAi5H1iRCcw8+1g1iWlaibCGFfS7xIihujJfqDsNT4XVD7tFVVYROks8zO24H1q32zY87tgyrIeCpBnLOOJbcULs6E6gV+Fx297u9yvwDNc5x4+kfJDZun6HWOPIy+AdmSmY8bwFmdVn5y/Hqkv00o/2OzhgFm2VQyFS3vzk/AKuD9nI1/JCrZ5ZxoL8L7g1SdXk/i5HbefX66NwxkSB/thgb/UoJXknQdNSN4nVPx6bFW9htWxEk3NzJshHoAcR28VdVMTpUl56DOZOQEF448dFhELHNE30Q=="
+    }
+  },
+  "noteItem": {
+    "vaultKey": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+    "id": "7c9e4a2b-1f3d-4b8e-a6c5-0d9f8e7a6b5c",
+    "nonce": "000000000000000000000002",
+    "plaintext": "{\"id\":\"7c9e4a2b-1f3d-4b8e-a6c5-0d9f8e7a6b5c\",\"type\":\"note\",\"schema\":1,\"name\":\"リカバリーコード\",\"notes\":\"1234-5678\\n2345-6789\\n（例）\",\"extra\":{},\"createdAt\":\"2026-09-28T00:00:00.000Z\",\"updatedAt\":\"2026-09-28T00:00:00.000Z\"}",
+    "envelope": {
+      "v": 1,
+      "alg": "A256GCM",
+      "n": "AAAAAAAAAAAAAAAC",
+      "c": "OmqzaWlCKLtdTrSZzHaeNkK3eDe2ZKFriAA0ITUiLs/uq5xjMMBbU4p8wWoxLbJW8L4R5SW5A7XjZbSrSJHH2sBQn2bysOIastKcpxBUj7FmLIeWNVKm0pP+h62T9itDPR3vWdo4ZTQ+TrCveX38OfR+mOqCA+4YNE5Bn37sPRh4GczpgFFQHJtCoC4Kw7DEGZ3qUTVm0YKla/ToYyzxQgypEHSV73YKo9DPSnimpvgJl1AauwhQynwKLub3yLlYW4iDwuEbdCyYuhQSIBOdj9Rm/MvPlAFLFQoWYyIAG1lsFgeMvQEaT3fTVzvyWn2HvJ05gE/TaNaO/zw="
+    }
+  },
+  "cardItem": {
+    "vaultKey": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+    "id": "3d5b8f1e-6a2c-4e9d-b7f0-1c4a8e2d6b93",
+    "nonce": "000000000000000000000003",
+    "plaintext": "{\"id\":\"3d5b8f1e-6a2c-4e9d-b7f0-1c4a8e2d6b93\",\"type\":\"card\",\"schema\":1,\"name\":\"メインのカード\",\"cardholderName\":\"TARO YAMADA\",\"brand\":\"Visa\",\"number\":\"4111111111111111\",\"expMonth\":\"4\",\"expYear\":\"2031\",\"code\":\"123\",\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-28T00:00:00.000Z\",\"updatedAt\":\"2026-09-28T00:00:00.000Z\"}",
+    "envelope": {
+      "v": 1,
+      "alg": "A256GCM",
+      "n": "AAAAAAAAAAAAAAAD",
+      "c": "jvEG36Qe8iJarfiNbufPqQ1kaS+T6D3ICq4Wp9YqpFFPKrC0ycBCTwV/ETX+BIpkw/B7IpoFIC37S+Gz3KL6fM/rUNumNXZZO1hiSs8h0foQqdLjXhWSQKNB3SQR2EYeo0NOa6UGBGoWpbKnUA+W11obh8E6Xc6Wt9kZrTgRKHB91So0ouqv7bdf2mbxW/TireA1MC8TjB1BXg1KzoBmocEuDrSzF2fN3MdJRox4N08iqoEmX3wE3LCdfX1nEiCga3mr6tWct4PcC4b7ScubGKMFDhMcqQim8huOOuIIpywpuZn+v+kj+TDPO/hUaas2BYuw/hVwR3qa1i/I9hpvDFEKnlsIRDwwzyp0oLWQFRD624LenndqNP4vxHIOGxREjdP4f+J9hvB8FWg0z1rJbtycG3FgYT10rZZYwgo32CASayTDy1+RWLFuRav7bVdp"
+    }
+  }
+}

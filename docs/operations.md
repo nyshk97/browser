@@ -4,7 +4,7 @@ README から退避した開発・リリース・運用の手順。自分用。
 
 
 Arc の代替として作っている自作ブラウザ。Electron + `BaseWindow` + タブごとの `WebContentsView` +
-`electron-chrome-extensions` で、Chrome 拡張（Bitwarden 等）が動く。
+`electron-chrome-extensions` で、Chrome 拡張（Keepa 等）が動く。
 
 現在は **Phase 2（常用移行）** まで実装済み。
 サイドバー3層・コマンドバー・ダウンロード・セッション復元・権限ダイアログ・パッケージングに加えて、
@@ -92,14 +92,14 @@ mise run dev       # 開発版 Nemo を起動（HMR あり・拡張つき）
 - remote debugging を 9333 で開けて Nemo を起動（**dev のときだけ**）
 
 > CDP に到達できるものは拡張の service worker で任意の JS を実行できる。
-> 実アカウントの Bitwarden を入れるときは `mise run dev:nodebug` を使う。
+> 実アカウントで拡張にログインするときは `mise run dev:nodebug` を使う。
 
 主なタスク（`mise tasks` で一覧）:
 
 | タスク | 内容 |
 |---|---|
 | `mise run dev` | 開発版を起動（HMR あり） |
-| `mise run dev:nodebug` | remote debugging を開けずに起動（実 Vault の Bitwarden を入れて触るとき） |
+| `mise run dev:nodebug` | remote debugging を開けずに起動（実アカウントでログインした拡張を触るとき） |
 | `mise run dev:popup` | 拡張 popup の DevTools を自動で開いて起動（popup の不具合を追うとき。CDP は開かない） |
 | `mise run dev:build` | ビルドしてから起動（本番に近い経路で確認したいとき） |
 | `mise run check` | lint → typecheck → ユニットテスト（コミット前） |
@@ -113,7 +113,6 @@ mise run dev       # 開発版 Nemo を起動（HMR あり・拡張つき）
 | `mise run licenses` | 依存ライブラリのライセンス棚卸し |
 | `mise run release [patch\|minor\|major\|x.y.z]` | 常用版をリリース（署名 → notarize → GitHub Release） |
 | `mise run ext:fetch` / `ext:verify` / `ext:update <version>` / `ext:rollback` | 拡張の取得・検証・更新・巻き戻し |
-| `mise run verify:ext-update <version>` | 版を上げ下げしても拡張の設定（`chrome.storage`）が残ることを実物で検証 |
 | `mise run arc:import [stable\|dev] [--dry-run] [--replace]` | Arc のピン留め・Favorites を取り込む（冪等） |
 | `mise run ext:outdated` | 拡張に新しい版が出ていないか確認（何も書き換えない） |
 | `mise run test:pages` | テストページのサーバだけ起動 |
@@ -244,6 +243,21 @@ mise run ext:rollback                   # lock を git の状態に戻して再�
 node scripts/ext-webstore-key.mjs <id>  # Web Store の CRX から公開鍵を取り出す（初回のみ）
 ```
 
+## kypr（パスワードマネージャー）
+
+自作のパスワードマネージャー kypr（`~/kypr`。private リポジトリ）を Nemo に組み込んでいる（Bitwarden 拡張の代わり）。
+計画は `docs/plans/2026-09-28-2232-kypr-integration.md`。
+
+- ツールバーの 🔑（このページに合うログインの件数）・⌘⇧L（1 件ならそのまま入力）・ログイン欄の下の候補（メインフレームだけ）
+- 初回は設定の「kypr」かポップアップでマスターパスワードを入れてログインする。2 回目からは Touch ID
+- ロック: 画面ロック・スリープ・終了・1 時間使わなかったとき
+- 鍵は main だけが持つ。この Mac に置くのは暗号文の控え（`userData/kypr/cache.json`）と、Touch ID 用の鍵を
+  端末鍵（`safeStorage`）で暗号化したもの（`userData/kypr/device-keys.json`）だけ
+- サーバーは dev 版も常用版も本番（`https://kypr.tools97.com`）
+- 暗号・同期のコードは kypr からコピーしている（`src/vendor/kypr/`。**手で直さない**。kypr 側を直して
+  `mise run export-nemo` でコピーし直す。コピー元のコミットは `src/vendor/kypr/VENDORED.md`）
+- パスキーはまだ使えない（Bitwarden 拡張を外したため。kypr の次の段階で入れる）
+
 ## Claude Code から操作する（Claude in Nemo）
 
 Claude in Chrome の代わり。Claude Code のセッションごとに専用の「Claude — <プロジェクト名>」ウィンドウを開いて、
@@ -267,7 +281,7 @@ Claude in Chrome の代わり。Claude Code のセッションごとに専用の
 
 - Claude Code のセッション（= ブリッジ 1 本）ごとに窓 1 枚。**最初のツール呼び出しで開き、セッションが終わると閉じる**
   （Claude Code が落ちても stdin が閉じるので閉じる）。セッション保存・履歴・一時タブの共有には入らない
-- 窓は専用のプロファイル（`persist:nemo-agent`）。**普段のログイン・拡張（Bitwarden）・履歴は見えない**。
+- 窓は専用のプロファイル（`persist:nemo-agent`）。**普段のログイン・拡張・kypr・履歴は見えない**。
   引き継ぎでログインしたサイトはこのプロファイルに残る（設定画面の「Claude in Nemo の cookie 等を全て削除」でまとめて消せる。サイト単位では消さない）
 - 出し方: 内蔵ディスプレイのデスクトップに、全画面にせず・前面を奪わず・最背面へ出す。普段の窓と同じく
   スクショ・画面共有には映る（画面 2 枚のときは内蔵側に出るので、Studio Display の共有には入らない）。

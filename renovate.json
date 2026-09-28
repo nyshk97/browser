@@ -21,7 +21,7 @@
     "  - CI / lint / typecheck / unit test",
     "  - CI / extension smoke (macOS)   ← 資格情報なしで決定的に回る拡張互換の smoke",
     "  - CI / package (macOS)",
-    "Bitwarden 実物での確認は保護 workflow（拡張互換（実物の Bitwarden））で行う。",
+    "本体の自走検証（verify-all）は workflow `自走検証（Electron・依存の更新）` で行う。",
     "これは `package.json` / `pnpm-lock.yaml` / `extensions.lock.json` を触る PR で自動的に回る。"
   ],
 
@@ -41,8 +41,8 @@
         "### マージ前に必ずやること",
         "",
         "- [ ] CI の `extension smoke (macOS)` が緑（資格情報なしの拡張互換）",
-        "- [ ] 保護 workflow `拡張互換（実物の Bitwarden）` が緑",
-        "- [ ] 実機で Bitwarden の Vault アンロックと自動入力を確認（VERIFY.md「Phase 0 受け入れテスト」）",
+        "- [ ] workflow `自走検証（Electron・依存の更新）` が緑",
+        "- [ ] 実機で kypr の確認（Touch ID での解除・⌘⇧L での入力・コピー。VERIFY.md「kypr」）",
         "- [ ] `docs/compat.md` の last-known-good をこの組み合わせに更新",
         "",
         "**落ちたら据え置く。** この PR を閉じれば pin は元のままなので、",

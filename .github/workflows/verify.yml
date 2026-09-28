@@ -1,0 +1,33 @@
+name: 自走検証（Electron・依存の更新）
+
+# 依存（Electron を含む）や拡張の lock が変わる PR で、本体の自走検証（verify-all）を回す。
+# ci.yml が回すのは lint・ユニットテスト・拡張の smoke・パッケージだけなので、
+# Electron の更新で本体の挙動が壊れていないかはここで見る。
+#
+# 拡張は verify-all が自作テスト拡張を作って読み込ませるので、外からのダウンロードは無い
+# （以前は実物の Bitwarden を取ってきていたが、外した。2026-09-28）。
+#
+# 手動実行と、依存・lock の更新 PR のときだけ回す（macOS で数分かかるため）。
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'extensions.lock.json'
+
+jobs:
+  verify:
+    name: 自走検証（verify-all）
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: 自走検証（テスト拡張 + ブラウザ本体）
+        run: node scripts/verify-all.mjs

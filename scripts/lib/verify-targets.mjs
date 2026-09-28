@@ -45,6 +45,7 @@ export const KNOWN_TARGETS = [
   'autofill', // フォーム自動入力（保管庫・Jev のモック。自分で起動する）
   'metrics', // メモリ・CPU の定期記録と UI 例外（自分で起動する。OPT_IN_ONLY を見る）
   'session-cookies', // セッション cookie（ログイン）の再起動をまたぐ引き継ぎ（自分で 3 回起動する）
+  'kypr', // kypr（パスワードマネージャー。模擬サーバー・Touch ID とクリップボードの差し替え。自分で 4 回起動する）
   'agent' // Claude in Nemo（ブリッジ経由の MCP・エージェント窓。自分で起動する。OPT_IN_ONLY を見る）
 ]
 
@@ -199,7 +200,8 @@ export const OWNERS = new Map([
   // 実サイト調査（自走検証ではない）。直したら自動入力のスイートで回帰を見る
   ['scripts/autofill-survey.mjs', ['autofill']],
   ['scripts/autofill-survey-urls.txt', ['autofill']],
-  ['src/main/autofill/frame-runner.ts', ['autofill']],
+  // iframe へ入れる口は kypr の入力も使う（`kypr/fill.ts`）
+  ['src/main/autofill/frame-runner.ts', ['autofill', 'kypr']],
   ['scripts/autofill.test.mjs', ['autofill']],
   // メモリ・CPU の定期記録と UI 例外だけが読むモジュール（他のスイートは触らない）。
   // `index.ts` / `registry.ts` / `ipc.ts` / `main.tsx` に入れた配線はここに載せない（フルに倒す）
@@ -236,7 +238,49 @@ export const OWNERS = new Map([
   ['src/shared/session-cookies.js', ['session-cookies']],
   ['src/main/store/session-cookies.ts', ['session-cookies']],
   ['scripts/session-cookies.test.mjs', ['session-cookies']],
-  ['scripts/verify-session-cookies.mjs', ['session-cookies']]
+  ['scripts/verify-session-cookies.mjs', ['session-cookies']],
+  // kypr だけが読むモジュール（新規ファイル。registry / ipc / menu / index / Toolbar / Overlay / Settings /
+  // keybindings / preload への配線はここに載せない = フルに倒す）。`Kypr.tsx` と `KyprSettings.tsx` は
+  // `verify-kypr.mjs` がポップアップ・候補・設定画面を開いて描画まで見ている
+  ['scripts/verify-kypr.mjs', ['kypr']],
+  ['scripts/lib/kypr-mock-server.mjs', ['kypr']],
+  ['scripts/kypr-config.test.mjs', ['kypr']],
+  ['scripts/kypr-vendor.test.mjs', ['kypr']],
+  ['src/shared/kypr-config.js', ['kypr']],
+  ['src/shared/kypr-page-source.js', ['kypr']],
+  ['src/preload/kypr-page.ts', ['kypr']],
+  ['src/main/kypr/index.ts', ['kypr']],
+  ['src/main/kypr/fill.ts', ['kypr']],
+  ['src/main/kypr/inline.ts', ['kypr']],
+  ['src/main/kypr/cache-store.ts', ['kypr']],
+  ['src/main/kypr/device-keys.ts', ['kypr']],
+  ['src/main/kypr/touch-id.ts', ['kypr']],
+  ['src/main/kypr/kdf.ts', ['kypr']],
+  ['src/main/kypr/kdf-worker.ts', ['kypr']],
+  ['src/renderer/components/Kypr.tsx', ['kypr']],
+  ['src/renderer/components/KyprSettings.tsx', ['kypr']],
+  // kypr からコピーしたコード（`mise run export-nemo` で上書きされる。手で直さない）
+  ['src/vendor/kypr/crypto/decrypt-export.ts', ['kypr']],
+  ['src/vendor/kypr/crypto/encoding.ts', ['kypr']],
+  ['src/vendor/kypr/crypto/envelope-shape.ts', ['kypr']],
+  ['src/vendor/kypr/crypto/envelope.ts', ['kypr']],
+  ['src/vendor/kypr/crypto/errors.ts', ['kypr']],
+  ['src/vendor/kypr/crypto/export-format.ts', ['kypr']],
+  ['src/vendor/kypr/crypto/ids.ts', ['kypr']],
+  ['src/vendor/kypr/crypto/index.ts', ['kypr']],
+  ['src/vendor/kypr/crypto/item.ts', ['kypr']],
+  ['src/vendor/kypr/crypto/kdf.ts', ['kypr']],
+  ['src/vendor/kypr/crypto/params.ts', ['kypr']],
+  ['src/vendor/kypr/crypto/vault.ts', ['kypr']],
+  ['src/vendor/kypr/client/api.ts', ['kypr']],
+  ['src/vendor/kypr/client/cache.ts', ['kypr']],
+  ['src/vendor/kypr/client/card.ts', ['kypr']],
+  ['src/vendor/kypr/client/generator.ts', ['kypr']],
+  ['src/vendor/kypr/client/index.ts', ['kypr']],
+  ['src/vendor/kypr/client/psl-data.ts', ['kypr']],
+  ['src/vendor/kypr/client/session.ts', ['kypr']],
+  ['src/vendor/kypr/client/url-match.ts', ['kypr']],
+  ['src/vendor/kypr/test-vectors/v1.json', ['kypr']]
 ])
 
 /**
@@ -249,8 +293,7 @@ export const OWNERS = new Map([
 export const UNMAPPED_VERIFY_SCRIPTS = [
   'scripts/verify-all.mjs', // 逆引きの本体。触ったらフル
   'scripts/verify-packaged.mjs', // パッケージ版。`mise run verify` の外
-  'scripts/verify-ext-smoke.mjs', // 拡張互換 smoke。`mise run verify` の外
-  'scripts/verify-ext-update.mjs' // 拡張の版上げ下げ。`mise run verify` の外
+  'scripts/verify-ext-smoke.mjs' // 拡張互換 smoke。`mise run verify` の外
 ]
 
 /** `KNOWN_TARGETS` の並び順に揃える（出力を安定させる）。 */

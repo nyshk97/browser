@@ -25,6 +25,7 @@ dist 版で実測）。固まったタブの調査は dev 版（CDP 9333）で�
 Chromium の `NOTREACHED "Unsuitable process reused for site"` = Electron #52644（再現なしで closed。43.0.0 でも発生）で、
 引き金は Bitwarden がフォーカス時に差し込む `chrome-extension://…/overlay/menu*.html` の OOPIF。2 回とも直前に Bitwarden の
 SW が入れ替わっていた。実プロファイルの複製でも再現できなかったので、同じスタックならアプリ側を掘らない。
+Bitwarden は 2026-09-28 に外したので、この経路はもう通らない（別の拡張の OOPIF で出たら同じバグを疑う）。
 
 ## 自走検証を足すとき
 

@@ -189,6 +189,16 @@ const verifyUnloadChoice = 'leave'
  * 使い捨てのデータディレクトリを毎回作って、そこで完結させる。
  */
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nemo-verify-'))
+/**
+ * 読み込ませる拡張は**自作テスト拡張だけ**（`make-test-extension.mjs` で作る）。
+ * 手元の `extensions/`（実物の拡張）を読ませると、端末ごとに中身が違い、CI には実体が無い。
+ * 以前は Bitwarden を題材にしていたが、外した（2026-09-28）。
+ */
+const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nemo-verify-ext-'))
+const extEnv = {
+  NEMO_EXT_DIR: path.join(extRoot, 'extensions'),
+  NEMO_EXT_LOCK: path.join(extRoot, 'extensions.lock.json')
+}
 /** ダウンロードの検証で実際の ~/Downloads を汚さないための保存先。 */
 const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nemo-verify-dl-'))
 
@@ -241,6 +251,7 @@ async function startApp() {
       NEMO_REMOTE_DEBUGGING_PORT: debugPort,
       NEMO_USER_DATA_DIR: userDataDir,
       NEMO_DOWNLOAD_DIR: downloadDir,
+      ...extEnv,
       // **アプリ側へ渡すのがここ**。検証スクリプトにだけ渡しても届かない
       NEMO_MEET_TEST_URL_PREFIX: meetPrefix,
       // Live Folder は起動直後に取得しに行くので、**フル検証の間は必ずローカルへ向ける**
@@ -331,9 +342,11 @@ try {
     throw new Error('ビルド失敗')
   }
 
-  console.log('\n=== 拡張の照合')
-  if ((await runToCompletion(process.execPath, ['scripts/ext-verify.mjs'])) !== 0) {
-    throw new Error('拡張が lock と一致しない')
+  console.log('\n=== テスト拡張を用意する')
+  // 照合（ツリーの hash）は起動時に main が行う（ext-verify は取得元の URL と manifestKey を前提にした
+  // 実物の拡張向けで、ローカルのテスト拡張の lock には合わない。verify-ext-smoke と同じ扱い）
+  if ((await runToCompletion(process.execPath, ['scripts/make-test-extension.mjs', extRoot])) !== 0) {
+    throw new Error('テスト拡張の生成に失敗した')
   }
 
   if (needsApp) {
@@ -576,6 +589,15 @@ try {
     if (autofillCode !== 0) exitCode = autofillCode
   }
 
+  if (want('kypr')) {
+    // kypr も別建て。**模擬サーバー・Touch ID・クリップボードの差し替えを自分で振る**
+    // （渡し忘れると本物の kypr のサーバーに向く。検証モードで宛先が無ければ kypr は起動しない）
+    await stopAll()
+    console.log('\n=== kypr（パスワードマネージャー）')
+    const kyprCode = await runToCompletion(process.execPath, ['scripts/verify-kypr.mjs'])
+    if (kyprCode !== 0) exitCode = kyprCode
+  }
+
   if (want('agent')) {
     // Claude in Nemo も別建て。**`NEMO_AGENT_SOCKET` を自分で振る**（ブリッジを常用・dev の socket に繋がない）
     await stopAll()
@@ -608,6 +630,7 @@ try {
   if (alive.length === 0) {
     fs.rmSync(userDataDir, { recursive: true, force: true })
     fs.rmSync(downloadDir, { recursive: true, force: true })
+    fs.rmSync(extRoot, { recursive: true, force: true })
   } else {
     exitCode = 1
     console.error(

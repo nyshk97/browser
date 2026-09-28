@@ -5,7 +5,7 @@ import { redactUrl } from './security.js'
 /**
  * 拡張の SW / content script の console（warning / error）を診断ログに残す。
  * **`NEMO_EXT_CONSOLE=1` のときだけ**動く（本文には URL・メール等が載りうるので常用版では出さない。
- * 実 Vault で「Bitwarden の内部でどこが止まっているか」を追うための dev 用スイッチ）。
+ * 実アカウントでログインした拡張の「内部でどこが止まっているか」を追うための dev 用スイッチ）。
  * URL は `redactUrl` を行単位で通してから書く。
  */
 export const extensionConsoleEnabled = process.env['NEMO_EXT_CONSOLE'] === '1'

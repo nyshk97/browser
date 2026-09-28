@@ -38,6 +38,14 @@ export const COMMANDS = [
   { id: 'find', label: 'ページ内を検索', accelerator: 'CmdOrCtrl+F', menu: 'edit', needsTab: true },
   { id: 'find-next', label: '次を検索', accelerator: 'CmdOrCtrl+G', menu: 'edit', needsTab: true },
   { id: 'find-previous', label: '前を検索', accelerator: 'CmdOrCtrl+Shift+G', menu: 'edit', needsTab: true },
+  // kypr: このページに合うログインが 1 件ならそのまま入れる。それ以外はポップアップを開く（Bitwarden の ⌘⇧L と同じ手癖）
+  {
+    id: 'kypr-fill',
+    label: 'kypr でログインを入力',
+    accelerator: 'CmdOrCtrl+Shift+L',
+    menu: 'edit',
+    needsTab: true
+  },
 
   // View
   { id: 'toggle-sidebar', label: 'サイドバーの表示', accelerator: 'CmdOrCtrl+S', menu: 'view' },

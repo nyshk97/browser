@@ -59,6 +59,22 @@ const ACCEPTED = new Map([
 const byLicense = new Map()
 /** @type {Map<string, string>} */
 const unknown = new Map()
+/**
+ * `node_modules` を経由せずにコードへ埋め込んだ第三者のもの（notice に固定で載せる）。
+ * kypr からコピーしたコード（src/vendor/kypr）は作者が同じなので GPL-3.0-only で置いており、ここには載せない。
+ */
+const EMBEDDED = [
+  {
+    id: 'Public Suffix List（src/vendor/kypr/client/psl-data.ts）',
+    license: 'MPL-2.0',
+    text: [
+      'This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.',
+      'If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.',
+      'Source: https://publicsuffix.org/list/public_suffix_list.dat'
+    ].join('\n')
+  }
+]
+
 /** notice に出す本文。`name@version` → { license, text }。 */
 const notices = new Map()
 
@@ -153,6 +169,10 @@ if (writeIndex !== -1) {
   for (const [id, entry] of [...notices].sort()) {
     lines.push(`## ${id}`, '', `License: ${entry.license}`, '')
     if (entry.text) lines.push('```', entry.text.trimEnd(), '```', '')
+  }
+  // `node_modules` を経由しない（= 上の走査に出ない）で同梱しているもの。docs/licenses.md の「コードに埋め込んだ第三者アセット」と揃える
+  for (const entry of EMBEDDED) {
+    lines.push(`## ${entry.id}`, '', `License: ${entry.license}`, '', '```', entry.text, '```', '')
   }
   fs.mkdirSync(path.dirname(path.resolve(target)), { recursive: true })
   fs.writeFileSync(target, `${lines.join('\n')}\n`)

@@ -4,7 +4,7 @@
  *
  * **クリップボードは触らせない**（cmd+c / cmd+x / cmd+v と `commands: copy/cut/paste` は拒否）。
  * CDP の key に `commands: ['paste']` を付けると `clipboard-read` を拒否していてもシステムの
- * クリップボードが貼られた（実測。Bitwarden の TOTP 自動コピーや、ユーザーがコピーしたパスワードが入りうる）。
+ * クリップボードが貼られた（実測。パスワードマネージャーのコピーや、ユーザーがコピーしたパスワードが入りうる）。
  */
 
 export interface KeyStroke {

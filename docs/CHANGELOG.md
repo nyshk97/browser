@@ -30,6 +30,8 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 
 ## [Unreleased]
 
+## [1.2.20] - 2026-09-28
+
 ### 追加
 
 - **Claude Code から Nemo を操作できるようにした（Claude in Nemo）**。Claude in Chrome の代わりに、Claude Code のセッションごとに専用の「Claude — <プロジェクト名>」ウィンドウを開いて操作する。普段のウィンドウ・ログイン・拡張には触れず、前面も奪わない。Claude Code を終えるとウィンドウは閉じる。設定（⌘,）の「Claude Code からの操作を許可」を ON にし、`claude mcp add-json` で登録して使う（docs/operations.md）

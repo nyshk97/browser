@@ -577,6 +577,15 @@ try {
     /cookie が残っているサイト（\d+）/.test(toggleText),
     toggleText
   )
+  // 行にはサイト名だけを出す（cookie の件数は出さない。ボタンの文字は除いて見る）
+  const rowText = await agentSidebar.ev(
+    "[...document.querySelector('[data-agent-site=\"127.0.0.1\"]').childNodes].filter((n) => n.nodeName !== 'BUTTON').map((n) => n.textContent).join('')"
+  )
+  check(
+    'サイトの行はサイト名だけ（cookie の件数を出さない）',
+    rowText === '127.0.0.1',
+    JSON.stringify(rowText)
+  )
   await agentSidebar.ev(
     "document.querySelector('[data-agent-site=\"127.0.0.1\"] .agent-site-x').click(), 'ok'"
   )

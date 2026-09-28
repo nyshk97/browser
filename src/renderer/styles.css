@@ -2712,10 +2712,6 @@ body[data-view='toolbar'] {
   font-size: 12px;
 }
 
-.agent-site-count {
-  color: var(--nemo-ink-dim);
-}
-
 .agent-site-x {
   width: 22px;
   height: 22px;

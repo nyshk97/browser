@@ -500,17 +500,15 @@ function AgentSites({ refreshKey }: { refreshKey: string }): React.JSX.Element {
                     消す
                   </button>
                 ) : (
-                  <>
-                    <span className="agent-site-count">{entry.cookies}</span>
-                    <button
-                      type="button"
-                      className="agent-site-x"
-                      title="このサイトの cookie とストレージを消す（ログアウト）"
-                      onClick={() => setArmed(entry.site)}
-                    >
-                      ×
-                    </button>
-                  </>
+                  // cookie の件数は出さない（多くてもログインしているとは限らず、見ても判断に使えない）
+                  <button
+                    type="button"
+                    className="agent-site-x"
+                    title="このサイトの cookie とストレージを消す（ログアウト）"
+                    onClick={() => setArmed(entry.site)}
+                  >
+                    ×
+                  </button>
                 )}
               </li>
             ))}

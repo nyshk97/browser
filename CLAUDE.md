@@ -10,6 +10,12 @@ dev 版（プロファイル `Nemo-dev`。`.nemo-run/<pid>.json` の `userData` 
 なお **`.nemo-run` と `ps` の起動判定はリポジトリの Electron しか見ない**（`/Applications/Nemo.app` が動いていても素通りする）ので、
 「起動中でないから安全」の根拠にしない。
 
+**Claude in Nemo（`mcp__nemo__*`）はこの決まりの例外で、外部サイトの作業に Claude のウィンドウを使うのはよい**（Nemo 自身が
+専用のウィンドウ・専用プロファイルに閉じている正規の経路）。**ただし Nemo 自体の変更の確認に `mcp__nemo` を使わない。**
+ブリッジは `/Applications/Nemo.app` 同梱のもので常用版に繋ぎ、常用版が起動していないときだけ dev 版に繋ぐので、
+どのビルドを検証したのかが決まらない（作業中のコードが入っていないことも多い）。agent まわりの確認は
+`mise run verify:only agent`（`scripts/verify-agent.mjs`）か、使い捨ての userData で立てた 2 つ目で行う。
+
 **常用（パッケージ版）の main プロセスに `kill -USR1` を送らない。** dev では Node inspector が 9229 に開くが、
 パッケージ版（fuse `enableNodeCliInspectArguments: false`）は**ログも出さずにそのまま死ぬ**（2026-09-03 に使い捨てプロファイルの
 dist 版で実測）。固まったタブの調査は dev 版（CDP 9333）で再現し、`Debugger.enable` を先に入れてから `Debugger.pause` で取る。

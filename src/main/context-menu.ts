@@ -20,7 +20,8 @@ import { runAutofill } from './autofill/index.js'
 export function attachContextMenu(
   wc: WebContents,
   window: () => BaseWindow | null,
-  openSettings: () => void,
+  /** kypr のポップアップを開く（自動入力の値の元が使えないとき）。 */
+  openKypr: () => void,
   /** エージェント窓があるときだけ関数を返す（リンクを Claude のウィンドウで開く）。 */
   openInAgent: () => ((url: string) => void) | undefined = () => undefined
 ): void {
@@ -37,13 +38,13 @@ export function attachContextMenu(
       (frame.parent === null || frame.parent.parent === null)
         ? () => {
             void runAutofill(wc, params.x, params.y, frame).then((result) => {
-              // 保管庫が無い / 開けないときは設定画面の「フォーム自動入力」へ
+              // kypr を開けない（ロック中で Touch ID が通らない・未ログイン）・個人情報が無いときは kypr のポップアップへ
               if (
-                result.reason === 'no-vault' ||
-                result.reason === 'no-passphrase' ||
-                result.reason === 'bad-passphrase'
+                result.reason === 'kypr-locked' ||
+                result.reason === 'kypr-signed-out' ||
+                result.reason === 'no-identity'
               ) {
-                openSettings()
+                openKypr()
               }
             })
           }

@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>レンタカーのご予約 | 自動入力の検証（身分証）</title>
+    <!--
+      身分証（パスポート・運転免許証・健康保険証）の欄の検証（plan 2026-09-29-0934-kypr-identity-autofill.md）。
+      - 「番号 → 発行日 → 有効期限」の並び（発行日は空欄のまま、期限は正しい書類で入る）
+      - 「免許証番号 → 交付日 → 有効期限（和暦の select） → 免許の色」
+      - 保険証の 4 欄
+      - 入れない例: 同行者の旅券番号（本人でない）・会員番号（確からしさが足りない）・カード払いの「有効期限」
+    -->
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 20px;
+      }
+      label,
+      .row {
+        display: block;
+        margin: 6px 0;
+      }
+      input,
+      select {
+        width: 160px;
+      }
+      .date select {
+        width: 80px;
+      }
+    </style>
+  </head>
+  <body>
+    <form id="docs" onsubmit="return false">
+      <h2>ご予約者</h2>
+      <label>お名前 <input name="name" autocomplete="name" /></label>
+
+      <h2>パスポート</h2>
+      <label>旅券番号 <input name="pp_no" /></label>
+      <dl class="date">
+        <dt>発行日</dt>
+        <dd>
+          <select name="pp_iy">
+            <option value="">--</option>
+            <option>2021</option>
+            <option>2022</option>
+          </select>
+          年
+          <select name="pp_im">
+            <option value="">--</option>
+            <option>4</option>
+            <option>5</option>
+          </select>
+          月
+          <select name="pp_id">
+            <option value="">--</option>
+            <option>29</option>
+            <option>30</option>
+          </select>
+          日
+        </dd>
+      </dl>
+      <dl class="date">
+        <dt>有効期限</dt>
+        <dd>
+          <select name="pp_ey">
+            <option value="">--</option>
+            <option>2030</option>
+            <option>2031</option>
+          </select>
+          年
+          <select name="pp_em">
+            <option value="">--</option>
+            <option>4</option>
+            <option>5</option>
+          </select>
+          月
+          <select name="pp_ed">
+            <option value="">--</option>
+            <option>29</option>
+            <option>30</option>
+          </select>
+          日
+        </dd>
+      </dl>
+      <label
+        >発行国
+        <select name="pp_country">
+          <option value="">選択してください</option>
+          <option>日本</option>
+          <option>アメリカ</option>
+        </select>
+      </label>
+
+      <h2>運転免許証</h2>
+      <label>免許証番号 <input name="lic_no" /></label>
+      <label>交付日 <input name="lic_issue" placeholder="2020/01/01" /></label>
+      <dl class="date">
+        <dt>有効期限</dt>
+        <dd>
+          <select name="lic_ey">
+            <option value="">--</option>
+            <option>令和10</option>
+            <option>令和11</option>
+            <option>令和12</option>
+          </select>
+          年
+          <select name="lic_em">
+            <option value="">--</option>
+            <option>5</option>
+            <option>6</option>
+          </select>
+          月
+          <select name="lic_ed">
+            <option value="">--</option>
+            <option>14</option>
+            <option>15</option>
+          </select>
+          日
+        </dd>
+      </dl>
+      <label
+        >免許の色
+        <select name="lic_color">
+          <option value="">選択してください</option>
+          <option>ゴールド</option>
+          <option>ブルー</option>
+          <option>グリーン</option>
+        </select>
+      </label>
+
+      <h2>健康保険証</h2>
+      <label>記号 <input name="ins_sym" /></label>
+      <label>番号 <input name="ins_no" /></label>
+      <label>枝番 <input name="ins_br" /></label>
+      <label>保険者番号 <input name="ins_insurer" /></label>
+
+      <h2>同行者</h2>
+      <label>同行者の旅券番号 <input name="companion_pp" /></label>
+
+      <h2>その他</h2>
+      <label>会員番号 <input name="member_no" /></label>
+
+      <h2>お支払い</h2>
+      <label>カード番号 <input name="card_no" autocomplete="off" /></label>
+      <label>有効期限 <input name="card_exp" placeholder="MM/YY" /></label>
+    </form>
+  </body>
+</html>

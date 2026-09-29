@@ -8,6 +8,7 @@ import {
   encryptItem,
   type Envelope,
   generateVaultKey,
+  type IdentityItem,
   isWeakerKdf,
   type KdfParams,
   type KyprErrorCode,
@@ -39,6 +40,7 @@ export type EntryState =
   | { kind: "login"; item: LoginItem }
   | { kind: "note"; item: NoteItem }
   | { kind: "card"; item: CardItem }
+  | { kind: "identity"; item: IdentityItem }
   | { kind: "unknown"; raw: Record<string, unknown> & { id: string } }
   | { kind: "error"; code: KyprErrorCode };
 

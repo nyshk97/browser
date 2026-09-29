@@ -685,6 +685,120 @@ try {
       c2.item.expYear === '2029',
     JSON.stringify({ card, n: c2?.item?.number?.length, m: c2?.item?.expMonth, y: c2?.item?.expYear })
   )
+  /* ---- 10b. 個人情報（フォーム自動入力の値の元） ---- */
+  // 件数の検査を崩さないよう、最後にゴミ箱 → 完全削除する
+  {
+    const identityFields = {
+      name: '自分',
+      familyName: '山田',
+      givenName: '太郎',
+      email: 'taro@example.com',
+      gender: 'male',
+      passportNumber: `${MARK}PP`,
+      passportExpiry: '2031-04-30',
+      licenseExpiry: '2029-06-15',
+      notes: ''
+    }
+    const badDate = await json(
+      `window.nemo.kyprSave({ id: null, type: 'identity', fields: ${JSON.stringify({ ...identityFields, passportExpiry: '2031/04/30' })} })`
+    )
+    check(
+      '個人情報: 日付が YYYY-MM-DD でなければ保存しない',
+      badDate.ok === false && badDate.reason === 'invalid',
+      JSON.stringify(badDate)
+    )
+    const created = await json(
+      `window.nemo.kyprSave({ id: null, type: 'identity', fields: ${JSON.stringify(identityFields)} })`
+    )
+    await other.sync()
+    const remote = other.entries.get(created.id)?.state
+    check(
+      '個人情報: Nemo で作ったものを別の端末で読める（無い項目は空文字）',
+      created.ok === true &&
+        remote?.kind === 'identity' &&
+        remote.item.passportNumber === `${MARK}PP` &&
+        remote.item.licenseExpiry === '2029-06-15' &&
+        remote.item.insurerNumber === '',
+      JSON.stringify({ created, kind: remote?.kind })
+    )
+    const detail = await json(`window.nemo.kyprItem(${JSON.stringify(created.id)})`)
+    check(
+      '個人情報: 詳細では旅券番号を空にして渡し、名前だけ secrets に入れる',
+      detail?.kind === 'identity' &&
+        detail.item.passportNumber === '' &&
+        detail.secrets.includes('passportNumber') &&
+        detail.item.familyName === '山田',
+      JSON.stringify({ kind: detail?.kind, secrets: detail?.secrets })
+    )
+    const revealed = await json(`window.nemo.kyprReveal(${JSON.stringify(created.id)}, 'passportNumber')`)
+    check('個人情報: 「表示」で旅券番号を取れる', revealed === `${MARK}PP`)
+
+    // ポップアップの描画（一覧 → 詳細 → 編集）
+    await ui.ev("window.nemo.setOverlay('kypr')")
+    const popup = await connectTo(app.cdp, 'view=overlay', { exclude: 'private=1' })
+    await waitFor(popup, `document.querySelector('[data-kypr-id="${created.id}"]') ? 'ok' : ''`, {
+      timeoutMs: 8000
+    })
+    await popup.ev(
+      `document.querySelector('.kypr-scroll > .kypr-row[data-kypr-id="${created.id}"]')?.click()`
+    )
+    await waitFor(
+      popup,
+      "document.querySelector('.kypr-detail [data-kypr-field=\"familyName\"]') ? 'ok' : ''",
+      {
+        timeoutMs: 5000
+      }
+    )
+    const shown = JSON.parse(
+      await popup.ev(`JSON.stringify({
+        text: document.querySelector('.kypr-detail').innerText,
+        groups: [...document.querySelectorAll('.kypr-field-group')].map((el) => el.textContent),
+        autofillTag: !!document.querySelector('.kypr-tag.on')
+      })`)
+    )
+    check(
+      '個人情報: 詳細に見出し（氏名・パスポート …）が出て、旅券番号は伏せ、性別は日本語、既定の印が付く',
+      shown.groups.includes('氏名') &&
+        shown.groups.includes('パスポート') &&
+        !shown.groups.includes('健康保険証') &&
+        !shown.text.includes(`${MARK}PP`) &&
+        shown.text.includes('男性') &&
+        shown.text.includes('2031-04-30') &&
+        shown.autofillTag,
+      JSON.stringify(shown)
+    )
+    await popup.ev(
+      `[...document.querySelectorAll('.kypr-detail-head .kypr-btn')].find((b) => b.textContent === '編集')?.click()`
+    )
+    await waitFor(popup, "document.querySelector('.kypr-editor .kypr-seg') ? 'ok' : ''", { timeoutMs: 5000 })
+    const editor = JSON.parse(
+      await popup.ev(`JSON.stringify({
+        groups: [...document.querySelectorAll('.kypr-edit-group')].map((el) => el.textContent),
+        gender: document.querySelector('.kypr-seg button.on')?.textContent ?? null,
+        passport: document.querySelector('input[name="kypr-passportNumber"]')?.value ?? null
+      })`)
+    )
+    check(
+      '個人情報: 編集画面に見出しごとの欄・性別の切り替え・秘密の値（編集を開いたときだけ）',
+      editor.groups.length === 8 && editor.gender === '男性' && editor.passport === `${MARK}PP`,
+      JSON.stringify({
+        groups: editor.groups,
+        gender: editor.gender,
+        passport: editor.passport === `${MARK}PP`
+      })
+    )
+    popup.close()
+    await ui.ev('window.nemo.setOverlay(null)')
+
+    await json(`window.nemo.kyprTrash(${JSON.stringify(created.id)})`)
+    const purgedIdentity = await json(`window.nemo.kyprPurge(${JSON.stringify(created.id)})`)
+    check(
+      '個人情報: 片付けた（ゴミ箱 → 完全削除）',
+      purgedIdentity.ok === true,
+      JSON.stringify(purgedIdentity)
+    )
+  }
+
   const bad = await json(`window.nemo.kyprSave({ id: null, type: 'login', fields: { name: 1 } })`)
   check('不正な項目は保存しない', bad.ok === false && bad.reason === 'invalid', JSON.stringify(bad))
 

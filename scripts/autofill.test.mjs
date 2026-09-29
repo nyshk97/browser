@@ -1,11 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {
-  countFilled,
-  normalizeProfile,
-  normalizeVaultContent,
-  PROFILE_KEYS
-} from '../src/shared/autofill-schema.js'
+import { normalizeProfile, PROFILE_KEYS } from '../src/shared/autofill-schema.js'
 import {
   deriveValues,
   formatForElement,
@@ -27,7 +22,6 @@ import {
   resolveConflicts,
   ruleOption
 } from '../src/shared/autofill-match.js'
-import { decryptEnvelope, encryptEnvelope } from '../src/shared/auth-vault-crypto.js'
 import { sanitizeDetail } from '../src/shared/log-redact.js'
 
 const PROFILE = normalizeProfile({
@@ -80,35 +74,7 @@ test('normalizeProfile: 知らないキー・文字列以外・壊れた日付�
   assert.equal(profile['birthday'], '')
   assert.equal(profile['gender'], '')
   assert.equal(profile['email'], '')
-  assert.equal(countFilled(profile), 1)
-})
-
-test('normalizeVaultContent: キー入りの新しい形と、プロフィールだけの最初の形の両方を読む', () => {
-  const wrapped = normalizeVaultContent({ profile: { family_name: '山田' }, jevKey: ' apikey_x ' })
-  assert.equal(wrapped.profile['family_name'], '山田')
-  assert.equal(wrapped.jevKey, 'apikey_x')
-  const legacy = normalizeVaultContent({ family_name: '山田' })
-  assert.equal(legacy.profile['family_name'], '山田', '最初の形（プロフィールそのもの）も読める')
-  assert.equal(legacy.jevKey, null)
-  assert.equal(
-    normalizeVaultContent({ profile: {}, jevKey: 'x'.repeat(513) }).jevKey,
-    null,
-    '長すぎるキーは捨てる'
-  )
-  assert.equal(normalizeVaultContent({ profile: {}, jevKey: 42 }).jevKey, null)
-  assert.equal(normalizeVaultContent(null).jevKey, null)
-})
-
-test('暗号の封筒: profile を入れて戻せる / パスフレーズ違いは bad-passphrase / 平文が外に出ない', async () => {
-  const meta = { count: countFilled(PROFILE), savedAt: 1_756_000_000_000, host: 'mac', appVersion: '1.2.17' }
-  const file = await encryptEnvelope(PROFILE, 'profile', 'correct horse battery', meta)
-  const ok = await decryptEnvelope(file, 'profile', 'correct horse battery')
-  assert.equal(ok.ok, true)
-  assert.deepEqual(ok.ok && ok.payload, PROFILE)
-  const bad = await decryptEnvelope(file, 'profile', 'wrong passphrase')
-  assert.deepEqual(bad, { ok: false, reason: 'bad-passphrase' })
-  const whole = JSON.stringify(file)
-  for (const value of SECRET_VALUES) assert.equal(whole.includes(value), false, value)
+  assert.equal(PROFILE_KEYS.filter((key) => profile[key] !== '').length, 1)
 })
 
 /* ---------------- 値の導出 ---------------- */
@@ -492,7 +458,8 @@ test('自動入力のログは sanitizeDetail を素通りする（[deep] / [red
     filled: 11,
     jevMs: 480,
     jevError: 'http-529',
-    reason: 'no-fields'
+    documents: 2,
+    reason: 'kypr-locked'
   }
   const after = JSON.stringify(sanitizeDetail({ ...detail }))
   assert.equal(after, JSON.stringify(detail))

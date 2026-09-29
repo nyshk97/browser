@@ -2,29 +2,34 @@
 /**
  * フォーム自動入力の検証（`mise run verify:only autofill`）。
  *
+ * 入れる値は kypr の個人情報（plan `2026-09-29-0934-kypr-identity-autofill.md`）。kypr の模擬サーバーに保管庫を作り、
+ * 「別の端末」として Node 側（Web と同じクライアント）から個人情報を足す。
+ *
  * 見るもの:
- *   1. 保管庫が無いときは入れずに `no-vault`（設定画面へ誘導する合図）を返す
- *   2. 保存 → `autofill.json` に**平文が一切現れない**。Jev のキーのファイルにも平文が無い
- *   3. 右クリックの自動入力と同じ処理で、ルール（autocomplete / type）と Jev の両方の欄が入る。
- *      分割された電話・生年月日・select・カナ・郵便番号の書式まで**値で**見る
+ *   1. kypr に未ログイン・個人情報が 0 件なら入れずに `kypr-signed-out` / `no-identity`（ポップアップへ誘導する合図）
+ *   2. Jev のキーは Mac ごとに端末鍵で暗号化して保存する（ファイルに平文が無い）
+ *   3. ロック中でも Touch ID で解除して入れる。右クリックの自動入力と同じ処理で、ルール（autocomplete / type）と
+ *      Jev の両方の欄が入る。分割された電話・生年月日・select・カナ・郵便番号の書式まで**値で**見る
  *   4. **入れてはいけない欄に入らない**: 既に値のある欄・パスワード・本人でない欄（紹介者）・
  *      お問い合わせ内容・フォームの外の欄・**見えない罠 5 種**
  *   5. **Jev に値を送っていない**（モックが受け取った body 全体を見る）。罠とフォームの外の欄も送っていない
  *   6. React の valueTracker をまねた欄で変更イベントが拾われる（isolated world の native setter）
- *   7. Jev が 529 → 再試行で入る / 401・タイムアウト・キー無しでもルールの欄は入る
- *   8. 違うパスフレーズでは既存の保管庫を上書きできない
- *   9. 設定画面に「フォーム自動入力」の節が描かれ、項目数が出る（Autofill.tsx の描画例外を拾う）
- *  10. 診断ログに値が出ていない / 未処理の例外が無い
+ *   7. 身分証: 番号と期限が正しい書類で入る（「有効期限」だけの欄・発行日を挟む並び・和暦の select）。
+ *      発行日・発行国・同行者・会員番号・カード払いの「有効期限」には入らない
+ *   8. 既定の個人情報を切り替えると、その値が入る
+ *   9. Jev が 529 → 再試行で入る / 401・タイムアウト・キー無しでもルールの欄は入る
+ *  10. 設定画面に「フォーム自動入力」の節が描かれる（Autofill.tsx の描画例外を拾う）
+ *  11. 診断ログに値が出ていない / 未処理の例外が無い
+ *  12. 再起動後もキーが残る。Touch ID が通らなければ `kypr-locked` で何も入れない
  *
- * **`NEMO_SLOTS_DIR` と `NEMO_HTTP_AUTH_TEST_CRYPTO=memory` を必ず渡す**（実 iCloud・実 Keychain に触らない）。
- * **`NEMO_JEV_TEST_ENDPOINT` を必ず渡す**（実 Jev にテスト用のキーを送らない）。
+ * **本物の kypr のサーバー・実 Keychain・実 Touch ID・実 Jev に触らない**:
+ *   NEMO_KYPR_TEST_SERVER・NEMO_HTTP_AUTH_TEST_CRYPTO=memory・NEMO_KYPR_TEST_TOUCHID・NEMO_JEV_TEST_ENDPOINT
  *
  * 使い方:
  *   node scripts/verify-autofill.mjs   （事前に out/ がビルドされていること）
  */
 import { createRequire } from 'node:module'
 import { spawn } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
@@ -40,11 +45,13 @@ import {
   waitForHttp
 } from './lib/harness.mjs'
 import { connectTo, connectUi, waitFor } from './lib/cdp.mjs'
+import { createKyprVault, profileToKypr as toKypr } from './lib/kypr-fixture.mjs'
+import { newIdentityItem } from '../src/vendor/kypr/crypto/index.ts'
 
 const require = createRequire(import.meta.url)
 const electronPath = require('electron')
 
-const PASSPHRASE = 'nemo-verify-autofill'
+const PASSWORD = 'nemo-verify-autofill マスター'
 const JEV_KEY = 'apikey_verify_0123456789abcdef'
 
 const PROFILE = {
@@ -66,14 +73,25 @@ const PROFILE = {
   organization: '株式会社サンプル',
   department: '開発部',
   job_title: '代表',
-  organization_url: 'https://example.com'
+  organization_url: 'https://example.com',
+  passport_number: 'TK1234567',
+  passport_expiry: '2031-04-30',
+  license_number: '987654321098',
+  license_expiry: '2029-06-15',
+  insurance_symbol: '4321',
+  insurance_number: '65',
+  insurance_branch: '07',
+  insurer_number: '06987654'
 }
+/** 既定を切り替えたときの 2 件目（新しい方）。メールだけ違う */
+const CORP_EMAIL = 'corp-verify@example.com'
 /** 送っても書いてもいけない値（2 文字以上のもの）。 */
 const SECRETS = [
   ...Object.values(PROFILE).filter((v) => v.length >= 2),
   '09012345678',
   '1000001',
-  PASSPHRASE,
+  CORP_EMAIL,
+  PASSWORD,
   JEV_KEY
 ]
 
@@ -117,8 +135,25 @@ const ANSWERS = {
   '氏 名（全角フリガナ）': 'full_name_kana',
   // 本物の Jev は FAX に tel と答えた。聞かれたら入ってしまうので、聞かないことを見る
   FAX番号: 'tel',
-  'ご住所（建物名まで）': 'address_full'
+  'ご住所（建物名まで）': 'address_full',
+  // autofill-documents.html（身分証）
+  旅券番号: 'passport_number',
+  発行日: 'none',
+  有効期限: 'document_expiry', // 書類名の無い「有効期限」。カード払いの欄にも同じ答えを返す（本物も取り違えうる）
+  発行国: 'none',
+  免許証番号: 'license_number',
+  交付日: 'none',
+  免許の色: 'none',
+  記号: 'insurance_symbol',
+  番号: 'insurance_number',
+  枝番: 'insurance_branch',
+  保険者番号: 'insurer_number',
+  同行者の旅券番号: 'passport_number', // 本人でない（NOT_OWN）
+  会員番号: 'passport_number', // 確からしさが身分証の足切りに届かない（CONFIDENCE）
+  カード番号: 'none'
 }
+/** 確信度を変える欄（無ければ 0.9）。 */
+const CONFIDENCE = { 会員番号: 0.6 }
 /**
  * 本物の Jev をまねた答え（見出し → [選択肢, 確率の分布]）。2 枠の氏名で 1 枠目の例「姓」に引っ張られる
  * （2026-09-27 に実 Jev で測った値）。無ければ `ANSWERS` の選択肢を確信度 0.9 で返す
@@ -131,7 +166,7 @@ const SPLIT_ANSWERS = {
     0.75
   ]
 }
-const NOT_OWN = new Set(['ご紹介者のお名前', 'お問い合わせ内容'])
+const NOT_OWN = new Set(['ご紹介者のお名前', 'お問い合わせ内容', '同行者の旅券番号'])
 
 let mode = 'ok'
 let calls = 0
@@ -151,7 +186,8 @@ function jevAnswer(body) {
         continue
       }
       const choice = ANSWERS[label] ?? 'none'
-      answers[id] = { type: 'choice', choice, confidence: 0.9, probabilities: { [choice]: 0.92 } }
+      const confidence = CONFIDENCE[label] ?? 0.9
+      answers[id] = { type: 'choice', choice, confidence, probabilities: { [choice]: confidence } }
     }
   }
   return { model: 'jev-1.13.0', answers, usage: { input_tokens: 1, output_tokens: 1 } }
@@ -160,9 +196,13 @@ function jevAnswer(body) {
 const server = http.createServer((req, res) => {
   const pathname = new URL(req.url, 'http://x').pathname
   if (
-    ['/autofill.html', '/autofill-efo.html', '/autofill-kayac.html', '/autofill-patterns.html'].includes(
-      pathname
-    )
+    [
+      '/autofill.html',
+      '/autofill-efo.html',
+      '/autofill-kayac.html',
+      '/autofill-patterns.html',
+      '/autofill-documents.html'
+    ].includes(pathname)
   ) {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
     res.end(fs.readFileSync(path.join(projectRoot, 'test-pages', pathname.slice(1))))
@@ -224,6 +264,11 @@ function makeDir(tag) {
   return dir
 }
 
+/** @type {Awaited<ReturnType<typeof createKyprVault>> | null} */
+let kypr = null
+/** `autofillForVerify` を呼んだ回数（ログの `autofill.run` の件数と突き合わせる）。 */
+let runCount = 0
+
 try {
   assertNemoNotRunning('verify-autofill')
   if (!fs.existsSync(path.join(projectRoot, 'out/main/index.js')))
@@ -231,17 +276,19 @@ try {
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   const origin = `http://127.0.0.1:${server.address().port}`
+  // kypr の保管庫を作る（Web と同じクライアント。個人情報は後から「別の端末」として足す）
+  kypr = await createKyprVault(PASSWORD)
+  const { origin: kyprOrigin, other } = kypr
 
   const userData = makeDir('data')
-  const slotsDir = makeDir('slots')
-  // Live Folder は `bootApp` が settings.json で止める（使い捨てプロファイルでも gh の実トークンで GitHub を叩き続ける）
+  // やめた保管庫のパスフレーズの記憶（起動で消えることを見る）
+  fs.writeFileSync(path.join(userData, 'autofill-vault-key.json'), '{"encrypted":"x"}')
 
-  /** 1 台ぶん起動する。**`NEMO_SLOTS_DIR` を共有して `NEMO_USER_DATA_DIR` を分ければ「別の Mac」になる** */
-  const bootApp = async (dataDir) => {
-    fs.writeFileSync(
-      path.join(dataDir, 'settings.json'),
-      JSON.stringify({ version: 1, data: { liveFolderEnabled: false } })
-    )
+  /** 1 回ぶん起動する。Live Folder は settings.json で止める（使い捨てプロファイルでも gh の実トークンで GitHub を叩き続ける） */
+  const bootApp = async (dataDir, touchId = 'ok') => {
+    const settingsFile = path.join(dataDir, 'settings.json')
+    if (!fs.existsSync(settingsFile))
+      fs.writeFileSync(settingsFile, JSON.stringify({ version: 1, data: { liveFolderEnabled: false } }))
     const port = String(await getFreePort())
     const cdp = `http://127.0.0.1:${port}`
     const child = spawn(electronPath, ['out/main/index.js'], {
@@ -251,9 +298,11 @@ try {
         ...process.env,
         NEMO_REMOTE_DEBUGGING_PORT: port,
         NEMO_USER_DATA_DIR: dataDir,
-        NEMO_SLOTS_DIR: slotsDir,
         NEMO_HTTP_AUTH_TEST_CRYPTO: 'memory',
         NEMO_JEV_TEST_ENDPOINT: `${origin}/v1/systemone`,
+        NEMO_KYPR_TEST_SERVER: kyprOrigin,
+        NEMO_KYPR_TEST_TOUCHID: touchId,
+        NEMO_KYPR_TEST_CLIPBOARD: 'memory',
         NEMO_VERIFY_DIAGNOSTICS: '1',
         NEMO_DOWNLOAD_DIR: makeDir('dl')
       }
@@ -266,16 +315,13 @@ try {
     return cdp
   }
 
-  /*
-   * **保管庫へ移す前のキー**（この Mac の userData に端末鍵で暗号化）を置いておく。
-   * 形式はテスト用の差し替え backend（`secret-backend.ts` の memoryBackend）と同じ
-   */
-  const legacy = `NEMOTEST1:${Buffer.from(`${createHash('sha256').update(JEV_KEY).digest('hex').slice(0, 16)}:${JEV_KEY}`).toString('base64')}`
-  fs.writeFileSync(path.join(userData, 'jev-key.json'), JSON.stringify({ encrypted: legacy }))
-
   const cdp = await bootApp(userData)
   const ui = await connectUi(cdp)
   const json = async (expression) => JSON.parse(await ui.ev(`${expression}.then(JSON.stringify)`))
+  check(
+    'やめた保管庫のパスフレーズの記憶は起動で消えた',
+    !fs.existsSync(path.join(userData, 'autofill-vault-key.json'))
+  )
 
   const tabKey = await ui.ev(
     `window.nemo.createTab(${JSON.stringify(`${origin}/autofill.html`)}).then((k) => k)`
@@ -297,9 +343,20 @@ try {
         "(() => { const r = document.getElementById('sei').getBoundingClientRect(); return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2 }) })()"
       )
     )
+  /** 右クリックの自動入力と同じ処理（`runAutofill`）を検証の口から呼ぶ。 */
+  const autofillAt = (key, x, y, frameUrl) => {
+    runCount += 1
+    return json(
+      `window.nemo.autofillForVerify(${JSON.stringify(key)}, ${x}, ${y}${frameUrl ? `, ${JSON.stringify(frameUrl)}` : ''})`
+    )
+  }
   const run = async () => {
     const { x, y } = await point()
-    return json(`window.nemo.autofillForVerify(${JSON.stringify(tabKey)}, ${x}, ${y})`)
+    return autofillAt(tabKey, x, y)
+  }
+  const countedJson = (expression) => {
+    runCount += 1
+    return json(expression)
   }
   const values = async () =>
     JSON.parse(
@@ -308,42 +365,68 @@ try {
       )
     )
 
-  /* ---- 1. 保管庫が無い ---- */
-  const initial = await json('window.nemo.autofillStatus()')
-  check('保存先が env の上書きで解決されている', initial.kind === 'env', `${initial.kind} ${initial.dir}`)
+  /* ---- 1. kypr に未ログイン・個人情報が無い ---- */
+  const signedOut = await run()
   check(
-    '最初は保管庫が空で、古い置き場所のキーだけある',
-    initial.state === 'empty' && initial.hasJevKey === true,
+    '未ログインなら kypr-signed-out で何も入れない',
+    signedOut?.reason === 'kypr-signed-out' && signedOut.filled === 0,
+    JSON.stringify(signedOut)
+  )
+  const signIn = await json(`window.nemo.kyprSignIn(${JSON.stringify(PASSWORD)}, true)`)
+  check('kypr にログインできた（Touch ID を覚える）', signIn.ok === true, JSON.stringify(signIn))
+  const noIdentity = await run()
+  check(
+    '個人情報が 0 件なら no-identity で何も入れない',
+    noIdentity?.reason === 'no-identity' && noIdentity.filled === 0,
+    JSON.stringify(noIdentity)
+  )
+  check('入れないときは Jev を呼ばない', calls === 0, `calls=${calls}`)
+
+  // 「別の端末」から個人情報を 2 件足す（古い方が既定になる）
+  const mine = newIdentityItem({ name: '自分', ...toKypr(PROFILE), createdAt: '2026-01-01T00:00:00.000Z' })
+  const corp = newIdentityItem({
+    name: '会社',
+    ...toKypr({ ...PROFILE, email: CORP_EMAIL }),
+    createdAt: '2026-02-01T00:00:00.000Z'
+  })
+  await other.create([corp, mine])
+  const synced = await json('window.nemo.kyprSync()')
+  check('Nemo で同期して個人情報を受け取った', synced.ok === true, JSON.stringify(synced))
+  const panel = await json('window.nemo.kyprPanel()')
+  check(
+    '既定の個人情報は一番古いもの（自分）',
+    panel.autofillIdentityId === mine.id &&
+      panel.items.filter((item) => item.kind === 'identity').length === 2,
+    JSON.stringify({ id: panel.autofillIdentityId, mine: mine.id })
+  )
+  const identityRow = panel.items.find((item) => item.id === mine.id)
+  check(
+    '一覧の 2 行目は氏名だけ（身分証の番号を出さない）',
+    identityRow?.subtitle === '山田 太郎',
+    JSON.stringify(identityRow?.subtitle)
+  )
+
+  /* ---- 2. Jev のキー（Mac ごと） ---- */
+  const initial = await json('window.nemo.autofillStatus()')
+  check(
+    '最初はキーが無い',
+    initial.hasJevKey === false && initial.encryptionAvailable,
     JSON.stringify(initial)
   )
-  const noVault = await run()
+  const saved = await json(`window.nemo.saveJevKey(${JSON.stringify(JEV_KEY)})`)
+  check('キーを保存できた', saved === true, JSON.stringify(saved))
+  const keyFile = path.join(userData, 'jev-key.json')
+  const keyRaw = fs.existsSync(keyFile) ? fs.readFileSync(keyFile, 'utf8') : ''
   check(
-    '保管庫が無いと no-vault で何も入れない',
-    noVault?.reason === 'no-vault' && noVault.filled === 0,
-    JSON.stringify(noVault)
+    'キーのファイルに平文が現れない',
+    keyRaw !== '' && !keyRaw.includes(JEV_KEY),
+    `${keyRaw.length} bytes`
   )
-  check('保管庫が無いときは Jev を呼ばない', calls === 0, `calls=${calls}`)
+  check('状態: キーあり', (await json('window.nemo.autofillStatus()')).hasJevKey === true)
 
-  /* ---- 2. 保存 ---- */
-  const saved = await json(
-    `window.nemo.autofillSave(${JSON.stringify(PROFILE)}, ${JSON.stringify(PASSPHRASE)}, true)`
-  )
-  check('プロフィールを保存できた', saved.ok === true, JSON.stringify(saved))
-  const vaultRaw = fs.readFileSync(path.join(slotsDir, 'autofill.json'), 'utf8')
-  const leakedVault = SECRETS.filter((s) => vaultRaw.includes(s))
-  check('保管庫のファイルに平文（キーを含む）が現れない', leakedVault.length === 0, leakedVault.join(', '))
-  check('保存で古い置き場所のキーは保管庫へ移って消えた', !fs.existsSync(path.join(userData, 'jev-key.json')))
-  const status = await json('window.nemo.autofillStatus()')
-  check(
-    '状態: 19 項目・パスフレーズを覚えている・キーあり',
-    status.state === 'ok' && status.meta?.count === 19 && status.hasPassphrase && status.hasJevKey,
-    JSON.stringify({
-      state: status.state,
-      count: status.meta?.count,
-      pass: status.hasPassphrase,
-      key: status.hasJevKey
-    })
-  )
+  // ロックしてから入れる（Touch ID で解除して続ける）
+  await ui.ev('window.nemo.kyprLock().then(() => "ok")')
+  check('ロックした', (await json('window.nemo.kyprStatus()')).state === 'locked')
 
   /* ---- 3〜6. 自動入力 ---- */
   await reload()
@@ -352,6 +435,10 @@ try {
   const result = await run()
   const got = await values()
   check('自動入力が成功した', result?.ok === true, JSON.stringify(result))
+  check(
+    'ロック中でも Touch ID で解除して入れた',
+    (await json('window.nemo.kyprStatus()')).state === 'unlocked'
+  )
   check(
     '欄の数・ルール・Jev・残りが想定どおり（16 欄 = ルール 6 + Jev 8 + 残り 2）',
     result?.fields === 16 && result.rule === 6 && result.jev === 8 && result.left === 2,
@@ -441,7 +528,9 @@ try {
         "(() => { const r = document.querySelector('[name=text2]').getBoundingClientRect(); return JSON.stringify({ x: r.left + 5, y: r.top + 5 }) })()"
       )
     )
-    const efoResult = await json(`window.nemo.autofillForVerify(${JSON.stringify(efoKey)}, ${at.x}, ${at.y})`)
+    const efoResult = await countedJson(
+      `window.nemo.autofillForVerify(${JSON.stringify(efoKey)}, ${at.x}, ${at.y})`
+    )
     const efoValues = JSON.parse(
       await efo.ev(
         "JSON.stringify(Object.fromEntries([...document.querySelectorAll('input, select')].map((el) => [el.name, el.value])))"
@@ -481,7 +570,7 @@ try {
         "(() => { const r = document.querySelector('[name=tel]').getBoundingClientRect(); return JSON.stringify({ x: r.left + 5, y: r.top + 5 }) })()"
       )
     )
-    const kayacResult = await json(
+    const kayacResult = await countedJson(
       `window.nemo.autofillForVerify(${JSON.stringify(kayacKey)}, ${at.x}, ${at.y})`
     )
     const kayacValues = JSON.parse(
@@ -530,7 +619,7 @@ try {
       ['別プロセスの iframe', `http://localhost:${port}/autofill-kayac.html?cross`]
     ]
     for (const [name, frameUrl] of cases) {
-      const r = await json(
+      const r = await countedJson(
         `window.nemo.autofillForVerify(${JSON.stringify(frameKey)}, -1, -1, ${JSON.stringify(frameUrl)})`
       )
       const inner = await connectTo(cdp, frameUrl.split('/').pop(), {
@@ -554,7 +643,7 @@ try {
     }
     // 透明な iframe には入れない
     const hiddenUrl = `http://localhost:${port}/autofill-kayac.html?hidden`
-    const hiddenResult = await json(
+    const hiddenResult = await countedJson(
       `window.nemo.autofillForVerify(${JSON.stringify(frameKey)}, -1, -1, ${JSON.stringify(hiddenUrl)})`
     )
     const hiddenFrame = await connectTo(cdp, 'autofill-kayac.html?hidden', { type: 'iframe' })
@@ -572,7 +661,7 @@ try {
 
     // 親が上の帯だけ見せている iframe: 帯の外（電話番号・ふりがな）には入らない
     const bandUrl = `http://localhost:${port}/autofill-kayac.html?band`
-    const bandResult = await json(
+    const bandResult = await countedJson(
       `window.nemo.autofillForVerify(${JSON.stringify(frameKey)}, -1, -1, ${JSON.stringify(bandUrl)})`
     )
     const bandFrame = await connectTo(cdp, 'autofill-kayac.html?band', { type: 'iframe' })
@@ -590,7 +679,7 @@ try {
 
     // 同じ URL の iframe が 2 つ: フォーカスのある方（dup2）だけに入る
     await host.ev("document.getElementById('dup2').contentDocument.querySelector('[name=tel]').focus()")
-    const dupResult = await json(
+    const dupResult = await countedJson(
       `window.nemo.autofillForVerify(${JSON.stringify(frameKey)}, -1, -1, ${JSON.stringify(`${origin}/autofill-kayac.html?dup`)})`
     )
     const dupValues = JSON.parse(
@@ -622,7 +711,7 @@ try {
           `(() => { const el = document.querySelector('[name=${anchor}]'); el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return JSON.stringify({ x: r.left + 3, y: r.top + 3 }) })()`
         )
       )
-      await json(`window.nemo.autofillForVerify(${JSON.stringify(patternsKey)}, ${at.x}, ${at.y})`)
+      await countedJson(`window.nemo.autofillForVerify(${JSON.stringify(patternsKey)}, ${at.x}, ${at.y})`)
     }
     const got = JSON.parse(
       await patterns.ev(
@@ -658,6 +747,99 @@ try {
     }
     patterns.close()
   }
+
+  /* ---- 6f. 身分証（パスポート・運転免許証・健康保険証） ---- */
+  let documentRuns = 0
+  {
+    const docsKey = await ui.ev(
+      `window.nemo.createTab(${JSON.stringify(`${origin}/autofill-documents.html`)}).then((k) => k)`
+    )
+    const docs = await connectTo(cdp, '/autofill-documents.html', { type: 'page' })
+    await waitFor(
+      docs,
+      "document.readyState === 'complete' && document.querySelector('[name=pp_no]') ? 'ok' : ''"
+    )
+    const at = JSON.parse(
+      await docs.ev(
+        "(() => { const r = document.querySelector('[name=pp_no]').getBoundingClientRect(); return JSON.stringify({ x: r.left + 5, y: r.top + 5 }) })()"
+      )
+    )
+    requests.length = 0
+    const docsResult = await countedJson(
+      `window.nemo.autofillForVerify(${JSON.stringify(docsKey)}, ${at.x}, ${at.y})`
+    )
+    documentRuns += 1
+    const got = JSON.parse(
+      await docs.ev(
+        "JSON.stringify(Object.fromEntries([...document.querySelectorAll('input, select')].map((el) => [el.name, el.value])))"
+      )
+    )
+    const want = {
+      name: '山田 太郎',
+      pp_no: 'TK1234567',
+      // 「有効期限」だけの欄は、発行日（決まらなかった日付の欄）を飛ばして旅券番号の書類に決まる
+      pp_ey: '2031',
+      pp_em: '4',
+      pp_ed: '30',
+      pp_iy: '', // 発行日は入れない
+      pp_im: '',
+      pp_id: '',
+      pp_country: '', // 発行国は入れない
+      lic_no: '987654321098',
+      lic_issue: '', // 交付日は入れない
+      lic_ey: '令和11', // 和暦の年の select
+      lic_em: '6',
+      lic_ed: '15',
+      lic_color: '',
+      ins_sym: '4321',
+      ins_no: '65',
+      ins_br: '07',
+      ins_insurer: '06987654',
+      companion_pp: '', // 本人でない
+      member_no: '', // 確からしさが身分証の足切りに届かない
+      card_no: '',
+      card_exp: '' // カード番号の直後の「有効期限」には身分証の期限を入れない
+    }
+    for (const [name, value] of Object.entries(want)) {
+      check(
+        `身分証: ${name} に ${JSON.stringify(value)}`,
+        got[name] === value,
+        `got=${JSON.stringify(got[name])}`
+      )
+    }
+    check(
+      '身分証: 入れた身分証の欄の数（旅券番号・期限・免許証番号・期限・保険証 4 欄 = 8）',
+      docsResult?.documents === 8,
+      JSON.stringify(docsResult)
+    )
+    const sentDocs = requests.map((r) => r.raw).join('\n')
+    const docValues = ['TK1234567', '987654321098', '4321', '06987654', '2031-04-30', '2029-06-15']
+    const leakedDocs = docValues.filter((value) => sentDocs.includes(value))
+    check(
+      '身分証: Jev に身分証の値を送っていない',
+      requests.length > 0 && leakedDocs.length === 0,
+      leakedDocs.length > 0 ? leakedDocs.join(', ') : `requests=${requests.length}`
+    )
+    docs.close()
+  }
+
+  /* ---- 6g. 既定の個人情報を切り替える ---- */
+  await ui.ev(
+    `window.nemo.updateSettings({ kyprAutofillIdentityId: ${JSON.stringify(corp.id)} }).then(() => 'ok')`
+  )
+  check('既定を「会社」に切り替えた', (await json('window.nemo.kyprPanel()')).autofillIdentityId === corp.id)
+  await reload()
+  await run()
+  check('切り替えた個人情報の値が入る', (await values()).mail === CORP_EMAIL, (await values()).mail)
+  // ゴミ箱に入れたら一番古いもの（自分）に戻る
+  await json(`window.nemo.kyprTrash(${JSON.stringify(corp.id)})`)
+  await reload()
+  await run()
+  check(
+    '既定の個人情報をゴミ箱に入れたら一番古いものに戻る',
+    (await values()).mail === 'taro@example.com',
+    (await values()).mail
+  )
 
   /* ---- 7. Jev の失敗 ---- */
   const ruleOnly = {
@@ -696,8 +878,8 @@ try {
       JSON.stringify({ kana_sei: v.kana_sei, mail: v.mail, zip: v.zip, sei: v.sei })
     )
   }
-  const cleared = await json('window.nemo.clearJevKey()')
-  check('キーを保管庫から消せた', cleared.ok === true, JSON.stringify(cleared))
+  await ui.ev('window.nemo.clearJevKey().then(() => "ok")')
+  check('キーを消せた（ファイルも消える）', !fs.existsSync(keyFile))
   {
     const { r, v } = await scenario('キー無し', 'ok')
     check(
@@ -707,78 +889,59 @@ try {
     )
   }
 
-  /* ---- 8. 違うパスフレーズで上書きできない ---- */
-  const before = fs.readFileSync(path.join(slotsDir, 'autofill.json'), 'utf8')
-  const wrong = await json(
-    `window.nemo.autofillSave(${JSON.stringify(PROFILE)}, "another-passphrase", false)`
-  )
-  check(
-    '違うパスフレーズの保存は bad-passphrase',
-    wrong.ok === false && wrong.reason === 'bad-passphrase',
-    JSON.stringify(wrong)
-  )
-  check(
-    '保管庫のファイルは変わっていない',
-    fs.readFileSync(path.join(slotsDir, 'autofill.json'), 'utf8') === before
-  )
-
-  /* ---- 9. 設定画面の描画 ---- */
+  /* ---- 10. 設定画面の描画 ---- */
   await ui.ev(`window.nemo.setOverlay('settings').then(() => 'ok')`)
   const overlay = await connectTo(cdp, 'view=overlay')
   const rendered = await waitFor(
     overlay,
-    `document.querySelector('[data-testid="autofill-state"]')?.textContent ?? ''`,
+    `document.querySelector('[data-testid="autofill-jev-state"]')?.textContent ?? ''`,
     { timeoutMs: 15000 }
   ).catch(() => '')
   check(
-    '設定画面に自動入力の節が描かれ、項目数が出る',
-    String(rendered).startsWith('19 項目'),
+    '設定画面に自動入力の節が描かれ、キーを消したあとは「未設定」',
+    String(rendered).startsWith('未設定'),
     JSON.stringify(rendered)
   )
-  const jevState = await overlay.ev(
-    `document.querySelector('[data-testid="autofill-jev-state"]')?.textContent ?? ''`
+  const source = await overlay.ev(
+    `document.querySelector('[data-testid="autofill-source"]')?.textContent ?? ''`
   )
-  check('キーを消したあとは「未設定」', jevState.startsWith('未設定'), JSON.stringify(jevState))
+  check('設定画面で値の元が kypr の個人情報だと分かる', source.includes('kypr'), JSON.stringify(source))
+  await ui.ev(`window.nemo.setOverlay(null).then(() => 'ok')`)
 
-  /* ---- 10. ログ ---- */
+  /* ---- 11. ログ ---- */
   const lines = readLogLines(userData)
   const runs = lines.filter((line) => line.includes('"event":"autofill.run"'))
-  check('autofill.run が実行回数ぶん出ている', runs.length === 16, `runs=${runs.length}`)
-  const logLeaks = SECRETS.filter((s) => lines.some((line) => line.includes(s)))
-  check('診断ログに値・キー・パスフレーズが出ていない', logLeaks.length === 0, logLeaks.join(', '))
+  check(
+    'autofill.run が実行回数ぶん出ている',
+    runs.length === runCount && runCount > 0,
+    `runs=${runs.length} called=${runCount}`
+  )
+  check(
+    'autofill.run に身分証の欄の数が出ている',
+    runs.filter((line) => line.includes('"documents":8')).length === documentRuns,
+    `documentRuns=${documentRuns}`
+  )
+  // **ログの検査だけ 3 桁以下の数字だけの値（保険証の番号「65」・枝番「07」）を外す**
+  // （時刻や件数に普通に現れ、空振りの FAIL になる。Jev に送る body の検査には全部の値を残す）
+  const logSecrets = SECRETS.filter((s) => !/^\d{1,3}$/.test(s))
+  const logLeaks = logSecrets.filter((s) => lines.some((line) => line.includes(s)))
+  check('診断ログに値・キー・マスターパスワードが出ていない', logLeaks.length === 0, logLeaks.join(', '))
   const crashes = findUncaughtExceptions(userData)
   check('未処理の例外が出ていない', crashes.length === 0, crashes.join(' / '))
 
-  /* ---- 11. 別の Mac（userData を分けて保管庫を共有）: パスフレーズだけでキーまで使える ---- */
+  /* ---- 12. 再起動: キーは残る・Touch ID が通らなければ入れない ---- */
   const resaved = await json(`window.nemo.saveJevKey(${JSON.stringify(JEV_KEY)})`)
-  check('キーを保管庫に保存できた', resaved.ok === true, JSON.stringify(resaved))
+  check('キーを保存し直した', resaved === true)
   await stopChildren(spawned.splice(0))
 
-  const secondData = makeDir('data2')
-  const cdp2 = await bootApp(secondData)
+  const cdp2 = await bootApp(userData, 'fail')
   const ui2 = await connectUi(cdp2)
   const json2 = async (expression) => JSON.parse(await ui2.ev(`${expression}.then(JSON.stringify)`))
-  const status2 = await json2('window.nemo.autofillStatus()')
   check(
-    '2 台目: 保管庫は見えるが、パスフレーズを覚えるまでキーは見えない',
-    status2.state === 'ok' && status2.hasPassphrase === false && status2.hasJevKey === false,
-    JSON.stringify({ state: status2.state, pass: status2.hasPassphrase, key: status2.hasJevKey })
+    '再起動後もキーが残っている（この Mac の userData）',
+    (await json2('window.nemo.autofillStatus()')).hasJevKey === true
   )
-  const lockedSave = await json2('window.nemo.saveJevKey("apikey_other")')
-  check(
-    '2 台目: パスフレーズを覚える前はキーを保存できない',
-    lockedSave.ok === false && lockedSave.reason === 'no-passphrase',
-    JSON.stringify(lockedSave)
-  )
-  const opened2 = await json2(`window.nemo.autofillOpen(${JSON.stringify(PASSPHRASE)}, true)`)
-  check('2 台目: パスフレーズで開けた', opened2.ok === true, JSON.stringify(opened2.ok))
-  const after2 = await json2('window.nemo.autofillStatus()')
-  check(
-    '2 台目: パスフレーズを入れただけでキーが使える',
-    after2.hasJevKey === true,
-    JSON.stringify(after2.hasJevKey)
-  )
-
+  check('再起動後の kypr はロック中', (await json2('window.nemo.kyprStatus()')).state === 'locked')
   const tabKey2 = await ui2.ev(
     `window.nemo.createTab(${JSON.stringify(`${origin}/autofill.html`)}).then((k) => k)`
   )
@@ -789,22 +952,27 @@ try {
       "(() => { const r = document.getElementById('sei').getBoundingClientRect(); return JSON.stringify({ x: r.left + 5, y: r.top + 5 }) })()"
     )
   )
-  requests.length = 0
-  const run2 = await json2(`window.nemo.autofillForVerify(${JSON.stringify(tabKey2)}, ${at2.x}, ${at2.y})`)
-  check(
-    '2 台目: 保管庫のキーで Jev を呼んで入った',
-    run2?.jev === 8 && requests[0]?.auth === `Bearer ${JEV_KEY}`,
-    JSON.stringify({ jev: run2?.jev, jevError: run2?.jevError, requests: requests.length })
+  calls = 0
+  const locked = await json2(`window.nemo.autofillForVerify(${JSON.stringify(tabKey2)}, ${at2.x}, ${at2.y})`)
+  const lockedValues = JSON.parse(
+    await page2.ev(
+      "JSON.stringify([...document.querySelectorAll('input')].map((el) => el.value).filter(Boolean))"
+    )
   )
-  check('2 台目: 古い置き場所にキーを作らない', !fs.existsSync(path.join(secondData, 'jev-key.json')))
-  const crashes2 = findUncaughtExceptions(secondData)
-  check('2 台目: 未処理の例外が出ていない', crashes2.length === 0, crashes2.join(' / '))
+  check(
+    'Touch ID が通らなければ kypr-locked で何も入れない（Jev も呼ばない）',
+    locked?.reason === 'kypr-locked' && calls === 0 && lockedValues.every((v) => v === '営業部'),
+    `${JSON.stringify(locked)} ${JSON.stringify(lockedValues)}`
+  )
+  const crashes2 = findUncaughtExceptions(userData)
+  check('再起動後: 未処理の例外が出ていない', crashes2.length === 0, crashes2.join(' / '))
 } catch (error) {
   failures += 1
   console.error('FAIL  検証が途中で落ちた —', error?.stack ?? error)
 } finally {
   await stopChildren(spawned)
   server.close()
+  await kypr?.mock.close()
   for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true })
 }
 

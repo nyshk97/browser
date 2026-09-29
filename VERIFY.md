@@ -1215,22 +1215,25 @@ mise run verify:only auth-vault   # 保存 / 差分 / 選択取り込みの通�
 ## フォーム自動入力（右クリック → Jev で欄を判定）
 
 ```bash
-mise run verify:only autofill   # 保管庫・ルール・Jev（モック）・流し込みの通し（自分で起動する。10 秒ほど）
+mise run verify:only autofill   # kypr の個人情報・ルール・Jev（モック）・流し込み・身分証の通し（自分で起動する。1 分ほど。133 件。2026-09-29 時点）
 ```
 
 フルの既定にも入っている（`auth-vault` の後の最後）。
 
-**`NEMO_SLOTS_DIR` / `NEMO_HTTP_AUTH_TEST_CRYPTO=memory` / `NEMO_JEV_TEST_ENDPOINT` を必ず渡す**
-（スクリプトが渡している）。最後のを渡し忘れると**実 Jev にテスト用のキーを送る**。
-`NEMO_JEV_TEST_ENDPOINT` はパッケージ版では無視される（キーを任意のサーバへ送らせないため）。
+入れる値は **kypr の個人情報**（`type: "identity"`）。自走検証は kypr の模擬サーバー（`scripts/lib/kypr-fixture.mjs`）に保管庫を作り、
+「別の端末」として Node 側から個人情報を足す。**`NEMO_KYPR_TEST_SERVER` / `NEMO_KYPR_TEST_TOUCHID` /
+`NEMO_HTTP_AUTH_TEST_CRYPTO=memory` / `NEMO_JEV_TEST_ENDPOINT` を必ず渡す**（スクリプトが渡している）。
+最後のを渡し忘れると**実 Jev にテスト用のキーを送る**。どれもパッケージ版では無視される。
 
 ネイティブの右クリックメニューは CDP から押せないので、**メニューと同じ `runAutofill` を
 `window.nemo.autofillForVerify(tabKey, x, y)`（`NEMO_VERIFY_DIAGNOSTICS=1` のときだけ生える）で呼ぶ**。
 
 自走検証が見るもの:
 
-- 保管庫が無いと `no-vault` で何も入れず、Jev も呼ばない（メニューからはここで設定画面が開く）
-- `autofill.json` と `jev-key.json` の**ファイル全体に平文が現れない**
+- kypr に未ログインなら `kypr-signed-out`、個人情報が 0 件なら `no-identity` で何も入れず、Jev も呼ばない（メニューからはここで kypr のポップアップが開く）
+- ロック中でも Touch ID で解除して入れる。Touch ID が通らなければ（`NEMO_KYPR_TEST_TOUCHID=fail` で再起動）`kypr-locked` で何も入れない
+- Jev のキーは Mac ごと（userData の `jev-key.json`）。**ファイルに平文が現れない**・再起動後も残る
+- 既定の個人情報は一番古いもの。ポップアップの「フォーム自動入力に使う」（設定の `kyprAutofillIdentityId`）で切り替えるとその値が入り、ゴミ箱に入れると一番古いものに戻る
 - ルール（`autocomplete` / `type`）と Jev の両方で決まった欄に、**書式まで含めて**正しい値が入る
   （電話 3 分割・郵便番号の `maxlength=7`・都道府県 select・生年月日の年月日 select・カナ）
 - **入れてはいけない欄に入らない**: 既に値のある欄・パスワード・紹介者（本人性の noul が低い）・
@@ -1240,22 +1243,27 @@ mise run verify:only autofill   # 保管庫・ルール・Jev（モック）・�
   文字列は除き、除いたあとに見た値の数を出す）。罠とフォームの外の欄も送っていない
 - React の valueTracker をまねた欄で変更イベントが拾われる（isolated world の native setter）
 - 529 → 再試行で入る / 401・タイムアウト・キー無しでもルールの欄は入る
-- 違うパスフレーズでは既存の保管庫を上書きできない（ファイルが変わらない）
+- **身分証**（`test-pages/autofill-documents.html`）: 旅券番号・免許証番号・保険証の 4 欄と、2 つの「有効期限」が
+  正しい書類で入る（「番号 → 発行日 → 有効期限」の発行日を飛ばす・年の select が和暦「令和11」）。
+  発行日・交付日・発行国・免許の色・同行者の旅券番号（本人でない）・会員番号（確からしさが身分証の足切りに届かない）・
+  カード払いの「有効期限」（直前がカード番号）には入れない。ログの `autofill.run` に `documents`（入れた身分証の欄の数）
 - 表の th「ご住所」の中に「郵便番号」「都道府県」… が段落で並ぶ形（`test-pages/autofill-efo.html`。実在の EFO サンプルと同じ組み方）で住所 6 欄が入る
 - 姓名が 2 枠に分かれ、Jev が 1 枠目の例に引っ張られて `family_name` と答える形（`test-pages/autofill-kayac.html`。モックが実 Jev の分布をまねる）で、姓・名・せい・めいが入る
 - iframe の中のフォーム（同じプロセス / localhost 経由の別プロセス）で入る。別プロセスはログの `autofill.frame_attached` が `crossProcess: true`
 - **親が透明にした iframe には入れない**（親ページ側の判定を外すと 5 欄に入って FAIL することを確かめた）
 - 同じ URL の iframe が 2 つなら、フォーカスのある方だけに入る
 - 実サイト調査で見つけた組み方（`test-pages/autofill-patterns.html`）: th の無い表・<span>年</span> の区切り・確認用の電話・例がかなの姓・FAX を入れない・3 桁 / 4 桁の郵便番号・type=tel の郵便番号・番地と建物をまとめた欄・「ご住所」「建物名称」の 2 枠
-- 古い置き場所（userData の `jev-key.json`）のキーは、プロフィールを保存すると保管庫へ移って消える
-- **2 台目（`NEMO_USER_DATA_DIR` を分けて `NEMO_SLOTS_DIR` を共有）でパスフレーズを入れるだけでキーが使える**。覚える前はキーの保存を `no-passphrase` で断る
-- 設定画面に節が描かれ、項目数が出る / 診断ログに値・キー・パスフレーズが出ない
+- やめた保管庫のパスフレーズの記憶（userData の `autofill-vault-key.json`）は起動で消える
+- 設定画面に節が描かれる / 診断ログに値・キー・マスターパスワードが出ない（3 桁以下の数字だけの値は時刻に紛れるので検査から外す）
 
 **モックは罠の欄にも本物らしい項目を答える**（攻撃側のページはそう見せる）。`none` を返すと、
 可視判定が壊れていても「罠に入らない」検査が PASS する（可視判定を外すと 9 件 FAIL することを確認済み）。
+身分証も同じで、同行者・会員番号・カード払いの「有効期限」には**それらしい答え**（`passport_number` / `document_expiry`）を返す。
+
+ポップアップの個人情報の画面（一覧・詳細の伏せた表示・見出し・編集画面）は `mise run verify:only kypr` が描画まで見る。
 
 **実サイトでの確認**は `NEMO_SURVEY_JEV_KEY_FILE=<キーのファイル> mise run autofill:survey`（`scripts/autofill-survey-urls.txt` の 44 ページ。
-**送信はしない**・架空のプロフィール）。欄ごとに入った値と、判定の内訳（手がかり・ルールか Jev か・Jev の答えと確信度・本人性）を
+**送信はしない**・架空のプロフィールを kypr の模擬サーバーに置く）。欄ごとに入った値と、判定の内訳（手がかり・ルールか Jev か・Jev の答えと確信度・本人性）を
 `autofill-survey.md` に出す。判定の内訳は `autofillForVerify` の戻り値にだけ入り、診断ログには出ない。
 入らない欄の報告を受けたら、その URL をリストに足して回し、内訳から原因を見る。直したら `test-pages/autofill-patterns.html` に同じ組み方を足す。
 
@@ -1265,12 +1273,12 @@ mise run verify:only autofill   # 保管庫・ルール・Jev（モック）・�
 
 人が見る分:
 
-- **右クリックメニューに「フォーム自動入力」が出る**のは入力欄の上だけで、iframe の中では出ない
-- 実 `safeStorage` を使う経路（パスフレーズの記憶・Jev のキー）。自走検証は差し替え backend
-- 保管庫が無い / パスフレーズを覚えていない状態でメニューを押すと設定画面が開く
+- **右クリックメニューに「フォーム自動入力」が出る**のは入力欄の上だけ（iframe の中も）
+- 実 `safeStorage`（Jev のキー）と実 Touch ID の経路。自走検証は差し替え
+- kypr をロックした状態でメニューを押すと Touch ID が出て、通れば入る。キャンセルすると kypr のポップアップが開く
 - autocomplete の無い実際の日本語フォームで、埋まった欄・空欄のまま残った欄が妥当か
-  （閾値は `src/shared/autofill-match.js` の `CHOICE_THRESHOLD` / `OWN_THRESHOLD`）
-- もう 1 台の Mac で同じパスフレーズを入れて保管庫が開けること
+  （閾値は `src/shared/autofill-match.js` の `CHOICE_THRESHOLD` / `OWN_THRESHOLD` / 身分証の `DOCUMENT_THRESHOLD`）
+- 身分証を求める実際のフォーム（レンタカー・旅行の申し込みなど）で、番号と期限が正しい欄に入り、関係ない番号の欄が空のまま残ること
 
 ## セッション cookie（ログイン）の再起動をまたぐ引き継ぎ
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   KyprActionResult,
   KyprInlineState,
@@ -8,6 +8,12 @@ import type {
   KyprSummary,
   KyprUnlockFailure
 } from '../../shared/types.js'
+import {
+  GENDER_LABELS,
+  MAX_PROFILE_VALUE,
+  PROFILE_FIELDS,
+  isValidDate
+} from '../../shared/autofill-schema.js'
 
 /**
  * kypr（自作のパスワードマネージャー）の UI。
@@ -24,6 +30,7 @@ const KIND_LABEL: Record<string, string> = {
   login: 'ログイン',
   card: 'クレジットカード',
   note: 'セキュアメモ',
+  identity: '個人情報',
   unknown: '知らない種類',
   error: '開けない'
 }
@@ -148,6 +155,14 @@ const PATHS = {
       <path d="M6 15h4" />
     </>
   ),
+  identity: (
+    <>
+      <rect x="2.5" y="4.5" width="19" height="15" rx="2.5" />
+      <circle cx="8.5" cy="10.5" r="2.5" />
+      <path d="M5 16.5a3.5 3.5 0 0 1 7 0" />
+      <path d="M14.5 10h4M14.5 14h4" />
+    </>
+  ),
   note: (
     <>
       <path d="M6 3h9l5 5v13H6z" />
@@ -226,7 +241,7 @@ function Avatar({
   size?: 'sm' | 'md' | 'lg'
 }): React.JSX.Element {
   const iconSize = size === 'lg' ? 22 : size === 'sm' ? 12 : 16
-  if (kind === 'card' || kind === 'note') {
+  if (kind === 'card' || kind === 'note' || kind === 'identity') {
     return (
       <span className={`kypr-av ${size} ${kind}`} aria-hidden="true">
         <KyprIcon name={kind} size={iconSize} />
@@ -381,18 +396,19 @@ export function KyprUnlock({
  * 詳細の Esc は一覧へ戻るだけ
  * ------------------------------------------------------------------ */
 
-type View =
-  | { name: 'list' }
-  | { name: 'detail'; id: string }
-  | { name: 'edit'; id: string | null; type: 'login' | 'card' | 'note' }
+type EditType = 'login' | 'card' | 'note' | 'identity'
 
-type Filter = 'all' | 'login' | 'card' | 'note' | 'trash'
+type View =
+  { name: 'list' } | { name: 'detail'; id: string } | { name: 'edit'; id: string | null; type: EditType }
+
+type Filter = 'all' | 'login' | 'card' | 'note' | 'identity' | 'trash'
 
 const FILTERS: [Filter, string][] = [
   ['all', 'すべて'],
   ['login', 'ログイン'],
   ['card', 'クレジットカード'],
   ['note', 'セキュアメモ'],
+  ['identity', '個人情報'],
   ['trash', 'ゴミ箱']
 ]
 const FILTER_LABEL = Object.fromEntries(FILTERS) as Record<Filter, string>
@@ -404,7 +420,14 @@ const COPY_LABEL: Record<string, string> = {
   code: 'セキュリティコード',
   expiry: '有効期限',
   cardholderName: '名義',
-  notes: '本文'
+  notes: '本文',
+  // 個人情報（キーは kypr の平文の名前）
+  ...Object.fromEntries(
+    PROFILE_FIELDS.map((f) => [
+      f.kypr,
+      `${f.group === 'パスポート' || f.group === '運転免許証' || f.group === '健康保険証' ? `${f.group}の` : ''}${f.label}`
+    ])
+  )
 }
 
 export function KyprPanel({ onClose }: { onClose: () => void }): React.JSX.Element {
@@ -470,6 +493,8 @@ export function KyprPanel({ onClose }: { onClose: () => void }): React.JSX.Eleme
         <KyprDetail
           id={view.id}
           readOnly={status.readOnly}
+          autofillIdentityId={data.autofillIdentityId}
+          onAutofillChanged={reload}
           onCopy={copy}
           onBack={() => {
             setView({ name: 'list' })
@@ -605,7 +630,7 @@ function KyprList({
   message: string | null
   onOpen: (id: string) => void
   onFill: (id: string) => void
-  onNew: (type: 'login' | 'card' | 'note') => void
+  onNew: (type: EditType) => void
   onCopy: (id: string, field: string) => void
   onLock: () => void
 }): React.JSX.Element {
@@ -751,7 +776,7 @@ function KyprList({
               <KyprIcon name="plus" />
             </button>
             <KyprMenu open={menu === 'new'} onClose={closeMenu}>
-              {(['login', 'card', 'note'] as const).map((type) => (
+              {(['login', 'card', 'note', 'identity'] as const).map((type) => (
                 <button
                   key={type}
                   type="button"
@@ -824,15 +849,20 @@ const COPYABLE_FIELDS = new Set(['username', 'password', 'number', 'code', 'expi
 function KyprDetail({
   id,
   readOnly,
+  autofillIdentityId,
+  onAutofillChanged,
   onCopy,
   onBack,
   onEdit
 }: {
   id: string
   readOnly: boolean
+  /** フォーム自動入力に使う個人情報（この Mac の設定。無ければ一番古いもの）。 */
+  autofillIdentityId: string | null
+  onAutofillChanged: () => void
   onCopy: (id: string, field: string) => void
   onBack: () => void
-  onEdit: (type: 'login' | 'card' | 'note') => void
+  onEdit: (type: EditType) => void
 }): React.JSX.Element {
   const [detail, setDetail] = useState<KyprItemDetail | null | undefined>(undefined)
   /** 「表示」で main から取った秘密の項目（閉じたら捨てる。詳細は秘密を空にして受け取る）。 */
@@ -871,8 +901,21 @@ function KyprDetail({
     const value = item[key]
     return typeof value === 'string' ? value : ''
   }
-  const fields: { key: string; value: string }[] = []
-  if (detail.kind === 'login') {
+  const fields: { key: string; value: string; label?: string; group?: string; secret?: boolean }[] = []
+  if (detail.kind === 'identity') {
+    // 見出しごとに並べる（並び・伏せる項目は `PROFILE_FIELDS`。キーは kypr の平文の名前）
+    for (const f of PROFILE_FIELDS) {
+      const value = str(f.kypr)
+      fields.push({
+        key: f.kypr,
+        // 未入力の性別は空のまま（表示名「未設定」にすると空の項目として隠れない）
+        value: f.type === 'gender' && value !== '' ? (GENDER_LABELS[value] ?? value) : value,
+        label: f.label,
+        group: f.group,
+        secret: f.secret === true
+      })
+    }
+  } else if (detail.kind === 'login') {
     fields.push({ key: 'username', value: str('username') }, { key: 'password', value: str('password') })
   } else if (detail.kind === 'card') {
     const month = str('expMonth')
@@ -905,6 +948,7 @@ function KyprDetail({
   }
   const editable = detail.editable && !readOnly
   const visibleFields = fields.filter((f) => f.value !== '' || detail.secrets.includes(f.key))
+  const isAutofill = detail.kind === 'identity' && !detail.deleted && autofillIdentityId === detail.id
 
   return (
     <div className="kypr-body kypr-detail">
@@ -914,11 +958,7 @@ function KyprDetail({
         </button>
         <span className="spacer" />
         {editable && !detail.deleted ? (
-          <button
-            type="button"
-            className="kypr-btn"
-            onClick={() => onEdit(detail.kind as 'login' | 'card' | 'note')}
-          >
+          <button type="button" className="kypr-btn" onClick={() => onEdit(detail.kind as EditType)}>
             編集
           </button>
         ) : null}
@@ -940,6 +980,7 @@ function KyprDetail({
           <span className="kypr-row-sub">
             {host ?? KIND_LABEL[detail.kind]}
             {detail.deleted ? <span className="kypr-tag warn">ゴミ箱</span> : null}
+            {isAutofill ? <span className="kypr-tag on">フォーム自動入力に使う</span> : null}
           </span>
         </span>
       </div>
@@ -949,51 +990,55 @@ function KyprDetail({
       ) : null}
       {visibleFields.length > 0 || uris.length > 0 || str('notes') ? (
         <div className="kypr-fields">
-          {visibleFields.map((f) => {
-            const secret = SECRET_FIELDS.has(f.key)
+          {visibleFields.map((f, i) => {
+            const secret = f.secret ?? SECRET_FIELDS.has(f.key)
             const visible = !secret || revealed.has(f.key)
+            const heading = f.group !== undefined && f.group !== visibleFields[i - 1]?.group ? f.group : null
             return (
-              <div key={f.key} className="kypr-field">
-                <span className="kypr-field-text">
-                  <span className="kypr-field-label">{FIELD_LABEL[f.key]}</span>
-                  <span className={`kypr-field-value${secret ? ' mono' : ''}`}>
-                    {!secret ? f.value : visible ? revealed.get(f.key) : '••••••••••'}
+              <Fragment key={f.key}>
+                {heading ? <div className="kypr-field-group">{heading}</div> : null}
+                <div className="kypr-field" data-kypr-field={f.key}>
+                  <span className="kypr-field-text">
+                    <span className="kypr-field-label">{f.label ?? FIELD_LABEL[f.key]}</span>
+                    <span className={`kypr-field-value${secret ? ' mono' : ''}`}>
+                      {!secret ? f.value : visible ? revealed.get(f.key) : '••••••••••'}
+                    </span>
                   </span>
-                </span>
-                {secret ? (
-                  <button
-                    type="button"
-                    className="icon"
-                    title={visible ? '隠す' : '表示'}
-                    onClick={() => {
-                      if (revealed.has(f.key)) {
-                        setRevealed((prev) => {
-                          const next = new Map(prev)
-                          next.delete(f.key)
-                          return next
+                  {secret ? (
+                    <button
+                      type="button"
+                      className="icon"
+                      title={visible ? '隠す' : '表示'}
+                      onClick={() => {
+                        if (revealed.has(f.key)) {
+                          setRevealed((prev) => {
+                            const next = new Map(prev)
+                            next.delete(f.key)
+                            return next
+                          })
+                          return
+                        }
+                        void window.nemo.kyprReveal(detail.id, f.key).then((value) => {
+                          if (value === null) return
+                          setRevealed((prev) => new Map(prev).set(f.key, value))
                         })
-                        return
-                      }
-                      void window.nemo.kyprReveal(detail.id, f.key).then((value) => {
-                        if (value === null) return
-                        setRevealed((prev) => new Map(prev).set(f.key, value))
-                      })
-                    }}
-                  >
-                    <KyprIcon name={visible ? 'eyeOff' : 'eye'} />
-                  </button>
-                ) : null}
-                {COPYABLE_FIELDS.has(f.key) ? (
-                  <button
-                    type="button"
-                    className="icon"
-                    title="コピー（30 秒で消えます）"
-                    onClick={() => onCopy(detail.id, f.key)}
-                  >
-                    <KyprIcon name="copy" />
-                  </button>
-                ) : null}
-              </div>
+                      }}
+                    >
+                      <KyprIcon name={visible ? 'eyeOff' : 'eye'} />
+                    </button>
+                  ) : null}
+                  {COPYABLE_FIELDS.has(f.key) || (detail.kind === 'identity' && f.key !== 'gender') ? (
+                    <button
+                      type="button"
+                      className="icon"
+                      title="コピー（30 秒で消えます）"
+                      onClick={() => onCopy(detail.id, f.key)}
+                    >
+                      <KyprIcon name="copy" />
+                    </button>
+                  ) : null}
+                </div>
+              </Fragment>
             )
           })}
           {uris.length > 0 ? (
@@ -1044,6 +1089,18 @@ function KyprDetail({
             このページに入力
           </button>
         ) : null}
+        {detail.kind === 'identity' && !detail.deleted && !isAutofill ? (
+          <button
+            type="button"
+            className="kypr-btn"
+            title="右クリックの「フォーム自動入力」でこの個人情報を使う（この Mac の設定）"
+            onClick={() =>
+              void window.nemo.updateSettings({ kyprAutofillIdentityId: detail.id }).then(onAutofillChanged)
+            }
+          >
+            フォーム自動入力に使う
+          </button>
+        ) : null}
         {!readOnly && detail.deleted ? (
           <>
             <button
@@ -1078,8 +1135,16 @@ function KyprDetail({
  * ------------------------------------------------------------------ */
 
 const EDIT_FIELDS: Record<
-  'login' | 'card' | 'note',
-  { key: string; label: string; secret?: boolean; multiline?: boolean }[]
+  EditType,
+  {
+    key: string
+    label: string
+    secret?: boolean
+    multiline?: boolean
+    group?: string
+    hint?: string
+    kind?: 'text' | 'date' | 'gender'
+  }[]
 > = {
   login: [
     { key: 'name', label: '名前' },
@@ -1101,6 +1166,19 @@ const EDIT_FIELDS: Record<
   note: [
     { key: 'name', label: '名前' },
     { key: 'notes', label: '本文', multiline: true }
+  ],
+  // キーは kypr の平文の名前（並び・見出し・伏せる項目は `PROFILE_FIELDS`）
+  identity: [
+    { key: 'name', label: '名前', hint: '自分' },
+    ...PROFILE_FIELDS.map((f) => ({
+      key: f.kypr,
+      label: f.label,
+      secret: f.secret === true,
+      group: f.group,
+      hint: f.hint,
+      kind: f.type
+    })),
+    { key: 'notes', label: 'メモ', multiline: true }
   ]
 }
 
@@ -1111,7 +1189,7 @@ function KyprEditor({
   onSaved
 }: {
   id: string | null
-  type: 'login' | 'card' | 'note'
+  type: EditType
   onCancel: () => void
   onSaved: (id: string) => void
 }): React.JSX.Element {
@@ -1172,6 +1250,17 @@ function KyprEditor({
   const set = (key: string, value: string): void => setValues((prev) => ({ ...(prev ?? {}), [key]: value }))
   const save = (): void => {
     if (busy) return
+    // 日付は YYYY-MM-DD（自動入力が年・月・日に分けて使う。main も同じ検査で断る）
+    const badDate = EDIT_FIELDS[type].find(
+      (f) =>
+        f.kind === 'date' && (values[f.key] ?? '').trim() !== '' && !isValidDate((values[f.key] ?? '').trim())
+    )
+    if (badDate) {
+      setMessage(
+        `${badDate.group ?? ''}の${badDate.label}は YYYY-MM-DD（例: ${badDate.hint ?? '2031-04-30'}）で入力してください。`
+      )
+      return
+    }
     setBusy(true)
     setMessage(null)
     const fields: Record<string, unknown> = { ...values }
@@ -1213,45 +1302,72 @@ function KyprEditor({
         </button>
         <span className="kypr-editor-title">{id ? '編集' : `新規（${KIND_LABEL[type]}）`}</span>
       </div>
-      {EDIT_FIELDS[type].map((f) => (
-        <label key={f.key} className="kypr-edit-field">
-          <span className="kypr-field-label">{f.label}</span>
-          {f.multiline ? (
-            <textarea
-              value={values[f.key] ?? ''}
-              rows={4}
-              spellCheck={false}
-              onChange={(event) => set(f.key, event.target.value)}
-            />
-          ) : (
-            <span className="kypr-edit-input">
-              <input
-                name={`kypr-${f.key}`}
-                type={f.secret && !shown ? 'password' : 'text'}
-                value={values[f.key] ?? ''}
-                autoComplete="off"
-                spellCheck={false}
-                onChange={(event) => set(f.key, event.target.value)}
-              />
-              {f.key === 'password' ? (
-                <button type="button" className="icon" title="強いパスワードを生成" onClick={generate}>
-                  <KyprIcon name="dice" />
-                </button>
-              ) : null}
-              {f.secret ? (
-                <button
-                  type="button"
-                  className="icon"
-                  title={shown ? '隠す' : '表示'}
-                  onClick={() => setShown((v) => !v)}
-                >
-                  <KyprIcon name={shown ? 'eyeOff' : 'eye'} />
-                </button>
-              ) : null}
-            </span>
-          )}
-        </label>
-      ))}
+      {EDIT_FIELDS[type].map((f, i, all) => {
+        // 性別は button の並びなので label で包まない（見出しを押すと先頭の「未設定」が押されたことになる）
+        const Row = f.kind === 'gender' ? 'div' : 'label'
+        return (
+          <Fragment key={f.key}>
+            {f.group !== undefined && f.group !== all[i - 1]?.group ? (
+              <span className="kypr-edit-group">{f.group}</span>
+            ) : null}
+            <Row className="kypr-edit-field">
+              <span className="kypr-field-label">{f.label}</span>
+              {f.kind === 'gender' ? (
+                // ネイティブの `<select>` は使わない（開くと View のフォーカスが外れうる）
+                <span className="kypr-seg" role="radiogroup" aria-label={f.label}>
+                  {Object.entries(GENDER_LABELS).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      aria-checked={(values[f.key] ?? '') === value}
+                      className={(values[f.key] ?? '') === value ? 'on' : ''}
+                      onClick={() => set(f.key, value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </span>
+              ) : f.multiline ? (
+                <textarea
+                  value={values[f.key] ?? ''}
+                  rows={4}
+                  spellCheck={false}
+                  onChange={(event) => set(f.key, event.target.value)}
+                />
+              ) : (
+                <span className="kypr-edit-input">
+                  <input
+                    name={`kypr-${f.key}`}
+                    type={f.secret && !shown ? 'password' : 'text'}
+                    value={values[f.key] ?? ''}
+                    placeholder={f.hint}
+                    maxLength={type === 'identity' ? MAX_PROFILE_VALUE : undefined}
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(event) => set(f.key, event.target.value)}
+                  />
+                  {f.key === 'password' ? (
+                    <button type="button" className="icon" title="強いパスワードを生成" onClick={generate}>
+                      <KyprIcon name="dice" />
+                    </button>
+                  ) : null}
+                  {f.secret ? (
+                    <button
+                      type="button"
+                      className="icon"
+                      title={shown ? '隠す' : '表示'}
+                      onClick={() => setShown((v) => !v)}
+                    >
+                      <KyprIcon name={shown ? 'eyeOff' : 'eye'} />
+                    </button>
+                  ) : null}
+                </span>
+              )}
+            </Row>
+          </Fragment>
+        )
+      })}
       {message ? <p className="kypr-error">{message}</p> : null}
       <div className="kypr-actions">
         <button type="submit" className="kypr-primary" disabled={busy}>

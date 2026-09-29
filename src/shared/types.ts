@@ -301,45 +301,12 @@ export interface AuthVaultLoadResult {
  * フォーム自動入力
  * ------------------------------------------------------------------ */
 
-/** プロフィール（`PROFILE_KEYS` の全キー。未入力は空文字列）。 */
-export type AutofillProfile = Record<string, string>
-
-/** 設定画面の状態。**プロフィールの値も Jev のキーも含まない**。 */
+/** 設定画面の状態。**Jev のキーの値は含まない**。 */
 export interface AutofillStatus {
-  state: 'empty' | 'ok' | 'unreadable'
-  /** 入っている項目の数と保存日時・端末（**復号せずに読める**ぶん）。 */
-  meta: AuthVaultMeta | null
-  reason: string | null
-  /** 新しい版の Nemo が書いたもの。**この間は保存も削除もさせない**。 */
-  isFutureVersion: boolean
-  hasConflictCopy: boolean
-  dir: string
-  kind: 'env' | 'icloud' | 'fallback'
-  hasPassphrase: boolean
-  encryptionAvailable: boolean
-  minPassphrase: number
+  /** この Mac に Jev のキーを保存してあるか。 */
   hasJevKey: boolean
-}
-
-export type AutofillFailure =
-  | 'empty'
-  | 'unreadable'
-  | 'bad-passphrase'
-  | 'tampered'
-  | 'malformed'
-  | 'no-passphrase'
-  | 'weak-passphrase'
-  | 'no-encryption'
-  | 'write-failed'
-  | 'future-version'
-
-/** 開いた結果。**値を renderer に渡すのはこの口だけ**（設定画面で編集を開いたとき）。 */
-export type AutofillOpenResult =
-  { ok: true; profile: AutofillProfile } | { ok: false; reason: AutofillFailure; detail?: string }
-
-export interface AutofillSaveResult {
-  ok: boolean
-  reason?: AutofillFailure
+  /** 端末鍵で暗号化できるか（できなければキーを保存できない）。 */
+  encryptionAvailable: boolean
 }
 
 /** 自動入力 1 回の結果（ログにも同じものを出す。**値・見出し・URL は含まない**）。 */
@@ -347,10 +314,14 @@ export interface AutofillRunResult {
   ok: boolean
   reason?:
     | 'busy'
-    | 'no-vault'
-    | 'no-passphrase'
-    | 'bad-passphrase'
-    | 'unreadable'
+    /** kypr を使えない（自走検証で宛先を渡していない等）。 */
+    | 'kypr-disabled'
+    /** この Mac で kypr にまだログインしていない。 */
+    | 'kypr-signed-out'
+    /** ロック中で、Touch ID で解除できなかった（覚えていない・通らなかった）。 */
+    | 'kypr-locked'
+    /** kypr に個人情報が 1 件も無い。 */
+    | 'no-identity'
     | 'no-fields'
     | 'collect-failed'
     | 'fill-failed'
@@ -365,6 +336,8 @@ export interface AutofillRunResult {
   left: number
   /** 実際に値を入れた入力要素の数（分割グループは要素ごとに数える）。 */
   filled: number
+  /** 入れた欄のうち身分証の項目（パスポート・免許証・保険証）の数。 */
+  documents?: number
   jevMs: number | null
   /** Jev を使えなかった理由（`no-key` / `timeout` / `http-401` など）。 */
   jevError?: string
@@ -536,14 +509,14 @@ export interface KyprStatus {
   itemCount: number
 }
 
-export type KyprItemKind = 'login' | 'card' | 'note' | 'unknown' | 'error'
+export type KyprItemKind = 'login' | 'card' | 'note' | 'identity' | 'unknown' | 'error'
 
 /** 一覧に出す 1 行。**パスワード・カード番号・セキュリティコード・メモの本文は入れない**。 */
 export interface KyprSummary {
   id: string
   kind: KyprItemKind
   name: string
-  /** ログインはユーザー名、カードは「ブランド •••• 下 4 桁」、それ以外は空。 */
+  /** ログインはユーザー名、カードは「ブランド •••• 下 4 桁」、個人情報は氏名（無ければメール）、それ以外は空。 */
   subtitle: string
   /** ログインの最初の URI のホスト（無ければ null）。 */
   host: string | null
@@ -558,6 +531,8 @@ export interface KyprPanelData {
   matches: KyprSummary[]
   /** すべてのアイテム（ゴミ箱の中も含む。絞り込みは renderer）。 */
   items: KyprSummary[]
+  /** フォーム自動入力に使う個人情報（設定で選んだもの。無ければ一番古いもの。0 件なら null）。 */
+  autofillIdentityId: string | null
 }
 
 /** 詳細・編集で渡す平文。**開いたときだけ**渡す。 */
@@ -583,7 +558,7 @@ export interface KyprItemDetail {
 export interface KyprItemInput {
   /** 既存のアイテムを更新するとき。新規は null。 */
   id: string | null
-  type: 'login' | 'card' | 'note'
+  type: 'login' | 'card' | 'note' | 'identity'
   fields: Record<string, unknown>
 }
 
@@ -1118,6 +1093,11 @@ export interface NemoSettings {
     /** 無効化した拡張の ID（lock に無い ID は無視される）。 */
     disabled: string[]
   }
+  /**
+   * フォーム自動入力に使う kypr の個人情報の ID（Mac ごと）。null・消えたときは一番古い 1 件を使う。
+   * kypr のポップアップの詳細画面で切り替える。
+   */
+  kyprAutofillIdentityId: string | null
 }
 
 /* ------------------------------------------------------------------ *
@@ -1394,33 +1374,15 @@ export interface NemoUiApi {
    */
   authVaultDelete(): Promise<boolean>
 
-  /* フォーム自動入力 */
-  /** 設定画面の状態。**毎回ディスクから読み直す**。値もキーも返さない。 */
+  /* フォーム自動入力（入れる値は kypr の個人情報） */
+  /** 設定画面の状態。キーの値は返さない。 */
   autofillStatus(): Promise<AutofillStatus>
   /**
-   * 保管庫を開いてプロフィールを受け取る（設定画面で編集するとき）。
-   * `passphrase` に `null` を渡すと覚えているものを使う。`remember` は入力したときだけ効く。
+   * Jev の API キーを**この Mac に**保存する（端末鍵で暗号化して userData に置く）。
+   * 保存できたかを返す（端末鍵が無ければ false）。キーを返す口は無い。
    */
-  autofillOpen(passphrase: string | null, remember: boolean): Promise<AutofillOpenResult>
-  /**
-   * 保存する。**保管庫が既にあるときは、そのパスフレーズで開けることを確かめてから上書きする**
-   * （違うパスフレーズで黙って作り直さない）。
-   */
-  autofillSave(
-    profile: AutofillProfile,
-    passphrase: string | null,
-    remember: boolean
-  ): Promise<AutofillSaveResult>
-  /** 保管庫を消す（覚えているパスフレーズも消える）。 */
-  autofillDelete(): Promise<boolean>
-  /**
-   * Jev の API キーを**保管庫の中に**保存する（別の Mac でもパスフレーズだけで使える）。
-   * パスフレーズを覚えている Mac でだけ保存できる（`no-passphrase`）。プロフィールが無ければ `empty`。
-   * キーを返す口は無い。
-   */
-  saveJevKey(key: string): Promise<AutofillSaveResult>
-  /** 保管庫からキーを消す（古い置き場所のキーも消す）。 */
-  clearJevKey(): Promise<AutofillSaveResult>
+  saveJevKey(key: string): Promise<boolean>
+  clearJevKey(): Promise<void>
 
   /* kypr（パスワードマネージャー）。**鍵は main だけが持つ**。平文は開いたアイテムの分だけ返す */
   kyprStatus(): Promise<KyprStatus>

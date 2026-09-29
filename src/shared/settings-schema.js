@@ -33,7 +33,8 @@ export const DEFAULT_SETTINGS = {
   liveFolderEnabled: true,
   agentEnabled: false,
   agentBlockedHosts: [],
-  extensions: { disabled: [] }
+  extensions: { disabled: [] },
+  kyprAutofillIdentityId: null
 }
 
 /**
@@ -76,8 +77,22 @@ export function normalizeSettings(raw) {
     agentBlockedHosts: normalizeBlockedHosts(input['agentBlockedHosts']),
     // ネストしたオブジェクトは**毎回ここで組み立て直す**。`updateSettings` の浅いマージで
     // `extensions` ごと置き換わっても、未指定のキーが既定値で埋まる
-    extensions: normalizeExtensionSettings(input['extensions'])
+    extensions: normalizeExtensionSettings(input['extensions']),
+    // フォーム自動入力に使う kypr の個人情報（Mac ごと）。消えていたら一番古い 1 件を使う（`kypr-identity.js`）
+    kyprAutofillIdentityId: normalizeKyprItemId(input['kyprAutofillIdentityId'])
   }
+}
+
+/**
+ * kypr のアイテム ID（UUID）。形が違えば null。
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+function normalizeKyprItemId(value) {
+  return typeof value === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+    ? value.toLowerCase()
+    : null
 }
 
 /**

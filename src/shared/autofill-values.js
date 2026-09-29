@@ -8,6 +8,8 @@
  * 純粋関数だけを置く（`scripts/autofill.test.mjs` から直接テストする）。
  */
 
+import { PROFILE_FIELDS } from './autofill-schema.js'
+
 /**
  * 収集スクリプトが返す入力欄 1 個（`autofill-collect-source.js` の `elements[]`）。
  *
@@ -25,6 +27,43 @@
  */
 const NAME_SEPARATOR = ' '
 const FULLWIDTH_SEPARATOR = '\u3000'
+
+/** 日付の項目（`YYYY-MM-DD`）。正は `PROFILE_FIELDS` の `type: 'date'`（`autofill-match.js` の `DATE_OPTIONS` も同じもの）。 */
+export const DATE_KEYS = PROFILE_FIELDS.filter((field) => field.type === 'date').map((field) => field.key)
+
+/** 分けた日付の部分 → 元の項目（`passport_expiry_year` → `passport_expiry`）。 */
+const DATE_PART_RE = new RegExp(`^(${DATE_KEYS.join('|')})_(year|month|day)$`)
+
+/**
+ * 元号（始まりの日が早い順）。和暦の select・入力欄に合わせるため。
+ * @type {readonly { name: string, letter: string, start: string }[]}
+ */
+const ERAS = [
+  { name: '明治', letter: 'M', start: '1868-10-23' },
+  { name: '大正', letter: 'T', start: '1912-07-30' },
+  { name: '昭和', letter: 'S', start: '1926-12-25' },
+  { name: '平成', letter: 'H', start: '1989-01-08' },
+  { name: '令和', letter: 'R', start: '2019-05-01' }
+]
+
+/**
+ * `YYYY-MM-DD` の和暦（元号と年）。明治より前は null。
+ * @param {string} date
+ * @returns {{ name: string, letter: string, year: number } | null}
+ */
+export function toWareki(date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null
+  for (let i = ERAS.length - 1; i >= 0; i -= 1) {
+    const era = /** @type {typeof ERAS[number]} */ (ERAS[i])
+    if (date >= era.start)
+      return {
+        name: era.name,
+        letter: era.letter,
+        year: Number(date.slice(0, 4)) - Number(era.start.slice(0, 4)) + 1
+      }
+  }
+  return null
+}
 
 /**
  * @param {Record<string, string>} profile `normalizeProfile` 済み
@@ -52,7 +91,13 @@ export function deriveValues(profile) {
     'organization',
     'department',
     'job_title',
-    'organization_url'
+    'organization_url',
+    'passport_number',
+    'license_number',
+    'insurance_symbol',
+    'insurance_number',
+    'insurance_branch',
+    'insurer_number'
   ]) {
     put(key, get(key))
   }
@@ -97,12 +142,14 @@ export function deriveValues(profile) {
   put('address_without_building', address)
   if (address) put('address_full', get('address_line2') ? `${address} ${get('address_line2')}` : address)
 
-  const birthday = /^(\d{4})-(\d{2})-(\d{2})$/.exec(get('birthday'))
-  if (birthday) {
-    put('birthday', get('birthday'))
-    put('birthday_year', birthday[1])
-    put('birthday_month', String(Number(birthday[2])))
-    put('birthday_day', String(Number(birthday[3])))
+  // 日付（生年月日・パスポートと免許証の有効期限）は年 / 月 / 日にも分ける
+  for (const key of DATE_KEYS) {
+    const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(get(key))
+    if (!date) continue
+    put(key, get(key))
+    put(`${key}_year`, date[1])
+    put(`${key}_month`, String(Number(date[2])))
+    put(`${key}_day`, String(Number(date[3])))
   }
   return out
 }
@@ -158,9 +205,14 @@ export function formatForElement(option, values, element, hintText) {
     }
     return value
   }
-  if (option === 'birthday') {
+  if (DATE_KEYS.includes(option)) {
     const [year, month, day] = value.split('-')
     if (element.type === 'date') return value
+    // 和暦の例・見出し（「令和◯年◯月◯日」「和暦で」）なら和暦で書く
+    const wareki = toWareki(value)
+    if (wareki && /令和|平成|昭和|和暦/.test(`${hints} ${element.placeholder}`)) {
+      return `${wareki.name}${wareki.year === 1 ? '元' : wareki.year}年${Number(month)}月${Number(day)}日`
+    }
     if (/年/.test(element.placeholder)) return `${year}年${Number(month)}月${Number(day)}日`
     if (element.maxLength === 8 || /^\d{8}$/.test(normalizeWidth(element.placeholder))) {
       return `${year}${month}${day}`
@@ -168,7 +220,14 @@ export function formatForElement(option, values, element, hintText) {
     if (/\d{4}-\d/.test(element.placeholder)) return value
     return `${year}/${month}/${day}`
   }
-  if (option === 'birthday_month' || option === 'birthday_day') {
+  const datePart = DATE_PART_RE.exec(option)
+  if (datePart?.[2] === 'year') {
+    // 年だけの欄が和暦（「令和[  ]年」「和暦で」）なら元号の年。元号は元の日付で決める（改元の年は日付で分かれる）
+    const wareki = toWareki(values[/** @type {string} */ (datePart[1])] ?? '')
+    if (wareki && /令和|平成|昭和|和暦/.test(`${hints} ${element.placeholder}`)) return String(wareki.year)
+    return value
+  }
+  if (datePart?.[2] === 'month' || datePart?.[2] === 'day') {
     // 「01」のような 2 桁の例があるときだけ 0 埋め
     if (/^0\d$/.test(normalizeWidth(element.placeholder)) || /^(MM|DD)$/i.test(element.placeholder)) {
       return value.padStart(2, '0')
@@ -203,10 +262,11 @@ export function formatForElement(option, values, element, hintText) {
  * @param {{ value: string, text: string }[]} options
  * @param {string} option 選択肢のキー
  * @param {string} value `formatForElement` を通す前の値
+ * @param {Record<string, string>} [values] `deriveValues` の戻り（年の欄を和暦で選ぶときに元の日付を見る）
  * @returns {number} 選ぶ option の添字。無ければ -1
  */
-export function matchSelectOption(options, option, value) {
-  const candidates = selectCandidates(option, value).map(normalizeOptionText).filter(Boolean)
+export function matchSelectOption(options, option, value, values = {}) {
+  const candidates = selectCandidates(option, value, values).map(normalizeOptionText).filter(Boolean)
   if (candidates.length === 0) return -1
 
   const texts = options.map((entry) => [normalizeOptionText(entry.text), normalizeOptionText(entry.value)])
@@ -226,20 +286,33 @@ export function matchSelectOption(options, option, value) {
 /**
  * @param {string} option
  * @param {string} value
+ * @param {Record<string, string>} values
  * @returns {string[]}
  */
-function selectCandidates(option, value) {
+function selectCandidates(option, value, values) {
   if (option === 'gender') return GENDER_WORDS[value] ?? []
   if (option === 'address_level1') {
     // 「神奈川県」と「神奈川」の揺れ。北海道は「道」を落とすと別物になるので落とさない
     const short = value === '北海道' ? value : value.replace(/[都府県]$/, '')
     return [value, short]
   }
-  if (option === 'birthday_year') return [value, `${value}年`]
-  if (option === 'birthday_month')
+  const part = DATE_PART_RE.exec(option)
+  if (part?.[2] === 'year') {
+    // 和暦の選択肢（「令和11」「令和11年」「R11」「令和元年」）。元号は元の日付で決める（改元の年は日付で分かれる）
+    const wareki = toWareki(values[/** @type {string} */ (part[1])] ?? '')
+    const eraYears = wareki
+      ? [String(wareki.year), ...(wareki.year === 1 ? ['元'] : [])].flatMap((y) => [
+          `${wareki.name}${y}`,
+          `${wareki.name}${y}年`,
+          `${wareki.letter}${y}`,
+          `${wareki.letter}${y}年`
+        ])
+      : []
+    return [value, `${value}年`, ...eraYears]
+  }
+  if (part?.[2] === 'month')
     return [value, value.padStart(2, '0'), `${value}月`, `${value.padStart(2, '0')}月`]
-  if (option === 'birthday_day')
-    return [value, value.padStart(2, '0'), `${value}日`, `${value.padStart(2, '0')}日`]
+  if (part?.[2] === 'day') return [value, value.padStart(2, '0'), `${value}日`, `${value.padStart(2, '0')}日`]
   return [value]
 }
 

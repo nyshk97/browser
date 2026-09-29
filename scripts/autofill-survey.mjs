@@ -6,9 +6,9 @@
  * 右クリックの「フォーム自動入力」と同じ処理を走らせて、欄ごとに「何が入ったか」を一覧にする。
  * 入らない欄を見つけるたびに 1 件ずつ報告してもらう代わりに、代表的なフォームをまとめて見るためのもの。
  *
- * - **送信はしない**（入力するだけ）。プロフィールは架空の値
+ * - **送信はしない**（入力するだけ）。プロフィールは架空の値で、kypr の模擬サーバーの個人情報に置く
  * - Jev のキーは `NEMO_SURVEY_JEV_KEY_FILE`（キーを 1 行書いたファイル）から読む。無ければルールだけで回す
- * - 実 iCloud・実 Keychain には触らない（`NEMO_SLOTS_DIR` / `NEMO_HTTP_AUTH_TEST_CRYPTO=memory`）
+ * - 本物の kypr・実 Keychain には触らない（`NEMO_KYPR_TEST_SERVER` / `NEMO_HTTP_AUTH_TEST_CRYPTO=memory`）
  * - フォームがメインのページに無いとき（iframe の中・描画されない）は、その旨と iframe の URL の host を出す
  *
  * 使い方:
@@ -29,6 +29,8 @@ import {
   waitForHttp
 } from './lib/harness.mjs'
 import { connect, connectUi, listTargets } from './lib/cdp.mjs'
+import { createKyprVault, profileToKypr } from './lib/kypr-fixture.mjs'
+import { newIdentityItem } from '../src/vendor/kypr/crypto/index.ts'
 
 const require = createRequire(import.meta.url)
 const electronPath = require('electron')
@@ -53,8 +55,17 @@ const PROFILE = {
   organization: '株式会社サンプル',
   department: '開発部',
   job_title: '部長',
-  organization_url: 'https://example.com'
+  organization_url: 'https://example.com',
+  passport_number: 'TK0000000',
+  passport_expiry: '2031-04-30',
+  license_number: '000000000000',
+  license_expiry: '2029-06-15',
+  insurance_symbol: '0000',
+  insurance_number: '00',
+  insurance_branch: '00',
+  insurer_number: '00000000'
 }
+const KYPR_PASSWORD = 'survey-kypr-password'
 
 const args = process.argv.slice(2)
 const outAt = args.indexOf('--out')
@@ -160,6 +171,8 @@ const resultLine = (result) =>
 
 const spawned = []
 const dirs = []
+/** @type {{ close(): Promise<void> } | null} */
+let kyprMock = null
 const report = []
 const say = (line) => {
   report.push(line)
@@ -171,8 +184,10 @@ try {
   if (!fs.existsSync(path.join(projectRoot, 'out/main/index.js')))
     throw new Error('out/ が無い。先に pnpm build する')
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'nemo-survey-'))
-  const slotsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nemo-survey-slots-'))
-  dirs.push(userData, slotsDir)
+  dirs.push(userData)
+  const kypr = await createKyprVault(KYPR_PASSWORD)
+  kyprMock = kypr.mock
+  await kypr.other.create([newIdentityItem({ name: '調査', ...profileToKypr(PROFILE) })])
   fs.writeFileSync(
     path.join(userData, 'settings.json'),
     JSON.stringify({ version: 1, data: { liveFolderEnabled: false } })
@@ -186,8 +201,9 @@ try {
       ...process.env,
       NEMO_REMOTE_DEBUGGING_PORT: port,
       NEMO_USER_DATA_DIR: userData,
-      NEMO_SLOTS_DIR: slotsDir,
       NEMO_HTTP_AUTH_TEST_CRYPTO: 'memory',
+      NEMO_KYPR_TEST_SERVER: kypr.origin,
+      NEMO_KYPR_TEST_TOUCHID: 'ok',
       NEMO_VERIFY_DIAGNOSTICS: '1',
       NEMO_DOWNLOAD_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'nemo-survey-dl-'))
     }
@@ -195,17 +211,15 @@ try {
   spawned.push(child)
   await waitForHttp(`${cdp}/json/list`, { child })
   const ui = await connectUi(cdp)
-  const saved = JSON.parse(
-    await ui.ev(
-      `window.nemo.autofillSave(${JSON.stringify(PROFILE)}, 'survey-passphrase', true).then(JSON.stringify)`
-    )
+  const signedIn = JSON.parse(
+    await ui.ev(`window.nemo.kyprSignIn(${JSON.stringify(KYPR_PASSWORD)}, false).then(JSON.stringify)`)
   )
-  if (!saved.ok) throw new Error(`プロフィールを保存できない: ${JSON.stringify(saved)}`)
+  if (!signedIn.ok) throw new Error(`kypr にログインできない: ${JSON.stringify(signedIn)}`)
   if (jevKey) {
     const key = JSON.parse(
       await ui.ev(`window.nemo.saveJevKey(${JSON.stringify(jevKey)}).then(JSON.stringify)`)
     )
-    if (!key.ok) throw new Error(`キーを保存できない: ${JSON.stringify(key)}`)
+    if (key !== true) throw new Error(`キーを保存できない: ${JSON.stringify(key)}`)
   } else {
     console.error('[survey] NEMO_SURVEY_JEV_KEY_FILE が無いので、ルールで決まる欄だけ入れる')
   }
@@ -328,6 +342,7 @@ try {
   process.exitCode = 1
 } finally {
   await stopChildren(spawned)
+  await kyprMock?.close()
   for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true })
   if (outFile) fs.writeFileSync(outFile, `${report.join('\n')}\n`)
 }

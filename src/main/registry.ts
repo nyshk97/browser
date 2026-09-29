@@ -1135,7 +1135,8 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
       wc,
       () => (win().isDestroyed ? null : win().baseWindow),
       () => {
-        if (!win().isDestroyed) win().setOverlay('settings')
+        // 小窓はポップアップを持たない
+        if (!win().isDestroyed && win().kind !== 'mini') win().setOverlay('kypr')
       },
       // 常用の窓のリンクを Claude のウィンドウで開く（マジックリンク型のログインの受け渡し）
       () =>

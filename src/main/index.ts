@@ -57,6 +57,7 @@ import { closeSession, initSession, markCleanExit } from './store/session.js'
 import { closeCallWindowStore, initCallWindowStore } from './store/call-window.js'
 import { closeHttpAuthStore, initHttpAuthStore } from './store/http-auth.js'
 import { initSecretBackend } from './store/secret-backend.js'
+import { removeRetiredAutofillPassphrase } from './store/jev-key.js'
 import { closeSessionCookies, initSessionCookies } from './store/session-cookies.js'
 import { stopHttpAuthMatcher } from './http-auth-matcher.js'
 import { configureMeetTestUrlPrefix } from './meet-adapter.js'
@@ -195,6 +196,7 @@ app
     initCallWindowStore()
     // **認証ハンドラ・IPC 登録より前**（暗号化 backend の解決 → ストアの読み込みの順）
     initSecretBackend()
+    removeRetiredAutofillPassphrase()
     initHttpAuthStore()
     initDb()
     // 定義の favicon を履歴から埋める（**DB を開いた後・ウィンドウ復元の前**に 1 回。

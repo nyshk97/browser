@@ -149,8 +149,7 @@ export const OWNERS = new Map([
   // セーブスロットだけが読むモジュール（他のスイートは触らない）。
   // `Slots.tsx` は `verify-slots.mjs` が設定画面を開いてカードの描画まで見ている
   // （IPC だけの検証だと描画例外を素通りするので、この割り当てが嘘になる）
-  // 保存先の解決（`slotsDir`）を自動入力の保管庫も使う
-  ['src/main/store/slots.ts', ['slots', 'autofill']],
+  ['src/main/store/slots.ts', ['slots']],
   // `slots-schema.js` は `normalizeFaviconUrl` を `settings-schema.js` へ、`slotHasSections` を適用経路へ
   // 出しており、Favorites の section / favicon（`pins`）にも効く
   ['src/shared/slots-schema.js', ['slots', 'pins']],
@@ -172,9 +171,8 @@ export const OWNERS = new Map([
   ['src/shared/http-auth-worker-source.js', ['http-auth']],
   ['scripts/http-auth-rules.test.mjs', ['http-auth', 'auth-vault']],
   // Basic 認証の保管庫だけが読むモジュール（他のスイートは触らない）
-  // 封筒の検査と暗号は自動入力の保管庫も使う（`encryptEnvelope` / `normalizeVaultFile`）
-  ['src/shared/auth-vault-schema.js', ['auth-vault', 'autofill']],
-  ['src/shared/auth-vault-crypto.js', ['auth-vault', 'autofill']],
+  ['src/shared/auth-vault-schema.js', ['auth-vault']],
+  ['src/shared/auth-vault-crypto.js', ['auth-vault']],
   ['src/shared/auth-vault-diff.js', ['auth-vault']],
   ['src/main/store/auth-vault.ts', ['auth-vault']],
   ['src/renderer/components/AuthVault.tsx', ['auth-vault']],
@@ -183,14 +181,14 @@ export const OWNERS = new Map([
   ['scripts/auth-vault-diff.test.mjs', ['auth-vault']],
   // フォーム自動入力だけが読むモジュール（他のスイートは触らない）。
   // `Autofill.tsx` は `verify-autofill.mjs` が設定画面を開いて節の描画まで見ている。
-  // `context-menu.ts` / `ipc.ts` / `registry.ts` に入れた配線はここに載せない（フルに倒す）
-  ['src/shared/autofill-schema.js', ['autofill']],
+  // `context-menu.ts` / `ipc.ts` / `registry.ts` に入れた配線はここに載せない（フルに倒す）。
+  // 項目の表は kypr のポップアップ（個人情報の詳細・編集）も読む
+  ['src/shared/autofill-schema.js', ['autofill', 'kypr']],
   ['src/shared/autofill-values.js', ['autofill']],
   ['src/shared/autofill-match.js', ['autofill']],
   ['src/shared/autofill-collect-source.js', ['autofill']],
   ['src/main/autofill/index.ts', ['autofill']],
   ['src/main/autofill/jev.ts', ['autofill']],
-  ['src/main/store/autofill-vault.ts', ['autofill']],
   ['src/main/store/jev-key.ts', ['autofill']],
   ['src/renderer/components/Autofill.tsx', ['autofill']],
   ['test-pages/autofill.html', ['autofill']],
@@ -203,6 +201,9 @@ export const OWNERS = new Map([
   // iframe へ入れる口は kypr の入力も使う（`kypr/fill.ts`）
   ['src/main/autofill/frame-runner.ts', ['autofill', 'kypr']],
   ['scripts/autofill.test.mjs', ['autofill']],
+  ['scripts/autofill-documents.test.mjs', ['autofill']],
+  // 自動入力の値の元（kypr の個人情報）を模擬サーバーに置く（自走検証と実サイト調査）
+  ['scripts/lib/kypr-fixture.mjs', ['autofill']],
   // メモリ・CPU の定期記録と UI 例外だけが読むモジュール（他のスイートは触らない）。
   // `index.ts` / `registry.ts` / `ipc.ts` / `main.tsx` に入れた配線はここに載せない（フルに倒す）
   ['src/main/metrics.ts', ['metrics']],
@@ -243,18 +244,23 @@ export const OWNERS = new Map([
   // keybindings / preload への配線はここに載せない = フルに倒す）。`Kypr.tsx` と `KyprSettings.tsx` は
   // `verify-kypr.mjs` がポップアップ・候補・設定画面を開いて描画まで見ている
   ['scripts/verify-kypr.mjs', ['kypr']],
-  ['scripts/lib/kypr-mock-server.mjs', ['kypr']],
+  // 自動入力の自走検証も値の元（kypr の個人情報）を模擬サーバーに置く
+  ['scripts/lib/kypr-mock-server.mjs', ['kypr', 'autofill']],
   ['scripts/kypr-config.test.mjs', ['kypr']],
   ['scripts/kypr-vendor.test.mjs', ['kypr']],
   ['src/shared/kypr-config.js', ['kypr']],
   ['src/shared/kypr-page-source.js', ['kypr']],
   ['src/preload/kypr-page.ts', ['kypr']],
-  ['src/main/kypr/index.ts', ['kypr']],
+  // 自動入力が個人情報を読む（`kyprIdentityForFill`）・ロック中は Touch ID で解除する
+  ['src/main/kypr/index.ts', ['kypr', 'autofill']],
+  // フォーム自動入力に使う個人情報の決め方（kypr のポップアップの「フォーム自動入力に使う」と自動入力の両方）
+  ['src/shared/kypr-identity.js', ['kypr', 'autofill']],
+  ['scripts/kypr-identity.test.mjs', ['kypr', 'autofill']],
   ['src/main/kypr/fill.ts', ['kypr']],
   ['src/main/kypr/inline.ts', ['kypr']],
   ['src/main/kypr/cache-store.ts', ['kypr']],
   ['src/main/kypr/device-keys.ts', ['kypr']],
-  ['src/main/kypr/touch-id.ts', ['kypr']],
+  ['src/main/kypr/touch-id.ts', ['kypr', 'autofill']],
   ['src/main/kypr/kdf.ts', ['kypr']],
   ['src/main/kypr/kdf-worker.ts', ['kypr']],
   ['src/renderer/components/Kypr.tsx', ['kypr']],
@@ -268,7 +274,7 @@ export const OWNERS = new Map([
   ['src/vendor/kypr/crypto/export-format.ts', ['kypr']],
   ['src/vendor/kypr/crypto/ids.ts', ['kypr']],
   ['src/vendor/kypr/crypto/index.ts', ['kypr']],
-  ['src/vendor/kypr/crypto/item.ts', ['kypr']],
+  ['src/vendor/kypr/crypto/item.ts', ['kypr', 'autofill']],
   ['src/vendor/kypr/crypto/kdf.ts', ['kypr']],
   ['src/vendor/kypr/crypto/params.ts', ['kypr']],
   ['src/vendor/kypr/crypto/vault.ts', ['kypr']],
@@ -276,6 +282,7 @@ export const OWNERS = new Map([
   ['src/vendor/kypr/client/cache.ts', ['kypr']],
   ['src/vendor/kypr/client/card.ts', ['kypr']],
   ['src/vendor/kypr/client/generator.ts', ['kypr']],
+  ['src/vendor/kypr/client/identity.ts', ['kypr', 'autofill']],
   ['src/vendor/kypr/client/index.ts', ['kypr']],
   ['src/vendor/kypr/client/psl-data.ts', ['kypr']],
   ['src/vendor/kypr/client/session.ts', ['kypr']],

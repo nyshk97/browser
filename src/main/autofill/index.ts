@@ -10,13 +10,16 @@ import {
   normalizeCollected,
   readJevAnswers,
   resolveConflicts,
+  resolveDocumentExpiry,
   ruleOption,
   type Decision
 } from '../../shared/autofill-match.js'
 import { deriveValues } from '../../shared/autofill-values.js'
+import { profileFromKypr } from '../../shared/autofill-schema.js'
 import type { AutofillRunResult } from '../../shared/types.js'
-import { autofillVaultStatus, openAutofillVault, recallAutofillPassphrase } from '../store/autofill-vault.js'
 import { readJevKey } from '../store/jev-key.js'
+import { getSettings } from '../store/settings.js'
+import { kyprIdentityForFill, kyprState, kyprStatus, unlockKyprWithTouchId } from '../kypr/index.js'
 import { askJev } from './jev.js'
 import { mainFrameRunner, subFrameRunner, type PageRunner } from './frame-runner.js'
 import { isAgentContents } from '../agent/contents.js'
@@ -30,7 +33,8 @@ const running = new WeakSet<WebContents>()
 /**
  * フォーム自動入力の本体（右クリックの「フォーム自動入力」と、自走検証の口が呼ぶ）。
  *
- * 1. 保管庫からプロフィールを出す（覚えているパスフレーズで。無ければ設定画面へ誘導するのは呼び出し側）
+ * 1. kypr の個人情報（既定の 1 件）からプロフィールを出す。ロック中なら Touch ID で解除する
+ *    （通らない・未ログイン・0 件なら kypr のポップアップへ誘導するのは呼び出し側）
  * 2. ページの isolated world で、右クリックした位置のフォームから**空で見える欄だけ**集める
  * 3. `autocomplete` / `type` で決まる欄はルールで決める
  * 4. 残りを Jev に聞く（**送るのは欄の手がかりだけ**。`buildJevRequests` は値を受け取らない）
@@ -101,22 +105,30 @@ async function runAutofillOnce(
     return result
   }
 
-  const passphrase = recallAutofillPassphrase()
-  if (!passphrase) {
-    const status = await autofillVaultStatus()
-    result.reason = status.state === 'empty' ? 'no-vault' : 'no-passphrase'
+  const state = kyprState()
+  if (state === 'disabled') {
+    result.reason = 'kypr-disabled'
     return finish()
   }
-  const opened = await openAutofillVault(passphrase)
-  if (!opened.ok) {
-    result.reason =
-      opened.reason === 'empty'
-        ? 'no-vault'
-        : opened.reason === 'bad-passphrase'
-          ? 'bad-passphrase'
-          : 'unreadable'
+  if (state === 'signed-out') {
+    result.reason = 'kypr-signed-out'
     return finish()
   }
+  if (state === 'locked') {
+    // Touch ID を覚えていなければ聞かずにポップアップへ（マスターパスワードの入力はポップアップで）
+    const unlocked = kyprStatus().touchIdEnrolled ? await unlockKyprWithTouchId() : null
+    if (!unlocked?.ok) {
+      result.reason = 'kypr-locked'
+      return finish()
+    }
+  }
+  const identity = kyprIdentityForFill(getSettings().kyprAutofillIdentityId)
+  if (!identity) {
+    // ロックされ直した（解除を待つ間に画面ロック）か、個人情報が 1 件も無い
+    result.reason = kyprState() === 'unlocked' ? 'no-identity' : 'kypr-locked'
+    return finish()
+  }
+  const profile = profileFromKypr(identity.values)
 
   if (wc.isDestroyed()) {
     result.reason = 'collect-failed'
@@ -135,7 +147,7 @@ async function runAutofillOnce(
     return finish()
   }
   try {
-    return await collectAndFill(wc, runner, inSubFrame, x, y, opened, result, finish, debug)
+    return await collectAndFill(wc, runner, inSubFrame, x, y, profile, result, finish, debug)
   } finally {
     runner.dispose()
   }
@@ -147,7 +159,7 @@ async function collectAndFill(
   inSubFrame: boolean,
   x: number,
   y: number,
-  opened: { profile: Record<string, string>; jevKey: string | null },
+  profile: Record<string, string>,
   result: AutofillRunResult,
   finish: () => AutofillRunResult,
   debug: boolean
@@ -191,8 +203,8 @@ async function collectAndFill(
   })
 
   if (pending.length > 0) {
-    // 保管庫のキーが正。保管庫へ移す前のキー（この Mac の userData）も読む
-    const key = opened.jevKey ?? readJevKey()
+    // Jev のキーは Mac ごと（userData に端末鍵で暗号化。`jev-key.ts`）
+    const key = readJevKey()
     if (!key) {
       result.jevError = 'no-key'
     } else {
@@ -231,14 +243,15 @@ async function collectAndFill(
     }
   }
 
-  const resolved = resolveConflicts(decisions, confirms)
+  // 「有効期限」だけの欄の書類を決めてから重複を解く（`document_expiry` のまま解くと片方が消える）
+  const resolved = resolveConflicts(resolveDocumentExpiry(decisions, collected), confirms)
   // 建物名の欄が別にあるなら、番地の欄に建物名まで入れない（二重になる）
   if ([...resolved.values()].some((decision) => decision.option === 'address_line2')) {
     for (const [index, decision] of resolved) {
       if (decision.option === 'address_line1_2') resolved.set(index, { ...decision, option: 'address_line1' })
     }
   }
-  const plan = buildFillPlan(collected, resolved, deriveValues(opened.profile))
+  const plan = buildFillPlan(collected, resolved, deriveValues(profile))
   if (debug) {
     // 自走検証・実サイト調査の口にだけ返す（**診断ログには載せない**。見出しはページの中身なので）
     result.debug = collected.fields.map((field, index) => ({
@@ -254,6 +267,7 @@ async function collectAndFill(
   }
   result.rule = plan.filledFields.rule
   result.jev = plan.filledFields.jev
+  result.documents = plan.documents
   result.left = result.fields - result.rule - result.jev
 
   if (plan.steps.length > 0 && !wc.isDestroyed()) {

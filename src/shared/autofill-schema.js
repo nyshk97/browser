@@ -1,16 +1,13 @@
 // @ts-check
 /**
- * フォーム自動入力の保管庫に入れるプロフィールのスキーマ。
+ * フォーム自動入力のプロフィールのスキーマ。値の正は kypr の個人情報（`type: "identity"`）。
  *
- * **renderer も読む**（設定画面の入力欄の並び・見出し）ので、node 組み込みも
+ * **renderer も読む**（kypr のポップアップの個人情報の並び・見出し）ので、node 組み込みも
  * `settings-schema.js`（`ext-lock.js` → `node:fs` に触る）も import しない。
  *
- * 保管庫に持つのは**元の値だけ**。氏名一括・電話の分割・生年月日の年月日などの導出形は
+ * kypr に持つのは**元の値だけ**。氏名一括・電話の分割・日付の年月日などの導出形は
  * `autofill-values.js` が使うたびに作る（持つと、元を直したときに導出形だけ古いまま残る）。
  */
-
-/** 保管庫ファイルのスキーマ版。 */
-export const AUTOFILL_VERSION = 1
 
 /** 1 項目の上限。住所でも十分な長さ。 */
 export const MAX_PROFILE_VALUE = 200
@@ -22,33 +19,200 @@ export const MAX_PROFILE_VALUE = 200
 export const GENDERS = ['', 'male', 'female', 'other']
 
 /**
- * プロフィールの項目（**設定画面に出す順**）。
+ * プロフィールの項目（**kypr の個人情報の編集画面に出す順**）。
  *
- * `key` は Jev の選択肢・`autocomplete` の対応表と同じ名前空間。
- * `hint` は入力欄の placeholder（形式の例）。
+ * 値の正は kypr の個人情報（`type: "identity"`）。`kypr` はその平文のキー（camelCase）で、
+ * 並び・見出し・伏せる項目は kypr の `packages/client/src/identity.ts`（Nemo には `src/vendor/kypr/client/identity.ts`）と揃える
+ * （`scripts/kypr-identity.test.mjs` が突き合わせる）。
  *
- * @type {readonly { key: string, label: string, hint: string, group: string }[]}
+ * `key` は Jev の選択肢・`autocomplete` の対応表と同じ名前空間（snake_case）。
+ * `hint` は入力欄の placeholder（形式の例）。`type: 'date'` は `YYYY-MM-DD`。
+ * `document` は身分証の項目（Jev の足切りを上げる・`document_expiry` の書類を決める）。
+ *
+ * @typedef {'passport' | 'license' | 'insurance'} DocumentKind
+ * @typedef {{ key: string, kypr: string, label: string, hint: string, group: string, type: 'text' | 'date' | 'gender', secret?: true, document?: DocumentKind }} ProfileField
+ * @type {readonly ProfileField[]}
  */
 export const PROFILE_FIELDS = [
-  { key: 'family_name', label: '姓', hint: '山田', group: '氏名' },
-  { key: 'given_name', label: '名', hint: '太郎', group: '氏名' },
-  { key: 'family_name_kana', label: 'セイ（カタカナ）', hint: 'ヤマダ', group: '氏名' },
-  { key: 'given_name_kana', label: 'メイ（カタカナ）', hint: 'タロウ', group: '氏名' },
-  { key: 'family_name_roman', label: '姓（ローマ字）', hint: 'Yamada', group: '氏名' },
-  { key: 'given_name_roman', label: '名（ローマ字）', hint: 'Taro', group: '氏名' },
-  { key: 'email', label: 'メールアドレス', hint: 'taro@example.com', group: '連絡先' },
-  { key: 'tel', label: '電話番号', hint: '090-1234-5678', group: '連絡先' },
-  { key: 'postal_code', label: '郵便番号', hint: '100-0001', group: '住所' },
-  { key: 'address_level1', label: '都道府県', hint: '東京都', group: '住所' },
-  { key: 'address_level2', label: '市区町村', hint: '千代田区', group: '住所' },
-  { key: 'address_line1', label: '町名・番地', hint: '千代田1-1', group: '住所' },
-  { key: 'address_line2', label: '建物名・部屋番号', hint: '〇〇タワー 1701', group: '住所' },
-  { key: 'birthday', label: '生年月日', hint: '2000-01-01', group: 'その他' },
-  { key: 'gender', label: '性別', hint: '', group: 'その他' },
-  { key: 'organization', label: '会社名', hint: '株式会社〇〇', group: '勤務先' },
-  { key: 'department', label: '部署', hint: '開発部', group: '勤務先' },
-  { key: 'job_title', label: '役職', hint: '代表取締役', group: '勤務先' },
-  { key: 'organization_url', label: '会社 URL', hint: 'https://example.com', group: '勤務先' }
+  { key: 'family_name', kypr: 'familyName', label: '姓', hint: '山田', group: '氏名', type: 'text' },
+  { key: 'given_name', kypr: 'givenName', label: '名', hint: '太郎', group: '氏名', type: 'text' },
+  {
+    key: 'family_name_kana',
+    kypr: 'familyNameKana',
+    label: 'セイ（カタカナ）',
+    hint: 'ヤマダ',
+    group: '氏名',
+    type: 'text'
+  },
+  {
+    key: 'given_name_kana',
+    kypr: 'givenNameKana',
+    label: 'メイ（カタカナ）',
+    hint: 'タロウ',
+    group: '氏名',
+    type: 'text'
+  },
+  {
+    key: 'family_name_roman',
+    kypr: 'familyNameRoman',
+    label: '姓（ローマ字）',
+    hint: 'Yamada',
+    group: '氏名',
+    type: 'text'
+  },
+  {
+    key: 'given_name_roman',
+    kypr: 'givenNameRoman',
+    label: '名（ローマ字）',
+    hint: 'Taro',
+    group: '氏名',
+    type: 'text'
+  },
+  {
+    key: 'email',
+    kypr: 'email',
+    label: 'メールアドレス',
+    hint: 'taro@example.com',
+    group: '連絡先',
+    type: 'text'
+  },
+  { key: 'tel', kypr: 'tel', label: '電話番号', hint: '090-1234-5678', group: '連絡先', type: 'text' },
+  {
+    key: 'postal_code',
+    kypr: 'postalCode',
+    label: '郵便番号',
+    hint: '100-0001',
+    group: '住所',
+    type: 'text'
+  },
+  {
+    key: 'address_level1',
+    kypr: 'addressLevel1',
+    label: '都道府県',
+    hint: '東京都',
+    group: '住所',
+    type: 'text'
+  },
+  {
+    key: 'address_level2',
+    kypr: 'addressLevel2',
+    label: '市区町村',
+    hint: '千代田区',
+    group: '住所',
+    type: 'text'
+  },
+  {
+    key: 'address_line1',
+    kypr: 'addressLine1',
+    label: '町名・番地',
+    hint: '千代田1-1',
+    group: '住所',
+    type: 'text'
+  },
+  {
+    key: 'address_line2',
+    kypr: 'addressLine2',
+    label: '建物名・部屋番号',
+    hint: '〇〇タワー 1701',
+    group: '住所',
+    type: 'text'
+  },
+  { key: 'birthday', kypr: 'birthday', label: '生年月日', hint: '2000-01-01', group: 'その他', type: 'date' },
+  { key: 'gender', kypr: 'gender', label: '性別', hint: '', group: 'その他', type: 'gender' },
+  {
+    key: 'organization',
+    kypr: 'organization',
+    label: '会社名',
+    hint: '株式会社〇〇',
+    group: '勤務先',
+    type: 'text'
+  },
+  { key: 'department', kypr: 'department', label: '部署', hint: '開発部', group: '勤務先', type: 'text' },
+  { key: 'job_title', kypr: 'jobTitle', label: '役職', hint: '代表取締役', group: '勤務先', type: 'text' },
+  {
+    key: 'organization_url',
+    kypr: 'organizationUrl',
+    label: '会社 URL',
+    hint: 'https://example.com',
+    group: '勤務先',
+    type: 'text'
+  },
+  {
+    key: 'passport_number',
+    kypr: 'passportNumber',
+    label: '旅券番号',
+    hint: 'TK1234567',
+    group: 'パスポート',
+    type: 'text',
+    secret: true,
+    document: 'passport'
+  },
+  {
+    key: 'passport_expiry',
+    kypr: 'passportExpiry',
+    label: '有効期限',
+    hint: '2031-04-30',
+    group: 'パスポート',
+    type: 'date',
+    document: 'passport'
+  },
+  {
+    key: 'license_number',
+    kypr: 'licenseNumber',
+    label: '免許証番号',
+    hint: '123456789012',
+    group: '運転免許証',
+    type: 'text',
+    secret: true,
+    document: 'license'
+  },
+  {
+    key: 'license_expiry',
+    kypr: 'licenseExpiry',
+    label: '有効期限',
+    hint: '2029-06-15',
+    group: '運転免許証',
+    type: 'date',
+    document: 'license'
+  },
+  {
+    key: 'insurance_symbol',
+    kypr: 'insuranceSymbol',
+    label: '記号',
+    hint: '1234',
+    group: '健康保険証',
+    type: 'text',
+    secret: true,
+    document: 'insurance'
+  },
+  {
+    key: 'insurance_number',
+    kypr: 'insuranceNumber',
+    label: '番号',
+    hint: '56',
+    group: '健康保険証',
+    type: 'text',
+    secret: true,
+    document: 'insurance'
+  },
+  {
+    key: 'insurance_branch',
+    kypr: 'insuranceBranch',
+    label: '枝番',
+    hint: '01',
+    group: '健康保険証',
+    type: 'text',
+    document: 'insurance'
+  },
+  {
+    key: 'insurer_number',
+    kypr: 'insurerNumber',
+    label: '保険者番号',
+    hint: '06123456',
+    group: '健康保険証',
+    type: 'text',
+    document: 'insurance'
+  }
 ]
 
 /** @type {readonly string[]} */
@@ -58,6 +222,28 @@ export const PROFILE_KEYS = PROFILE_FIELDS.map((field) => field.key)
  * @typedef {Record<string, string>} AutofillProfile
  *   `PROFILE_KEYS` の全キーを持つ。未入力は空文字列。
  */
+
+/** 性別の表示名（kypr の `GENDER_LABELS` と同じ）。 */
+export const GENDER_LABELS = /** @type {Record<string, string>} */ ({
+  '': '未設定',
+  male: '男性',
+  female: '女性',
+  other: 'その他'
+})
+
+/**
+ * kypr の個人情報の平文（camelCase）をプロフィール（snake_case）にする。`normalizeProfile` を通す
+ * （日付・性別の形が違う値・上限を超えた値は空にする。kypr は読むときに形を見ないので、ここで見る）。
+ *
+ * @param {Record<string, unknown>} values
+ * @returns {AutofillProfile}
+ */
+export function profileFromKypr(values) {
+  /** @type {Record<string, unknown>} */
+  const raw = {}
+  for (const field of PROFILE_FIELDS) raw[field.key] = values[field.kypr]
+  return normalizeProfile(raw)
+}
 
 /**
  * プロフィールを正規化する。**保存前と復号後の両方で通す**。
@@ -78,17 +264,12 @@ export function normalizeProfile(raw) {
     const value = /** @type {Record<string, unknown>} */ (source)[key]
     profile[key] = typeof value === 'string' && value.length <= MAX_PROFILE_VALUE ? value.trim() : ''
   }
-  if (profile['birthday'] && !isValidDate(profile['birthday'])) profile['birthday'] = ''
+  for (const field of PROFILE_FIELDS) {
+    if (field.type === 'date' && profile[field.key] && !isValidDate(profile[field.key] ?? ''))
+      profile[field.key] = ''
+  }
   if (!GENDERS.includes(profile['gender'] ?? '')) profile['gender'] = ''
   return profile
-}
-
-/**
- * 入っている項目の数（保管庫の平文メタの `count`）。
- * @param {AutofillProfile} profile
- */
-export function countFilled(profile) {
-  return PROFILE_KEYS.filter((key) => (profile[key] ?? '') !== '').length
 }
 
 /**
@@ -105,31 +286,3 @@ export function isValidDate(value) {
 
 /** Jev の API キーの上限。 */
 export const MAX_JEV_KEY = 512
-
-/**
- * 保管庫の中身（暗号の中）。**Jev の API キーもここに入れる**ので、別の Mac でもパスフレーズを
- * 入れるだけでキーまで使える（端末鍵で暗号化したキーは Mac ごとに入れ直しになる）。
- *
- * @typedef {object} AutofillVaultContent
- * @property {AutofillProfile} profile
- * @property {string | null} jevKey
- */
-
-/**
- * 復号した中身を正規化する。**最初の形（プロフィールそのもの）も読む**
- * （キーを保管庫に入れる前に保存した保管庫。次に保存したときに新しい形になる）。
- *
- * @param {unknown} raw
- * @returns {AutofillVaultContent}
- */
-export function normalizeVaultContent(raw) {
-  const record = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? raw : {}
-  const content = /** @type {Record<string, unknown>} */ (record)
-  const wrapped = typeof content['profile'] === 'object' && content['profile'] !== null
-  if (!wrapped) return { profile: normalizeProfile(raw), jevKey: null }
-  const key = content['jevKey']
-  return {
-    profile: normalizeProfile(content['profile']),
-    jevKey: typeof key === 'string' && key.trim() !== '' && key.length <= MAX_JEV_KEY ? key.trim() : null
-  }
-}

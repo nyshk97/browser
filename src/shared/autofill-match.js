@@ -15,7 +15,7 @@
  *
  * 純粋関数だけを置く（`scripts/autofill.test.mjs` から直接テストする）。
  */
-import { formatForElement, matchSelectOption } from './autofill-values.js'
+import { DATE_KEYS, formatForElement, matchSelectOption } from './autofill-values.js'
 
 /** Jev のモデル。**alias を使わない**（閾値を合わせた版から黙って中身が変わるため）。 */
 export const JEV_MODEL = 'jev-1.13.0'
@@ -26,8 +26,15 @@ export const CHOICE_THRESHOLD = 0.5
 /** これ未満の本人性は入れない（Phase 1 で決めた初期値）。 */
 export const OWN_THRESHOLD = 0.5
 
-/** 1 リクエストの欄数の上限。欄 1 つ ≒ 1.15k トークンで、1 リクエスト 64k まで。 */
-export const MAX_FIELDS_PER_REQUEST = 40
+/**
+ * 身分証の項目（番号・期限）の choice の足切り。**ほかの項目より厳しくする**
+ * （間違った欄に入ったときの影響が大きい。迷ったら空欄のまま残す）。
+ * 値は plan `2026-09-29-0934-kypr-identity-autofill.md` の Phase 1（実キーの試し撃ち）で決める。
+ */
+export const DOCUMENT_THRESHOLD = 0.8
+
+/** 1 リクエストの欄数の上限。欄 1 つ ≒ 1.5k トークン（身分証の候補を足した後の見込み）で、1 リクエスト 64k まで。 */
+export const MAX_FIELDS_PER_REQUEST = 32
 
 /** 1 回の自動入力で扱う欄の上限（巨大なフォームで Jev を何十回も叩かない）。 */
 export const MAX_FIELDS = 120
@@ -86,19 +93,83 @@ export const JEV_OPTIONS = {
   department: ['Department or division within the company', '部署名, 所属'],
   job_title: ['Job title or position', '役職'],
   organization_url: ['Company website URL', '会社URL, ホームページ, WebサイトURL'],
+  passport_number: ["The filler's passport number", '旅券番号, パスポート番号, Passport No.'],
+  passport_expiry: [
+    'Expiry date of the passport (not the issue date; the whole date, even if the form splits it into year / month / day)',
+    'パスポートの有効期限, 旅券の有効期間満了日'
+  ],
+  license_number: [
+    "The filler's driver's license number (12 digits in Japan)",
+    '運転免許証番号, 免許証番号, 免許番号'
+  ],
+  license_expiry: [
+    "Expiry date of the driver's license (not the issue date; the whole date, even if the form splits it into year / month / day)",
+    '免許証の有効期限, 運転免許証の有効期間'
+  ],
+  insurance_symbol: [
+    'Health insurance card symbol (kigo): the short code printed before the insured number',
+    '記号, 被保険者記号, 保険証の記号'
+  ],
+  insurance_number: [
+    'Health insurance card number (bango) of the insured person (not the insurer number)',
+    '番号, 被保険者番号, 保険証の番号'
+  ],
+  insurance_branch: ['Health insurance card branch number (edaban), usually 2 digits', '枝番'],
+  insurer_number: ['Insurer number printed on the health insurance card (6 or 8 digits)', '保険者番号'],
+  document_expiry: [
+    "Expiry date of an identity document (passport or driver's license) when the label does not say which document. Not a credit card expiry and not an issue date",
+    '有効期限, 有効期間'
+  ],
   none: [
-    'None of the profile items fits: free text such as inquiry body, subject, age, number of employees, how you found us, coupon codes, passwords, or anything else',
+    'None of the profile items fits: free text such as inquiry body, subject, age, number of employees, how you found us, coupon codes, passwords, membership / reservation / order / employee numbers, My Number (individual number), credit card number / expiry / security code, issue dates of documents, issuing country, license color, or anything else',
     null
   ]
+}
+
+/**
+ * 身分証の項目（`DOCUMENT_THRESHOLD` で足切りする）と、その書類。
+ * @type {Record<string, 'passport' | 'license' | 'insurance'>}
+ */
+export const DOCUMENT_OPTIONS = {
+  passport_number: 'passport',
+  passport_expiry: 'passport',
+  license_number: 'license',
+  license_expiry: 'license',
+  insurance_symbol: 'insurance',
+  insurance_number: 'insurance',
+  insurance_branch: 'insurance',
+  insurer_number: 'insurance',
+  document_expiry: 'passport' // 書類は `resolveDocumentExpiry` が決め直す（ここは足切りのためだけ）
+}
+
+/**
+ * 書類の番号の選択肢 → その書類の期限（期限の無い書類は null）。
+ * @type {Record<string, string | null>}
+ */
+const DOCUMENT_EXPIRY = {
+  passport_number: 'passport_expiry',
+  license_number: 'license_expiry',
+  insurance_symbol: null,
+  insurance_number: null,
+  insurance_branch: null,
+  insurer_number: null
+}
+
+/** 日付の項目（`YYYY-MM-DD`。年 / 月 / 日に分けられる）。正は `PROFILE_FIELDS` の `type: 'date'`。 */
+export const DATE_OPTIONS = DATE_KEYS
+
+/** @param {string} option */
+function thresholdFor(option) {
+  return option in DOCUMENT_OPTIONS ? DOCUMENT_THRESHOLD : CHOICE_THRESHOLD
 }
 
 const CHOICE_QUESTION = 'Which profile item should be entered into this form `field`?'
 const OWN_QUESTION =
   "Does this form `field` ask for the form filler's OWN personal or own-company information?"
 const OWN_CRITERIA = {
-  true: "The filler's own name, contact, address, birthday, gender, or the filler's own company / department / title / website",
+  true: "The filler's own name, contact, address, birthday, gender, the filler's own company / department / title / website, or the filler's own passport / driver's license / health insurance card numbers and expiry dates",
   false:
-    'Information about someone or something else (a referrer, child, family member, emergency contact, workplace or delivery address that differs from home), or not personal information at all (inquiry text, budget, passwords, IDs)'
+    "Information about someone or something else (a referrer, child, family member, fellow traveler's passport, emergency contact, workplace or delivery address that differs from home), or not personal information at all (inquiry text, budget, passwords, membership / reservation / order / employee numbers)"
 }
 
 /** 2 か所以上に入れてよい項目（確認用メールアドレス）。それ以外は 1 か所だけ。 */
@@ -136,14 +207,17 @@ export const AUTOCOMPLETE = {
   sex: 'gender'
 }
 
-/** 分割後の選択肢 → 一括の選択肢（グループはこちらで持つ）。 */
+/**
+ * 分割後の選択肢 → 一括の選択肢（グループはこちらで持つ）。日付は `DATE_OPTIONS` の全部の年 / 月 / 日。
+ * @type {Record<string, string>}
+ */
 const PART_TO_WHOLE = {
   tel_part1: 'tel',
   tel_part2: 'tel',
   tel_part3: 'tel',
-  birthday_year: 'birthday',
-  birthday_month: 'birthday',
-  birthday_day: 'birthday'
+  ...Object.fromEntries(
+    DATE_OPTIONS.flatMap((option) => ['year', 'month', 'day'].map((part) => [`${option}_${part}`, option]))
+  )
 }
 
 /**
@@ -298,8 +372,7 @@ export function ruleOption(field, elements = []) {
 
   // 分割グループは一括の側で持つ（割り当ては `expandGroup`）。収集側はルールのトークンを持つ欄を
   // まとめないので実際のページからは通らない。`normalizeCollected` に手で渡したときの保険
-  if (field.members.length > 1)
-    option = PART_TO_WHOLE[/** @type {keyof typeof PART_TO_WHOLE} */ (option)] ?? option
+  if (field.members.length > 1) option = PART_TO_WHOLE[option] ?? option
 
   /*
    * `autocomplete="family-name"` をフリガナ欄に付けているサイトがある。
@@ -348,7 +421,11 @@ export function expandGroup(option, count) {
   if (MULTI_USE.has(option)) return Array.from({ length: count }, () => option)
   if (option === 'tel' && count === 3) return ['tel_part1', 'tel_part2', 'tel_part3']
   if (option === 'postal_code' && count === 2) return ['postal_code_part1', 'postal_code_part2']
-  if (option === 'birthday' && count === 3) return ['birthday_year', 'birthday_month', 'birthday_day']
+  if (DATE_OPTIONS.includes(option) && count === 3)
+    return [`${option}_year`, `${option}_month`, `${option}_day`]
+  // 保険証の「記号 [ ] - [ ] 番号」
+  if ((option === 'insurance_symbol' || option === 'insurance_number') && count === 2)
+    return ['insurance_symbol', 'insurance_number']
   if (option === 'full_name' && count === 2) return ['family_name', 'given_name']
   if (option === 'full_name_kana' && count === 2) return ['family_name_kana', 'given_name_kana']
   if (option === 'full_name_roman' && count === 2) return ['family_name_roman', 'given_name_roman']
@@ -482,13 +559,86 @@ export function readJevAnswers(answers, indexes, groups = new Set()) {
       rejected += 1
       continue
     }
-    if (confidence < CHOICE_THRESHOLD || noul < OWN_THRESHOLD) {
+    if (confidence < thresholdFor(option) || noul < OWN_THRESHOLD) {
       rejected += 1
       continue
     }
     decisions.set(index, { option, confidence, source: 'jev' })
   }
   return { decisions, rejected }
+}
+
+/**
+ * 書類を決めて日付を入れる欄か（`resolveDocumentExpiry` がさかのぼるときに**飛ばしてよい**欄）。
+ * 「番号 → 発行日 → 有効期限」の発行日のような欄。**日付でない欄（発行国の select など）は飛ばさない**
+ * （飛ばすとさかのぼりすぎて、カードの期限に免許証の期限が入る）。
+ *
+ * @param {CollectedField} field
+ * @param {import('./autofill-values.js').CollectedElement[]} elements
+ */
+export function isDateLikeField(field, elements) {
+  if (field.type === 'date') return true
+  // name は単語の区切りで見る（`update_flag` や `candidate_id` の date に当てない）
+  if (
+    /発行日|発行年月日|交付日|交付年月日|取得日|取得年月日|年月日|日付|date/i.test(hintText(field)) ||
+    /(^|[^a-z])date([^a-z]|$)/i.test(field.name)
+  )
+    return true
+  // 年 / 月 / 日の 3 つに分かれた欄（select か、4 桁・2 桁・2 桁の入力）
+  if (field.members.length === 3) {
+    const parts = field.members.map((index) => elements[index])
+    const lengths = parts.map((element) => element?.maxLength ?? null)
+    if (parts.every((element) => element?.tag === 'select')) return true
+    if (lengths[0] === 4 && lengths[1] === 2 && lengths[2] === 2) return true
+  }
+  return false
+}
+
+/**
+ * 「有効期限」とだけ書いた欄（`document_expiry`）の書類をコードで決める。**`readJevAnswers` の後・`resolveConflicts` の前**に呼ぶ
+ * （`document_expiry` のまま重複を解くと、パスポートと免許証の 2 つの「有効期限」の片方が消える）。
+ *
+ * 前の欄へさかのぼり、**Jev・ルールで決まらなかった日付の欄だけ飛ばす**。最初に当たった欄が身分証の番号なら
+ * その書類の期限（`passport_expiry` / `license_expiry`）。それ以外（カード番号・ほかの項目・日付でない未決定の欄）や、
+ * 期限の無い書類（保険証）なら捨てる（空欄のまま）。
+ *
+ * @param {Map<number, Decision>} decisions
+ * @param {Collected} collected
+ * @returns {Map<number, Decision>}
+ */
+export function resolveDocumentExpiry(decisions, collected) {
+  /** @type {Map<number, Decision>} */
+  const out = new Map()
+  /** `document_expiry` の欄ごとに決めた期限（null = 決まらなかった）。年と月が別の欄に分かれた期限で引き継ぐ */
+  /** @type {Map<number, string | null>} */
+  const decided = new Map()
+  // フォームの上から順に見る（前の `document_expiry` の結果を後ろの欄が引き継ぐため）
+  for (const index of [...decisions.keys()].sort((a, b) => a - b)) {
+    const decision = /** @type {Decision} */ (decisions.get(index))
+    if (decision.option !== 'document_expiry') {
+      out.set(index, decision)
+      continue
+    }
+    let expiry = null
+    for (let prev = index - 1; prev >= 0; prev -= 1) {
+      const before = decisions.get(prev)
+      const field = collected.fields[prev]
+      if (!field) break
+      if (!before) {
+        if (isDateLikeField(field, collected.elements)) continue
+        break
+      }
+      // すぐ前も書類名の無い「有効期限」（年と月が別の欄）なら、その欄の結果を引き継ぐ
+      expiry =
+        before.option === 'document_expiry'
+          ? (decided.get(prev) ?? null)
+          : (DOCUMENT_EXPIRY[before.option] ?? null)
+      break
+    }
+    decided.set(index, expiry)
+    if (expiry) out.set(index, { ...decision, option: expiry })
+  }
+  return out
 }
 
 /**
@@ -533,12 +683,13 @@ export function resolveConflicts(decisions, confirms = new Set()) {
  * @param {Collected} collected
  * @param {Map<number, Decision>} decisions
  * @param {Record<string, string>} values `deriveValues` の戻り
- * @returns {{ steps: FillStep[], filledFields: { rule: number, jev: number }, skipped: number }}
+ * @returns {{ steps: FillStep[], filledFields: { rule: number, jev: number }, documents: number, skipped: number }}
  */
 export function buildFillPlan(collected, decisions, values) {
   /** @type {FillStep[]} */
   const steps = []
   const filledFields = { rule: 0, jev: 0 }
+  let documents = 0
   let skipped = 0
   for (const [index, decision] of decisions) {
     const field = collected.fields[index]
@@ -556,7 +707,7 @@ export function buildFillPlan(collected, decisions, values) {
       const element = collected.elements[elementIndex]
       if (!element) return
       if (element.tag === 'select') {
-        const optionIndex = matchSelectOption(element.options ?? [], part, values[part] ?? '')
+        const optionIndex = matchSelectOption(element.options ?? [], part, values[part] ?? '', values)
         if (optionIndex >= 0) fieldSteps.push({ element: elementIndex, optionIndex })
         return
       }
@@ -573,8 +724,9 @@ export function buildFillPlan(collected, decisions, values) {
     }
     steps.push(...fieldSteps)
     filledFields[decision.source] += 1
+    if (decision.option in DOCUMENT_OPTIONS) documents += 1
   }
-  return { steps, filledFields, skipped }
+  return { steps, filledFields, documents, skipped }
 }
 
 /** @param {CollectedField} field */

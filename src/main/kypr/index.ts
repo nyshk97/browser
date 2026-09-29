@@ -19,13 +19,19 @@ import {
   normalizeExpYear
 } from '../../vendor/kypr/client/card.ts'
 import { matchingLogins, parseUri } from '../../vendor/kypr/client/url-match.ts'
+import { IDENTITY_FIELDS, identitySummary, isValidIdentityDate } from '../../vendor/kypr/client/identity.ts'
 import {
+  IDENTITY_KEYS,
   newCardItem,
+  newIdentityItem,
   newLoginItem,
   newNoteItem,
   nowIso,
+  type IdentityKey,
   type VaultItem
 } from '../../vendor/kypr/crypto/index.ts'
+import { pickAutofillIdentity } from '../../shared/kypr-identity.js'
+import { MAX_PROFILE_VALUE } from '../../shared/autofill-schema.js'
 import {
   KYPR_CLIPBOARD_CLEAR_MS,
   KYPR_IDLE_LOCK_MS,
@@ -336,6 +342,9 @@ function summaryOf(entry: VaultEntry): KyprSummary {
     }
   }
   if (s.kind === 'note') return { ...base, kind: 'note', name: s.item.name, subtitle: '', host: null }
+  // 身分証の番号は一覧に出さない（氏名かメールだけ）
+  if (s.kind === 'identity')
+    return { ...base, kind: 'identity', name: s.item.name, subtitle: identitySummary(s.item), host: null }
   if (s.kind === 'unknown') {
     const name = typeof s.raw['name'] === 'string' ? s.raw['name'] : ''
     return {
@@ -392,11 +401,44 @@ export function kyprLoginForFill(
   return { username, password, uris }
 }
 
+/**
+ * フォーム自動入力に使う個人情報（`preferredId` は設定で選んだもの）。ロック中・0 件なら null。
+ * 平文は main の中だけで使う（renderer には渡さない）。
+ */
+export function kyprIdentityForFill(
+  preferredId: string | null
+): { id: string; values: Record<IdentityKey, string> } | null {
+  if (!session) return null
+  const id = kyprAutofillIdentityId(preferredId)
+  const entry = id ? session.entries.get(id) : undefined
+  if (!entry || entry.state.kind !== 'identity') return null
+  const item = entry.state.item
+  touchKypr()
+  return {
+    id: entry.id,
+    values: Object.fromEntries(IDENTITY_KEYS.map((k) => [k, item[k]])) as Record<IdentityKey, string>
+  }
+}
+
+/** フォーム自動入力に使う個人情報の ID（設定で選んだもの → 一番古いもの）。 */
+export function kyprAutofillIdentityId(preferredId: string | null): string | null {
+  if (!session) return null
+  const candidates = [...session.entries.values()].map((entry) => ({
+    id: entry.id,
+    kind: entry.state.kind,
+    deleted: entry.deletedAt !== null,
+    createdAt: entry.state.kind === 'identity' ? entry.state.item.createdAt : ''
+  }))
+  return pickAutofillIdentity(candidates, preferredId)
+}
+
 /** 詳細では渡さない秘密の項目（「表示」を押したとき・編集を開いたときだけ渡す）。 */
 const SECRET_FIELDS: Record<string, readonly string[]> = {
   login: ['password'],
   card: ['number', 'code'],
-  note: []
+  note: [],
+  // 身分証の番号（伏せる項目は kypr の `identity.ts` が正）
+  identity: IDENTITY_FIELDS.filter((f) => f.secret).map((f) => f.key)
 }
 
 /**
@@ -409,7 +451,7 @@ export function kyprItem(id: string, withSecrets = false): KyprItemDetail | null
   touchKypr()
   const s = entry.state
   const base = { id: entry.id, deleted: entry.deletedAt !== null }
-  if (s.kind === 'login' || s.kind === 'card' || s.kind === 'note') {
+  if (s.kind === 'login' || s.kind === 'card' || s.kind === 'note' || s.kind === 'identity') {
     const item = structuredClone(s.item) as Record<string, unknown>
     const secrets: string[] = []
     for (const field of SECRET_FIELDS[s.kind] ?? []) {
@@ -428,7 +470,7 @@ export function revealKyprField(id: string, field: string): string | null {
   const entry = session?.entries.get(id)
   if (!entry) return null
   const s = entry.state
-  if (s.kind !== 'login' && s.kind !== 'card') return null
+  if (s.kind !== 'login' && s.kind !== 'card' && s.kind !== 'identity') return null
   if (!SECRET_FIELDS[s.kind]?.includes(field)) return null
   const value = (s.item as Record<string, unknown>)[field]
   touchKypr()
@@ -481,14 +523,16 @@ function clearOurClipboard(): void {
 const COPYABLE: Record<string, readonly string[]> = {
   login: ['username', 'password'],
   card: ['number', 'code', 'expiry', 'cardholderName'],
-  note: ['notes']
+  note: ['notes'],
+  // 性別は内部の値（male など）なのでコピーさせない
+  identity: IDENTITY_KEYS.filter((key) => key !== 'gender')
 }
 
 export function copyKyprField(id: string, field: string): boolean {
   const entry = session?.entries.get(id)
   if (!entry) return false
   const s = entry.state
-  if (s.kind !== 'login' && s.kind !== 'card' && s.kind !== 'note') return false
+  if (s.kind !== 'login' && s.kind !== 'card' && s.kind !== 'note' && s.kind !== 'identity') return false
   if (!COPYABLE[s.kind]?.includes(field)) return false
   let value: string
   if (s.kind === 'card' && field === 'expiry') {
@@ -537,10 +581,14 @@ function pickFields(
       ? ['name', 'username', 'password', 'notes']
       : type === 'card'
         ? ['name', 'cardholderName', 'brand', 'number', 'expMonth', 'expYear', 'code', 'notes']
-        : ['name', 'notes']
+        : type === 'identity'
+          ? ['name', ...IDENTITY_KEYS, 'notes']
+          : ['name', 'notes']
   for (const key of keys) {
     const value = fields[key] ?? ''
-    const s = str(value, key === 'notes' ? 100_000 : 10_000)
+    // 個人情報の項目は自動入力の上限（`MAX_PROFILE_VALUE`）まで。超えると自動入力で黙って空になる
+    const max = key === 'notes' ? 100_000 : type === 'identity' && key !== 'name' ? MAX_PROFILE_VALUE : 10_000
+    const s = str(value, max)
     if (s === null) return null
     out[key] = s
   }
@@ -563,6 +611,15 @@ function pickFields(
     }
     out['uris'] = clean
   }
+  if (type === 'identity') {
+    // 日付は YYYY-MM-DD で実在する日・性別は決まった値だけ（自動入力が形を当てにする）
+    for (const f of IDENTITY_FIELDS) {
+      const value = (out[f.key] as string).trim()
+      if (f.kind === 'date' && !isValidIdentityDate(value)) return null
+      if (f.kind === 'gender' && !['', 'male', 'female', 'other'].includes(value)) return null
+      out[f.key] = value
+    }
+  }
   if (type === 'card') {
     out['number'] = digitsOf(out['number'] as string)
     out['expMonth'] = normalizeExpMonth(out['expMonth'] as string)
@@ -577,7 +634,7 @@ export async function saveKyprItem(input: KyprItemInput): Promise<KyprActionResu
   if (current.readOnly) return { ok: false, reason: 'read-only' }
   if (
     !input ||
-    !['login', 'card', 'note'].includes(input.type) ||
+    !['login', 'card', 'note', 'identity'].includes(input.type) ||
     typeof input.fields !== 'object' ||
     input.fields === null
   )
@@ -592,7 +649,9 @@ export async function saveKyprItem(input: KyprItemInput): Promise<KyprActionResu
           ? newLoginItem(fields)
           : input.type === 'card'
             ? newCardItem(fields)
-            : newNoteItem(fields)
+            : input.type === 'identity'
+              ? newIdentityItem(fields)
+              : newNoteItem(fields)
       await current.create([item])
       log('kypr.create', { kind: input.type })
       return { ok: true, id: item.id }

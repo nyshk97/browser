@@ -9,9 +9,7 @@ import type {
   AuthVaultSavePreview,
   AuthVaultSaveResult,
   AuthVaultStatus,
-  AutofillOpenResult,
   AutofillRunResult,
-  AutofillSaveResult,
   AutofillStatus,
   CallState,
   GithubTokenStatus,
@@ -189,11 +187,6 @@ const api: NemoUiApi = {
     ) as Promise<AuthVaultLoadResult>,
   authVaultDelete: () => ipcRenderer.invoke('nemo:auth-vault-delete') as Promise<boolean>,
   autofillStatus: () => ipcRenderer.invoke('nemo:autofill-status') as Promise<AutofillStatus>,
-  autofillOpen: (passphrase, remember) =>
-    ipcRenderer.invoke('nemo:autofill-open', passphrase, remember) as Promise<AutofillOpenResult>,
-  autofillSave: (profile, passphrase, remember) =>
-    ipcRenderer.invoke('nemo:autofill-save', profile, passphrase, remember) as Promise<AutofillSaveResult>,
-  autofillDelete: () => ipcRenderer.invoke('nemo:autofill-delete') as Promise<boolean>,
 
   kyprStatus: () => ipcRenderer.invoke('nemo:kypr-status') as Promise<KyprStatus>,
   kyprPanel: () => ipcRenderer.invoke('nemo:kypr-panel') as Promise<KyprPanelData>,
@@ -224,8 +217,8 @@ const api: NemoUiApi = {
     ipcRenderer.on('nemo:kypr-inline', listener)
     return () => ipcRenderer.removeListener('nemo:kypr-inline', listener)
   },
-  saveJevKey: (key) => ipcRenderer.invoke('nemo:jev-key-save', key) as Promise<AutofillSaveResult>,
-  clearJevKey: () => ipcRenderer.invoke('nemo:jev-key-clear') as Promise<AutofillSaveResult>,
+  saveJevKey: (key) => ipcRenderer.invoke('nemo:jev-key-save', key) as Promise<boolean>,
+  clearJevKey: () => ipcRenderer.invoke('nemo:jev-key-clear') as Promise<void>,
   liveFolderRefresh: () => ipcRenderer.invoke('nemo:live-folder-refresh') as Promise<void>,
   liveFolderOpen: (url) => ipcRenderer.invoke('nemo:live-folder-open', url) as Promise<void>,
   saveGithubToken: (token) => ipcRenderer.invoke('nemo:github-token-save', token) as Promise<boolean>,

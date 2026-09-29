@@ -9,6 +9,8 @@
  *
  * - `__nemoKypr.probe()` … 入れる先の欄があるか（`{ hasPassword, hasUsername, focused }`）。値は返さない
  * - `__nemoKypr.fill(username, password)` … 欄に入れる（見えている欄だけ）。入れた欄を返す
+ * - `__nemoKypr.fillCode(code)` … ワンタイムコードを入れる（フォーカス中の入力欄 → 見えている `autocomplete=one-time-code`
+ *   の欄の順）。入れたら true
  * - `__nemoKypr.read()` … 新規作成の下書きに使う。いまの欄の値を 1 回だけ読む
  *
  * 欄の選び方: フォーカスのある欄のフォーム → ページで最初に見えているパスワード欄 の順で、
@@ -124,6 +126,23 @@ export const KYPR_PAGE_SOURCE = String.raw`
       const last = out.password ? f.password : out.username ? f.username : null
       if (last) last.focus()
       return out
+    },
+    fillCode(code) {
+      if (typeof code !== 'string' || !/^[0-9]{6,8}$/.test(code)) return false
+      const active = document.activeElement
+      const typeOk = (el) => ['text', 'tel', 'number', 'password'].includes(typeOf(el))
+      let el = null
+      if (active instanceof HTMLInputElement && typeOk(active) && isVisible(active)) el = active
+      else {
+        el =
+          visibleInputs().find(
+            (i) => typeOk(i) && autocompleteOf(i).split(/\s+/).includes('one-time-code')
+          ) || null
+      }
+      if (!el) return false
+      setValue(el, code)
+      el.focus()
+      return true
     },
     read() {
       const f = find()

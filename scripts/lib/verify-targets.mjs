@@ -261,6 +261,8 @@ export const OWNERS = new Map([
   ['src/shared/kypr-identity.js', ['kypr', 'autofill']],
   ['scripts/kypr-identity.test.mjs', ['kypr', 'autofill']],
   ['src/main/kypr/fill.ts', ['kypr']],
+  // ページの QR を読む（ワンタイムコードの登録）。`verify-kypr.mjs` がテストページの QR を読む
+  ['src/main/kypr/qr.ts', ['kypr']],
   ['src/main/kypr/inline.ts', ['kypr']],
   ['src/main/kypr/cache-store.ts', ['kypr']],
   ['src/main/kypr/device-keys.ts', ['kypr']],

@@ -18,7 +18,15 @@ import {
   normalizeExpMonth,
   normalizeExpYear
 } from '../../vendor/kypr/client/card.ts'
-import { matchingLogins, parseUri } from '../../vendor/kypr/client/url-match.ts'
+import { matchingLogins, matchingTotps, parseUri } from '../../vendor/kypr/client/url-match.ts'
+import {
+  compareTotp,
+  parseOtpauthUri,
+  sameTotp,
+  TOTP_PROBLEM_TEXT,
+  totpNow,
+  totpTitle
+} from '../../vendor/kypr/client/totp.ts'
 import { IDENTITY_FIELDS, identitySummary, isValidIdentityDate } from '../../vendor/kypr/client/identity.ts'
 import {
   IDENTITY_KEYS,
@@ -26,8 +34,12 @@ import {
   newIdentityItem,
   newLoginItem,
   newNoteItem,
+  newTotpItem,
+  normalizeTotpSecret,
   nowIso,
+  totpProblem,
   type IdentityKey,
+  type TotpItem,
   type VaultItem
 } from '../../vendor/kypr/crypto/index.ts'
 import { pickAutofillIdentity } from '../../shared/kypr-identity.js'
@@ -45,6 +57,9 @@ import type {
   KyprItemInput,
   KyprStatus,
   KyprSummary,
+  KyprTotpCheck,
+  KyprTotpCode,
+  KyprTotpDraft,
   KyprUnlockResult
 } from '../../shared/types.js'
 import { log, logError } from '../log.js'
@@ -350,6 +365,17 @@ function summaryOf(entry: VaultEntry): KyprSummary {
   // 身分証の番号は一覧に出さない（氏名かメールだけ）
   if (s.kind === 'identity')
     return { ...base, kind: 'identity', name: s.item.name, subtitle: identitySummary(s.item), host: null }
+  // ワンタイムコードの名前は「発行元: ラベル」。秘密鍵もコードも入れない（コードは kyprTotpCodes で別に渡す）
+  if (s.kind === 'totp') {
+    const first = s.item.uris[0]?.uri
+    return {
+      ...base,
+      kind: 'totp',
+      name: totpTitle(s.item),
+      subtitle: '',
+      host: first ? (parseUri(first)?.host ?? null) : null
+    }
+  }
   if (s.kind === 'unknown') {
     const name = typeof s.raw['name'] === 'string' ? s.raw['name'] : ''
     return {
@@ -365,15 +391,68 @@ function summaryOf(entry: VaultEntry): KyprSummary {
 
 const byName = (a: KyprSummary, b: KyprSummary): number => a.name.localeCompare(b.name, 'ja')
 
+/**
+ * 一覧。ワンタイムコード以外は名前の順、ワンタイムコードはその後ろに発行元 → ラベルの順（発行元が空のものは末尾）。
+ * 比べ方が違うものを 1 つの sort に混ぜると並びが揺れるので、分けて並べてからつなぐ
+ */
 export function kyprSummaries(): KyprSummary[] {
   if (!session) return []
-  return [...session.entries.values()].map(summaryOf).sort(byName)
+  const entries = [...session.entries.values()]
+  const totps = entries.flatMap((e) => (e.state.kind === 'totp' ? [{ entry: e, item: e.state.item }] : []))
+  totps.sort((a, b) => compareTotp(a.item, b.item))
+  return [
+    ...entries
+      .filter((e) => e.state.kind !== 'totp')
+      .map(summaryOf)
+      .sort(byName),
+    ...totps.map((t) => summaryOf(t.entry))
+  ]
 }
 
 /** そのページに合うログイン（ゴミ箱の中・隔離したもの・ログイン以外は出さない。kypr の共通の関数で弾く）。 */
 export function kyprMatches(pageUrl: string): KyprSummary[] {
   if (!session) return []
   return matchingLogins(session.entries.values(), pageUrl).map(summaryOf).sort(byName)
+}
+
+/** そのページに合うワンタイムコード（URL を足したものだけ。ゴミ箱の中・隔離したものは出さない）。 */
+export function kyprTotpMatches(pageUrl: string): KyprSummary[] {
+  if (!session) return []
+  return matchingTotps(session.entries.values(), pageUrl)
+    .map((entry) => ({ entry, item: (entry.state as { kind: 'totp'; item: TotpItem }).item }))
+    .sort((a, b) => compareTotp(a.item, b.item))
+    .map((t) => summaryOf(t.entry))
+}
+
+/** 入力・コピーに使うワンタイムコード（ゴミ箱の中・ワンタイムコード以外は null）。 */
+function totpEntry(id: string): TotpItem | null {
+  const entry = session?.entries.get(id)
+  if (!entry || entry.deletedAt !== null || entry.state.kind !== 'totp') return null
+  return entry.state.item
+}
+
+/** 今のコード（ポップアップが 1 秒ごとに聞く）。知らない id・ゴミ箱の中は返さない。 */
+export async function kyprTotpCodes(ids: string[]): Promise<Record<string, KyprTotpCode>> {
+  const out: Record<string, KyprTotpCode> = {}
+  for (const id of ids.slice(0, 500)) {
+    const item = totpEntry(id)
+    if (!item) continue
+    const now = await totpNow(item)
+    out[id] = 'code' in now ? now : { problem: now.problem, text: TOTP_PROBLEM_TEXT[now.problem] }
+  }
+  return out
+}
+
+/** 入れる先の URL とコード（入力の直前に照合し直すため URL も返す）。出せなければ null。 */
+export async function kyprTotpForFill(
+  id: string
+): Promise<{ code: string; uris: { uri: string; match?: number | null }[] } | null> {
+  const item = totpEntry(id)
+  if (!item) return null
+  const now = await totpNow(item)
+  if (!('code' in now)) return null
+  touchKypr()
+  return { code: now.code, uris: item.uris }
 }
 
 /** バッジの件数は push のたびに聞かれるので、URL ごとに覚えておく（一覧が変わったら捨てる）。 */
@@ -443,7 +522,8 @@ const SECRET_FIELDS: Record<string, readonly string[]> = {
   card: ['number', 'code'],
   note: [],
   // 身分証の番号（伏せる項目は kypr の `identity.ts` が正）
-  identity: IDENTITY_FIELDS.filter((f) => f.secret).map((f) => f.key)
+  identity: IDENTITY_FIELDS.filter((f) => f.secret).map((f) => f.key),
+  totp: ['secret']
 }
 
 /**
@@ -456,7 +536,13 @@ export function kyprItem(id: string, withSecrets = false): KyprItemDetail | null
   touchKypr()
   const s = entry.state
   const base = { id: entry.id, deleted: entry.deletedAt !== null }
-  if (s.kind === 'login' || s.kind === 'card' || s.kind === 'note' || s.kind === 'identity') {
+  if (
+    s.kind === 'login' ||
+    s.kind === 'card' ||
+    s.kind === 'note' ||
+    s.kind === 'identity' ||
+    s.kind === 'totp'
+  ) {
     const item = structuredClone(s.item) as Record<string, unknown>
     const secrets: string[] = []
     for (const field of SECRET_FIELDS[s.kind] ?? []) {
@@ -475,7 +561,7 @@ export function revealKyprField(id: string, field: string): string | null {
   const entry = session?.entries.get(id)
   if (!entry) return null
   const s = entry.state
-  if (s.kind !== 'login' && s.kind !== 'card' && s.kind !== 'identity') return null
+  if (s.kind !== 'login' && s.kind !== 'card' && s.kind !== 'identity' && s.kind !== 'totp') return null
   if (!SECRET_FIELDS[s.kind]?.includes(field)) return null
   const value = (s.item as Record<string, unknown>)[field]
   touchKypr()
@@ -530,14 +616,22 @@ const COPYABLE: Record<string, readonly string[]> = {
   card: ['number', 'code', 'expiry', 'cardholderName'],
   note: ['notes'],
   // 性別は内部の値（male など）なのでコピーさせない
-  identity: IDENTITY_KEYS.filter((key) => key !== 'gender')
+  identity: IDENTITY_KEYS.filter((key) => key !== 'gender'),
+  totp: ['secret']
 }
 
 export function copyKyprField(id: string, field: string): boolean {
   const entry = session?.entries.get(id)
   if (!entry) return false
   const s = entry.state
-  if (s.kind !== 'login' && s.kind !== 'card' && s.kind !== 'note' && s.kind !== 'identity') return false
+  if (
+    s.kind !== 'login' &&
+    s.kind !== 'card' &&
+    s.kind !== 'note' &&
+    s.kind !== 'identity' &&
+    s.kind !== 'totp'
+  )
+    return false
   if (!COPYABLE[s.kind]?.includes(field)) return false
   let value: string
   if (s.kind === 'card' && field === 'expiry') {
@@ -551,6 +645,13 @@ export function copyKyprField(id: string, field: string): boolean {
     value = typeof raw === 'string' ? raw : ''
   }
   if (value === '') return false
+  writeOurClipboard(value)
+  log('kypr.copy', { kind: s.kind, field })
+  return true
+}
+
+/** クリップボードに置き、30 秒で消す（自分の書いたものがまだ残っているときだけ）。 */
+function writeOurClipboard(value: string): void {
   clearOurClipboard()
   // `org.nspasteboard.ConcealedType` は付けない: Electron の clipboard はテキストと独自の型を 1 回の書き込みで
   // 置けない（writeBuffer は書き込みのたびに中身を置き換える）。plan の決定どおり、付けられないので諦める
@@ -558,7 +659,19 @@ export function copyKyprField(id: string, field: string): boolean {
   clipboardValue = value
   clipboardTimer = setTimeout(clearOurClipboard, clipboardClearMs())
   touchKypr()
-  log('kypr.copy', { kind: s.kind, field })
+}
+
+/** ワンタイムコードの今のコードをコピーする。 */
+export async function copyKyprTotp(
+  id: string,
+  reason: 'user' | 'after-login' | 'fallback' = 'user'
+): Promise<boolean> {
+  const item = totpEntry(id)
+  if (!item) return false
+  const now = await totpNow(item)
+  if (!('code' in now)) return false
+  writeOurClipboard(now.code)
+  log('kypr.copy', { kind: 'totp', field: 'code', reason })
   return true
 }
 
@@ -588,7 +701,9 @@ function pickFields(
         ? ['name', 'cardholderName', 'brand', 'number', 'expMonth', 'expYear', 'code', 'notes']
         : type === 'identity'
           ? ['name', ...IDENTITY_KEYS, 'notes']
-          : ['name', 'notes']
+          : type === 'totp'
+            ? ['name', 'account', 'secret', 'algorithm', 'notes']
+            : ['name', 'notes']
   for (const key of keys) {
     const value = fields[key] ?? ''
     // 個人情報の項目は自動入力の上限（`MAX_PROFILE_VALUE`）まで。超えると自動入力で黙って空になる
@@ -597,7 +712,7 @@ function pickFields(
     if (s === null) return null
     out[key] = s
   }
-  if (type === 'login') {
+  if (type === 'login' || type === 'totp') {
     const uris = fields['uris'] ?? []
     if (!Array.isArray(uris) || uris.length > 50) return null
     const clean: Record<string, unknown>[] = []
@@ -625,6 +740,20 @@ function pickFields(
       out[f.key] = value
     }
   }
+  if (type === 'totp') {
+    // 保存できるのはコードを出せる値だけ（kypr の Web・iOS の編集画面と同じ）。発行元かラベルのどちらかは要る
+    const digits = fields['digits']
+    const period = fields['period']
+    if (!Number.isInteger(digits) || !Number.isInteger(period)) return null
+    out['name'] = (out['name'] as string).trim()
+    out['account'] = (out['account'] as string).trim()
+    out['secret'] = normalizeTotpSecret(out['secret'] as string)
+    out['digits'] = digits
+    out['period'] = period
+    if (out['name'] === '' && out['account'] === '') return null
+    if (totpProblem(out as { secret: string; algorithm: string; digits: number; period: number }) !== null)
+      return null
+  }
   if (type === 'card') {
     out['number'] = digitsOf(out['number'] as string)
     out['expMonth'] = normalizeExpMonth(out['expMonth'] as string)
@@ -639,7 +768,7 @@ export async function saveKyprItem(input: KyprItemInput): Promise<KyprActionResu
   if (current.readOnly) return { ok: false, reason: 'read-only' }
   if (
     !input ||
-    !['login', 'card', 'note', 'identity'].includes(input.type) ||
+    !['login', 'card', 'note', 'identity', 'totp'].includes(input.type) ||
     typeof input.fields !== 'object' ||
     input.fields === null
   )
@@ -656,7 +785,9 @@ export async function saveKyprItem(input: KyprItemInput): Promise<KyprActionResu
             ? newCardItem(fields)
             : input.type === 'identity'
               ? newIdentityItem(fields)
-              : newNoteItem(fields)
+              : input.type === 'totp'
+                ? newTotpItem(fields)
+                : newNoteItem(fields)
       await current.create([item])
       log('kypr.create', { kind: input.type })
       return { ok: true, id: item.id }
@@ -694,6 +825,49 @@ export async function kyprItemAction(
   } catch (error) {
     return actionFailure(error, action)
   }
+}
+
+/* ---------------- ワンタイムコードの登録 ---------------- */
+
+/** otpauth URI を下書きにする（読めなければ null）。URL は呼び出し側が入れる。 */
+export function kyprParseOtpauth(text: string, uri = ''): KyprTotpDraft | null {
+  const p = parseOtpauthUri(text)
+  if (!p) return null
+  return {
+    name: p.issuer,
+    account: p.account,
+    secret: p.secret,
+    algorithm: p.algorithm,
+    digits: p.digits,
+    period: p.period,
+    uri
+  }
+}
+
+/** 編集中の値の検査（コードを出せるか・同じものがあるか・今のコード）。 */
+export async function kyprTotpCheck(input: {
+  id: string | null
+  secret: string
+  algorithm: string
+  digits: number
+  period: number
+}): Promise<KyprTotpCheck> {
+  const params = { ...input, secret: normalizeTotpSecret(input.secret) }
+  const problem = totpProblem(params)
+  const empty = { code: null, remaining: 0, period: params.period }
+  if (problem) return { problem: TOTP_PROBLEM_TEXT[problem], duplicateOf: null, ...empty }
+  let duplicateOf: string | null = null
+  for (const entry of session?.entries.values() ?? []) {
+    if (entry.id === input.id || entry.deletedAt !== null || entry.state.kind !== 'totp') continue
+    if (sameTotp(entry.state.item, params)) {
+      duplicateOf = totpTitle(entry.state.item) || '（名前なし）'
+      break
+    }
+  }
+  const now = await totpNow(params)
+  return 'code' in now
+    ? { problem: null, duplicateOf, code: now.code, remaining: now.remaining, period: now.period }
+    : { problem: TOTP_PROBLEM_TEXT[now.problem], duplicateOf, ...empty }
 }
 
 export function generateKyprPassword(length: number, sets: string[]): string {

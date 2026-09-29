@@ -1,4 +1,5 @@
-// 個人情報の表示と入力の並び。保存する値は crypto-spec.md の個人情報の節に従う
+// 個人情報の表示と入力の並び。保存する値は crypto-spec.md の個人情報の節に従う。
+// iOS に写しがある（apps/ios/KyprCore/Identity.swift）。項目を変えたらそちらも直す
 import type { IdentityItem, IdentityKey } from "../crypto/index.ts";
 
 export type IdentityFieldKind = "text" | "date" | "gender";

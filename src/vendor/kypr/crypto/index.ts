@@ -8,4 +8,5 @@ export * from "./ids.ts";
 export * from "./item.ts";
 export * from "./kdf.ts";
 export * from "./params.ts";
+export * from "./totp.ts";
 export * from "./vault.ts";

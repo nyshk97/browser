@@ -1,11 +1,19 @@
 import type { WebContents, WebFrameMain } from 'electron'
 import { loginMatchesPage, parsePage } from '../../vendor/kypr/client/url-match.ts'
 import { KYPR_PAGE_SOURCE, KYPR_WORLD_ID } from '../../shared/kypr-page-source.js'
-import type { KyprActionResult, KyprDraft } from '../../shared/types.js'
+import type { KyprActionResult, KyprDraft, KyprTotpDraft, KyprTotpQrResult } from '../../shared/types.js'
 import { log, logError } from '../log.js'
 import { isAgentContents } from '../agent/contents.js'
 import { subFrameRunner, type PageRunner } from '../autofill/frame-runner.js'
-import { kyprLoginForFill, touchKypr } from './index.js'
+import {
+  copyKyprTotp,
+  kyprLoginForFill,
+  kyprParseOtpauth,
+  kyprTotpForFill,
+  kyprTotpMatches,
+  touchKypr
+} from './index.js'
+import { readQrFromImage } from './qr.js'
 
 /**
  * kypr のログインをページに入れる（⌘⇧L・ポップアップ・入力欄の下の候補）。
@@ -142,12 +150,98 @@ export async function fillKyprLogin(
       ...filled,
       inSubFrame: target.frame !== wc.mainFrame
     })
-    return filled.username || filled.password ? { ok: true, id: itemId } : { ok: false, reason: 'no-target' }
+    if (!filled.username && !filled.password) return { ok: false, reason: 'no-target' }
+    // 入れた先のフレームに合うワンタイムコードが 1 件だけなら、コードをコピーしておく（2FA の欄は多くのサイトで次の画面に出る）
+    const totps = target.frame.isDestroyed() ? [] : kyprTotpMatches(target.frame.url)
+    const totpCopied = totps.length === 1 && totps[0] ? await copyKyprTotp(totps[0].id, 'after-login') : false
+    return totpCopied ? { ok: true, id: itemId, totpCopied } : { ok: true, id: itemId }
   } catch (error) {
     logError('kypr.fill_failed', error, {})
     return { ok: false, reason: 'failed' }
   } finally {
     target.runner.dispose()
+  }
+}
+
+/**
+ * ワンタイムコードを入れる（ポップアップから）。入れる先は**フォーカスのあるフレーム**（メインか直下の iframe）の
+ * 「フォーカス中の入力欄 → 見えている `autocomplete=one-time-code` の欄」。
+ * **そのフレームの URL にワンタイムコードの URL が合うときだけ入れる**（ログインと同じ。別オリジンの iframe に
+ * 別のサイトのコードを入れない）。合わない・欄が無いときはコピーする（`copied: true`）。
+ */
+export async function fillKyprTotp(wc: WebContents, itemId: string): Promise<KyprActionResult> {
+  if (isAgentContents(wc)) return { ok: false, reason: 'agent' }
+  const totp = await kyprTotpForFill(itemId)
+  if (!totp) return { ok: false, reason: 'not-found' }
+  const fallback = async (reason: string): Promise<KyprActionResult> => {
+    log('kypr.fill_totp', { ok: false, reason })
+    return (await copyKyprTotp(itemId, 'fallback'))
+      ? { ok: true, id: itemId, copied: true }
+      : { ok: false, reason: 'failed' }
+  }
+  if (wc.isDestroyed()) return fallback('destroyed')
+  const main = wc.mainFrame
+  const focused = wc.focusedFrame
+  const frame =
+    focused && focused !== main && focused.parent === main && !focused.isDestroyed() ? focused : main
+  const runner = frame === main ? mainRunner(wc) : await subFrameRunner(wc, frame)
+  if (!runner) return fallback('no-runner')
+  try {
+    // **入れる直前に、入れる先のフレームの URL で照合し直す**
+    if (frame.isDestroyed() || !loginMatchesPage({ uris: totp.uris }, frame.url))
+      return await fallback('url-mismatch')
+    const ok =
+      (await runner.run(
+        `${KYPR_PAGE_SOURCE};globalThis.__nemoKypr.fillCode(${JSON.stringify(totp.code)})`
+      )) === true
+    if (!ok) return await fallback('no-target')
+    log('kypr.fill_totp', { ok: true, inSubFrame: frame !== main })
+    return { ok: true, id: itemId }
+  } catch (error) {
+    logError('kypr.fill_totp_failed', error, {})
+    return fallback('failed')
+  } finally {
+    runner.dispose()
+  }
+}
+
+/** 新規のワンタイムコードの下書き（URL は今のページのオリジン）。 */
+export function kyprTotpDraftFrom(wc: WebContents | null): KyprTotpDraft {
+  const empty: KyprTotpDraft = {
+    name: '',
+    account: '',
+    secret: '',
+    algorithm: 'SHA1',
+    digits: 6,
+    period: 30,
+    uri: ''
+  }
+  if (!wc || wc.isDestroyed() || isAgentContents(wc)) return empty
+  const page = parsePage(wc.getURL())
+  return page ? { ...empty, uri: new URL(page.url).origin } : empty
+}
+
+/**
+ * 表示中の範囲を撮って QR を読み、ワンタイムコードの登録の下書きにする（2FA の設定画面の QR）。
+ * `otpauth://totp/` として読める QR だけを拾う。URL はページのオリジン
+ */
+export async function kyprTotpFromPageQr(wc: WebContents | null): Promise<KyprTotpQrResult> {
+  if (!wc || wc.isDestroyed() || isAgentContents(wc)) return { ok: false, reason: 'no-page' }
+  const page = parsePage(wc.getURL())
+  if (!page) return { ok: false, reason: 'no-page' }
+  try {
+    const image = await wc.capturePage()
+    const data = readQrFromImage(image)
+    if (data === null) {
+      log('kypr.page_qr', { ok: false, reason: 'not-found', ...image.getSize() })
+      return { ok: false, reason: 'not-found' }
+    }
+    const draft = kyprParseOtpauth(data, new URL(page.url).origin)
+    log('kypr.page_qr', { ok: draft !== null })
+    return draft ? { ok: true, draft } : { ok: false, reason: 'not-otpauth' }
+  } catch (error) {
+    logError('kypr.page_qr_failed', error, {})
+    return { ok: false, reason: 'failed' }
   }
 }
 

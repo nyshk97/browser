@@ -2,6 +2,7 @@ import { utf8Decode, utf8Encode } from "./encoding.ts";
 import { open, seal } from "./envelope.ts";
 import type { Envelope } from "./envelope-shape.ts";
 import { KyprCryptoError } from "./errors.ts";
+import { TOTP_DEFAULTS } from "./totp.ts";
 
 export interface LoginUri {
   uri: string;
@@ -110,7 +111,27 @@ export type IdentityItem = {
   [key: string]: unknown;
 } & Record<IdentityKey, string>;
 
-export type VaultItem = LoginItem | NoteItem | CardItem | IdentityItem;
+// ワンタイムコード（TOTP）の平文（schema 1）。name は発行元、account はラベル。
+// 無いキーは既定値で読む（normalizeTotpItem）。値の中身（アルゴリズム名・Base32・範囲）は読むときに見ない（totpProblem で見る）
+export interface TotpItem {
+  id: string;
+  type: "totp";
+  schema: 1;
+  name: string;
+  account: string;
+  secret: string;
+  algorithm: string;
+  digits: number;
+  period: number;
+  uris: LoginUri[];
+  notes: string;
+  extra: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  [key: string]: unknown;
+}
+
+export type VaultItem = LoginItem | NoteItem | CardItem | IdentityItem | TotpItem;
 
 // 知らない type / schema のアイテムは読み取り専用で扱う
 export type DecryptedItem =
@@ -118,6 +139,7 @@ export type DecryptedItem =
   | { kind: "note"; item: NoteItem }
   | { kind: "card"; item: CardItem }
   | { kind: "identity"; item: IdentityItem }
+  | { kind: "totp"; item: TotpItem }
   | { kind: "unknown"; raw: Record<string, unknown> & { id: string } };
 
 const ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
@@ -130,6 +152,18 @@ export function nowIso(): string {
   return new Date().toISOString();
 }
 
+function isUriList(x: unknown): x is LoginUri[] {
+  return (
+    Array.isArray(x) &&
+    x.every(
+      (u) =>
+        isObject(u) &&
+        typeof u.uri === "string" &&
+        (u.match === undefined || u.match === null || Number.isInteger(u.match)),
+    )
+  );
+}
+
 export function isLoginItem(x: Record<string, unknown>): x is LoginItem {
   return (
     x.type === "login" &&
@@ -139,13 +173,7 @@ export function isLoginItem(x: Record<string, unknown>): x is LoginItem {
     typeof x.username === "string" &&
     typeof x.password === "string" &&
     typeof x.notes === "string" &&
-    Array.isArray(x.uris) &&
-    x.uris.every(
-      (u) =>
-        isObject(u) &&
-        typeof u.uri === "string" &&
-        (u.match === undefined || u.match === null || Number.isInteger(u.match)),
-    ) &&
+    isUriList(x.uris) &&
     isObject(x.extra) &&
     typeof x.createdAt === "string" &&
     ISO_UTC_RE.test(x.createdAt) &&
@@ -248,6 +276,57 @@ export function newIdentityItem(fields: Partial<Omit<IdentityItem, "id" | "type"
   } as IdentityItem;
 }
 
+// ワンタイムコードとして読めるか。あるキーの型だけを見る（無いキーは normalizeTotpItem が既定値で埋める）
+export function isTotpItem(x: Record<string, unknown>): boolean {
+  const optString = (k: string) => x[k] === undefined || typeof x[k] === "string";
+  const optInt = (k: string) => x[k] === undefined || Number.isInteger(x[k]);
+  return (
+    x.type === "totp" &&
+    x.schema === 1 &&
+    hasCommonFields(x) &&
+    optString("account") &&
+    optString("secret") &&
+    optString("algorithm") &&
+    optInt("digits") &&
+    optInt("period") &&
+    (x.uris === undefined || isUriList(x.uris))
+  );
+}
+
+// 無いキーを既定値で埋めて TotpItem にする（知らないキーは残す）。isTotpItem が true のものだけ渡す
+export function normalizeTotpItem(x: Record<string, unknown>): TotpItem {
+  return {
+    ...x,
+    account: x.account ?? "",
+    secret: x.secret ?? "",
+    algorithm: x.algorithm ?? TOTP_DEFAULTS.algorithm,
+    digits: x.digits ?? TOTP_DEFAULTS.digits,
+    period: x.period ?? TOTP_DEFAULTS.period,
+    uris: x.uris ?? [],
+  } as TotpItem;
+}
+
+export function newTotpItem(fields: Partial<Omit<TotpItem, "id" | "type" | "schema">> = {}): TotpItem {
+  const now = nowIso();
+  return {
+    name: "",
+    account: "",
+    secret: "",
+    algorithm: TOTP_DEFAULTS.algorithm,
+    digits: TOTP_DEFAULTS.digits,
+    period: TOTP_DEFAULTS.period,
+    uris: [],
+    notes: "",
+    extra: {},
+    createdAt: now,
+    updatedAt: now,
+    ...fields,
+    id: crypto.randomUUID(),
+    type: "totp",
+    schema: 1,
+  };
+}
+
 export function newLoginItem(fields: Partial<Omit<LoginItem, "id" | "type" | "schema">> = {}): LoginItem {
   const now = nowIso();
   return {
@@ -299,6 +378,10 @@ export async function decryptItem(vaultKey: Uint8Array, id: string, envelope: un
   if (parsed.type === "identity" && parsed.schema === 1) {
     if (!isIdentityItem(parsed)) throw new KyprCryptoError("malformed", "個人情報の項目が不正");
     return { kind: "identity", item: normalizeIdentityItem(parsed) };
+  }
+  if (parsed.type === "totp" && parsed.schema === 1) {
+    if (!isTotpItem(parsed)) throw new KyprCryptoError("malformed", "ワンタイムコードの項目が不正");
+    return { kind: "totp", item: normalizeTotpItem(parsed) };
   }
   return { kind: "unknown", raw: parsed as Record<string, unknown> & { id: string } };
 }

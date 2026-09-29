@@ -89,14 +89,19 @@ import { clearJevKey, hasJevKey, saveJevKey } from './store/jev-key.js'
 import { runAutofill } from './autofill/index.js'
 import {
   copyKyprField,
+  copyKyprTotp,
   generateKyprPassword,
   kyprAutofillIdentityId,
   kyprClipboardForVerify,
   kyprItem,
   kyprItemAction,
   kyprMatches,
+  kyprParseOtpauth,
   kyprStatus,
   kyprSummaries,
+  kyprTotpCheck,
+  kyprTotpCodes,
+  kyprTotpMatches,
   lockKypr,
   revealKyprField,
   saveKyprItem,
@@ -107,7 +112,14 @@ import {
   touchKypr,
   unlockKyprWithTouchId
 } from './kypr/index.js'
-import { fillKyprLogin, kyprDraftFrom, kyprTargetUrl } from './kypr/fill.js'
+import {
+  fillKyprLogin,
+  fillKyprTotp,
+  kyprDraftFrom,
+  kyprTargetUrl,
+  kyprTotpDraftFrom,
+  kyprTotpFromPageQr
+} from './kypr/fill.js'
 import { hideKyprInline, kyprInlineState, kyprInlineTarget } from './kypr/inline.js'
 
 import { MAX_JEV_KEY } from '../shared/autofill-schema.js'
@@ -154,6 +166,10 @@ import type {
   KyprItemInput,
   KyprPanelData,
   KyprStatus,
+  KyprTotpCheck,
+  KyprTotpCode,
+  KyprTotpDraft,
+  KyprTotpQrResult,
   KyprUnlockResult
 } from '../shared/types.js'
 import type {
@@ -1319,6 +1335,7 @@ export function registerIpcHandlers(): void {
       status,
       page,
       matches: page && status.state === 'unlocked' ? kyprMatches(page.url) : [],
+      totpMatches: page && status.state === 'unlocked' ? kyprTotpMatches(page.url) : [],
       items: kyprSummaries(),
       autofillIdentityId: kyprAutofillIdentityId(getSettings().kyprAutofillIdentityId)
     }
@@ -1371,6 +1388,53 @@ export function registerIpcHandlers(): void {
     // 入れたらポップアップを閉じてページへ戻す
     if (result.ok && win.overlay === 'kypr') win.setOverlay(null)
     return result
+  })
+  ipcMain.handle(
+    'nemo:kypr-totp-codes',
+    async (event, ids: unknown): Promise<Record<string, KyprTotpCode>> => {
+      requireKyprWindow(event)
+      if (!Array.isArray(ids)) return {}
+      return kyprTotpCodes(ids.filter((id): id is string => typeof id === 'string'))
+    }
+  )
+  ipcMain.handle('nemo:kypr-fill-totp', async (event, id: unknown): Promise<KyprActionResult> => {
+    const win = requireKyprWindow(event)
+    const wc = foregroundContents(win)
+    if (!wc)
+      return (await copyKyprTotp(idOf(id), 'fallback'))
+        ? { ok: true, copied: true }
+        : { ok: false, reason: 'no-target' }
+    const result = await fillKyprTotp(wc, idOf(id))
+    // 入れたらポップアップを閉じてページへ戻す（コピーに回ったときは、知らせを見せるため閉じない）
+    if (result.ok && !result.copied && win.overlay === 'kypr') win.setOverlay(null)
+    return result
+  })
+  ipcMain.handle('nemo:kypr-copy-totp', async (event, id: unknown): Promise<boolean> => {
+    requireKyprWindow(event)
+    return copyKyprTotp(idOf(id))
+  })
+  ipcMain.handle('nemo:kypr-totp-from-page-qr', async (event): Promise<KyprTotpQrResult> => {
+    const win = requireKyprWindow(event)
+    return kyprTotpFromPageQr(foregroundContents(win))
+  })
+  ipcMain.handle('nemo:kypr-totp-draft', (event): KyprTotpDraft => {
+    const win = requireKyprWindow(event)
+    return kyprTotpDraftFrom(foregroundContents(win))
+  })
+  ipcMain.handle('nemo:kypr-parse-otpauth', (event, text: unknown): KyprTotpDraft | null => {
+    requireKyprWindow(event)
+    return typeof text === 'string' && text.length <= 4_000 ? kyprParseOtpauth(text) : null
+  })
+  ipcMain.handle('nemo:kypr-totp-check', async (event, input: unknown): Promise<KyprTotpCheck> => {
+    requireKyprWindow(event)
+    const raw = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>
+    return kyprTotpCheck({
+      id: typeof raw['id'] === 'string' ? raw['id'] : null,
+      secret: typeof raw['secret'] === 'string' ? raw['secret'].slice(0, 1_000) : '',
+      algorithm: typeof raw['algorithm'] === 'string' ? raw['algorithm'] : '',
+      digits: typeof raw['digits'] === 'number' ? raw['digits'] : NaN,
+      period: typeof raw['period'] === 'number' ? raw['period'] : NaN
+    })
   })
   ipcMain.handle('nemo:kypr-draft', async (event): Promise<KyprDraft> => {
     const win = requireKyprWindow(event)

@@ -1,6 +1,6 @@
 // ログインの URI と、自動入力する画面の URL の照合（docs/crypto-spec.md「URL の照合」）。
 // match は Bitwarden の URI 一致方式（0 ドメイン・1 ホスト・2 前方一致・3 完全一致・4 正規表現・5 一致させない。null は 0）
-import type { LoginItem } from "../crypto/index.ts";
+import type { LoginItem, TotpItem } from "../crypto/index.ts";
 import { PSL_RULES } from "./psl-data.ts";
 
 // Public Suffix List で「登録可能なドメイン」（eTLD+1）を切り出す。private section（github.io 等）も含める
@@ -170,6 +170,23 @@ export function matchingLogins<T extends { deletedAt: string | null; state: { ki
   for (const entry of entries) {
     if (entry.deletedAt !== null || entry.state.kind !== "login") continue;
     const item = (entry.state as { kind: "login"; item: Pick<LoginItem, "uris"> }).item;
+    if (item.uris.some((u) => uriMatches(u.uri, u.match, page, psl))) out.push(entry);
+  }
+  return out;
+}
+
+// 画面の URL に合うワンタイムコード（URL を足したものだけ）。絞り込みは matchingLogins と同じ
+export function matchingTotps<T extends { deletedAt: string | null; state: { kind: string } }>(
+  entries: Iterable<T>,
+  pageUrl: string,
+  psl: PublicSuffixList = publicSuffixList(),
+): T[] {
+  const page = parsePage(pageUrl);
+  if (!page) return [];
+  const out: T[] = [];
+  for (const entry of entries) {
+    if (entry.deletedAt !== null || entry.state.kind !== "totp") continue;
+    const item = (entry.state as { kind: "totp"; item: Pick<TotpItem, "uris"> }).item;
     if (item.uris.some((u) => uriMatches(u.uri, u.match, page, psl))) out.push(entry);
   }
   return out;

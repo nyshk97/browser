@@ -13,6 +13,7 @@
  * 使い方:
  *   node scripts/verify-kypr.mjs   （事前に out/ がビルドされていること）
  */
+import { createHmac } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
@@ -39,6 +40,7 @@ import {
   newKdfParams,
   newLoginItem,
   newNoteItem,
+  newTotpItem,
   wrapVaultKey
 } from '../src/vendor/kypr/crypto/index.ts'
 
@@ -48,7 +50,27 @@ const electronPath = require('electron')
 const PASSWORD = 'nemo-verify マスター 🔑'
 /** 平文の目印。**このアイテムの URL は一度も開かない**（開くと履歴に正当に残る）。 */
 const MARK = 'KYPRMARK7d3'
-const MARKERS = [MARK, 'kyprmark-url', '4111111111111111', 'pw-A-secret', 'pw-created-secret']
+/** ワンタイムコードの秘密鍵（Base32 として読める文字だけ）。これも userData に平文で残ってはいけない。 */
+const TOTP_SECRET = 'KYPRTOTPSEQRETQQ'
+const MARKERS = [MARK, 'kyprmark-url', '4111111111111111', 'pw-A-secret', 'pw-created-secret', TOTP_SECRET]
+
+/** TOTP のコード（SHA1・6 桁・30 秒）。kypr の実装とは別に node:crypto で計算する（RFC 6238）。 */
+function nodeTotp(secret, unixSeconds) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+  let bits = ''
+  for (const ch of secret.toUpperCase()) bits += alphabet.indexOf(ch).toString(2).padStart(5, '0')
+  const key = Buffer.from(bits.match(/.{8}/g).map((b) => parseInt(b, 2)))
+  const msg = Buffer.alloc(8)
+  msg.writeBigUInt64BE(BigInt(Math.floor(unixSeconds / 30)))
+  const h = createHmac('sha1', key).update(msg).digest()
+  const off = h[h.length - 1] & 0x0f
+  return String((h.readUInt32BE(off) & 0x7fffffff) % 1_000_000).padStart(6, '0')
+}
+/** 今のコードと、1 秒前のコード（コードは 1 秒ごとに計算し直すので、読んだ時刻の境目をまたいでもよい）。 */
+const nodeTotpNow = (secret) => {
+  const t = Math.floor(Date.now() / 1000)
+  return [nodeTotp(secret, t), nodeTotp(secret, t - 1)]
+}
 
 let failures = 0
 let checks = 0
@@ -153,6 +175,18 @@ const pages = {
     '<!doctype html><meta charset="utf-8"><title>混在</title>' +
     '<p>ニュースレター <input id="newsletter" type="email" name="email" style="width:200px;height:24px"></p>' +
     `<iframe id="login" src="http://localhost:${server.address().port}/login.html?mixed=1" width="600" height="200"></iframe>`,
+  // ワンタイムコードの欄（autocomplete=one-time-code）だけのページ
+  '/otp.html':
+    '<!doctype html><meta charset="utf-8"><title>2FA</title>' +
+    '<label>コード <input id="otp" autocomplete="one-time-code" inputmode="numeric" style="width:200px;height:24px"></label>',
+  // 2FA の設定画面の QR（otpauth://totp/QrIssuer:qr-account?secret=KYPRMARKQRSEQRET&issuer=QrIssuer）
+  '/qr.html':
+    '<!doctype html><meta charset="utf-8"><title>2FA の設定</title><p>アプリで読んでください</p>' +
+    '<img id="qr" width="300" height="300" src="data:image/png;base64,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">',
+  // ワンタイムコードでない QR（https://example.com/not-otp）
+  '/qr-other.html':
+    '<!doctype html><meta charset="utf-8"><title>ほかの QR</title>' +
+    '<img width="300" height="300" src="data:image/png;base64,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">',
   '/hidden.html':
     '<!doctype html><meta charset="utf-8"><title>罠</title><form>' +
     '<input id="username" name="username" style="display:none">' +
@@ -870,6 +904,271 @@ try {
       '個人情報: 片付けた（ゴミ箱 → 完全削除）',
       purgedIdentity.ok === true,
       JSON.stringify(purgedIdentity)
+    )
+  }
+
+  /* ---- 10c. ワンタイムコード（TOTP） ---- */
+  // 件数の検査を崩さないよう、最後にゴミ箱 → 完全削除する
+  {
+    const T1 = newTotpItem({ name: 'Otp Site', account: 'me', secret: TOTP_SECRET, uris: [{ uri: origin }] })
+    const T2 = newTotpItem({ name: 'No Url', account: 'x', secret: 'JBSWY3DPEHPK3PXP' })
+    await other.create([T1, T2])
+    await json('window.nemo.kyprSync()')
+
+    await ui.ev(`window.nemo.navigate(${JSON.stringify(tabKey)}, ${JSON.stringify(`${origin}/otp.html`)})`)
+    const otpPage = await connectTo(app.cdp, '/otp.html', { type: 'page' })
+    await waitFor(otpPage, "document.readyState === 'complete' && document.getElementById('otp') ? 'ok' : ''")
+    const otpPanel = await json('window.nemo.kyprPanel()')
+    const totpRows = otpPanel.items.filter((i) => i.kind === 'totp')
+    check(
+      'TOTP: このページに合うのは URL を足したもの（Otp Site）だけ・一覧の末尾に「発行元: ラベル」で並ぶ',
+      otpPanel.totpMatches.length === 1 &&
+        otpPanel.totpMatches[0].id === T1.id &&
+        totpRows.map((i) => i.name).join() === 'No Url: x,Otp Site: me' &&
+        otpPanel.items.slice(-2).every((i) => i.kind === 'totp'),
+      JSON.stringify({ matches: otpPanel.totpMatches.map((m) => m.name), totp: totpRows.map((i) => i.name) })
+    )
+    check('TOTP: 一覧に秘密鍵が入っていない', !JSON.stringify(otpPanel).includes(TOTP_SECRET))
+
+    const codes = await json(`window.nemo.kyprTotpCodes(${JSON.stringify([T1.id, T2.id, 'no-such-id'])})`)
+    check(
+      'TOTP: 今のコードが node:crypto で独立に計算したものと一致する（知らない id は返さない）',
+      nodeTotpNow(TOTP_SECRET).includes(codes[T1.id]?.code) &&
+        nodeTotpNow('JBSWY3DPEHPK3PXP').includes(codes[T2.id]?.code) &&
+        codes[T1.id].remaining >= 1 &&
+        codes[T1.id].remaining <= 30 &&
+        !('no-such-id' in codes),
+      JSON.stringify({ t1: codes[T1.id], expected: nodeTotpNow(TOTP_SECRET) })
+    )
+
+    const filledOtp = await json(`window.nemo.kyprFillTotp(${JSON.stringify(T1.id)})`)
+    const otpValue = await otpPage.ev("document.getElementById('otp').value")
+    check(
+      'TOTP: URL が合えば one-time-code の欄にコードを入れる',
+      filledOtp.ok === true && !filledOtp.copied && nodeTotpNow(TOTP_SECRET).includes(otpValue),
+      JSON.stringify({ filledOtp, otpValue })
+    )
+    await otpPage.ev("document.getElementById('otp').value = ''")
+    const copiedOtp = await json(`window.nemo.kyprFillTotp(${JSON.stringify(T2.id)})`)
+    const clipOtp = await json('window.nemo.kyprClipboardForVerify()')
+    check(
+      'TOTP: URL が合わなければ入れずにコピーする',
+      copiedOtp.ok === true &&
+        copiedOtp.copied === true &&
+        (await otpPage.ev("document.getElementById('otp').value")) === '' &&
+        nodeTotpNow('JBSWY3DPEHPK3PXP').includes(clipOtp),
+      JSON.stringify({ copiedOtp, clip: clipOtp })
+    )
+
+    // ログインを入れたとき、このページに合う TOTP が 1 件ならコードをコピーする
+    await ui.ev(
+      `window.nemo.navigate(${JSON.stringify(tabKey)}, ${JSON.stringify(`${origin}/login.html?totp=1`)})`
+    )
+    const totpLogin = await connectTo(app.cdp, '/login.html?totp=1', { type: 'page' })
+    await waitFor(
+      totpLogin,
+      "document.readyState === 'complete' && document.getElementById('password') ? 'ok' : ''"
+    )
+    const loginFilled = await json(`window.nemo.kyprFill(${JSON.stringify(A.id)})`)
+    const clipAfterLogin = await json('window.nemo.kyprClipboardForVerify()')
+    check(
+      'TOTP: ログインを入れたら、このページに合う 1 件のコードをコピーする',
+      loginFilled.ok === true &&
+        loginFilled.totpCopied === true &&
+        nodeTotpNow(TOTP_SECRET).includes(clipAfterLogin),
+      JSON.stringify({ loginFilled, clip: clipAfterLogin })
+    )
+
+    // ページの QR を読む（表示中の範囲を撮る）
+    const readQrOn = async (pathName) => {
+      await ui.ev(
+        `window.nemo.navigate(${JSON.stringify(tabKey)}, ${JSON.stringify(`${origin}${pathName}`)})`
+      )
+      const qrPage = await connectTo(app.cdp, pathName, { type: 'page' })
+      await waitFor(
+        qrPage,
+        "document.readyState === 'complete' && [...document.images].every((i) => i.complete) ? 'ok' : ''"
+      )
+      // 移った直後は前のページの絵のまま撮れることがある（人が押すときはもう描かれている）。描画が 2 フレーム進むのを待つ
+      await qrPage.ev('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))')
+      await sleep(300)
+      return json('window.nemo.kyprTotpFromPageQr()')
+    }
+    const qr = await readQrOn('/qr.html')
+    check(
+      'TOTP: ページの QR を読んで下書きにする（発行元・ラベル・秘密鍵・URL はページのオリジン）',
+      qr.ok === true &&
+        qr.draft.name === 'QrIssuer' &&
+        qr.draft.account === 'qr-account' &&
+        qr.draft.secret === 'KYPRMARKQRSEQRET' &&
+        qr.draft.uri === origin,
+      JSON.stringify({
+        ...qr,
+        draft: qr.draft ? { ...qr.draft, secret: qr.draft.secret ? '(入っている)' : '' } : null
+      })
+    )
+    const otherQr = await readQrOn('/qr-other.html')
+    const noQr = await readQrOn('/otp.html')
+    check(
+      'TOTP: ワンタイムコードでない QR・QR の無いページは読めない',
+      otherQr.ok === false &&
+        otherQr.reason === 'not-otpauth' &&
+        noQr.ok === false &&
+        noQr.reason === 'not-found',
+      JSON.stringify({ otherQr, noQr })
+    )
+
+    const parsed = await json(
+      "window.nemo.kyprParseOtpauth('otpauth://totp/Issuer:alice?secret=jbsw%20y3dp%20ehpk%203pxp&digits=8')"
+    )
+    const dup = await json(
+      `window.nemo.kyprTotpCheck({ id: null, secret: ${JSON.stringify(TOTP_SECRET.toLowerCase())}, algorithm: 'SHA1', digits: 6, period: 30 })`
+    )
+    const broken = await json(
+      "window.nemo.kyprTotpCheck({ id: null, secret: 'JBSWY3DP1', algorithm: 'SHA1', digits: 6, period: 30 })"
+    )
+    check(
+      'TOTP: otpauth URI を読む・同じ秘密鍵のものを知らせる・読めない秘密鍵は理由を出す',
+      parsed?.name === 'Issuer' &&
+        parsed.account === 'alice' &&
+        parsed.secret === 'JBSWY3DPEHPK3PXP' &&
+        parsed.digits === 8 &&
+        dup.duplicateOf === 'Otp Site: me' &&
+        nodeTotpNow(TOTP_SECRET).includes(dup.code) &&
+        broken.problem !== null &&
+        broken.code === null,
+      JSON.stringify({ parsed: parsed?.name, dup: dup.duplicateOf, broken: broken.problem })
+    )
+
+    const badTotp = await json(
+      "window.nemo.kyprSave({ id: null, type: 'totp', fields: { name: 'Bad', account: '', secret: 'JBSWY3DP1', algorithm: 'SHA1', digits: 6, period: 30, notes: '', uris: [] } })"
+    )
+    const savedQr = await json(
+      `window.nemo.kyprSave({ id: null, type: 'totp', fields: { ...${JSON.stringify(qr.draft ?? {})}, notes: '', uris: [{ uri: ${JSON.stringify(origin)} }] } })`
+    )
+    await other.sync()
+    const remoteQr = other.entries.get(savedQr.id)?.state
+    check(
+      'TOTP: コードを出せない値は保存しない・QR から作ったものを別の端末で読める',
+      badTotp.ok === false &&
+        badTotp.reason === 'invalid' &&
+        savedQr.ok === true &&
+        remoteQr?.kind === 'totp' &&
+        remoteQr.item.name === 'QrIssuer' &&
+        remoteQr.item.secret === 'KYPRMARKQRSEQRET' &&
+        remoteQr.item.uris[0]?.uri === origin,
+      JSON.stringify({ badTotp, savedQr, kind: remoteQr?.kind })
+    )
+    const edited = await json(
+      `window.nemo.kyprSave({ id: ${JSON.stringify(T2.id)}, type: 'totp', fields: { name: 'No Url', account: 'renamed', secret: 'JBSWY3DPEHPK3PXP', algorithm: 'SHA1', digits: 6, period: 30, notes: '', uris: [] } })`
+    )
+    await other.sync()
+    const remoteT2 = other.entries.get(T2.id)?.state
+    check(
+      'TOTP: 編集した値を別の端末で読める',
+      edited.ok === true && remoteT2?.kind === 'totp' && remoteT2.item.account === 'renamed',
+      JSON.stringify({ edited })
+    )
+
+    // ポップアップの描画: このページの TOTP（コード付き）→ コードの一覧 → 詳細（秘密鍵は伏せる）→ 編集
+    await ui.ev(`window.nemo.navigate(${JSON.stringify(tabKey)}, ${JSON.stringify(`${origin}/otp.html`)})`)
+    await waitFor(
+      ui,
+      "window.nemo.kyprPanel().then((p) => p.page && p.page.url.includes('/otp.html') ? 'ok' : '')"
+    )
+    await ui.ev("window.nemo.setOverlay('kypr')")
+    const popup = await connectTo(app.cdp, 'view=overlay', { exclude: 'private=1' })
+    await waitFor(
+      popup,
+      `document.querySelector('.kypr-hero [data-kypr-id="${T1.id}"] .kypr-totp-code') ? 'ok' : ''`,
+      {
+        timeoutMs: 8000
+      }
+    ).catch(() => '')
+    const heroCode = await popup.ev(
+      `document.querySelector('.kypr-hero [data-kypr-id="${T1.id}"] .kypr-totp-code')?.dataset.kyprTotpCode ?? null`
+    )
+    await popup.ev(`document.querySelector('[data-kypr-mode="codes"]')?.click()`)
+    await waitFor(
+      popup,
+      `document.querySelector('.kypr-scroll > [data-kypr-id="${T2.id}"] .kypr-totp-code') ? 'ok' : ''`,
+      {
+        timeoutMs: 5000
+      }
+    ).catch(() => '')
+    const codesView = JSON.parse(
+      await popup.ev(`JSON.stringify({
+        rows: [...document.querySelectorAll('.kypr-list > .kypr-scroll > .kypr-row .kypr-row-name')].map((e) => e.textContent),
+        logins: document.querySelectorAll('.kypr-list > .kypr-scroll > .kypr-row:not(.kypr-totp-row)').length
+      })`)
+    )
+    check(
+      'TOTP: ポップアップの「このページ」にコード・「コード」に切り替えると TOTP だけが並ぶ',
+      nodeTotpNow(TOTP_SECRET).includes(heroCode) &&
+        codesView.rows.includes('No Url: renamed') &&
+        codesView.rows.includes('QrIssuer: qr-account') &&
+        codesView.logins === 0,
+      JSON.stringify({ heroCode, ...codesView })
+    )
+    await popup.ev(`document.querySelector('.kypr-scroll > .kypr-row[data-kypr-id="${T1.id}"]')?.click()`)
+    await waitFor(popup, "document.querySelector('.kypr-detail .kypr-totp-big') ? 'ok' : ''", {
+      timeoutMs: 5000
+    }).catch(() => '')
+    const totpDetail = JSON.parse(
+      await popup.ev(`JSON.stringify({
+        text: document.querySelector('.kypr-detail')?.innerText ?? '',
+        code: document.querySelector('.kypr-detail .kypr-totp-big')?.dataset.kyprTotpCode ?? null
+      })`)
+    )
+    check(
+      'TOTP: 詳細に大きなコード・発行元・ラベルが出て、秘密鍵は伏せる',
+      nodeTotpNow(TOTP_SECRET).includes(totpDetail.code) &&
+        totpDetail.text.includes('Otp Site') &&
+        totpDetail.text.includes('秘密鍵') &&
+        !totpDetail.text.includes(TOTP_SECRET),
+      JSON.stringify({ code: totpDetail.code, text: totpDetail.text.slice(0, 120).replace(/\n/g, ' / ') })
+    )
+    await popup.ev(
+      `[...document.querySelectorAll('.kypr-detail-head .kypr-btn')].find((b) => b.textContent === '編集')?.click()`
+    )
+    await waitFor(popup, "document.querySelector('.kypr-editor input[name=\"kypr-secret\"]') ? 'ok' : ''", {
+      timeoutMs: 5000
+    }).catch(() => '')
+    await waitFor(popup, "document.querySelector('.kypr-editor [data-kypr-totp-code]') ? 'ok' : ''", {
+      timeoutMs: 5000
+    }).catch(() => '')
+    const totpEditor = JSON.parse(
+      await popup.ev(`JSON.stringify({
+        secret: document.querySelector('.kypr-editor input[name="kypr-secret"]')?.value ?? null,
+        name: document.querySelector('.kypr-editor input[name="kypr-name"]')?.value ?? null,
+        preview: document.querySelector('.kypr-editor [data-kypr-totp-code]')?.dataset.kyprTotpCode ?? null,
+        algorithm: document.querySelector('.kypr-editor .kypr-seg button.on')?.textContent ?? null
+      })`)
+    )
+    check(
+      'TOTP: 編集画面に秘密鍵（編集を開いたときだけ）・発行元・今のコード・アルゴリズムが出る',
+      totpEditor.secret === TOTP_SECRET &&
+        totpEditor.name === 'Otp Site' &&
+        nodeTotpNow(TOTP_SECRET).includes(totpEditor.preview) &&
+        totpEditor.algorithm === 'SHA1',
+      JSON.stringify({ ...totpEditor, secret: totpEditor.secret === TOTP_SECRET })
+    )
+    popup.close()
+    await ui.ev('window.nemo.setOverlay(null)')
+
+    let cleaned = true
+    for (const id of [T1.id, T2.id, savedQr.id].filter(Boolean)) {
+      await json(`window.nemo.kyprTrash(${JSON.stringify(id)})`)
+      cleaned = (await json(`window.nemo.kyprPurge(${JSON.stringify(id)})`)).ok === true && cleaned
+    }
+    check('TOTP: 片付けた（ゴミ箱 → 完全削除）', cleaned)
+    await ui.ev(
+      `window.nemo.navigate(${JSON.stringify(tabKey)}, ${JSON.stringify(`${origin}/login.html?k=1`)})`
+    )
+    page = await connectTo(app.cdp, '/login.html?k=1', { type: 'page' })
+    await waitFor(
+      page,
+      "document.readyState === 'complete' && document.getElementById('password') ? 'ok' : ''"
     )
   }
 

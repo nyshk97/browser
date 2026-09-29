@@ -511,16 +511,19 @@ export interface KyprStatus {
   itemCount: number
 }
 
-export type KyprItemKind = 'login' | 'card' | 'note' | 'identity' | 'unknown' | 'error'
+export type KyprItemKind = 'login' | 'card' | 'note' | 'identity' | 'totp' | 'unknown' | 'error'
 
 /** 一覧に出す 1 行。**パスワード・カード番号・セキュリティコード・メモの本文は入れない**。 */
 export interface KyprSummary {
   id: string
   kind: KyprItemKind
   name: string
-  /** ログインはユーザー名、カードは「ブランド •••• 下 4 桁」、個人情報は氏名（無ければメール）、それ以外は空。 */
+  /**
+   * ログインはユーザー名、カードは「ブランド •••• 下 4 桁」、個人情報は氏名（無ければメール）、それ以外は空。
+   * ワンタイムコードは `name` が「発行元: ラベル」で、ここは空（コードは `kyprTotpCodes` で別に取る）
+   */
   subtitle: string
-  /** ログインの最初の URI のホスト（無ければ null）。 */
+  /** ログイン・ワンタイムコードの最初の URI のホスト（無ければ null）。 */
   host: string | null
   deleted: boolean
 }
@@ -531,7 +534,9 @@ export interface KyprPanelData {
   page: { url: string; host: string } | null
   /** このページに合うログイン。 */
   matches: KyprSummary[]
-  /** すべてのアイテム（ゴミ箱の中も含む。絞り込みは renderer）。 */
+  /** このページに合うワンタイムコード（URL を足したものだけ）。 */
+  totpMatches: KyprSummary[]
+  /** すべてのアイテム（ゴミ箱の中も含む。絞り込みは renderer）。ワンタイムコードは末尾に発行元 → ラベルの順で並ぶ。 */
   items: KyprSummary[]
   /** フォーム自動入力に使う個人情報（設定で選んだもの。無ければ一番古いもの。0 件なら null）。 */
   autofillIdentityId: string | null
@@ -560,7 +565,7 @@ export interface KyprItemDetail {
 export interface KyprItemInput {
   /** 既存のアイテムを更新するとき。新規は null。 */
   id: string | null
-  type: 'login' | 'card' | 'note' | 'identity'
+  type: 'login' | 'card' | 'note' | 'identity' | 'totp'
   fields: Record<string, unknown>
 }
 
@@ -581,7 +586,14 @@ export type KyprUnlockFailure =
 export type KyprUnlockResult = { ok: true } | { ok: false; reason: KyprUnlockFailure; retryAfter?: number }
 
 export type KyprActionResult =
-  | { ok: true; id?: string }
+  | {
+      ok: true
+      id?: string
+      /** ワンタイムコードを入れられず、代わりにコピーした。 */
+      copied?: boolean
+      /** ログインを入れたとき、このページに合うワンタイムコードが 1 件だったのでコードをコピーした。 */
+      totpCopied?: boolean
+    }
   | {
       ok: false
       reason:
@@ -605,6 +617,38 @@ export interface KyprDraft {
   uri: string
   username: string
   password: string
+}
+
+/** ワンタイムコードの今のコード（出せなければ理由）。 */
+export type KyprTotpCode =
+  { code: string; remaining: number; period: number } | { problem: string; text: string }
+
+/** ワンタイムコードの登録の下書き（otpauth URI・ページの QR から）。 */
+export interface KyprTotpDraft {
+  name: string
+  account: string
+  secret: string
+  algorithm: string
+  digits: number
+  period: number
+  /** ページのオリジン（QR を読んだとき・新規作成）。無ければ空。 */
+  uri: string
+}
+
+/** ページの QR を読んだ結果。 */
+export type KyprTotpQrResult =
+  | { ok: true; draft: KyprTotpDraft }
+  | { ok: false; reason: 'no-page' | 'not-found' | 'not-otpauth' | 'failed' }
+
+/** 編集中の値の検査（保存できるか・同じ秘密鍵のものがあるか・今のコード）。 */
+export interface KyprTotpCheck {
+  /** コードを出せない理由の文言（出せるなら null）。 */
+  problem: string | null
+  /** 同じもの（秘密鍵とパラメータが同じ）の見出し。無ければ null。 */
+  duplicateOf: string | null
+  code: string | null
+  remaining: number
+  period: number
 }
 
 /** 入力欄の下の候補。 */
@@ -1407,6 +1451,24 @@ export interface NemoUiApi {
   kyprCopy(id: string, field: string): Promise<boolean>
   /** 前面のタブに入れる（入れる先のフレームの URL で照合し直す）。 */
   kyprFill(id: string): Promise<KyprActionResult>
+  /** 表示中のワンタイムコードの今のコード（id ごと）。ポップアップが 1 秒ごとに聞く。 */
+  kyprTotpCodes(ids: string[]): Promise<Record<string, KyprTotpCode>>
+  /** ワンタイムコードを入れる先の欄に入れる。URL が合わない・欄が無いときはコピーする（`copied: true`）。 */
+  kyprFillTotp(id: string): Promise<KyprActionResult>
+  kyprCopyTotp(id: string): Promise<boolean>
+  /** 前面のタブに表示中の範囲から QR を読んで、登録の下書きを作る。 */
+  kyprTotpFromPageQr(): Promise<KyprTotpQrResult>
+  /** 新規のワンタイムコードの下書き（URL は前面のタブのオリジン）。 */
+  kyprTotpDraft(): Promise<KyprTotpDraft>
+  /** 貼り付けた otpauth URI を読む（読めなければ null）。 */
+  kyprParseOtpauth(text: string): Promise<KyprTotpDraft | null>
+  kyprTotpCheck(input: {
+    id: string | null
+    secret: string
+    algorithm: string
+    digits: number
+    period: number
+  }): Promise<KyprTotpCheck>
   kyprDraft(): Promise<KyprDraft>
   kyprSave(input: KyprItemInput): Promise<KyprActionResult>
   kyprTrash(id: string): Promise<KyprActionResult>

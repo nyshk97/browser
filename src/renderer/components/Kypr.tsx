@@ -6,6 +6,10 @@ import type {
   KyprPanelData,
   KyprStatus,
   KyprSummary,
+  KyprTotpCheck,
+  KyprTotpCode,
+  KyprTotpDraft,
+  KyprTotpQrResult,
   KyprUnlockFailure
 } from '../../shared/types.js'
 import {
@@ -31,6 +35,7 @@ const KIND_LABEL: Record<string, string> = {
   card: 'クレジットカード',
   note: 'セキュアメモ',
   identity: '個人情報',
+  totp: 'ワンタイムコード',
   unknown: '知らない種類',
   error: '開けない'
 }
@@ -179,7 +184,21 @@ const PATHS = {
   fingerprint: (
     <path d="M12 11v3a8 8 0 0 1-1 4M8.5 5.5A6 6 0 0 1 18 10v2M6 9a6 6 0 0 0-.5 2.5V14a11 11 0 0 1-1 4M15 12v2a12 12 0 0 1-1.5 6M9 14a14 14 0 0 1-1 4" />
   ),
-  check: <path d="m5 12 5 5 9-10" />
+  check: <path d="m5 12 5 5 9-10" />,
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </>
+  ),
+  qr: (
+    <>
+      <rect x="4" y="4" width="6" height="6" rx="1" />
+      <rect x="14" y="4" width="6" height="6" rx="1" />
+      <rect x="4" y="14" width="6" height="6" rx="1" />
+      <path d="M14 14h2v2h-2zM18 18h2v2h-2zM14 18h2M18 14h2" />
+    </>
+  )
 } as const
 
 export type KyprIconName = keyof typeof PATHS
@@ -241,10 +260,10 @@ function Avatar({
   size?: 'sm' | 'md' | 'lg'
 }): React.JSX.Element {
   const iconSize = size === 'lg' ? 22 : size === 'sm' ? 12 : 16
-  if (kind === 'card' || kind === 'note' || kind === 'identity') {
+  if (kind === 'card' || kind === 'note' || kind === 'identity' || kind === 'totp') {
     return (
       <span className={`kypr-av ${size} ${kind}`} aria-hidden="true">
-        <KyprIcon name={kind} size={iconSize} />
+        <KyprIcon name={kind === 'totp' ? 'clock' : kind} size={iconSize} />
       </span>
     )
   }
@@ -396,10 +415,89 @@ export function KyprUnlock({
  * 詳細の Esc は一覧へ戻るだけ
  * ------------------------------------------------------------------ */
 
-type EditType = 'login' | 'card' | 'note' | 'identity'
+type EditType = 'login' | 'card' | 'note' | 'identity' | 'totp'
 
 type View =
-  { name: 'list' } | { name: 'detail'; id: string } | { name: 'edit'; id: string | null; type: EditType }
+  | { name: 'list' }
+  | { name: 'detail'; id: string }
+  | { name: 'edit'; id: string | null; type: EditType; draft?: KyprTotpDraft }
+
+/* ---------------- ワンタイムコード ---------------- */
+
+/** 6 桁は 3 + 3、8 桁は 4 + 4 で区切る（kypr の `formatTotpCode` と同じ。renderer は kypr のコードを読まない）。 */
+function formatTotp(code: string): string {
+  if (code.length === 6) return `${code.slice(0, 3)} ${code.slice(3)}`
+  if (code.length === 8) return `${code.slice(0, 4)} ${code.slice(4)}`
+  return code
+}
+
+/** 表示中のワンタイムコードのコードを 1 秒ごとに main に聞く（秘密鍵は main から出さない）。 */
+function useTotpCodes(ids: string[]): Record<string, KyprTotpCode> {
+  const key = ids.join(',')
+  const [codes, setCodes] = useState<Record<string, KyprTotpCode>>({})
+  useEffect(() => {
+    if (key === '') return
+    const list = key.split(',')
+    let alive = true
+    const tick = (): void => {
+      void window.nemo.kyprTotpCodes(list).then((next) => {
+        if (alive) setCodes(next)
+      })
+    }
+    tick()
+    const timer = setInterval(tick, 1000)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [key])
+  return codes
+}
+
+/** 残り時間の円（残り 5 秒からは赤）。 */
+function TotpRing({
+  remaining,
+  period,
+  size = 16
+}: {
+  remaining: number
+  period: number
+  size?: number
+}): React.JSX.Element {
+  return (
+    <svg
+      className={`kypr-ring${remaining <= 5 ? ' ending' : ''}`}
+      width={size}
+      height={size}
+      viewBox="0 0 20 20"
+      aria-hidden="true"
+    >
+      <circle className="kypr-ring-bg" cx="10" cy="10" r="7" />
+      <circle
+        className="kypr-ring-fg"
+        cx="10"
+        cy="10"
+        r="7"
+        strokeDasharray="44"
+        strokeDashoffset={44 * (1 - remaining / Math.max(period, 1))}
+      />
+    </svg>
+  )
+}
+
+function qrFailureText(result: KyprTotpQrResult): string | null {
+  if (result.ok) return null
+  switch (result.reason) {
+    case 'not-found':
+      return 'このページの表示中の範囲に QR コードが見つかりません（QR コードが画面に出るまでスクロールしてください）。'
+    case 'not-otpauth':
+      return 'この QR コードはワンタイムコード（otpauth://totp/）ではありません。'
+    case 'no-page':
+      return 'このページでは QR コードを読めません。'
+    default:
+      return 'QR コードを読めませんでした。'
+  }
+}
 
 type Filter = 'all' | 'login' | 'card' | 'note' | 'identity' | 'trash'
 
@@ -421,6 +519,7 @@ const COPY_LABEL: Record<string, string> = {
   expiry: '有効期限',
   cardholderName: '名義',
   notes: '本文',
+  secret: '秘密鍵',
   // 個人情報（キーは kypr の平文の名前）
   ...Object.fromEntries(
     PROFILE_FIELDS.map((f) => [
@@ -456,6 +555,37 @@ export function KyprPanel({ onClose }: { onClose: () => void }): React.JSX.Eleme
     })
   }, [])
 
+  const showToast = useCallback((text: string) => {
+    setToast((prev) => ({ text, n: (prev?.n ?? 0) + 1 }))
+  }, [])
+  const copyTotp = useCallback(
+    (id: string) => {
+      void window.nemo.kyprCopyTotp(id).then((ok) => {
+        if (ok) showToast('コードをコピーしました（30 秒で消えます）')
+      })
+    },
+    [showToast]
+  )
+  // 入れられない（URL が合わない・欄が無い）ときは main がコピーに回す
+  const fillTotp = useCallback(
+    (id: string) => {
+      setMessage(null)
+      void window.nemo.kyprFillTotp(id).then((result) => {
+        if (result.ok && result.copied)
+          showToast('このページには入れられないので、コードをコピーしました（30 秒で消えます）')
+        else setMessage(actionFailureText(result))
+      })
+    },
+    [showToast]
+  )
+  const readQr = useCallback(() => {
+    setMessage(null)
+    void window.nemo.kyprTotpFromPageQr().then((result) => {
+      if (result.ok) setView({ name: 'edit', id: null, type: 'totp', draft: result.draft })
+      else setMessage(qrFailureText(result))
+    })
+  }, [])
+
   const status = data?.status
   return (
     <div className="panel kypr-panel">
@@ -487,6 +617,9 @@ export function KyprPanel({ onClose }: { onClose: () => void }): React.JSX.Eleme
             setView({ name: 'edit', id: null, type })
           }}
           onCopy={copy}
+          onFillTotp={fillTotp}
+          onCopyTotp={copyTotp}
+          onReadQr={readQr}
           onLock={() => void window.nemo.kyprLock().then(reload)}
         />
       ) : view.name === 'detail' ? (
@@ -496,11 +629,23 @@ export function KyprPanel({ onClose }: { onClose: () => void }): React.JSX.Eleme
           autofillIdentityId={data.autofillIdentityId}
           onAutofillChanged={reload}
           onCopy={copy}
+          onFillTotp={fillTotp}
+          onCopyTotp={copyTotp}
           onBack={() => {
             setView({ name: 'list' })
             reload()
           }}
           onEdit={(type) => setView({ name: 'edit', id: view.id, type })}
+        />
+      ) : view.type === 'totp' ? (
+        <KyprTotpEditor
+          id={view.id}
+          draft={view.draft}
+          onCancel={() => setView(view.id ? { name: 'detail', id: view.id } : { name: 'list' })}
+          onSaved={(id) => {
+            reload()
+            setView({ name: 'detail', id })
+          }}
         />
       ) : (
         <KyprEditor
@@ -590,6 +735,70 @@ function KyprRow({
   )
 }
 
+/** ワンタイムコードの行。コードを押すとこのページに入れる（入れられなければコピー）。 */
+function KyprTotpRow({
+  item,
+  code,
+  selected,
+  onOpen,
+  onFill,
+  onCopy
+}: {
+  item: KyprSummary
+  code: KyprTotpCode | undefined
+  selected: boolean
+  onOpen: (id: string) => void
+  onFill: (id: string) => void
+  onCopy: (id: string) => void
+}): React.JSX.Element {
+  return (
+    <div
+      className={`kypr-row kypr-totp-row${selected ? ' sel' : ''}`}
+      data-kypr-id={item.id}
+      title="開く"
+      onClick={() => onOpen(item.id)}
+    >
+      <Avatar kind="totp" name={item.name} host={item.host} />
+      <span className="kypr-row-text">
+        <span className="kypr-row-name">{item.name || '（名前なし）'}</span>
+        <span className="kypr-row-sub">{item.host ?? KIND_LABEL.totp}</span>
+      </span>
+      <span className="kypr-row-acts">
+        <button
+          type="button"
+          className="icon"
+          title="コードをコピー（30 秒で消えます）"
+          onClick={(event) => {
+            event.stopPropagation()
+            onCopy(item.id)
+          }}
+        >
+          <KyprIcon name="copy" />
+        </button>
+      </span>
+      {code && 'code' in code ? (
+        <button
+          type="button"
+          className="kypr-totp-code"
+          data-kypr-totp-code={code.code}
+          title="このページに入力（入れられなければコピー）"
+          onClick={(event) => {
+            event.stopPropagation()
+            onFill(item.id)
+          }}
+        >
+          <span className="mono">{formatTotp(code.code)}</span>
+          <TotpRing remaining={code.remaining} period={code.period} />
+        </button>
+      ) : code ? (
+        <span className="kypr-totp-code problem" title={code.text}>
+          —
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
 /** ポップアップの中だけで開く小さいメニュー（ネイティブの `<select>` は使わない。開くと View のフォーカスが外れうる）。 */
 function KyprMenu({
   open,
@@ -624,6 +833,9 @@ function KyprList({
   onFill,
   onNew,
   onCopy,
+  onFillTotp,
+  onCopyTotp,
+  onReadQr,
   onLock
 }: {
   data: KyprPanelData
@@ -632,9 +844,14 @@ function KyprList({
   onFill: (id: string) => void
   onNew: (type: EditType) => void
   onCopy: (id: string, field: string) => void
+  onFillTotp: (id: string) => void
+  onCopyTotp: (id: string) => void
+  onReadQr: () => void
   onLock: () => void
 }): React.JSX.Element {
   const [query, setQuery] = useState('')
+  // 「保管庫」（ワンタイムコード以外）と「コード」（ワンタイムコード）を切り替える（kypr の iOS のタブと同じ分け方）
+  const [mode, setMode] = useState<'vault' | 'codes'>('vault')
   const [filter, setFilter] = useState<Filter>('all')
   const [menu, setMenu] = useState<'filter' | 'new' | null>(null)
   const [sel, setSel] = useState(0)
@@ -646,18 +863,31 @@ function KyprList({
   const items = useMemo(() => {
     const q = query.trim().toLowerCase()
     return data.items.filter((item) => {
-      if (filter === 'trash' ? !item.deleted : item.deleted) return false
-      if (filter !== 'all' && filter !== 'trash' && item.kind !== filter) return false
+      if (mode === 'codes') {
+        if (item.kind !== 'totp' || item.deleted) return false
+      } else {
+        if (filter === 'trash' ? !item.deleted : item.deleted) return false
+        // ワンタイムコードは「コード」に出す（ゴミ箱だけは戻せるようにここにも出す）
+        if (item.kind === 'totp' && filter !== 'trash') return false
+        if (filter !== 'all' && filter !== 'trash' && item.kind !== filter) return false
+      }
       if (!q) return true
+      // ワンタイムコードの名前は「発行元: ラベル」、host は URL のホスト（検索の対象は発行元・ラベル・URL）
       return [item.name, item.subtitle, item.host ?? ''].some((text) => text.toLowerCase().includes(q))
     })
-  }, [data.items, query, filter])
+  }, [data.items, query, filter, mode])
 
   // 検索中は「このページ」のカードを畳む（検索の結果だけを見せる）
   const showPage = data.page !== null && query.trim() === ''
   const matches = showPage ? data.matches : []
+  const totpMatches = showPage ? data.totpMatches : []
   const shown = items.slice(0, 200)
-  const rowCount = matches.length + shown.length
+  const heroCount = matches.length + totpMatches.length
+  const rowCount = heroCount + shown.length
+  const codes = useTotpCodes([
+    ...totpMatches.map((item) => item.id),
+    ...(mode === 'codes' ? shown.map((item) => item.id) : [])
+  ])
   const selected = Math.min(sel, Math.max(rowCount - 1, 0))
 
   useEffect(() => {
@@ -672,9 +902,11 @@ function KyprList({
     } else if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
       event.preventDefault()
       if (selected < matches.length) onFill(matches[selected].id)
+      else if (selected < heroCount) onFillTotp(totpMatches[selected - matches.length].id)
       else {
-        const item = shown[selected - matches.length]
-        if (item) onOpen(item.id)
+        const item = shown[selected - heroCount]
+        if (item?.kind === 'totp' && !item.deleted) onFillTotp(item.id)
+        else if (item) onOpen(item.id)
       }
     }
   }
@@ -690,11 +922,11 @@ function KyprList({
               <span className="kypr-row-text">
                 <span className="kypr-hero-host">{data.page.host}</span>
                 <span className="kypr-row-sub">
-                  {matches.length > 0 ? `一致 ${matches.length} 件 · ↵ で 1 件目を入力` : '一致 0 件'}
+                  {heroCount > 0 ? `一致 ${heroCount} 件 · ↵ で 1 件目を入力` : '一致 0 件'}
                 </span>
               </span>
             </div>
-            {matches.length === 0 ? (
+            {heroCount === 0 ? (
               <div className="kypr-hero-none">
                 <span>このサイトのログインはまだありません。</span>
                 {readOnly ? null : (
@@ -705,27 +937,64 @@ function KyprList({
                 )}
               </div>
             ) : (
-              matches.map((item, i) => (
-                <KyprRow
-                  key={item.id}
-                  item={item}
-                  selected={selected === i}
-                  onOpen={onOpen}
-                  onFill={onFill}
-                  onCopy={onCopy}
-                />
-              ))
+              <>
+                {matches.map((item, i) => (
+                  <KyprRow
+                    key={item.id}
+                    item={item}
+                    selected={selected === i}
+                    onOpen={onOpen}
+                    onFill={onFill}
+                    onCopy={onCopy}
+                  />
+                ))}
+                {totpMatches.map((item, i) => (
+                  <KyprTotpRow
+                    key={item.id}
+                    item={item}
+                    code={codes[item.id]}
+                    selected={selected === matches.length + i}
+                    onOpen={onOpen}
+                    onFill={onFillTotp}
+                    onCopy={onCopyTotp}
+                  />
+                ))}
+              </>
             )}
           </section>
         ) : null}
         {message ? <p className="kypr-error kypr-pad">{message}</p> : null}
+        <div className="kypr-seg kypr-mode" role="tablist" aria-label="表示">
+          {(
+            [
+              ['vault', '保管庫'],
+              ['codes', 'コード']
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={mode === id}
+              className={mode === id ? 'on' : ''}
+              data-kypr-mode={id}
+              onClick={() => {
+                setMode(id)
+                setSel(0)
+                inputRef.current?.focus()
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <div className="kypr-bar">
           <label className="kypr-search">
             <KyprIcon name="search" />
             <input
               ref={inputRef}
               value={query}
-              placeholder="すべてから検索"
+              placeholder={mode === 'codes' ? 'コードを検索（発行元・ラベル・URL）' : 'すべてから検索'}
               spellCheck={false}
               onChange={(event) => {
                 setQuery(event.target.value)
@@ -734,7 +1003,19 @@ function KyprList({
               onKeyDown={onKeyDown}
             />
           </label>
-          <div className="kypr-menu-anchor">
+          {mode === 'codes' ? (
+            <button
+              type="button"
+              className="icon"
+              id="kypr-read-qr"
+              disabled={readOnly}
+              title={readOnly ? '読み取り専用で開いています' : 'このページの QR コードを読んで登録'}
+              onClick={onReadQr}
+            >
+              <KyprIcon name="qr" />
+            </button>
+          ) : null}
+          <div className="kypr-menu-anchor" hidden={mode === 'codes'}>
             <button
               type="button"
               className="kypr-select"
@@ -776,7 +1057,7 @@ function KyprList({
               <KyprIcon name="plus" />
             </button>
             <KyprMenu open={menu === 'new'} onClose={closeMenu}>
-              {(['login', 'card', 'note', 'identity'] as const).map((type) => (
+              {(['login', 'card', 'note', 'identity', 'totp'] as const).map((type) => (
                 <button
                   key={type}
                   type="button"
@@ -794,19 +1075,31 @@ function KyprList({
           </div>
         </div>
         <div className="kypr-section-label">
-          {FILTER_LABEL[filter]}
+          {mode === 'codes' ? KIND_LABEL.totp : FILTER_LABEL[filter]}
           <span className="kypr-count">{items.length}</span>
         </div>
         {items.length === 0 ? <p className="kypr-note kypr-pad">見つかりません。</p> : null}
-        {shown.map((item, i) => (
-          <KyprRow
-            key={item.id}
-            item={item}
-            selected={selected === matches.length + i}
-            onOpen={onOpen}
-            onCopy={onCopy}
-          />
-        ))}
+        {shown.map((item, i) =>
+          item.kind === 'totp' && !item.deleted ? (
+            <KyprTotpRow
+              key={item.id}
+              item={item}
+              code={codes[item.id]}
+              selected={selected === heroCount + i}
+              onOpen={onOpen}
+              onFill={onFillTotp}
+              onCopy={onCopyTotp}
+            />
+          ) : (
+            <KyprRow
+              key={item.id}
+              item={item}
+              selected={selected === heroCount + i}
+              onOpen={onOpen}
+              onCopy={onCopy}
+            />
+          )
+        )}
       </div>
       <div className="kypr-foot">
         <span className="kypr-brand">
@@ -817,7 +1110,7 @@ function KyprList({
           <b>↑↓</b> 選択
         </span>
         <span>
-          <b>↵</b> {matches.length > 0 && selected < matches.length ? '入力' : '開く'}
+          <b>↵</b> {selected < heroCount || (mode === 'codes' && shown.length > 0) ? '入力' : '開く'}
         </span>
         {readOnly ? <span className="kypr-tag">読み取り専用</span> : null}
         <span className="spacer" />
@@ -843,8 +1136,56 @@ const FIELD_LABEL: Record<string, string> = {
   code: 'セキュリティコード',
   notes: 'メモ'
 }
-const SECRET_FIELDS = new Set(['password', 'number', 'code'])
-const COPYABLE_FIELDS = new Set(['username', 'password', 'number', 'code', 'expiry', 'cardholderName'])
+const SECRET_FIELDS = new Set(['password', 'number', 'code', 'secret'])
+const COPYABLE_FIELDS = new Set([
+  'username',
+  'password',
+  'number',
+  'code',
+  'expiry',
+  'cardholderName',
+  'secret'
+])
+
+/** 詳細で大きく出すワンタイムコード（押すとこのページに入れる）。 */
+function KyprTotpBig({
+  id,
+  onFill,
+  onCopy
+}: {
+  id: string
+  onFill: (id: string) => void
+  onCopy: (id: string) => void
+}): React.JSX.Element | null {
+  const code = useTotpCodes([id])[id]
+  if (!code) return null
+  if (!('code' in code))
+    return <p className="kypr-error">このコードは出せません（{code.text}）。編集で直せます。</p>
+  return (
+    <div className="kypr-totp-big" data-kypr-totp-code={code.code}>
+      <button
+        type="button"
+        className="kypr-totp-big-code mono"
+        title="このページに入力（入れられなければコピー）"
+        onClick={() => onFill(id)}
+      >
+        {formatTotp(code.code)}
+      </button>
+      <span className="kypr-totp-left">
+        <TotpRing remaining={code.remaining} period={code.period} size={18} />
+        {code.remaining} 秒
+      </span>
+      <button
+        type="button"
+        className="icon"
+        title="コードをコピー（30 秒で消えます）"
+        onClick={() => onCopy(id)}
+      >
+        <KyprIcon name="copy" />
+      </button>
+    </div>
+  )
+}
 
 function KyprDetail({
   id,
@@ -852,6 +1193,8 @@ function KyprDetail({
   autofillIdentityId,
   onAutofillChanged,
   onCopy,
+  onFillTotp,
+  onCopyTotp,
   onBack,
   onEdit
 }: {
@@ -861,6 +1204,8 @@ function KyprDetail({
   autofillIdentityId: string | null
   onAutofillChanged: () => void
   onCopy: (id: string, field: string) => void
+  onFillTotp: (id: string) => void
+  onCopyTotp: (id: string) => void
   onBack: () => void
   onEdit: (type: EditType) => void
 }): React.JSX.Element {
@@ -915,6 +1260,19 @@ function KyprDetail({
         secret: f.secret === true
       })
     }
+  } else if (detail.kind === 'totp') {
+    fields.push(
+      { key: 'name', value: str('name'), label: '発行元' },
+      { key: 'account', value: str('account'), label: 'ラベル' },
+      { key: 'secret', value: str('secret'), label: '秘密鍵' }
+    )
+    // 既定（SHA1・6 桁・30 秒）と違うときだけ出す
+    const algorithm = str('algorithm')
+    if (algorithm !== 'SHA1') fields.push({ key: 'algorithm', value: algorithm, label: 'アルゴリズム' })
+    if (item['digits'] !== 6)
+      fields.push({ key: 'digits', value: `${String(item['digits'])} 桁`, label: '桁数' })
+    if (item['period'] !== 30)
+      fields.push({ key: 'period', value: `${String(item['period'])} 秒`, label: '周期' })
   } else if (detail.kind === 'login') {
     fields.push({ key: 'username', value: str('username') }, { key: 'password', value: str('password') })
   } else if (detail.kind === 'card') {
@@ -932,7 +1290,9 @@ function KyprDetail({
     )
   }
   const uris = (
-    detail.kind === 'login' && Array.isArray(item['uris']) ? (item['uris'] as { uri?: unknown }[]) : []
+    (detail.kind === 'login' || detail.kind === 'totp') && Array.isArray(item['uris'])
+      ? (item['uris'] as { uri?: unknown }[])
+      : []
   )
     .map((u) => (typeof u.uri === 'string' ? u.uri : ''))
     .filter(Boolean)
@@ -976,7 +1336,11 @@ function KyprDetail({
       <div className="kypr-detail-hero">
         <Avatar kind={detail.kind} name={str('name')} host={host} size="lg" />
         <span className="kypr-row-text">
-          <span className="kypr-detail-name">{str('name') || '（名前なし）'}</span>
+          <span className="kypr-detail-name">
+            {(detail.kind === 'totp'
+              ? [str('name'), str('account')].filter(Boolean).join(': ')
+              : str('name')) || '（名前なし）'}
+          </span>
           <span className="kypr-row-sub">
             {host ?? KIND_LABEL[detail.kind]}
             {detail.deleted ? <span className="kypr-tag warn">ゴミ箱</span> : null}
@@ -987,6 +1351,9 @@ function KyprDetail({
       {detail.error ? <p className="kypr-error">このアイテムは開けません（{detail.error}）。</p> : null}
       {detail.kind === 'unknown' ? (
         <p className="kypr-note">この版の Nemo が知らない種類です（読み取り専用）。</p>
+      ) : null}
+      {detail.kind === 'totp' && !detail.deleted ? (
+        <KyprTotpBig id={detail.id} onFill={onFillTotp} onCopy={onCopyTotp} />
       ) : null}
       {visibleFields.length > 0 || uris.length > 0 || str('notes') ? (
         <div className="kypr-fields">
@@ -1089,6 +1456,11 @@ function KyprDetail({
             このページに入力
           </button>
         ) : null}
+        {detail.kind === 'totp' && !detail.deleted ? (
+          <button type="button" className="kypr-primary" onClick={() => onFillTotp(detail.id)}>
+            このページに入力
+          </button>
+        ) : null}
         {detail.kind === 'identity' && !detail.deleted && !isAutofill ? (
           <button
             type="button"
@@ -1179,7 +1551,321 @@ const EDIT_FIELDS: Record<
       kind: f.type
     })),
     { key: 'notes', label: 'メモ', multiline: true }
-  ]
+  ],
+  // ワンタイムコードは KyprTotpEditor（項目の並びが違う）
+  totp: []
+}
+
+interface TotpValues {
+  secret: string
+  name: string
+  account: string
+  uri: string
+  algorithm: string
+  digits: string
+  period: string
+  notes: string
+}
+
+const totpValuesOf = (d: KyprTotpDraft, notes = ''): TotpValues => ({
+  secret: d.secret,
+  name: d.name,
+  account: d.account,
+  uri: d.uri,
+  algorithm: d.algorithm,
+  digits: String(d.digits),
+  period: String(d.period),
+  notes
+})
+
+/** 数字だけの文字列を整数に（それ以外は NaN。main がコードを出せない値として断る）。 */
+const toInt = (s: string): number => (/^[0-9]+$/.test(s.trim()) ? Number(s.trim()) : NaN)
+
+/**
+ * ワンタイムコードの作成・編集。秘密鍵か otpauth URI を貼る・このページの QR を読む・手で入れる。
+ * 入力のたびに main で検査し（コードを出せるか・同じ秘密鍵のものがあるか）、今のコードを出す
+ */
+function KyprTotpEditor({
+  id,
+  draft,
+  onCancel,
+  onSaved
+}: {
+  id: string | null
+  draft?: KyprTotpDraft
+  onCancel: () => void
+  onSaved: (id: string) => void
+}): React.JSX.Element {
+  const [values, setValues] = useState<TotpValues | null>(() => (draft ? totpValuesOf(draft) : null))
+  const [otherUris, setOtherUris] = useState<unknown[]>([])
+  const [firstUri, setFirstUri] = useState<Record<string, unknown>>({ match: null })
+  // 新規は打ちながら確かめるので見せる。既存は伏せる
+  const [shown, setShown] = useState(id === null)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const [check, setCheck] = useState<KyprTotpCheck | null>(null)
+  const [reloadTick, setReloadTick] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    if (id) {
+      void window.nemo.kyprItemForEdit(id).then((detail) => {
+        if (cancelled || !detail?.item) return
+        const item = detail.item
+        const s = (key: string): string => (typeof item[key] === 'string' ? item[key] : '')
+        const uris = Array.isArray(item['uris']) ? (item['uris'] as Record<string, unknown>[]) : []
+        const first = uris[0]
+        setFirstUri(first ? { ...first } : { match: null })
+        setOtherUris(uris.slice(1))
+        setValues({
+          secret: s('secret'),
+          name: s('name'),
+          account: s('account'),
+          uri: typeof first?.['uri'] === 'string' ? first['uri'] : '',
+          algorithm: s('algorithm'),
+          digits: String(item['digits']),
+          period: String(item['period']),
+          notes: s('notes')
+        })
+      })
+    } else if (!draft) {
+      void window.nemo.kyprTotpDraft().then((d) => {
+        if (!cancelled) setValues(totpValuesOf(d))
+      })
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [id, draft, reloadTick])
+
+  // 入力のたびに（と 1 秒ごとに）main で検査する。今のコードもここで出す
+  const checkKey = values
+    ? JSON.stringify([values.secret, values.algorithm, values.digits, values.period])
+    : ''
+  useEffect(() => {
+    if (checkKey === '') return
+    const [secret, algorithm, digits, period] = JSON.parse(checkKey) as string[]
+    let alive = true
+    const tick = (): void => {
+      void window.nemo
+        .kyprTotpCheck({ id, secret, algorithm, digits: toInt(digits), period: toInt(period) })
+        .then((next) => {
+          if (alive) setCheck(next)
+        })
+    }
+    tick()
+    const timer = setInterval(tick, 1000)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [checkKey, id])
+
+  if (!values) return <div className="empty">読み込み中…</div>
+
+  const set = (key: keyof TotpValues, value: string): void =>
+    setValues((prev) => (prev ? { ...prev, [key]: value } : prev))
+  // otpauth URI を貼ったら、発行元・ラベル・詳細設定まで埋める（URL はそのまま）
+  const onSecret = (text: string): void => {
+    set('secret', text)
+    if (!text.trim().toLowerCase().startsWith('otpauth')) return
+    void window.nemo.kyprParseOtpauth(text).then((d) => {
+      if (d) setValues((prev) => (prev ? { ...totpValuesOf(d, prev.notes), uri: prev.uri } : prev))
+    })
+  }
+  const readQr = (): void => {
+    setMessage(null)
+    void window.nemo.kyprTotpFromPageQr().then((result) => {
+      if (result.ok)
+        setValues((prev) =>
+          prev ? { ...totpValuesOf(result.draft, prev.notes), uri: prev.uri || result.draft.uri } : prev
+        )
+      else setMessage(qrFailureText(result))
+    })
+  }
+  const looksUri = values.secret.trim().toLowerCase().startsWith('otpauth')
+  const save = (): void => {
+    if (busy) return
+    if (!values.name.trim() && !values.account.trim()) {
+      setMessage('発行元かラベルを入れてください。')
+      return
+    }
+    if (looksUri) {
+      setMessage('otpauth URI として読めません。')
+      return
+    }
+    if (check?.problem) {
+      setMessage(check.problem)
+      return
+    }
+    setBusy(true)
+    setMessage(null)
+    const first = values.uri.trim() ? [{ ...firstUri, uri: values.uri.trim() }] : []
+    const fields = {
+      name: values.name,
+      account: values.account,
+      secret: values.secret,
+      algorithm: values.algorithm,
+      digits: toInt(values.digits),
+      period: toInt(values.period),
+      notes: values.notes,
+      uris: [...first, ...otherUris]
+    }
+    void window.nemo
+      .kyprSave({ id, type: 'totp', fields })
+      .then((result) => {
+        if (result.ok && result.id) onSaved(result.id)
+        else {
+          setMessage(actionFailureText(result))
+          if (!result.ok && result.reason === 'conflict') setReloadTick((n) => n + 1)
+        }
+      })
+      .finally(() => setBusy(false))
+  }
+  const algorithms = ['SHA1', 'SHA256', 'SHA512']
+  if (!algorithms.includes(values.algorithm)) algorithms.push(values.algorithm)
+
+  return (
+    <form
+      className="kypr-body kypr-editor"
+      onSubmit={(event) => {
+        event.preventDefault()
+        save()
+      }}
+    >
+      <div className="kypr-detail-head">
+        <button type="button" className="icon" title="やめる" onClick={onCancel}>
+          <KyprIcon name="back" />
+        </button>
+        <span className="kypr-editor-title">{id ? '編集' : '新規（ワンタイムコード）'}</span>
+        <span className="spacer" />
+        <button type="button" className="kypr-btn" id="kypr-editor-read-qr" onClick={readQr}>
+          <KyprIcon name="qr" size={14} />
+          このページの QR を読む
+        </button>
+      </div>
+      <label className="kypr-edit-field">
+        <span className="kypr-field-label">秘密鍵か otpauth URI</span>
+        <span className="kypr-edit-input">
+          <input
+            name="kypr-secret"
+            type={shown || looksUri ? 'text' : 'password'}
+            value={values.secret}
+            placeholder="JBSW Y3DP EHPK 3PXP または otpauth://totp/…"
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(event) => onSecret(event.target.value)}
+          />
+          <button
+            type="button"
+            className="icon"
+            title={shown ? '隠す' : '表示'}
+            onClick={() => setShown((v) => !v)}
+          >
+            <KyprIcon name={shown ? 'eyeOff' : 'eye'} />
+          </button>
+        </span>
+      </label>
+      {values.secret.trim() === '' ? null : looksUri ? (
+        <p className="kypr-error">
+          otpauth URI として読めません（TOTP
+          で、秘密鍵・アルゴリズム・桁数・周期が正しいか確かめてください）。
+        </p>
+      ) : check?.problem ? (
+        <p className="kypr-error">{check.problem}</p>
+      ) : check?.code ? (
+        <div className="kypr-totp-big" data-kypr-totp-code={check.code}>
+          <span className="kypr-field-label">今のコード</span>
+          <span className="kypr-totp-big-code mono">{formatTotp(check.code)}</span>
+          <span className="kypr-totp-left">
+            <TotpRing remaining={check.remaining} period={check.period} size={18} />
+            {check.remaining} 秒
+          </span>
+        </div>
+      ) : null}
+      {check?.duplicateOf ? (
+        <p className="kypr-note" id="kypr-totp-duplicate">
+          同じ秘密鍵のワンタイムコードがすでにあります（{check.duplicateOf}）。
+        </p>
+      ) : null}
+      {(
+        [
+          ['name', '発行元', '例: GitHub'],
+          ['account', 'ラベル', '例: 個人'],
+          ['uri', 'URL（任意。このページの候補になる）', 'https://']
+        ] as const
+      ).map(([key, label, hint]) => (
+        <label key={key} className="kypr-edit-field">
+          <span className="kypr-field-label">{label}</span>
+          <span className="kypr-edit-input">
+            <input
+              name={`kypr-${key}`}
+              value={values[key]}
+              placeholder={hint}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => set(key, event.target.value)}
+            />
+          </span>
+        </label>
+      ))}
+      <span className="kypr-edit-group">詳細設定（ふつうは変えない）</span>
+      <div className="kypr-edit-field">
+        <span className="kypr-field-label">アルゴリズム</span>
+        <span className="kypr-seg" role="radiogroup" aria-label="アルゴリズム">
+          {algorithms.map((a) => (
+            <button
+              key={a}
+              type="button"
+              role="radio"
+              aria-checked={values.algorithm === a}
+              className={values.algorithm === a ? 'on' : ''}
+              onClick={() => set('algorithm', a)}
+            >
+              {a}
+            </button>
+          ))}
+        </span>
+      </div>
+      {(
+        [
+          ['digits', '桁数'],
+          ['period', '周期（秒）']
+        ] as const
+      ).map(([key, label]) => (
+        <label key={key} className="kypr-edit-field">
+          <span className="kypr-field-label">{label}</span>
+          <span className="kypr-edit-input">
+            <input
+              name={`kypr-${key}`}
+              value={values[key]}
+              inputMode="numeric"
+              autoComplete="off"
+              onChange={(event) => set(key, event.target.value)}
+            />
+          </span>
+        </label>
+      ))}
+      <label className="kypr-edit-field">
+        <span className="kypr-field-label">メモ</span>
+        <textarea
+          value={values.notes}
+          rows={3}
+          spellCheck={false}
+          onChange={(event) => set('notes', event.target.value)}
+        />
+      </label>
+      {message ? <p className="kypr-error">{message}</p> : null}
+      <div className="kypr-actions">
+        <button type="submit" className="kypr-primary" disabled={busy}>
+          {busy ? '保存中…' : '保存'}
+        </button>
+        <button type="button" className="kypr-btn" onClick={onCancel}>
+          やめる
+        </button>
+      </div>
+    </form>
+  )
 }
 
 function KyprEditor({

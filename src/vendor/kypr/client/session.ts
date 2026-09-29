@@ -17,6 +17,7 @@ import {
   type LoginItem,
   newKdfParams,
   type NoteItem,
+  type TotpItem,
   parseKdfParams,
   unwrapVaultKey,
   type VaultItem,
@@ -41,6 +42,7 @@ export type EntryState =
   | { kind: "note"; item: NoteItem }
   | { kind: "card"; item: CardItem }
   | { kind: "identity"; item: IdentityItem }
+  | { kind: "totp"; item: TotpItem }
   | { kind: "unknown"; raw: Record<string, unknown> & { id: string } }
   | { kind: "error"; code: KyprErrorCode };
 

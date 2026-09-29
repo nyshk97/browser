@@ -40,6 +40,8 @@
   --kypr-note-hi: #f5c542;
   --kypr-identity: #5e5ce6;
   --kypr-identity-hi: #8583ff;
+  --kypr-totp: #34c759;
+  --kypr-totp-hi: #5fdc7f;
 
   --nemo-row-h: 40px;
   --nemo-radius: 7px;
@@ -3644,6 +3646,10 @@ body[data-view='call'] {
   background: linear-gradient(160deg, var(--kypr-identity-hi), var(--kypr-identity));
 }
 
+.kypr-av.totp {
+  background: linear-gradient(160deg, var(--kypr-totp-hi), var(--kypr-totp));
+}
+
 .kypr-av.broken {
   background: var(--nemo-surface-hi);
   color: var(--nemo-danger);
@@ -4323,4 +4329,81 @@ body[data-view='call'] {
 
 .kypr-inline-row:hover {
   background: var(--nemo-hover);
+}
+
+/* ワンタイムコード */
+.kypr-mode {
+  margin: 8px 4px 0;
+}
+
+.kypr-totp-code {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 7px;
+  color: var(--nemo-ink);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+.kypr-totp-code:hover {
+  background: var(--kypr-button-hi);
+}
+
+.kypr-totp-code.problem {
+  color: var(--nemo-ink-dim);
+}
+
+.kypr-ring circle {
+  fill: none;
+  stroke-width: 2.6;
+}
+
+.kypr-ring-bg {
+  stroke: var(--kypr-field);
+}
+
+.kypr-ring-fg {
+  stroke: var(--kypr-accent);
+  transform: rotate(-90deg);
+  transform-origin: center;
+  transition: stroke-dashoffset 0.25s linear;
+}
+
+.kypr-ring.ending .kypr-ring-fg {
+  stroke: var(--nemo-danger);
+}
+
+.kypr-totp-big {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--kypr-field);
+}
+
+.kypr-totp-big-code {
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+  color: var(--nemo-ink);
+}
+
+button.kypr-totp-big-code:hover {
+  color: var(--kypr-accent);
+}
+
+.kypr-totp-left {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--nemo-ink-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }

@@ -1247,6 +1247,10 @@ mise run verify:only autofill   # kypr の個人情報・ルール・Jev（モ�
   正しい書類で入る（「番号 → 発行日 → 有効期限」の発行日を飛ばす・年の select が和暦「令和11」）。
   発行日・交付日・発行国・免許の色・同行者の旅券番号（本人でない）・会員番号（確からしさが身分証の足切りに届かない）・
   カード払いの「有効期限」（直前がカード番号）には入れない。ログの `autofill.run` に `documents`（入れた身分証の欄の数）
+- **英語のフォーム**（`test-pages/autofill-english.html`。`lang="en"`・見出しに日本語が無い）: 氏名はローマ字（Full name は「Taro Yamada」）、
+  住所は英語の住所（autocomplete=address-line1 のルールの欄も）、都道府県は対応表から（Tokyo）、国は Japan、性別は Male。日本語の値が 1 つも入らない。
+  日本語のフォームは英語と判定しない（`autofill.run` の `english`）。英語の住所が未登録なら住所の欄は空のまま（ユニットテスト）
+- 年齢の欄（日本語「年齢」・英語「Age」）に、生年月日から今日の日付で数えた満年齢が入る
 - 表の th「ご住所」の中に「郵便番号」「都道府県」… が段落で並ぶ形（`test-pages/autofill-efo.html`。実在の EFO サンプルと同じ組み方）で住所 6 欄が入る
 - 姓名が 2 枠に分かれ、Jev が 1 枠目の例に引っ張られて `family_name` と答える形（`test-pages/autofill-kayac.html`。モックが実 Jev の分布をまねる）で、姓・名・せい・めいが入る
 - iframe の中のフォーム（同じプロセス / localhost 経由の別プロセス）で入る。別プロセスはログの `autofill.frame_attached` が `crossProcess: true`

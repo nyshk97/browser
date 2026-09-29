@@ -68,6 +68,9 @@ const PROFILE = {
   address_level2: '千代田区',
   address_line1: '千代田1-1',
   address_line2: 'サンプルタワー 1701',
+  address_level2_en: 'Chiyoda-ku',
+  address_line1_en: '1-1 Chiyoda',
+  address_line2_en: 'Sample Tower 1701',
   birthday: '1988-07-14',
   gender: 'male',
   organization: '株式会社サンプル',
@@ -150,7 +153,16 @@ const ANSWERS = {
   保険者番号: 'insurer_number',
   同行者の旅券番号: 'passport_number', // 本人でない（NOT_OWN）
   会員番号: 'passport_number', // 確からしさが身分証の足切りに届かない（CONFIDENCE）
-  カード番号: 'none'
+  カード番号: 'none',
+  年齢: 'age',
+  // autofill-english.html（英語のフォーム）
+  'First name': 'given_name',
+  'Last name': 'family_name',
+  'Full name (as on passport)': 'full_name',
+  City: 'address_level2',
+  'State / Prefecture': 'address_level1',
+  Age: 'age',
+  Gender: 'gender'
 }
 /** 確信度を変える欄（無ければ 0.9）。 */
 const CONFIDENCE = { 会員番号: 0.6 }
@@ -201,7 +213,8 @@ const server = http.createServer((req, res) => {
       '/autofill-efo.html',
       '/autofill-kayac.html',
       '/autofill-patterns.html',
-      '/autofill-documents.html'
+      '/autofill-documents.html',
+      '/autofill-english.html'
     ].includes(pathname)
   ) {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
@@ -268,6 +281,16 @@ function makeDir(tag) {
 let kypr = null
 /** `autofillForVerify` を呼んだ回数（ログの `autofill.run` の件数と突き合わせる）。 */
 let runCount = 0
+/** 生年月日（PROFILE.birthday）から今日の日付で数えた満年齢（年齢の欄に入る値）。 */
+const expectedAge = (() => {
+  const [y, m, d] = PROFILE.birthday.split('-').map(Number)
+  const now = new Date()
+  return String(
+    now.getFullYear() -
+      y -
+      (now.getMonth() + 1 < m || (now.getMonth() + 1 === m && now.getDate() < d) ? 1 : 0)
+  )
+})()
 
 try {
   assertNemoNotRunning('verify-autofill')
@@ -435,6 +458,7 @@ try {
   const result = await run()
   const got = await values()
   check('自動入力が成功した', result?.ok === true, JSON.stringify(result))
+  check('日本語のフォームは英語のフォームと判定しない', result?.english === false, String(result?.english))
   check(
     'ロック中でも Touch ID で解除して入れた',
     (await json('window.nemo.kyprStatus()')).state === 'unlocked'
@@ -776,6 +800,7 @@ try {
     )
     const want = {
       name: '山田 太郎',
+      age: expectedAge, // 生年月日から今日の日付で数える
       pp_no: 'TK1234567',
       // 「有効期限」だけの欄は、発行日（決まらなかった日付の欄）を飛ばして旅券番号の書類に決まる
       pp_ey: '2031',
@@ -821,6 +846,61 @@ try {
       leakedDocs.length > 0 ? leakedDocs.join(', ') : `requests=${requests.length}`
     )
     docs.close()
+  }
+
+  /* ---- 6f2. 英語のフォーム（氏名はローマ字・住所は英語の住所・国は Japan・年齢） ---- */
+  {
+    const enKey = await ui.ev(
+      `window.nemo.createTab(${JSON.stringify(`${origin}/autofill-english.html`)}).then((k) => k)`
+    )
+    const en = await connectTo(cdp, '/autofill-english.html', { type: 'page' })
+    await waitFor(
+      en,
+      "document.readyState === 'complete' && document.querySelector('[name=first]') ? 'ok' : ''"
+    )
+    const at = JSON.parse(
+      await en.ev(
+        "(() => { const r = document.querySelector('[name=first]').getBoundingClientRect(); return JSON.stringify({ x: r.left + 5, y: r.top + 5 }) })()"
+      )
+    )
+    requests.length = 0
+    const enResult = await countedJson(
+      `window.nemo.autofillForVerify(${JSON.stringify(enKey)}, ${at.x}, ${at.y})`
+    )
+    const got = JSON.parse(
+      await en.ev(
+        "JSON.stringify(Object.fromEntries([...document.querySelectorAll('input, select')].map((el) => [el.name, el.value])))"
+      )
+    )
+    check(
+      '英語のフォームと判定した',
+      enResult?.english === true,
+      JSON.stringify({ english: enResult?.english })
+    )
+    const want = {
+      first: 'Taro',
+      last: 'Yamada',
+      full: 'Taro Yamada',
+      email: 'taro@example.com',
+      line1: '1-1 Chiyoda', // autocomplete=address-line1（ルール）でも英語の住所
+      line2: 'Sample Tower 1701',
+      city: 'Chiyoda-ku',
+      state: 'Tokyo', // 都道府県は対応表から
+      zip: '100-0001',
+      country: 'JP', // autocomplete=country。選択肢の表示名 Japan で選ぶ
+      age: expectedAge,
+      gender: 'Male'
+    }
+    for (const [name, value] of Object.entries(want)) {
+      check(
+        `英語のフォーム: ${name} に ${JSON.stringify(value)}`,
+        got[name] === value,
+        `got=${JSON.stringify(got[name])}`
+      )
+    }
+    const japanese = Object.entries(got).filter(([, value]) => /[\u3040-\u30ff\u3400-\u9fff]/.test(value))
+    check('英語のフォームに日本語の値が入っていない', japanese.length === 0, JSON.stringify(japanese))
+    en.close()
   }
 
   /* ---- 6g. 既定の個人情報を切り替える ---- */

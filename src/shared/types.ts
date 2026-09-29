@@ -338,6 +338,8 @@ export interface AutofillRunResult {
   filled: number
   /** 入れた欄のうち身分証の項目（パスポート・免許証・保険証）の数。 */
   documents?: number
+  /** 英語のフォームと判定した（氏名はローマ字・住所は英語の住所で入れた）。 */
+  english?: boolean
   jevMs: number | null
   /** Jev を使えなかった理由（`no-key` / `timeout` / `http-401` など）。 */
   jevError?: string

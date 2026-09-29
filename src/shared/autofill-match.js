@@ -93,6 +93,11 @@ export const JEV_OPTIONS = {
   department: ['Department or division within the company', '部署名, 所属'],
   job_title: ['Job title or position', '役職'],
   organization_url: ['Company website URL', '会社URL, ホームページ, WebサイトURL'],
+  age: ['Age in years (a number)', '年齢, 満年齢, 歳'],
+  country: [
+    "Country of the filler's address (not a nationality or issuing country of a document)",
+    '国, 国名, Country'
+  ],
   passport_number: ["The filler's passport number", '旅券番号, パスポート番号, Passport No.'],
   passport_expiry: [
     'Expiry date of the passport (not the issue date; the whole date, even if the form splits it into year / month / day)',
@@ -121,7 +126,7 @@ export const JEV_OPTIONS = {
     '有効期限, 有効期間'
   ],
   none: [
-    'None of the profile items fits: free text such as inquiry body, subject, age, number of employees, how you found us, coupon codes, passwords, membership / reservation / order / employee numbers, My Number (individual number), credit card number / expiry / security code, issue dates of documents, issuing country, license color, or anything else',
+    'None of the profile items fits: free text such as inquiry body, subject, number of employees, how you found us, coupon codes, passwords, membership / reservation / order / employee numbers, My Number (individual number), credit card number / expiry / security code, issue dates of documents, issuing country, license color, or anything else',
     null
   ]
 }
@@ -204,7 +209,9 @@ export const AUTOCOMPLETE = {
   'bday-year': 'birthday_year',
   'bday-month': 'birthday_month',
   'bday-day': 'birthday_day',
-  sex: 'gender'
+  sex: 'gender',
+  country: 'country',
+  'country-name': 'country'
 }
 
 /**
@@ -238,6 +245,7 @@ const PART_TO_WHOLE = {
  *
  * @typedef {object} Collected
  * @property {string} pageTitle
+ * @property {string} pageLang `<html lang>`（無ければ空）
  * @property {import('./autofill-values.js').CollectedElement[]} elements
  * @property {CollectedField[]} fields
  */
@@ -302,7 +310,34 @@ export function normalizeCollected(raw) {
       optionsSample: Array.isArray(item['optionsSample']) ? item['optionsSample'].slice(0, 6).map(text) : []
     })
   }
-  return { pageTitle: text(raw['pageTitle']), elements, fields }
+  return {
+    pageTitle: text(raw['pageTitle']),
+    pageLang: text(raw['pageLang']).toLowerCase(),
+    elements,
+    fields
+  }
+}
+
+/** ひらがな・カタカナ・漢字。 */
+const JAPANESE_RE = /[\u3040-\u30ff\u3400-\u9fff]/
+
+/**
+ * 英語のフォームか。**ページの `lang` が日本語でなく、フォームの見出しに日本語が 1 つも無い**とき。
+ * 英語のフォームでは氏名をローマ字、住所を英語の住所にする（`deriveValues` の `english`）。
+ * `lang` が無いページは見出しだけで決める（日本語のページの多くは `lang="ja"` を書くが、書かないものもある）。
+ *
+ * @param {Collected} collected
+ */
+export function isEnglishForm(collected) {
+  if (collected.pageLang.startsWith('ja')) return false
+  const texts = collected.fields.flatMap((field) => [
+    field.label,
+    field.nearby,
+    field.section,
+    field.placeholder
+  ])
+  if (texts.every((value) => value === '')) return false
+  return !texts.some((value) => JAPANESE_RE.test(value))
 }
 
 /**

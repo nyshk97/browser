@@ -5,6 +5,7 @@ import {
   buildFillPlan,
   buildJevRequests,
   isConfirmField,
+  isEnglishForm,
   isExcluded,
   refineOption,
   normalizeCollected,
@@ -251,7 +252,9 @@ async function collectAndFill(
       if (decision.option === 'address_line1_2') resolved.set(index, { ...decision, option: 'address_line1' })
     }
   }
-  const plan = buildFillPlan(collected, resolved, deriveValues(profile))
+  // 英語のフォームでは氏名をローマ字・住所を英語の住所にする（英語の住所が無ければ住所の欄は空のまま）
+  result.english = isEnglishForm(collected)
+  const plan = buildFillPlan(collected, resolved, deriveValues(profile, { english: result.english }))
   if (debug) {
     // 自走検証・実サイト調査の口にだけ返す（**診断ログには載せない**。見出しはページの中身なので）
     result.debug = collected.fields.map((field, index) => ({

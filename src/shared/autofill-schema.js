@@ -117,6 +117,31 @@ export const PROFILE_FIELDS = [
     group: '住所',
     type: 'text'
   },
+  // 英語のフォームで使う（`deriveValues` が英語のフォームのときだけ住所の値を差し替える）。都道府県と国は作る
+  {
+    key: 'address_level2_en',
+    kypr: 'addressLevel2En',
+    label: '市区町村',
+    hint: 'Chiyoda-ku',
+    group: '住所（英語）',
+    type: 'text'
+  },
+  {
+    key: 'address_line1_en',
+    kypr: 'addressLine1En',
+    label: '町名・番地',
+    hint: '1-1 Chiyoda',
+    group: '住所（英語）',
+    type: 'text'
+  },
+  {
+    key: 'address_line2_en',
+    kypr: 'addressLine2En',
+    label: '建物名・部屋番号',
+    hint: 'Sample Tower 1701',
+    group: '住所（英語）',
+    type: 'text'
+  },
   { key: 'birthday', kypr: 'birthday', label: '生年月日', hint: '2000-01-01', group: 'その他', type: 'date' },
   { key: 'gender', kypr: 'gender', label: '性別', hint: '', group: 'その他', type: 'gender' },
   {

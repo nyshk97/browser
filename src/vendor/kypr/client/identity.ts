@@ -28,6 +28,10 @@ export const IDENTITY_FIELDS: readonly IdentityField[] = [
   { key: "addressLevel2", label: "市区町村", group: "住所", hint: "千代田区", kind: "text" },
   { key: "addressLine1", label: "町名・番地", group: "住所", hint: "千代田1-1", kind: "text" },
   { key: "addressLine2", label: "建物名・部屋番号", group: "住所", hint: "〇〇タワー 1701", kind: "text" },
+  // 英語のフォーム（海外のサービスの請求先など）で使う。都道府県（Tokyo）と国（Japan）は使う側が作る
+  { key: "addressLevel2En", label: "市区町村", group: "住所（英語）", hint: "Chiyoda-ku", kind: "text" },
+  { key: "addressLine1En", label: "町名・番地", group: "住所（英語）", hint: "1-1 Chiyoda", kind: "text" },
+  { key: "addressLine2En", label: "建物名・部屋番号", group: "住所（英語）", hint: "Sample Tower 1701", kind: "text" },
   { key: "birthday", label: "生年月日", group: "その他", hint: "2000-01-01", kind: "date" },
   { key: "gender", label: "性別", group: "その他", hint: "", kind: "gender" },
   { key: "organization", label: "会社名", group: "勤務先", hint: "株式会社〇〇", kind: "text" },

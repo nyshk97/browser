@@ -65,11 +65,90 @@ export function toWareki(date) {
   return null
 }
 
+/** 都道府県 → 英語の表記（英語のフォームの State / Prefecture）。 */
+const PREFECTURES_EN = {
+  北海道: 'Hokkaido',
+  青森県: 'Aomori',
+  岩手県: 'Iwate',
+  宮城県: 'Miyagi',
+  秋田県: 'Akita',
+  山形県: 'Yamagata',
+  福島県: 'Fukushima',
+  茨城県: 'Ibaraki',
+  栃木県: 'Tochigi',
+  群馬県: 'Gunma',
+  埼玉県: 'Saitama',
+  千葉県: 'Chiba',
+  東京都: 'Tokyo',
+  神奈川県: 'Kanagawa',
+  新潟県: 'Niigata',
+  富山県: 'Toyama',
+  石川県: 'Ishikawa',
+  福井県: 'Fukui',
+  山梨県: 'Yamanashi',
+  長野県: 'Nagano',
+  岐阜県: 'Gifu',
+  静岡県: 'Shizuoka',
+  愛知県: 'Aichi',
+  三重県: 'Mie',
+  滋賀県: 'Shiga',
+  京都府: 'Kyoto',
+  大阪府: 'Osaka',
+  兵庫県: 'Hyogo',
+  奈良県: 'Nara',
+  和歌山県: 'Wakayama',
+  鳥取県: 'Tottori',
+  島根県: 'Shimane',
+  岡山県: 'Okayama',
+  広島県: 'Hiroshima',
+  山口県: 'Yamaguchi',
+  徳島県: 'Tokushima',
+  香川県: 'Kagawa',
+  愛媛県: 'Ehime',
+  高知県: 'Kochi',
+  福岡県: 'Fukuoka',
+  佐賀県: 'Saga',
+  長崎県: 'Nagasaki',
+  熊本県: 'Kumamoto',
+  大分県: 'Oita',
+  宮崎県: 'Miyazaki',
+  鹿児島県: 'Kagoshima',
+  沖縄県: 'Okinawa'
+}
+
+/**
+ * 都道府県の英語の表記（「東京」のように都府県を省いた書き方も受ける）。知らない値は空。
+ * @param {string} prefecture
+ */
+export function prefectureEn(prefecture) {
+  const name = prefecture.trim()
+  const table = /** @type {Record<string, string>} */ (PREFECTURES_EN)
+  return table[name] ?? table[`${name}都`] ?? table[`${name}府`] ?? table[`${name}県`] ?? ''
+}
+
+/**
+ * 満年齢（`today` の日付で数える。2 月 29 日生まれは平年では 3 月 1 日に 1 つ増える）。形が違えば空。
+ * @param {string} birthday `YYYY-MM-DD`
+ * @param {Date} today
+ */
+export function ageOn(birthday, today) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthday)
+  if (!match) return ''
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])]
+  const [ty, tm, td] = [today.getFullYear(), today.getMonth() + 1, today.getDate()]
+  const age = ty - year - (tm < month || (tm === month && td < day) ? 1 : 0)
+  return age >= 0 && age < 150 ? String(age) : ''
+}
+
 /**
  * @param {Record<string, string>} profile `normalizeProfile` 済み
+ * @param {{ english?: boolean, today?: Date }} [options]
+ *   `english` … 英語のフォーム（`isEnglishForm`）。氏名はローマ字、住所は英語の住所にする。
+ *   **英語の住所が無ければ住所の値は出さない**（英語のフォームに日本語の住所を入れない）。郵便番号・国・都道府県は出す
+ *   `today` … 年齢を数える日（既定は今日）
  * @returns {Record<string, string>} 選択肢のキー → 値（**空の項目から導く値は出さない**）
  */
-export function deriveValues(profile) {
+export function deriveValues(profile, options = {}) {
   /** @type {Record<string, string>} */
   const out = {}
   const put = (/** @type {string} */ key, /** @type {string | undefined} */ value) => {
@@ -151,8 +230,54 @@ export function deriveValues(profile) {
     put(`${key}_month`, String(Number(date[2])))
     put(`${key}_day`, String(Number(date[3])))
   }
+
+  put('age', ageOn(get('birthday'), options.today ?? new Date()))
+  // 住所の国（日本語のフォームは「日本」、英語のフォームは Japan。select は両方の書き方で照合する）
+  if (address || get('postal_code')) put('country', options.english ? 'Japan' : '日本')
+
+  if (options.english) {
+    // 氏名はローマ字（カナは英語のフォームで使わないので出さない）
+    for (const key of ['family_name', 'given_name', 'full_name']) delete out[key]
+    for (const key of Object.keys(out)) if (key.endsWith('_kana')) delete out[key]
+    put('family_name', get('family_name_roman'))
+    put('given_name', get('given_name_roman'))
+    put('full_name', out['full_name_roman'])
+    // 住所は英語の住所（無ければ出さない）。都道府県は表から作る
+    for (const key of [
+      'address_level1',
+      'address_level2',
+      'address_line1',
+      'address_line2',
+      'address_line1_2',
+      'address_city_line1',
+      'address_without_building',
+      'address_full'
+    ])
+      delete out[key]
+    const [city, line1, line2] = [get('address_level2_en'), get('address_line1_en'), get('address_line2_en')]
+    const prefecture = prefectureEn(get('address_level1'))
+    put('address_level1', prefecture)
+    put('address_level2', city)
+    put('address_line1', line1)
+    put('address_line2', line2)
+    if (line1) put('address_line1_2', line2 ? `${line1}, ${line2}` : line1)
+    // 英語の住所は小さい単位から（1-1 Chiyoda, Sample Tower 1701, Chiyoda-ku, Tokyo）
+    if (line1 && city) {
+      put('address_city_line1', `${line1}, ${city}`)
+      put('address_without_building', [line1, city, prefecture].filter(Boolean).join(', '))
+      put('address_full', [line1, line2, city, prefecture].filter(Boolean).join(', '))
+    }
+    if (out['gender']) put('gender_display', ENGLISH_GENDER[out['gender']] ?? '')
+  }
   return out
 }
+
+/** 英語のフォームの性別の書き方。 */
+const ENGLISH_GENDER = /** @type {Record<string, string>} */ ({
+  male: 'Male',
+  female: 'Female',
+  other: 'Other'
+})
 
 /**
  * 電話番号を 3 つに割る。**区切りがあればそれを信じる**（市外局番の桁は地域で違うので、
@@ -249,7 +374,7 @@ export function formatForElement(option, values, element, hintText) {
       : spaced
   }
   if (option.endsWith('_kana') && wantsHiragana(hintText, element.placeholder)) return toHiragana(value)
-  if (option === 'gender') return genderText(value)
+  if (option === 'gender') return values['gender_display'] ?? genderText(value)
   return value
 }
 
@@ -291,6 +416,12 @@ export function matchSelectOption(options, option, value, values = {}) {
  */
 function selectCandidates(option, value, values) {
   if (option === 'gender') return GENDER_WORDS[value] ?? []
+  if (option === 'country') return ['Japan', '日本', 'JP', 'JPN', '日本国']
+  if (option === 'age') return [value, `${value}歳`, `${value}才`]
+  if (option === 'address_level1' && /^[A-Za-z]/.test(value)) {
+    // 英語のフォーム（Tokyo / Tokyo-to / Tokyo Prefecture）
+    return [value, `${value} Prefecture`, `${value}-to`, `${value}-fu`, `${value}-ken`]
+  }
   if (option === 'address_level1') {
     // 「神奈川県」と「神奈川」の揺れ。北海道は「道」を落とすと別物になるので落とさない
     const short = value === '北海道' ? value : value.replace(/[都府県]$/, '')

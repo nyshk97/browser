@@ -284,7 +284,8 @@ export const AUTOFILL_PAGE_SOURCE =
     }
 
     g.__nemoAutofill = { els }
-    return { pageTitle: clean(document.title, 100), elements, fields }
+    // 英語のフォームかの判定に使う（autofill-match.js の isEnglishForm）
+    return { pageTitle: clean(document.title, 100), pageLang: clean(document.documentElement.lang, 20), elements, fields }
   }
 
   // 2 つの要素の共通の祖先まで、b から何段上がるか

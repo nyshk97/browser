@@ -780,7 +780,7 @@ try {
     )
     check(
       '個人情報: 編集画面に見出しごとの欄・性別の切り替え・秘密の値（編集を開いたときだけ）',
-      editor.groups.length === 8 && editor.gender === '男性' && editor.passport === `${MARK}PP`,
+      editor.groups.length === 9 && editor.gender === '男性' && editor.passport === `${MARK}PP`,
       JSON.stringify({
         groups: editor.groups,
         gender: editor.gender,

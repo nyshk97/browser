@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Checkout | autofill (English form)</title>
+    <!--
+      英語のフォーム（plan 2026-09-29-0934-kypr-identity-autofill.md の続き）。氏名はローマ字・住所は英語の住所・
+      都道府県は対応表（Tokyo）・国は Japan・年齢は生年月日から数える・性別は Male。
+    -->
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 20px;
+      }
+      label {
+        display: block;
+        margin: 6px 0;
+      }
+      input,
+      select {
+        width: 200px;
+      }
+    </style>
+  </head>
+  <body>
+    <form id="checkout" onsubmit="return false">
+      <label>First name <input name="first" /></label>
+      <label>Last name <input name="last" /></label>
+      <label>Full name (as on passport) <input name="full" /></label>
+      <label>Email <input type="email" name="email" /></label>
+      <label>Address line 1 <input name="line1" autocomplete="address-line1" /></label>
+      <label>Address line 2 <input name="line2" autocomplete="address-line2" /></label>
+      <label>City <input name="city" /></label>
+      <label
+        >State / Prefecture
+        <select name="state">
+          <option value="">Select</option>
+          <option>Osaka</option>
+          <option>Tokyo</option>
+        </select>
+      </label>
+      <label>ZIP / Postal code <input name="zip" autocomplete="postal-code" /></label>
+      <label
+        >Country
+        <select name="country" autocomplete="country">
+          <option value="">Select</option>
+          <option value="US">United States</option>
+          <option value="JP">Japan</option>
+        </select>
+      </label>
+      <label>Age <input name="age" /></label>
+      <label>Gender <input name="gender" /></label>
+    </form>
+  </body>
+</html>

@@ -153,6 +153,8 @@ const PEEK_PLACEHOLDER_TIMEOUT = 8000
 const PEEK_TOOL_BAND = 42
 /** 小窓の上部バーの高さ（DESIGN.md「小窓」と一致させる）。 */
 const MINI_BAR_HEIGHT = 38
+/** 外のクリックで閉じた直後に、同じ押し込みの click でポップアップを開き直さないための猶予。 */
+const KYPR_REOPEN_GUARD_MS = 500
 
 /* 分割ビュー（DESIGN.md「分割ビュー」と一致させる）。 */
 /** 左右のペインのあいだ。 */
@@ -980,6 +982,8 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
 
   wc.on('did-start-loading', notify)
   wc.on('did-stop-loading', notify)
+  // ページを押した（= kypr のポップアップの外のクリック）
+  wc.on('focus', () => win().onViewFocused(wc))
   // 会議の検知は **`dom-ready` / `did-navigate` / `did-navigate-in-page` の3つ**で拾う。
   // **`did-navigate` を必ず入れる**（bfcache から復元されると `dom-ready` は出ない）。
   wc.on('dom-ready', () => notifyCall(tab))
@@ -1513,6 +1517,12 @@ export class NemoWindow {
   overlay: OverlayKind = null
   /** kypr の候補（`kypr-inline`）を出す位置。ウィンドウの座標。 */
   kyprAnchor: Electron.Rectangle | null = null
+  /**
+   * kypr のポップアップを「外のクリック」で閉じた時刻（ツールバー / サイドバーへフォーカスが移ったときだけ）。
+   * ツールバーの kypr のアイコンを押すと、**押し下げでフォーカスが移って閉じ、続く click で開き直す**ので、
+   * その直後の開く要求を捨てて「押すと閉じる」にする
+   */
+  private kyprDismissedToChromeAt = 0
   private destroyed = false
   private uiReady = false
   private pendingAfterReady: (() => void)[] = []
@@ -1607,6 +1617,10 @@ export class NemoWindow {
     if (this.toolbarView) this.baseWindow.contentView.addChildView(this.toolbarView)
     this.baseWindow.contentView.addChildView(this.overlayView)
     this.overlayView.setVisible(false)
+    // kypr のポップアップを外のクリックで閉じる（`onViewFocused`）。タブの View は `attachTabEvents` で繋ぐ
+    for (const view of [this.chromeView, this.toolbarView]) {
+      if (view) view.webContents.on('focus', () => this.onViewFocused(view.webContents))
+    }
 
     // 通常ウィンドウの MRU を記録する（小窓の昇格先を決めるのに使う）。
     // **小窓は記録しない**。記録すると小窓から小窓へ昇格しようとする。
@@ -2118,10 +2132,30 @@ export class NemoWindow {
     }
   }
 
-  setOverlay(kind: OverlayKind): void {
+  /**
+   * ページ・ツールバー・サイドバーの View がフォーカスを得た。
+   *
+   * kypr のポップアップは**外をクリックしたら閉じる**（Esc では閉じない）。外を押すと押した View が
+   * フォーカスを得るので、ここで閉じる。クリックはそのまま押した先に届く（ページのリンク・欄を 1 回で押せる）。
+   * **overlay の blur では拾わない**: 別のアプリへ移ったとき・Touch ID のシートでも blur が来て閉じてしまう
+   * （戻ってきたら続きをしたい）。main が自分でページへフォーカスを入れる経路（`focusForegroundPage` 等）は
+   * オーバーレイが出ている間は動かないので、ここに来るのはユーザーの操作だけ
+   */
+  onViewFocused(wc: WebContents): void {
+    if (this.destroyed || this.overlay !== 'kypr') return
+    const toChrome = wc === this.chromeView.webContents || wc === this.toolbarView?.webContents
+    if (toChrome) this.kyprDismissedToChromeAt = Date.now()
+    log('kypr.popup_outside_close', { to: toChrome ? 'chrome' : 'page' })
+    // 押した先（ページの欄・アドレスバー等）にフォーカスを残す。ページへ戻し直さない
+    this.setOverlay(null, { refocus: false })
+  }
+
+  setOverlay(kind: OverlayKind, options: { refocus?: boolean } = {}): void {
     // 小窓が出せるのはダイアログと kypr の候補だけ（コマンドバー・ライブラリ・設定は持たない）
     if (this.kind === 'mini' && kind !== null && kind !== 'prompt' && kind !== 'kypr-inline') return
     if (this.overlay === kind) return
+    // ツールバーの kypr のアイコンの押し下げで閉じた直後の click（`kyprDismissedToChromeAt` を見よ）
+    if (kind === 'kypr' && Date.now() - this.kyprDismissedToChromeAt < KYPR_REOPEN_GUARD_MS) return
     this.overlay = kind
     this.layout()
     // kypr の候補は**ページのフォーカスを奪わない**（欄に打ち続けられるように。押したときだけ候補の View に移る）
@@ -2139,7 +2173,7 @@ export class NemoWindow {
     } else if (kind) this.overlayWebContents.focus()
     // Peek が出ているならフォーカスは Peek へ返す（⌘L → Esc で裏の親ページに
     // キー入力が入るのを防ぐ）
-    else this.getForegroundTab()?.webContents?.focus()
+    else if (options.refocus !== false) this.getForegroundTab()?.webContents?.focus()
     this.overlayWebContents.send('nemo:overlay', kind)
     this.pushState()
     overlayChangeListener?.(this, kind)

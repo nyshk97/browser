@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { hostOf, prettyUrl, useSharedState, useWindowState } from '../useNemo.js'
 import type { LoadedExtensionInfo, TabState } from '../../shared/types.js'
+import { KyprIcon, KyprMark } from './Kypr.js'
 
 const PAGE_PARTITION = 'persist:nemo'
 
@@ -323,13 +324,15 @@ export function Toolbar({ pane = 'left' }: { pane?: 'left' | 'right' }): React.J
               }
               onClick={() => void window.nemo.setOverlay('kypr')}
             >
-              🔑
+              <KyprMark size="sm" locked={state.kypr.state !== 'unlocked'} />
               {state.kypr.state === 'unlocked' ? (
                 state.kypr.count > 0 ? (
                   <span className="count">{state.kypr.count > 9 ? '9+' : state.kypr.count}</span>
                 ) : null
               ) : (
-                <span className="count locked">🔒</span>
+                <span className="count locked">
+                  <KyprIcon name="lock" size={8} />
+                </span>
               )}
             </button>
           ) : null}

@@ -36,6 +36,7 @@ mise run verify:packaged    # パッケージした .app を起動して smoke t
 
 - ディスプレイが 2 枚つながっていると、Phase 1 の画面共有まわりの 5 件（「1 枚のときはディスプレイ選択が出ない」など）が落ちる
 - フル実行のときだけ、Live Folder の 3 件（前のスイートの一時タブが残る順序依存）が落ちる。`--only live-folder` なら通る
+- フル実行のときだけ、ピン留めの ↑↓ 移動の 6 件（「↓ でピンの次は一時タブ 1 枚目」など。同じく前のスイートの一時タブが残る）が落ちる。`--only pins` なら通る（2026-09-29 に HEAD で確認）
 
 自分の変更のせいか分からない FAIL は、HEAD を worktree に出して同じスイートを回して比べる:
 `git worktree add --detach <dir> HEAD` → `node_modules`・`extensions`・`.ext-cache` を symlink →
@@ -161,7 +162,7 @@ mise run verify:only split
 | **Live Folder（GitHub の PR）**・取得のバックオフ・トークン | `mise run verify:only live-folder restart` + 下の「Live Folder（GitHub の PR）」 |
 | **拡張アイコンの popup の位置**（ツールバーの View オフセット） | `mise run verify:ext` |
 | 拡張まわり・Electron のバージョン | `mise run verify:ext`（+ 実機で実物の拡張）。拡張の端末ごと ON/OFF・DevTools パネルへの `chrome.*` 補完（`chrome.debugger` / `webRequest` の tabId）もここ |
-| **kypr（パスワードマネージャー）**・解除 / Touch ID / ロック・同期・照合・入力（ポップアップ / ⌘⇧L / 欄の下の候補）・作成 / 編集 / ゴミ箱・コピー | `mise run verify:only kypr`（模擬サーバーと差し替えで 4 回起動する。68 件）+ 下の「kypr」 |
+| **kypr（パスワードマネージャー）**・解除 / Touch ID / ロック・同期・照合・入力（ポップアップ / ⌘⇧L / 欄の下の候補）・作成 / 編集 / ゴミ箱・コピー | `mise run verify:only kypr`（模擬サーバーと差し替えで 4 回起動する。73 件）+ 下の「kypr」 |
 | パッケージング・ネイティブ依存・fuses | `mise run package` → `mise run verify:packaged` |
 | 履歴 / アーカイブ・シークレット・設定画面 | `mise run verify`（`verify-phase2.mjs` が含まれる） |
 | **履歴 DB のスキーマ**（列追加・インデックス） | `mise run verify:db-migration` |
@@ -1309,7 +1310,15 @@ mise run verify:only session-cookies   # 同じ使い捨てプロファイルで
 （知らないキーが残る）/ カードの整形・競合・ゴミ箱 / 復元 / 完全削除・セッション切れの再ログイン・オフラインの読み取り専用・
 Touch ID の解除と失敗・サーバーが覚えた鍵を拒否したとき・前回より弱い KDF パラメータ・欄の下の候補（スクリプトの focus では
 出ない / 出た直後の押下を無視 / スクロールで閉じる / ロック中）・シークレットウィンドウ・使わないときのロック・
-宛先の渡し忘れで起動しない・userData に平文が無いこと。エージェント窓に出ないことは `verify:only agent` が見る。
+宛先の渡し忘れで起動しない・userData に平文が無いこと・ポップアップの描画（このページのカード・一覧・ロゴ）と
+ツールバーのロゴと件数・ポップアップの閉じ方（Esc では閉じない / 詳細の Esc は一覧へ / ページを押すと閉じる /
+ツールバーのアイコンを押すと閉じて開き直さない）。エージェント窓に出ないことは `verify:only agent` が見る。
+
+**外のクリックは `window.nemo.focusForVerify('page' | 'toolbar')`（`webContents.focus()`）で撃つ**。
+実物のクリックも押した View をファーストレスポンダにするだけで、閉じる判定は main がその View の `focus` で拾う
+（`registry.ts` の `onViewFocused`）。合成マウスは使わない。**人が見るもの**: 実物のクリックでページ・アドレスバー・
+サイドバーを押すと閉じて、押した先にそのまま届くこと / 別のアプリへ移って戻る・Touch ID のシートでは閉じないこと /
+ツールバーのアイコンを 2 回押すと開いて閉じること。
 
 コピー元（kypr の `packages/`）を直したら、kypr で `mise run export-nemo` を実行してコピーし直し、
 `node --test scripts/kypr-vendor.test.mjs`（テストベクタ）→ `mise run verify:only kypr` を回す。
@@ -1322,7 +1331,7 @@ Touch ID の解除と失敗・サーバーが覚えた鍵を拒否したとき�
 2. ブラウザで `http://localhost:8797` を開き、使い捨てのマスターパスワードで保管庫を作ってアイテムを足す
 3. Nemo を使い捨ての userData で、宛先を向けて起動する:
    `NEMO_USER_DATA_DIR=$(mktemp -d) NEMO_KYPR_TEST_SERVER=http://localhost:8797 NEMO_HTTP_AUTH_TEST_CRYPTO=memory mise run dev:build`
-4. ツールバーの 🔑 からログイン → 一覧・入力・作成・編集が Web と行き来できるか（Web で作ったものが Nemo に、Nemo で作ったものが Web に出る）
+4. ツールバーの kypr のアイコンからログイン → 一覧・入力・作成・編集が Web と行き来できるか（Web で作ったものが Nemo に、Nemo で作ったものが Web に出る）
 
 ### 人が見る分（常用版）
 

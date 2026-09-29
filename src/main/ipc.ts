@@ -527,6 +527,23 @@ export function registerIpcHandlers(): void {
      * ⌘ 長押しバッジの状態機械を直接叩く。合成キーでは Meta の `before-input-event` を
      * 起こせないので、down / up / blur を名前で撃ち、戻り値で「今出ているか」を見る
      */
+    /**
+     * 外のクリックと同じフォーカスの移動を起こす（kypr のポップアップを外のクリックで閉じるの確認）。
+     * 実物のクリックも押した先の View をファーストレスポンダにするだけなので、`webContents.focus()` で
+     * 同じ経路（overlay の WebContents の blur）に乗る。合成マウスは使わない（ユーザーの操作を奪う）
+     */
+    ipcMain.handle('nemo:focus-for-verify', (event, target: unknown): boolean => {
+      const win = requireWindow(event)
+      const wc =
+        target === 'page'
+          ? win.getForegroundTab()?.webContents
+          : target === 'toolbar'
+            ? (win.toolbarView ?? win.chromeView).webContents
+            : null
+      if (!wc || wc.isDestroyed()) return false
+      wc.focus()
+      return true
+    })
     // kypr のコピーの確認（検証ではメモリ上のクリップボードに差し替えている。実物は読まない）
     ipcMain.handle('nemo:kypr-clipboard-for-verify', (event): string | null => {
       requireWindow(event)

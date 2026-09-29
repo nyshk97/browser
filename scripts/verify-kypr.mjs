@@ -22,6 +22,7 @@ import {
   assertNemoNotRunning,
   findUncaughtExceptions,
   getFreePort,
+  readLogLines,
   projectRoot,
   sleep,
   stopChildren,
@@ -466,23 +467,149 @@ try {
   await waitFor(overlayUi, `document.querySelector('[data-kypr-id="${A.id}"]') ? 'ok' : ''`, {
     timeoutMs: 8000
   }).catch(() => '')
-  const panelText = await overlayUi.ev('document.body.innerText')
-  check(
-    'ポップアップが描ける（このページの 2 件と一覧）',
-    panelText.includes('このページ（127.0.0.1）') &&
-      panelText.includes('Site A (2)') &&
-      panelText.includes('Site B'),
-    panelText.slice(0, 120).replace(/\n/g, ' / ')
+  const panelView = JSON.parse(
+    await overlayUi.ev(`JSON.stringify({
+      host: document.querySelector('.kypr-hero-host')?.textContent ?? null,
+      hero: [...document.querySelectorAll('.kypr-hero .kypr-row .kypr-row-name')].map((e) => e.textContent),
+      fills: document.querySelectorAll('.kypr-hero .kypr-fill').length,
+      list: [...document.querySelectorAll('.kypr-list > .kypr-scroll > .kypr-row .kypr-row-name')].map((e) => e.textContent),
+      logo: !!document.querySelector('.kypr-foot .kypr-mark')
+    })`)
   )
+  check(
+    'ポップアップが描ける（このページのカードに 2 件と「入力」、下に一覧、フッターにロゴ）',
+    panelView.host === '127.0.0.1' &&
+      panelView.hero.includes('Site A (2)') &&
+      panelView.hero.length === 2 &&
+      panelView.fills === 2 &&
+      panelView.list.includes('Site B') &&
+      panelView.logo,
+    JSON.stringify({ ...panelView, list: panelView.list.length })
+  )
+  // ツールバーのボタンは kypr のロゴ（Web / iOS と同じ図柄）に件数のバッジ
+  const toolbarUi = await connectTo(app.cdp, 'view=toolbar', { exclude: 'private=1' })
+  const toolbarIcon = JSON.parse(
+    await toolbarUi.ev(`JSON.stringify({
+      mark: !!document.querySelector('.kypr-icon .kypr-mark:not(.locked)'),
+      count: document.querySelector('.kypr-icon .count')?.textContent ?? null
+    })`)
+  )
+  check(
+    'ツールバー: kypr のロゴと、このページに合う件数（2）',
+    toolbarIcon.mark && toolbarIcon.count === '2',
+    JSON.stringify(toolbarIcon)
+  )
+
+  /* ---- 8b. 閉じ方: Esc では閉じない・外をクリックすると閉じる ---- */
+  const overlayKind = async () => (await json('window.nemo.getOverlayState()')).kind
+  const pressEscape = async (session) => {
+    await session.send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27
+    })
+    await session.send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27
+    })
+  }
+  const kindBeforeEsc = await overlayKind()
+  await pressEscape(overlayUi)
+  await new Promise((r) => setTimeout(r, 400))
+  check(
+    'ポップアップは Esc で閉じない',
+    kindBeforeEsc === 'kypr' && (await overlayKind()) === 'kypr',
+    JSON.stringify({ before: kindBeforeEsc })
+  )
+  // 詳細の Esc は一覧へ戻るだけ
+  const kindBeforeDetail = await overlayKind()
+  const outsideCloses = () =>
+    readLogLines(userData).filter((line) => line.includes('kypr.popup_outside_close')).length
+  await overlayUi.ev(
+    `document.querySelector('.kypr-list > .kypr-scroll > .kypr-row[data-kypr-id="${B.id}"]')?.click()`
+  )
+  const detailShown = await waitFor(overlayUi, "document.querySelector('.kypr-detail') ? 'ok' : ''", {
+    timeoutMs: 5000
+  }).catch(() => '')
+  const detailText = String(await overlayUi.ev('document.body.innerText'))
+    .slice(0, 80)
+    .replace(/\n/g, ' / ')
+  await pressEscape(overlayUi)
+  const backToList = await waitFor(
+    overlayUi,
+    "document.querySelector('.kypr-list') && !document.querySelector('.kypr-detail') ? 'ok' : ''",
+    { timeoutMs: 5000 }
+  ).catch(() => '')
+  check(
+    '詳細の Esc は一覧へ戻り、ポップアップは開いたまま',
+    kindBeforeDetail === 'kypr' &&
+      detailShown === 'ok' &&
+      backToList === 'ok' &&
+      (await overlayKind()) === 'kypr',
+    JSON.stringify({ kindBeforeDetail, detailShown, backToList, detailText, outsideCloses: outsideCloses() })
+  )
+  // 外（ページ）をクリック = ページの View へフォーカスが移る → 閉じる。
+  // 直前に開いていたことも見る（閉じていたら「閉じた」は空振りで PASS する）
+  const kindBeforeOutside = await overlayKind()
+  const focusMoved = await json("window.nemo.focusForVerify('page')")
+  const closedByPage = await waitFor(
+    ui,
+    "window.nemo.getOverlayState().then((s) => (s.kind === null ? 'ok' : ''))",
+    { timeoutMs: 5000 }
+  ).catch(() => '')
+  check(
+    'ページをクリックすると閉じる',
+    kindBeforeOutside === 'kypr' && focusMoved === true && closedByPage === 'ok',
+    JSON.stringify({ kindBeforeOutside, focusMoved, closedByPage, outsideCloses: outsideCloses() })
+  )
+  // ツールバーのアイコンを押す = 押し下げでツールバーへフォーカスが移って閉じ、続く click の「開く」は捨てる
+  await ui.ev("window.nemo.setOverlay('kypr')")
+  await waitFor(ui, "window.nemo.getOverlayState().then((s) => (s.kind === 'kypr' ? 'ok' : ''))", {
+    timeoutMs: 5000
+  }).catch(() => '')
+  const toggled = JSON.parse(
+    await ui.ev(`(async () => {
+      const opened = (await window.nemo.getOverlayState()).kind
+      await window.nemo.focusForVerify('toolbar')
+      const deadline = Date.now() + 3000
+      let closed = null
+      while (Date.now() < deadline) {
+        closed = (await window.nemo.getOverlayState()).kind
+        if (closed === null) break
+        await new Promise((r) => setTimeout(r, 10))
+      }
+      await window.nemo.setOverlay('kypr')
+      await new Promise((r) => setTimeout(r, 100))
+      const afterClick = (await window.nemo.getOverlayState()).kind
+      await new Promise((r) => setTimeout(r, 700))
+      await window.nemo.setOverlay('kypr')
+      await new Promise((r) => setTimeout(r, 100))
+      const later = (await window.nemo.getOverlayState()).kind
+      return JSON.stringify({ opened, closed, afterClick, later })
+    })()`)
+  )
+  check(
+    'ツールバーのアイコンを押すと閉じる（押し下げで閉じた直後の「開く」は捨てる。少し後なら開く）',
+    toggled.opened === 'kypr' &&
+      toggled.closed === null &&
+      toggled.afterClick === null &&
+      toggled.later === 'kypr',
+    JSON.stringify(toggled)
+  )
+  await ui.ev('window.nemo.setOverlay(null)')
   await ui.ev("window.nemo.setOverlay('settings')")
-  await waitFor(overlayUi, "document.body.innerText.includes('パスワードマネージャー') ? 'ok' : ''", {
+  // 節の見出しは先に出て、状態（解除中・件数）は kyprStatus の往復のあとに出る。状態まで待つ
+  await waitFor(overlayUi, "document.body.innerText.includes('解除中') ? 'ok' : ''", {
     timeoutMs: 8000
   }).catch(() => '')
   const settingsText = await overlayUi.ev('document.body.innerText')
   check(
     '設定画面に kypr の節が描ける（解除中・件数）',
     settingsText.includes('解除中') && settingsText.includes('10 件'),
-    ''
+    (settingsText.match(/kypr[\s\S]{0,120}/)?.[0] ?? settingsText.slice(0, 120)).replace(/\n/g, ' / ')
   )
   await ui.ev('window.nemo.setOverlay(null)')
 
@@ -682,7 +809,6 @@ try {
   page = await connectTo(app.cdp, '/login.html?inline=1', { type: 'page' })
   await waitFor(page, "document.readyState === 'complete' && document.getElementById('password') ? 'ok' : ''")
   await ui.ev('window.nemo.kyprSync()')
-  const overlayKind = async () => (await json('window.nemo.getOverlayState()')).kind
   // スクリプトの focus() では出ない
   await page.ev("document.getElementById('username').focus()")
   await sleep(800)

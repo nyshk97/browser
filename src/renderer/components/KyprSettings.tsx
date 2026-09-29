@@ -17,7 +17,10 @@ export function KyprSettings(): React.JSX.Element {
   useEffect(reload, [reload])
 
   return (
-    <SettingsSection title="kypr" sub="パスワードマネージャー。ツールバーの 🔑 と ⌘⇧L から使います">
+    <SettingsSection
+      title="kypr"
+      sub="パスワードマネージャー。ツールバーの kypr のアイコンと ⌘⇧L から使います"
+    >
       {!status ? null : status.state === 'unlocked' ? (
         <>
           <p className="ok">

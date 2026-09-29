@@ -1532,6 +1532,11 @@ export interface NemoUiApi {
    * タブのページで右クリックの「フォーム自動入力」と同じ処理を走らせる（**本番では何もしない**）。
    * ネイティブの右クリックメニューは CDP から押せないので、同じ関数を名指しで呼ぶ。
    */
+  /**
+   * ページ（前面のタブ）かツールバーの View へフォーカスを移す（**本番では何もしない**）。
+   * 外のクリックと同じく、kypr のポップアップが閉じるかを見るのに使う
+   */
+  focusForVerify(target: 'page' | 'toolbar'): Promise<boolean>
   /** kypr のコピーの確認（`NEMO_KYPR_TEST_CLIPBOARD=memory` のときだけ値が返る）。 */
   kyprClipboardForVerify(): Promise<string | null>
   autofillForVerify(key: string, x: number, y: number, frameUrl?: string): Promise<AutofillRunResult | null>

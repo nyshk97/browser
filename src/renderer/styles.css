@@ -21,6 +21,23 @@
   /* 状態バッジ（Live Folder）。GitHub の色に寄せる */
   --nemo-ok: #3fb950;
   --nemo-warn: #d29922;
+  /* kypr（パスワードマネージャー）。Web 版 kypr（apps/web/src/styles.css）の色に合わせる */
+  --kypr-accent: #0a84ff;
+  --kypr-accent-hi: #2b95ff;
+  --kypr-accent-line: rgba(10, 132, 255, 0.3);
+  --kypr-accent-glow: rgba(10, 132, 255, 0.18);
+  --kypr-panel: #232326;
+  --kypr-field: #2a2a2e;
+  --kypr-menu: #313136;
+  --kypr-button: #2e2e33;
+  --kypr-button-hi: #38383e;
+  --kypr-selected: rgba(255, 255, 255, 0.1);
+  --kypr-locked: #5a5a62;
+  --kypr-link: #64b0ff;
+  --kypr-card: #ff375f;
+  --kypr-card-hi: #ff6b85;
+  --kypr-note: #e6a100;
+  --kypr-note-hi: #f5c542;
 
   --nemo-row-h: 40px;
   --nemo-radius: 7px;
@@ -3496,34 +3513,185 @@ body[data-view='call'] {
 
 /* ------------------------------------------------------------------ *
  * kypr（パスワードマネージャー）: ポップアップ・ログイン欄の下の候補
+ *
+ * 色は Web 版 kypr（apps/web/src/styles.css）に合わせる（トークンは :root の --kypr-*）。
+ * ロゴ（.kypr-mark）は Web の favicon・iOS のアプリアイコンと同じ図柄
  * ------------------------------------------------------------------ */
 
+.kypr-ic {
+  flex: none;
+}
+
+/* ロゴ。線の太さは小さいほど太くする（16px で細いと鍵に見えない） */
+.kypr-mark {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  background: var(--kypr-accent);
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.kypr-mark svg {
+  width: 74%;
+  height: 74%;
+  stroke-width: 2.5;
+}
+
+.kypr-mark.xs {
+  width: 16px;
+  height: 16px;
+  border-radius: 4.5px;
+}
+
+.kypr-mark.sm {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+}
+
+.kypr-mark.xs svg,
+.kypr-mark.sm svg {
+  stroke-width: 3.2;
+}
+
+.kypr-mark.md {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+
+.kypr-mark.lg {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+}
+
+.kypr-mark.locked {
+  background: var(--kypr-locked);
+}
+
+/* ツールバーのボタン。件数は白地のバッジ（青いロゴの上で読めるように）、ロック中は錠前の丸 */
 .toolbar .kypr-icon .count {
   position: absolute;
-  right: -2px;
-  bottom: 0;
-  min-width: 13px;
-  height: 13px;
+  right: -4px;
+  bottom: -1px;
+  min-width: 12px;
+  height: 12px;
   padding: 0 3px;
-  border-radius: 7px;
-  background: var(--nemo-accent);
-  color: #fff;
-  font-size: 9px;
-  line-height: 13px;
+  border-radius: 6px;
+  background: var(--nemo-ink);
+  color: var(--nemo-page-bg);
+  font-size: 8.5px;
+  font-weight: 700;
+  line-height: 12px;
   text-align: center;
+  box-shadow: 0 0 0 1.5px var(--nemo-sidebar);
 }
 
 .toolbar .kypr-icon .count.locked {
-  background: transparent;
-  font-size: 8px;
+  min-width: 11px;
+  width: 11px;
+  height: 11px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: var(--nemo-surface-hi);
+  color: var(--nemo-ink);
 }
 
-.kypr-panel {
-  height: 100%;
+/* 頭文字のアイコン（Web 版の .av と同じ色の出し方） */
+.kypr-av {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: linear-gradient(160deg, hsl(var(--h, 210) 75% 62%), hsl(var(--h, 210) 70% 46%));
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.15);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1;
 }
 
-.kypr-title {
+.kypr-av.sm {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.kypr-av.lg {
+  width: 48px;
+  height: 48px;
+  border-radius: 13px;
+  font-size: 21px;
+}
+
+.kypr-av.card {
+  background: linear-gradient(160deg, var(--kypr-card-hi), var(--kypr-card));
+}
+
+.kypr-av.note {
+  background: linear-gradient(160deg, var(--kypr-note-hi), var(--kypr-note));
+}
+
+.kypr-av.broken {
+  background: var(--nemo-surface-hi);
+  color: var(--nemo-danger);
+}
+
+/* 共通のボタン */
+.kypr-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  background: var(--kypr-button);
+  color: var(--nemo-ink);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.kypr-btn:hover:not(:disabled) {
+  background: var(--kypr-button-hi);
+}
+
+.kypr-btn.danger {
+  color: var(--nemo-danger);
+}
+
+.kypr-primary,
+.kypr-fill {
+  background: var(--kypr-accent);
+  color: #fff;
   font-weight: 600;
+  white-space: nowrap;
+}
+
+.kypr-primary:hover:not(:disabled),
+.kypr-fill:hover {
+  background: var(--kypr-accent-hi);
+}
+
+.kypr-primary:disabled {
+  opacity: 0.5;
+}
+
+.kypr-primary {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.kypr-fill {
+  padding: 4px 10px;
+  border-radius: 7px;
+  font-size: 12px;
 }
 
 .kypr-tag {
@@ -3538,17 +3706,6 @@ body[data-view='call'] {
   color: var(--nemo-warn);
 }
 
-.kypr-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px;
-  overflow-y: auto;
-  min-height: 0;
-  flex: 1;
-  font-size: 12px;
-}
-
 .kypr-note {
   color: var(--nemo-ink-dim);
   font-size: 12px;
@@ -3561,23 +3718,370 @@ body[data-view='call'] {
   margin: 2px 0;
 }
 
+/* ---- ポップアップ ---- */
+
+.kypr-panel {
+  height: 100%;
+  position: relative;
+  background: var(--kypr-panel);
+  font-size: 12px;
+}
+
+.kypr-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.kypr-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 8px;
+}
+
+.kypr-pad {
+  padding: 0 8px;
+}
+
+/* このページに合うログイン */
+.kypr-hero {
+  margin: 12px 4px 2px;
+  padding: 10px 6px 6px;
+  border-radius: 12px;
+  border: 1px solid var(--kypr-accent-line);
+  background:
+    radial-gradient(120% 140% at 0% 0%, var(--kypr-accent-glow), transparent 60%), var(--kypr-field);
+}
+
+.kypr-hero-site {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 6px 6px;
+}
+
+.kypr-hero-host {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.kypr-hero-none {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 6px 4px;
+  color: var(--nemo-ink-dim);
+}
+
+.kypr-hero .kypr-row-acts {
+  opacity: 1;
+}
+
+/* 検索・種類・新規。一覧をスクロールしても上に残す */
+.kypr-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px 6px;
+  background: var(--kypr-panel);
+}
+
+.kypr-search {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: var(--kypr-field);
+  color: var(--nemo-ink-dim);
+}
+
+.kypr-search:focus-within {
+  border-color: var(--kypr-accent);
+  box-shadow: 0 0 0 3px var(--kypr-accent-glow);
+}
+
+.kypr-search input {
+  flex: 1;
+  min-width: 0;
+  color: var(--nemo-ink);
+}
+
+.kypr-search input::placeholder {
+  color: var(--nemo-ink-dim);
+  opacity: 0.7;
+}
+
+.kypr-menu-anchor {
+  position: relative;
+}
+
+.kypr-select {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 8px 0 10px;
+  border-radius: 9px;
+  background: var(--kypr-field);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.kypr-select:hover {
+  background: var(--kypr-button-hi);
+}
+
+.kypr-select .kypr-ic {
+  color: var(--nemo-ink-dim);
+}
+
+.kypr-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 5;
+  min-width: 150px;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--nemo-border);
+  background: var(--kypr-menu);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+.kypr-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 6px;
+  text-align: left;
+  font-size: 12px;
+}
+
+.kypr-menu-item:hover {
+  background: var(--kypr-accent);
+  color: #fff;
+}
+
+.kypr-section-label {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--nemo-ink-dim);
+}
+
+.kypr-count {
+  font-weight: 400;
+  opacity: 0.7;
+}
+
+.kypr-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 9px;
+}
+
+.kypr-row:hover {
+  background: var(--nemo-hover);
+}
+
+.kypr-row.sel {
+  background: var(--kypr-selected);
+}
+
+.kypr-row.deleted {
+  opacity: 0.55;
+}
+
+.kypr-row-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.kypr-row-name,
+.kypr-row-sub {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.kypr-row-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.kypr-row-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--nemo-ink-dim);
+  font-size: 11.5px;
+}
+
+.kypr-row-acts {
+  display: flex;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.kypr-row:hover .kypr-row-acts,
+.kypr-row.sel .kypr-row-acts {
+  opacity: 1;
+}
+
+.kypr-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px 4px 12px;
+  border-top: 1px solid var(--nemo-border);
+  color: var(--nemo-ink-dim);
+  font-size: 11px;
+}
+
+.kypr-foot b {
+  font-weight: 500;
+  color: var(--nemo-ink);
+  opacity: 0.8;
+}
+
+.kypr-brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.kypr-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 44px;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--kypr-menu);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: kypr-toast-in 0.18s ease-out;
+}
+
+.kypr-toast .kypr-ic {
+  color: var(--nemo-ok);
+}
+
+@keyframes kypr-toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+}
+
+/* ---- ロック画面（ポップアップ）・解除（設定画面） ---- */
+
+.kypr-lock {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.kypr-lock-head {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 8px 0;
+}
+
 .kypr-unlock {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.kypr-password,
-.kypr-search {
+.kypr-unlock.hero {
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 28px 40px;
+  text-align: center;
+}
+
+.kypr-unlock.hero h3 {
+  margin: 8px 0 0;
+  font-size: 15px;
+}
+
+.kypr-unlock.hero .kypr-touchid {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 9px;
+  border-radius: 8px;
+  background: var(--kypr-accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.kypr-unlock.hero .kypr-touchid:hover:not(:disabled) {
+  background: var(--kypr-accent-hi);
+}
+
+.kypr-or {
+  color: var(--nemo-ink-dim);
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.kypr-unlock.hero .kypr-password {
+  width: 100%;
+}
+
+.kypr-unlock.hero .kypr-password input {
+  background: var(--kypr-field);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.kypr-password {
   display: flex;
   gap: 6px;
   align-items: center;
 }
 
-.kypr-password input,
-.kypr-search input,
-.kypr-edit-input input,
-.kypr-edit-field textarea {
+.kypr-password input {
   flex: 1;
   min-width: 0;
   background: var(--nemo-surface);
@@ -3585,8 +4089,7 @@ body[data-view='call'] {
   padding: 6px 8px;
 }
 
-.kypr-password .btn,
-.kypr-search .btn {
+.kypr-password .btn {
   margin-top: 0;
   white-space: nowrap;
 }
@@ -3598,160 +4101,152 @@ body[data-view='call'] {
   color: var(--nemo-ink-dim);
 }
 
-.kypr-section h4 {
-  margin: 4px 0;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--nemo-ink-dim);
+.kypr-check input {
+  accent-color: var(--kypr-accent);
 }
 
-.kypr-filters,
-.kypr-new,
-.kypr-actions {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
+/* ---- 詳細・編集 ---- */
 
-.kypr-new .btn,
-.kypr-actions .btn {
-  margin-top: 0;
-}
-
-.kypr-filter {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  color: var(--nemo-ink-dim);
-}
-
-.kypr-filter.on {
-  background: var(--nemo-surface-hi);
-  color: var(--nemo-ink);
-}
-
-.kypr-row {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  border-radius: var(--nemo-radius);
-}
-
-.kypr-row:hover {
-  background: var(--nemo-hover);
-}
-
-.kypr-row.deleted {
-  opacity: 0.6;
-}
-
-.kypr-row-main,
-.kypr-inline-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-  padding: 5px 6px;
-  text-align: left;
-}
-
-.kypr-kind {
-  width: 18px;
-  text-align: center;
-  flex: 0 0 auto;
-}
-
-.kypr-row-text {
+.kypr-body {
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  gap: 6px;
+  padding: 10px 12px;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+  font-size: 12px;
 }
 
-.kypr-row-name,
-.kypr-row-sub {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.kypr-row-sub {
-  color: var(--nemo-ink-dim);
-  font-size: 11px;
+.kypr-detail {
+  gap: 0;
 }
 
 .kypr-detail-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+}
+
+.kypr-detail-hero {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 4px 14px;
 }
 
 .kypr-detail-name {
-  font-weight: 600;
-  font-size: 13px;
+  font-size: 16px;
+  font-weight: 700;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  flex: 1;
-  min-width: 0;
+}
+
+.kypr-fields {
+  border-radius: 11px;
+  border: 1px solid var(--nemo-border);
+  background: var(--kypr-field);
 }
 
 .kypr-field {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--nemo-border);
+  gap: 2px;
+  padding: 8px 6px 8px 12px;
+}
+
+.kypr-field + .kypr-field {
+  border-top: 1px solid var(--nemo-border);
 }
 
 .kypr-field.notes {
   align-items: flex-start;
 }
 
+.kypr-field-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
 .kypr-field-label {
-  width: 96px;
-  flex: 0 0 auto;
   color: var(--nemo-ink-dim);
   font-size: 11px;
 }
 
 .kypr-field-value {
-  flex: 1;
-  min-width: 0;
+  font-size: 13px;
   overflow-wrap: anywhere;
-  display: flex;
-  flex-direction: column;
 }
 
 .kypr-field-value.mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.03em;
 }
 
 .kypr-field-value.pre {
   white-space: pre-wrap;
 }
 
+.kypr-uri {
+  color: var(--kypr-link);
+}
+
+.kypr-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 14px;
+}
+
+.kypr-editor {
+  gap: 10px;
+}
+
+.kypr-editor-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .kypr-edit-field {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
 .kypr-edit-input {
   display: flex;
   align-items: center;
   gap: 2px;
+  padding-right: 4px;
+  border-radius: 8px;
+  background: var(--kypr-field);
+}
+
+.kypr-edit-input input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
 }
 
 .kypr-edit-field textarea {
   resize: vertical;
+  padding: 7px 10px;
+  border: 0;
+  outline: 0;
+  border-radius: 8px;
+  background: var(--kypr-field);
   color: var(--nemo-ink);
   font: inherit;
 }
 
-/* ログイン欄の下の候補。View ごとこの大きさなので、余白は View の外に出さない */
+/* ---- ログイン欄の下の候補。View ごとこの大きさなので、余白は View の外に出さない ---- */
+
 .kypr-inline {
-  background: #232329;
+  background: var(--kypr-panel);
   border: 1px solid #3a3a44;
   border-radius: var(--nemo-radius);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
@@ -3762,9 +4257,14 @@ body[data-view='call'] {
 }
 
 .kypr-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   height: 40px;
+  padding: 5px 8px;
   border-radius: 5px;
+  text-align: left;
 }
 
 .kypr-inline-row:hover {

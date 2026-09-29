@@ -72,7 +72,8 @@ export function Overlay(): React.JSX.Element | null {
     const onKey = (event: KeyboardEvent): void => {
       // スイッチャーの Esc は main 側（`before-input-event`）で取消に落とす。
       // ここで閉じると「オーバーレイだけ消えて押しっぱなしの状態が残る」ことになる。
-      if (event.key === 'Escape' && !prompt && kind !== 'tab-switcher') close()
+      // kypr のポップアップは Esc で閉じない（外をクリックすると main が閉じる。詳細の Esc は一覧へ戻る）
+      if (event.key === 'Escape' && !prompt && kind !== 'tab-switcher' && kind !== 'kypr') close()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

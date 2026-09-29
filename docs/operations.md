@@ -258,6 +258,12 @@ node scripts/ext-webstore-key.mjs <id>  # Web Store の CRX から公開鍵を�
 - 暗号・同期のコードは kypr からコピーしている（`src/vendor/kypr/`。**手で直さない**。kypr 側を直して
   `mise run export-nemo` でコピーし直す。コピー元のコミットは `src/vendor/kypr/VENDORED.md`）
 - パスキーはまだ使えない（Bitwarden 拡張を外したため。kypr の次の段階で入れる）
+- **例外として、kypr の Web 版（`https://kypr.tools97.com`）の Touch ID 解除だけは Nemo が答える**
+  （`src/main/kypr/web-authenticator.ts`。計画は `docs/plans/2026-09-29-1212-kypr-web-touch-id.md`）。
+  Web 版はパスキーの PRF 拡張の出力で鍵を包むので、kypr の origin のメインフレームにだけ PRF を返す小さな認証器を入れている
+  （署名は作らない）。クレデンシャルごとの秘密は `safeStorage` で暗号化して `userData/kypr/web-authenticator.json` に置き、
+  Touch ID を通したときだけ使う。Web 版で Touch ID をやめる・有効にし直すと古い秘密は消える（origin ごとに 5 件まで）。
+  Nemo の kypr のログアウトでは消さない。シークレットウィンドウでは入れない
 
 ## Claude Code から操作する（Claude in Nemo）
 

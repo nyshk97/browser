@@ -70,6 +70,7 @@ import { startAgent, stopAgent } from './agent/index.js'
 import { registerKyprPagePreload } from './page-shim.js'
 import { initKypr, onKyprChange } from './kypr/index.js'
 import { installKyprInline } from './kypr/inline.js'
+import { installKyprWebAuthn } from './kypr/web-authenticator.js'
 
 applyUserDataDir()
 app.setAppUserModelId(APP_ID)
@@ -250,6 +251,8 @@ app
 
     initKypr()
     installKyprInline()
+    // kypr の Web 版の Touch ID 解除に答える（kypr の origin のメインフレームだけ）
+    installKyprWebAuthn()
     // 解除・ロック・同期で、ツールバーの件数（バッジ）を全ウィンドウで出し直す
     onKyprChange(() => {
       for (const win of windowsById.values()) if (!win.isDestroyed) win.pushState()

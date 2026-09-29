@@ -68,8 +68,81 @@ const LOGIN_PAGE =
   '<button>ログイン</button></form>' +
   '<div style="height:2000px"></div>'
 
+// kypr の Web 版（kypr `798c258` の `apps/web/src/lib/device-unlock.ts`）と同じ呼び出しをするページ。
+// kypr の Web 版そのものは Nemo の CI に無いので、Touch ID 解除の検査はこれで見る。
+// 結果は JSON 文字列で返す（例外は name だけ）
+const WEBAUTHN_PAGE =
+  '<!doctype html><meta charset="utf-8"><title>kypr の Touch ID</title><p>webauthn</p><script>' +
+  String.raw`
+const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf instanceof ArrayBuffer ? buf : buf.buffer)))
+const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
+const run = (fn) => fn().then((v) => JSON.stringify({ ok: true, ...v }), (e) => JSON.stringify({ ok: false, error: e && e.name }))
+window.kyprTest = {
+  available: () => run(async () => {
+    if (typeof PublicKeyCredential === 'undefined') return { available: false }
+    if (!(await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable())) return { available: false }
+    if (typeof PublicKeyCredential.getClientCapabilities === 'function') {
+      const caps = await PublicKeyCredential.getClientCapabilities()
+      if (caps['extension:prf'] === false) return { available: false }
+    }
+    return { available: true }
+  }),
+  enable: (salt) => run(async () => {
+    const cred = await navigator.credentials.create({
+      publicKey: {
+        rp: { name: 'kypr' },
+        user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'kypr', displayName: 'kypr のロック解除' },
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred' },
+        attestation: 'none',
+        timeout: 60000,
+        extensions: { prf: { eval: { first: unb64(salt) } } }
+      }
+    })
+    const prf = cred.getClientExtensionResults().prf
+    return { id: b64(cred.rawId), enabled: prf && prf.enabled === true, prf: prf && prf.results && prf.results.first ? b64(prf.results.first) : null }
+  }),
+  unlock: (id, salt) => run(async () => {
+    const cred = await navigator.credentials.get({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        allowCredentials: [{ type: 'public-key', id: unb64(id) }],
+        userVerification: 'required',
+        timeout: 60000,
+        extensions: { prf: { eval: { first: unb64(salt) } } }
+      }
+    })
+    const first = cred.getClientExtensionResults().prf.results.first
+    return { prf: b64(first) }
+  }),
+  forget: (id) => run(async () => {
+    const credentialId = id.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    await PublicKeyCredential.signalUnknownCredential({ rpId: location.hostname, credentialId })
+    return {}
+  }),
+  // 端末内蔵を指定した、PRF の無い要求（kypr 以外のサイトの形。今までどおり即 NotAllowedError）
+  platformCreate: () => run(async () => {
+    await navigator.credentials.create({
+      publicKey: {
+        rp: { name: 'x' },
+        user: { id: new Uint8Array(16), name: 'x', displayName: 'x' },
+        challenge: new Uint8Array(32),
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform' },
+        timeout: 10000
+      }
+    })
+    return {}
+  })
+}
+document.title = 'kypr の Touch ID（準備完了）'
+` +
+  '</script>'
+
 const pages = {
   '/login.html': LOGIN_PAGE,
+  '/webauthn.html': WEBAUTHN_PAGE,
   // 欄の無いトップの中に、別オリジン（localhost）のログインの iframe
   '/frame.html': (_req, server) =>
     '<!doctype html><meta charset="utf-8"><title>埋め込み</title><p>ログインは iframe の中</p>' +
@@ -253,7 +326,8 @@ try {
 
   /* ================= 1 回目の起動 ================= */
   const userData = makeDir('data')
-  let app = await bootApp(userData, origin)
+  // Touch ID の差し替えに少し時間をかける（Web 版の Touch ID 解除で「処理中に次の要求が来た」を作るため）
+  let app = await bootApp(userData, origin, { NEMO_KYPR_TEST_TOUCHID_MS: '300' })
   let ui = await connectUi(app.cdp)
   const json = async (expression) => JSON.parse(await ui.ev(`${expression}.then(JSON.stringify)`))
   const windowKypr = async () => (await json('window.nemo.getWindowState()')).kypr
@@ -1088,6 +1162,152 @@ try {
     JSON.stringify(reenroll)
   )
 
+  /* ---- 18. kypr の Web 版の Touch ID 解除（Nemo 内蔵の認証器） ---- */
+  const webPage = async (url, ui_ = ui) => {
+    await ui_.ev(`window.nemo.createTab(${JSON.stringify(url)})`)
+    const p = await connectTo(app.cdp, url.replace(/^https?:\/\/[^/]+/, ''), { type: 'page' })
+    await waitFor(p, "window.kyprTest ? 'ok' : ''")
+    return p
+  }
+  const call = async (p, expr) => JSON.parse(await p.ev(`window.kyprTest.${expr}`))
+  const webauthnFile = path.join(userData, 'kypr', 'web-authenticator.json')
+  const webauthnRows = () =>
+    fs.existsSync(webauthnFile) ? JSON.parse(fs.readFileSync(webauthnFile, 'utf8')).credentials : []
+  const SALT_A = Buffer.alloc(32, 0x11).toString('base64')
+  const SALT_B = Buffer.alloc(32, 0x22).toString('base64')
+
+  let web = await webPage(`${origin}/webauthn.html?n=1`)
+  const avail = await call(web, 'available()')
+  check(
+    'Web 版: kypr の origin では Touch ID のボタンが出る条件を満たす（isUVPAA・PRF）',
+    avail.available === true,
+    JSON.stringify(avail)
+  )
+  const enabled1 = await call(web, `enable(${JSON.stringify(SALT_A)})`)
+  const unlocked1 = await call(web, `unlock(${JSON.stringify(enabled1.id)}, ${JSON.stringify(SALT_A)})`)
+  check(
+    'Web 版: 有効にするとき PRF の結果が返り（Touch ID 1 回）、解除で同じ出力が返る',
+    enabled1.ok === true &&
+      enabled1.enabled === true &&
+      typeof enabled1.prf === 'string' &&
+      Buffer.from(enabled1.prf, 'base64').length === 32 &&
+      unlocked1.ok === true &&
+      unlocked1.prf === enabled1.prf,
+    JSON.stringify({
+      enabled1: { ...enabled1, prf: enabled1.prf ? '…' : null },
+      same: unlocked1.prf === enabled1.prf
+    })
+  )
+  const other1 = await call(web, `unlock(${JSON.stringify(enabled1.id)}, ${JSON.stringify(SALT_B)})`)
+  check('Web 版: 別の salt なら別の出力', other1.ok === true && other1.prf !== enabled1.prf)
+  // 2 つ目を作って、signalUnknownCredential で消す
+  const enabled2 = await call(web, `enable(${JSON.stringify(SALT_B)})`)
+  const rowsBeforeForget = webauthnRows().length
+  await call(web, `forget(${JSON.stringify(enabled2.id)})`)
+  const afterForget = await call(web, `unlock(${JSON.stringify(enabled2.id)}, ${JSON.stringify(SALT_B)})`)
+  check(
+    'Web 版: signalUnknownCredential のあとは、そのクレデンシャルで解除できない（ほかは残る）',
+    enabled2.ok === true &&
+      rowsBeforeForget === 2 &&
+      afterForget.ok === false &&
+      afterForget.error === 'NotAllowedError' &&
+      webauthnRows().length === 1 &&
+      (await call(web, `unlock(${JSON.stringify(enabled1.id)}, ${JSON.stringify(SALT_A)})`)).prf ===
+        enabled1.prf,
+    JSON.stringify({ before: rowsBeforeForget, after: webauthnRows().length, afterForget })
+  )
+  // 同時に 2 件（Touch ID の差し替えは 300ms かかる）
+  const concurrent = JSON.parse(
+    await web.ev(
+      `Promise.all([window.kyprTest.unlock(${JSON.stringify(enabled1.id)}, ${JSON.stringify(SALT_A)}), window.kyprTest.unlock(${JSON.stringify(enabled1.id)}, ${JSON.stringify(SALT_A)})]).then((r) => JSON.stringify(r.map((x) => JSON.parse(x))))`
+    )
+  )
+  check(
+    'Web 版: 処理中に来た 2 件目はすぐ NotAllowedError（Touch ID を重ねない）',
+    concurrent.filter((r) => r.ok === true).length === 1 &&
+      concurrent.filter((r) => r.ok === false && r.error === 'NotAllowedError').length === 1,
+    JSON.stringify(concurrent.map((r) => (r.ok ? 'ok' : r.error)))
+  )
+  // 保存の形
+  const rows = webauthnRows()
+  check(
+    'Web 版: 秘密は暗号化して保存する（memory backend の形式・想定外のキーが無い）',
+    rows.length === 1 &&
+      rows.every(
+        (r) =>
+          r.encrypted.startsWith('NEMOTEST1:') &&
+          Object.keys(r).sort().join(',') === 'createdAt,encrypted,id,origin,rpId' &&
+          r.origin === origin &&
+          r.rpId === '127.0.0.1'
+      ),
+    JSON.stringify(rows.map((r) => ({ ...r, encrypted: `${r.encrypted.slice(0, 10)}…` })))
+  )
+  // kypr 以外の origin（同じポートの localhost）: 今までどおり
+  const foreign = await webPage(`http://localhost:${port}/webauthn.html?n=2`)
+  const foreignAvail = await call(foreign, 'available()')
+  const foreignStart = Date.now()
+  const foreignCreate = await call(foreign, 'platformCreate()')
+  const foreignKypr = await call(foreign, `enable(${JSON.stringify(SALT_A)})`)
+  check(
+    'Web 版: kypr 以外の origin では isUVPAA は false のまま、端末内蔵の要求は即 NotAllowedError',
+    foreignAvail.available === false &&
+      foreignCreate.error === 'NotAllowedError' &&
+      foreignKypr.error === 'NotAllowedError' &&
+      Date.now() - foreignStart < 5000,
+    JSON.stringify({ foreignAvail, foreignCreate, foreignKypr, ms: Date.now() - foreignStart })
+  )
+  // 裏のタブ: web は foreign を開いたので裏に回っている
+  const hiddenTab = await call(web, `unlock(${JSON.stringify(enabled1.id)}, ${JSON.stringify(SALT_A)})`)
+  check(
+    'Web 版: 裏のタブからは Touch ID を求めずに NotAllowedError',
+    hiddenTab.ok === false &&
+      hiddenTab.error === 'NotAllowedError' &&
+      readLogLines(userData).some((line) => line.includes('kypr.webauthn') && line.includes('hidden')),
+    JSON.stringify(hiddenTab)
+  )
+  // シークレットウィンドウ
+  const privateWeb = await webPage(`${origin}/webauthn.html?private=2`, privateUi)
+  const privateAvail = await call(privateWeb, 'available()')
+  check(
+    'Web 版: シークレットウィンドウでは isUVPAA が false（認証器を入れない）',
+    privateAvail.available === false,
+    JSON.stringify(privateAvail)
+  )
+  // PRF の出力とクレデンシャルの id がログに、PRF の出力が userData のどこにも出ない
+  const secrets = [enabled1.prf, other1.prf].map((v) => Buffer.from(v, 'base64'))
+  const idBytes = Buffer.from(enabled1.id, 'base64')
+  const forms = (buf) => [buf.toString('hex'), buf.toString('base64'), buf.toString('base64url')]
+  const prfHits = []
+  let scanned = 0
+  const walkAll = (d) => {
+    for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, entry.name)
+      if (entry.isDirectory()) walkAll(p)
+      else if (entry.isFile()) {
+        scanned += 1
+        let buf
+        try {
+          buf = fs.readFileSync(p)
+        } catch {
+          continue
+        }
+        for (const secret of secrets) {
+          if (buf.includes(secret) || forms(secret).some((f) => buf.includes(Buffer.from(f)))) {
+            prfHits.push(path.relative(userData, p))
+          }
+        }
+      }
+    }
+  }
+  walkAll(userData)
+  const logText = readLogLines(userData).join('\n')
+  const idInLogs = forms(idBytes).some((f) => logText.includes(f))
+  check(
+    'Web 版: PRF の出力は userData のどこにも、クレデンシャルの id はログに出ない',
+    prfHits.length === 0 && !idInLogs && scanned > 0 && logText.includes('kypr.webauthn'),
+    `files=${scanned} hits=${prfHits.slice(0, 3).join(' / ')} idInLogs=${idInLogs}`
+  )
+
   const crashes1 = findUncaughtExceptions(userData)
   check('未処理の例外が出ていない', crashes1.length === 0, crashes1.join(' / '))
   await stopApp(app.child)
@@ -1115,6 +1335,19 @@ try {
   check(
     '使わないまま決めた時間が経つとロックする',
     (await json('window.nemo.kyprStatus()')).state === 'locked'
+  )
+  // Web 版: 再起動しても秘密は残っていて、Touch ID が通らなければ NotAllowedError（秘密は消さない）
+  const webFail = await webPage(`${origin}/webauthn.html?n=3`)
+  const rowsBeforeFail = webauthnRows().length
+  const failed = await call(webFail, `unlock(${JSON.stringify(enabled1.id)}, ${JSON.stringify(SALT_A)})`)
+  check(
+    '2 回目 Web 版: 再起動後も秘密が残り、Touch ID が通らなければ NotAllowedError で、秘密は消さない',
+    rowsBeforeFail === 1 &&
+      failed.ok === false &&
+      failed.error === 'NotAllowedError' &&
+      webauthnRows().length === 1 &&
+      readLogLines(userData).some((line) => line.includes('kypr.webauthn') && line.includes('touch-id')),
+    JSON.stringify({ rowsBeforeFail, failed, after: webauthnRows().length })
   )
   const crashes2 = findUncaughtExceptions(userData)
   check('2 回目: 未処理の例外が出ていない', crashes2.length === 0, crashes2.join(' / '))

@@ -12,6 +12,15 @@ import { log } from '../log.js'
 const mode = (): ReturnType<typeof resolveKyprTouchIdMode> =>
   resolveKyprTouchIdMode(process.env['NEMO_KYPR_TEST_TOUCHID'], app.isPackaged)
 
+/**
+ * 差し替えた Touch ID が答えるまでの時間（`NEMO_KYPR_TEST_TOUCHID_MS`）。実物はダイアログで待つので、
+ * 「処理中に次の要求が来た」を自走検証で作るのに使う。パッケージ版では無視する（`mode()` が 'real' になる）。
+ */
+async function testDelay(): Promise<void> {
+  const ms = Number(process.env['NEMO_KYPR_TEST_TOUCHID_MS'])
+  if (Number.isFinite(ms) && ms > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(ms, 10_000)))
+}
+
 export function touchIdAvailable(): boolean {
   const m = mode()
   if (m === 'ok' || m === 'fail') return true
@@ -26,6 +35,7 @@ export function touchIdAvailable(): boolean {
 /** 通れば true。キャンセル・失敗・使えないは false（呼び出し側はマスターパスワードに回す）。 */
 export async function promptTouchId(reason: string): Promise<boolean> {
   const m = mode()
+  if (m === 'ok' || m === 'fail') await testDelay()
   if (m === 'ok') return true
   if (m === 'fail' || m === 'unavailable') return false
   if (!touchIdAvailable()) return false

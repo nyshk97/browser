@@ -55,6 +55,10 @@
  * iframe に入れるサイトでは効かないが、login.live.com / accounts.google.com 等の主要な
  * サインインはトップフレームで完結する。
  *
+ * **kypr の Web 版の origin だけは、このシムの外側に kypr 用の認証器が入る**（`src/shared/kypr-webauthn-shim.js`。
+ * `src/preload/kypr-page.ts` が extension-shim より後に入れる）。PRF 付きの要求はそちらが先に受け、
+ * kypr の形でないものだけがこのシムに届く。ここで握る isUVPAA は native の false のまま。
+ *
  * **この関数はそのまま文字列化してページに送る**ので、外側の変数・import を参照しない。
  * 配る経路は `src/preload/extension-shim.ts`（通常セッション）と
  * `src/main/page-shim.ts` の登録（シークレットセッション）。

@@ -253,7 +253,8 @@ export const OWNERS = new Map([
   ['scripts/kypr-vendor.test.mjs', ['kypr']],
   ['src/shared/kypr-config.js', ['kypr']],
   ['src/shared/kypr-page-source.js', ['kypr']],
-  ['src/preload/kypr-page.ts', ['kypr']],
+  // テストページ（127.0.0.1）を開くたびに kypr の認証器を入れるか main に同期で聞くので、ページを開く基本の検査（phase1）も回す
+  ['src/preload/kypr-page.ts', ['kypr', 'phase1']],
   // 自動入力が個人情報を読む（`kyprIdentityForFill`）・ロック中は Touch ID で解除する
   ['src/main/kypr/index.ts', ['kypr', 'autofill']],
   // フォーム自動入力に使う個人情報の決め方（kypr のポップアップの「フォーム自動入力に使う」と自動入力の両方）
@@ -264,6 +265,12 @@ export const OWNERS = new Map([
   ['src/main/kypr/cache-store.ts', ['kypr']],
   ['src/main/kypr/device-keys.ts', ['kypr']],
   ['src/main/kypr/touch-id.ts', ['kypr', 'autofill']],
+  // kypr の Web 版の Touch ID 解除に答える認証器（`verify-kypr.mjs` が模擬サーバーのテストページで create / get まで見る）
+  ['src/main/kypr/web-authenticator.ts', ['kypr']],
+  ['src/shared/kypr-webauthn.js', ['kypr']],
+  ['src/shared/kypr-webauthn-shim.js', ['kypr']],
+  ['scripts/kypr-webauthn.test.mjs', ['kypr']],
+  ['scripts/kypr-webauthn-shim.test.mjs', ['kypr']],
   ['src/main/kypr/kdf.ts', ['kypr']],
   ['src/main/kypr/kdf-worker.ts', ['kypr']],
   ['src/renderer/components/Kypr.tsx', ['kypr']],

@@ -84,6 +84,11 @@ isUVPAA() が true になった時点でシムは自動的に素通しになる�
 **Bitwarden 拡張は外した（2026-09-28）ので、いまの Nemo にはパスキーで答えられるものが無い**
 （シムが即座に NotAllowedError を返し、多くのサイトはパスワードでのログインに落ちる）。
 パスキーは kypr の次の段階で Nemo に入れる。それまでパスキーしか登録していないアカウントには Nemo から入れない。
+**例外は kypr の Web 版の origin だけ**: `src/preload/kypr-page.ts` がこのシムの**外側**に kypr 用の認証器
+（`src/shared/kypr-webauthn-shim.js`。答えるのは main の `src/main/kypr/web-authenticator.ts`）を入れ、
+isUVPAA を true にして PRF 付きの `create` / `get` に答える（Web 版の Touch ID 解除用。署名は作らない）。
+外側に入るのは preload の登録順（extension-shim → kypr-page）による。逆になると kypr の要求がこのシムで
+NotAllowedError になる（`mise run verify:only kypr` が実物で見ている）。
 拡張のパスキー（`registerContentScripts` の world MAIN で page script を注入する形）はこの件と無関係に動く。
 
 ## Phase 1 で分かった癖

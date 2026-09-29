@@ -106,6 +106,11 @@ export function initKypr(): void {
   }, tick).unref()
 }
 
+/** kypr のサーバーの origin（Web 版もここから配られる）。kypr が無効なら null。 */
+export function kyprServerOrigin(): string | null {
+  return server?.url ?? null
+}
+
 export function onKyprChange(fn: () => void): () => void {
   listeners.add(fn)
   return () => listeners.delete(fn)

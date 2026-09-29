@@ -162,7 +162,7 @@ mise run verify:only split
 | **Live Folder（GitHub の PR）**・取得のバックオフ・トークン | `mise run verify:only live-folder restart` + 下の「Live Folder（GitHub の PR）」 |
 | **拡張アイコンの popup の位置**（ツールバーの View オフセット） | `mise run verify:ext` |
 | 拡張まわり・Electron のバージョン | `mise run verify:ext`（+ 実機で実物の拡張）。拡張の端末ごと ON/OFF・DevTools パネルへの `chrome.*` 補完（`chrome.debugger` / `webRequest` の tabId）もここ |
-| **kypr（パスワードマネージャー）**・解除 / Touch ID / ロック・同期・照合・入力（ポップアップ / ⌘⇧L / 欄の下の候補）・作成 / 編集 / ゴミ箱・コピー | `mise run verify:only kypr`（模擬サーバーと差し替えで 4 回起動する。73 件）+ 下の「kypr」 |
+| **kypr（パスワードマネージャー）**・解除 / Touch ID / ロック・同期・照合・入力（ポップアップ / ⌘⇧L / 欄の下の候補）・作成 / 編集 / ゴミ箱・コピー | `mise run verify:only kypr`（模擬サーバーと差し替えで 4 回起動する。91 件）+ 下の「kypr」 |
 | パッケージング・ネイティブ依存・fuses | `mise run package` → `mise run verify:packaged` |
 | 履歴 / アーカイブ・シークレット・設定画面 | `mise run verify`（`verify-phase2.mjs` が含まれる） |
 | **履歴 DB のスキーマ**（列追加・インデックス） | `mise run verify:db-migration` |
@@ -1326,6 +1326,13 @@ Touch ID の解除と失敗・サーバーが覚えた鍵を拒否したとき�
 ツールバーのロゴと件数・ポップアップの閉じ方（Esc では閉じない / 詳細の Esc は一覧へ / ページを押すと閉じる /
 ツールバーのアイコンを押すと閉じて開き直さない）。エージェント窓に出ないことは `verify:only agent` が見る。
 
+**Web 版の Touch ID 解除**（Nemo 内蔵の認証器）は、模擬サーバーの `/webauthn.html`（kypr の `device-unlock.ts` と同じ
+呼び出しをするテストページ）で見る: kypr の origin で isUVPAA が true・有効にするとき PRF が返り解除で同じ出力・
+`signalUnknownCredential` で消える・処理中の 2 件目は即 NotAllowedError（`NEMO_KYPR_TEST_TOUCHID_MS` で Touch ID の
+差し替えに時間をかけて作る）・保存が暗号化の形式・同じポートの `localhost`（kypr 以外）では今までどおり・裏のタブと
+シークレットでは答えない・PRF の出力が userData に無い・再起動後に Touch ID が通らなければ NotAllowedError で秘密は残る。
+kypr の Web 版の options が変わったら、テストページと `src/shared/kypr-webauthn.js` の判定を合わせる。
+
 **外のクリックは `window.nemo.focusForVerify('page' | 'toolbar')`（`webContents.focus()`）で撃つ**。
 実物のクリックも押した View をファーストレスポンダにするだけで、閉じる判定は main がその View の `focus` で拾う
 （`registry.ts` の `onViewFocused`）。合成マウスは使わない。**人が見るもの**: 実物のクリックでページ・アドレスバー・
@@ -1355,6 +1362,9 @@ Touch ID の解除と失敗・サーバーが覚えた鍵を拒否したとき�
 - iframe のログイン（Apple ID のサインインなど）を ⌘⇧L で入れる
 - カードの番号・期限・セキュリティコードをコピーして決済フォームに貼れる。30 秒でクリップボードから消える
 - マスターパスワードで解除したとき、診断ログに `kypr.kdf_worker_fallback` が出ていない（出ていれば鍵の導出が main で回っている）
+- Web 版（`https://kypr.tools97.com`）: マスターパスワードで解除 → Touch ID を有効にする（Touch ID が 1 回だけ出る）→
+  ロックして Touch ID で解除できる・Touch ID を閉じるとマスターパスワードに回る・無効にして有効にし直しても解除できる
+  （`userData/kypr/web-authenticator.json` の件数が増え続けない）
 
 ## Claude in Nemo（Claude Code から操作する）
 

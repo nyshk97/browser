@@ -1,5 +1,7 @@
 /// <reference lib="dom" />
-import { ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
+import { KYPR_PRODUCTION_SERVER } from '../shared/kypr-config.js'
+import { installKyprWebAuthn } from '../shared/kypr-webauthn-shim.js'
 
 /**
  * kypr: ログイン欄の下に候補を出すための見張り（ページ向けの preload。isolated world で走る）。
@@ -11,7 +13,38 @@ import { ipcRenderer } from 'electron'
  * - スクロール・リサイズ・Esc・フォーカスが外れたら閉じるよう知らせる
  *
  * ページのメインワールドからはこのスクリプトも ipcRenderer も見えない（contextIsolation）。
+ *
+ * もう 1 つ、kypr の Web 版の Touch ID 解除に答える認証器（`src/shared/kypr-webauthn-shim.js`）を、
+ * kypr の origin のメインフレームにだけ main world へ入れる。**全サイトで同期 IPC を撃たない**よう、
+ * 本番の kypr と模擬サーバー（`127.0.0.1` / `localhost` の http）の候補のときだけ main に聞く。
+ * 最終的な判定は main（`src/main/kypr/web-authenticator.ts`。シークレット・エージェントのセッションでは入れない）。
  */
+
+function kyprWebAuthnCandidate(): boolean {
+  if (location.origin === KYPR_PRODUCTION_SERVER) return true
+  return (
+    location.protocol === 'http:' && (location.hostname === '127.0.0.1' || location.hostname === 'localhost')
+  )
+}
+
+if (window.top === window && kyprWebAuthnCandidate()) {
+  let enabled: boolean
+  try {
+    enabled = ipcRenderer.sendSync('nemo:kypr-webauthn-enabled') === true
+  } catch {
+    enabled = false
+  }
+  if (enabled) {
+    try {
+      contextBridge.executeInMainWorld({
+        func: installKyprWebAuthn,
+        args: [(req: Record<string, unknown>) => ipcRenderer.invoke('nemo:kypr-webauthn', req)]
+      })
+    } catch (error) {
+      console.error('[nemo] kypr webauthn failed', error)
+    }
+  }
+}
 
 const CHANNEL = 'nemo:kypr-field'
 /** 直前の操作を「このフォーカスの原因」とみなす時間。 */

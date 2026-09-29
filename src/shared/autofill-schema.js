@@ -117,7 +117,16 @@ export const PROFILE_FIELDS = [
     group: '住所',
     type: 'text'
   },
-  // 英語のフォームで使う（`deriveValues` が英語のフォームのときだけ住所の値を差し替える）。都道府県と国は作る
+  // 英語のフォームで使う（`deriveValues` が英語のフォームのときだけ住所の値を差し替える）。
+  // 都道府県と国は空なら作る（都道府県は日本語の都道府県から対応表、国は Japan）
+  {
+    key: 'address_level1_en',
+    kypr: 'addressLevel1En',
+    label: '都道府県',
+    hint: 'Tokyo',
+    group: '住所（英語）',
+    type: 'text'
+  },
   {
     key: 'address_level2_en',
     kypr: 'addressLevel2En',
@@ -142,6 +151,7 @@ export const PROFILE_FIELDS = [
     group: '住所（英語）',
     type: 'text'
   },
+  { key: 'country_en', kypr: 'countryEn', label: '国', hint: 'Japan', group: '住所（英語）', type: 'text' },
   { key: 'birthday', kypr: 'birthday', label: '生年月日', hint: '2000-01-01', group: 'その他', type: 'date' },
   { key: 'gender', kypr: 'gender', label: '性別', hint: '', group: 'その他', type: 'gender' },
   {

@@ -90,6 +90,24 @@ test('deriveValues（英語）: 英語の住所が無ければ住所の欄は空
   assert.equal(v['country'], 'Japan')
 })
 
+test('deriveValues（英語）: 都道府県と国は保存した英語の値を優先し、無ければ対応表 / Japan', () => {
+  const stored = deriveValues(
+    normalizeProfile({ ...PROFILE, address_level1_en: 'Tokyo-to', country_en: 'JAPAN' }),
+    { english: true, today: TODAY }
+  )
+  assert.equal(stored['address_level1'], 'Tokyo-to')
+  assert.equal(stored['country'], 'JAPAN')
+  assert.equal(stored['address_full'], '1-1 Chiyoda, Sample Tower 1701, Chiyoda-ku, Tokyo-to')
+  // 保存した書き方が選択肢に無ければ、対応表の書き方（Tokyo）で選ぶ
+  assert.equal(
+    matchSelectOption(options(['Osaka', 'Tokyo']), 'address_level1', stored['address_level1'], stored),
+    1
+  )
+  const derived = deriveValues(PROFILE, { english: true, today: TODAY })
+  assert.equal(derived['address_level1'], 'Tokyo')
+  assert.equal(derived['country'], 'Japan')
+})
+
 test('deriveValues（日本語）: 今までどおり。国は「日本」', () => {
   const v = deriveValues(PROFILE, { today: TODAY })
   assert.equal(v['full_name'], '山田 太郎')

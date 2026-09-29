@@ -145,6 +145,7 @@ export function ageOn(birthday, today) {
  * @param {{ english?: boolean, today?: Date }} [options]
  *   `english` … 英語のフォーム（`isEnglishForm`）。氏名はローマ字、住所は英語の住所にする。
  *   **英語の住所が無ければ住所の値は出さない**（英語のフォームに日本語の住所を入れない）。郵便番号・国・都道府県は出す
+ *   （都道府県と国は、英語の値を保存していればそれ、無ければ対応表 / Japan）
  *   `today` … 年齢を数える日（既定は今日）
  * @returns {Record<string, string>} 選択肢のキー → 値（**空の項目から導く値は出さない**）
  */
@@ -233,7 +234,7 @@ export function deriveValues(profile, options = {}) {
 
   put('age', ageOn(get('birthday'), options.today ?? new Date()))
   // 住所の国（日本語のフォームは「日本」、英語のフォームは Japan。select は両方の書き方で照合する）
-  if (address || get('postal_code')) put('country', options.english ? 'Japan' : '日本')
+  if (address || get('postal_code')) put('country', options.english ? get('country_en') || 'Japan' : '日本')
 
   if (options.english) {
     // 氏名はローマ字（カナは英語のフォームで使わないので出さない）
@@ -255,8 +256,10 @@ export function deriveValues(profile, options = {}) {
     ])
       delete out[key]
     const [city, line1, line2] = [get('address_level2_en'), get('address_line1_en'), get('address_line2_en')]
-    const prefecture = prefectureEn(get('address_level1'))
+    const prefecture = get('address_level1_en') || prefectureEn(get('address_level1'))
     put('address_level1', prefecture)
+    // select の照合で、保存した書き方（Tokyo-to など）が選択肢に無いときに対応表の書き方でも探す
+    put('address_level1_table', prefectureEn(get('address_level1')))
     put('address_level2', city)
     put('address_line1', line1)
     put('address_line2', line2)
@@ -420,7 +423,15 @@ function selectCandidates(option, value, values) {
   if (option === 'age') return [value, `${value}歳`, `${value}才`]
   if (option === 'address_level1' && /^[A-Za-z]/.test(value)) {
     // 英語のフォーム（Tokyo / Tokyo-to / Tokyo Prefecture）
-    return [value, `${value} Prefecture`, `${value}-to`, `${value}-fu`, `${value}-ken`]
+    const table = values['address_level1_table'] ?? ''
+    return [
+      value,
+      `${value} Prefecture`,
+      `${value}-to`,
+      `${value}-fu`,
+      `${value}-ken`,
+      ...(table ? [table, `${table} Prefecture`] : [])
+    ]
   }
   if (option === 'address_level1') {
     // 「神奈川県」と「神奈川」の揺れ。北海道は「道」を落とすと別物になるので落とさない

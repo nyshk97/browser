@@ -30,6 +30,8 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-09-29
+
 ### 追加
 
 - **kypr の Web 版（kypr.tools97.com）を Nemo でも Touch ID で解除できるようにした**。Web 版の「Touch ID を有効にする」が Nemo でも出る。有効にしたあとは、Chrome や Safari と同じくロック画面の指紋のボタンで解除できる（Touch ID を閉じるとマスターパスワードに回る）。シークレットウィンドウでは使えない。ほかのサイトのパスキーは引き続き使えない

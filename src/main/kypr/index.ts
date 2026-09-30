@@ -69,6 +69,7 @@ import type {
   KyprUnlockResult
 } from '../../shared/types.js'
 import { log, logError } from '../log.js'
+import { getFaviconsForHosts } from '../store/history.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { FileCacheStore, kyprDir } from './cache-store.js'
@@ -451,6 +452,19 @@ function summaryOf(entry: VaultEntry): KyprSummary {
 }
 
 const byName = (a: KyprSummary, b: KyprSummary): number => a.name.localeCompare(b.name, 'ja')
+
+/**
+ * ログインの行に favicon を付ける（ポップアップ・入力欄の候補に渡す直前に 1 回）。
+ * **履歴にあるホストだけ**（`getFaviconsForHosts`）。開いたことのないサイトの favicon は推測して取りに行かない
+ */
+export function withKyprFavicons(rows: KyprSummary[]): KyprSummary[] {
+  const hosts = rows.flatMap((row) => (row.kind === 'login' && row.host ? [row.host] : []))
+  if (hosts.length === 0) return rows
+  const favicons = getFaviconsForHosts(hosts)
+  return rows.map((row) =>
+    row.kind === 'login' && row.host ? { ...row, faviconUrl: favicons.get(row.host) ?? null } : row
+  )
+}
 
 /**
  * 一覧。ワンタイムコード以外は名前の順、ワンタイムコードはその後ろに発行元 → ラベルの順（発行元が空のものは末尾）。

@@ -533,13 +533,18 @@ export interface KyprSummary {
   subtitle: string
   /** ログイン・ワンタイムコードの最初の URI のホスト（無ければ null）。 */
   host: string | null
+  /**
+   * ログインの favicon（`host` を Nemo で開いたことがあるときだけ。履歴から引く。`withKyprFavicons`）。
+   * 保管庫のホストから推測して取りに行かない（使っているサイトの一覧が外へ出る）。無ければ頭文字を出す
+   */
+  faviconUrl?: string | null
   deleted: boolean
 }
 
 export interface KyprPanelData {
   status: KyprStatus
   /** 入れる先のフレームの URL（http / https のページでなければ null）。 */
-  page: { url: string; host: string } | null
+  page: { url: string; host: string; faviconUrl: string | null } | null
   /** このページに合うログイン。 */
   matches: KyprSummary[]
   /** このページに合うワンタイムコード（URL を足したものだけ）。 */

@@ -94,8 +94,12 @@ function check(name, ok, detail = '') {
 
 /* ---------------- テストページ ---------------- */
 
+/** テストページの favicon（UI の CSP で出せる data:。http の favicon は出ないので使わない）。 */
+const LOGIN_FAVICON =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23e34'/%3E%3C/svg%3E"
 const LOGIN_PAGE =
   '<!doctype html><meta charset="utf-8"><title>ログイン</title>' +
+  `<link rel="icon" href="${LOGIN_FAVICON}">` +
   '<form id="f" onsubmit="return false">' +
   '<label>ID <input id="username" name="username" autocomplete="username" style="width:200px;height:24px"></label>' +
   '<label>PW <input id="password" name="password" type="password" autocomplete="current-password" style="width:200px;height:24px"></label>' +
@@ -665,6 +669,33 @@ try {
       panelView.list.includes('Site B') &&
       panelView.logo,
     JSON.stringify({ ...panelView, list: panelView.list.length })
+  )
+  // favicon: 開いたサイト（127.0.0.1。ポート違いの行から引く）は履歴の favicon、一度も開いていないサイト
+  // （kyprmark-url.example）は頭文字のまま（保管庫のホストで外へ取りに行かない）
+  await waitFor(
+    overlayUi,
+    `document.querySelector('[data-kypr-id="${A.id}"] .kypr-av.fav img')?.naturalWidth > 0 ? 'ok' : ''`,
+    { timeoutMs: 8000 }
+  ).catch(() => '')
+  const avatars = JSON.parse(
+    await overlayUi.ev(`JSON.stringify({
+      a: document.querySelector('.kypr-list > .kypr-scroll > [data-kypr-id="${A.id}"] .kypr-av.fav img')?.getAttribute('src') ?? null,
+      aLoaded: document.querySelector('[data-kypr-id="${A.id}"] .kypr-av.fav img')?.naturalWidth ?? 0,
+      hero: document.querySelector('.kypr-hero-site .kypr-av.fav img')?.getAttribute('src') ?? null,
+      m: (() => {
+        const av = document.querySelector('[data-kypr-id="${M.id}"] .kypr-av')
+        return av ? { fav: av.classList.contains('fav'), text: av.textContent } : null
+      })()
+    })`)
+  )
+  check(
+    'ポップアップ: 開いたサイトのログインは favicon・一度も開いていないサイトは頭文字',
+    avatars.a === LOGIN_FAVICON &&
+      avatars.aLoaded > 0 &&
+      avatars.hero === LOGIN_FAVICON &&
+      avatars.m?.fav === false &&
+      avatars.m.text === 'K',
+    JSON.stringify({ ...avatars, a: avatars.a?.slice(0, 20), hero: avatars.hero?.slice(0, 20) })
   )
   // ツールバーのボタンは kypr のロゴ（Web / iOS と同じ図柄）に件数のバッジ
   const toolbarUi = await connectTo(app.cdp, 'view=toolbar', { exclude: 'private=1' })

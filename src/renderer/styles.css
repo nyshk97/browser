@@ -3634,6 +3634,18 @@ body[data-view='call'] {
   font-size: 21px;
 }
 
+/* favicon は白い地に載せる（黒い favicon が暗い面に沈まないように。透過の周りも揃って見える） */
+.kypr-av.fav {
+  background: #fff;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.18);
+}
+
+.kypr-av.fav img {
+  width: 62.5%;
+  height: 62.5%;
+  object-fit: contain;
+}
+
 .kypr-av.card {
   background: linear-gradient(160deg, var(--kypr-card-hi), var(--kypr-card));
 }

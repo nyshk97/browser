@@ -113,7 +113,8 @@ import {
   syncKypr,
   syncKyprIfStale,
   touchKypr,
-  unlockKyprWithTouchId
+  unlockKyprWithTouchId,
+  withKyprFavicons
 } from './kypr/index.js'
 import {
   fillKyprLogin,
@@ -129,7 +130,13 @@ import { MAX_JEV_KEY } from '../shared/autofill-schema.js'
 import type { ImportEntry } from '../shared/http-auth-rules.js'
 import { MAX_PASSPHRASE, MIN_PASSPHRASE, validatePassphrase } from '../shared/auth-vault-schema.js'
 import { cancelDownload, clearDownloads, revealDownload } from './downloads.js'
-import { clearHistory, getFavicons, queryHistory, removeHistory } from './store/history.js'
+import {
+  clearHistory,
+  getFavicons,
+  getFaviconsForHosts,
+  queryHistory,
+  removeHistory
+} from './store/history.js'
 import { clearArchive, queryArchive, removeArchived } from './store/archive.js'
 import { getAppStatus } from './app-status.js'
 import { isCallWindowContents } from './call-window.js'
@@ -1351,13 +1358,30 @@ export function registerIpcHandlers(): void {
     const status = kyprStatus()
     const wc = foregroundContents(win)
     const url = status.state === 'unlocked' && wc ? await kyprTargetUrl(wc) : wc ? wc.getURL() : null
-    const page = url && /^https?:/.test(url) ? { url, host: new URL(url).hostname } : null
+    const host = url && /^https?:/.test(url) ? new URL(url).hostname : null
+    // 見出しの favicon はタブのもの（UI の CSP で出せる https / data: のとき）。無い・入れる先が別ホストの
+    // iframe なら、そのホストを履歴から引く
+    const tab = win.getForegroundTab()
+    const tabFavicon =
+      tab && URL.parse(tab.url)?.hostname === host && /^(https:|data:image\/)/.test(tab.faviconUrl ?? '')
+        ? tab.faviconUrl
+        : null
+    const page =
+      url && host
+        ? { url, host, faviconUrl: tabFavicon ?? getFaviconsForHosts([host]).get(host) ?? null }
+        : null
+    const items = withKyprFavicons(kyprSummaries())
+    // このページに合うものは一覧の部分集合なので、favicon は一覧の分を使い回す（履歴を 2 回引かない）
+    const favicons = new Map(items.map((item) => [item.id, item.faviconUrl]))
     return {
       status,
       page,
-      matches: page && status.state === 'unlocked' ? kyprMatches(page.url) : [],
+      matches:
+        page && status.state === 'unlocked'
+          ? kyprMatches(page.url).map((row) => ({ ...row, faviconUrl: favicons.get(row.id) ?? null }))
+          : [],
       totpMatches: page && status.state === 'unlocked' ? kyprTotpMatches(page.url) : [],
-      items: kyprSummaries(),
+      items,
       autofillIdentityId: kyprAutofillIdentityId(getSettings().kyprAutofillIdentityId),
       agentRefusal: wc ? await agentFillRefusal(wc) : null
     }

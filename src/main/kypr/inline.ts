@@ -3,7 +3,7 @@ import type { KyprInlineState } from '../../shared/types.js'
 import { log } from '../log.js'
 import { findTabByWebContents, type NemoTab, type NemoWindow } from '../registry.js'
 import { agentFillRefusal, agentUserAtWindow, isAgentContents } from '../agent/contents.js'
-import { kyprMatches, kyprState, syncKyprIfStale } from './index.js'
+import { kyprMatches, kyprState, syncKyprIfStale, withKyprFavicons } from './index.js'
 
 /**
  * kypr: ログイン欄の下に出す候補（オーバーレイの `kypr-inline`）。
@@ -138,7 +138,12 @@ function show(win: NemoWindow, tab: NemoTab, wc: WebContents, x: number, y: numb
   }
   anchor.x = Math.min(Math.max(anchor.x, 0), Math.max(content.width - WIDTH - 8, 0))
 
-  shown = { win, tabKey: tab.key, url, state: { locked: state !== 'unlocked', rows, shownAt: Date.now() } }
+  shown = {
+    win,
+    tabKey: tab.key,
+    url,
+    state: { locked: state !== 'unlocked', rows: withKyprFavicons(rows), shownAt: Date.now() }
+  }
   win.kyprAnchor = anchor
   log('kypr.inline_show', { rows: rows.length, locked: state !== 'unlocked' })
   if (win.overlay === 'kypr-inline') {

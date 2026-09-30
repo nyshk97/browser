@@ -256,20 +256,33 @@ export function KyprMark({
 }
 
 /**
- * 頭文字のアイコン。色の決め方は Web 版の `Avatar` と同じ（ドメイン、無ければ名前から）で、
- * 同じアイテムが Web と同じ色になる。サイトのファビコンは読まない（どのサイトを使っているかが外に漏れる）
+ * アイテムのアイコン。ログインは favicon があればそれ、無ければ頭文字。
+ * favicon は main が**履歴にあるホストだけ**付けてくる（`withKyprFavicons`）。保管庫のホストから URL を推測して
+ * 取りに行かない（どのサイトを使っているかが外に漏れる）。表示のときは、開いたことのあるサイトが申告した URL へ通信が出る。
+ * 頭文字の色の決め方は Web 版の `Avatar` と同じ（ドメイン、無ければ名前から）で、同じアイテムが Web と同じ色になる
  */
 function Avatar({
   kind,
   name,
   host,
+  favicon,
   size = 'md'
 }: {
   kind: KyprSummary['kind']
   name: string
   host: string | null
+  favicon?: string | null
   size?: 'sm' | 'md' | 'lg'
 }): React.JSX.Element {
+  // 失敗した src を覚える（`Favicon` と同じ。真偽値だと src が変わっても失敗のままになる）
+  const [failedSrc, setFailedSrc] = useState<string | null>(null)
+  if (kind === 'login' && favicon && failedSrc !== favicon) {
+    return (
+      <span className={`kypr-av ${size} fav`} aria-hidden="true">
+        <img src={favicon} alt="" draggable={false} onError={() => setFailedSrc(favicon)} />
+      </span>
+    )
+  }
   const iconSize = size === 'lg' ? 22 : size === 'sm' ? 12 : 16
   if (kind === 'card' || kind === 'note' || kind === 'identity' || kind === 'totp') {
     return (
@@ -681,6 +694,7 @@ export function KyprPanel({ onClose }: { onClose: () => void }): React.JSX.Eleme
       ) : view.name === 'detail' ? (
         <KyprDetail
           id={view.id}
+          favicon={data.items.find((item) => item.id === view.id)?.faviconUrl ?? null}
           readOnly={status.readOnly}
           autofillIdentityId={data.autofillIdentityId}
           onAutofillChanged={reload}
@@ -759,7 +773,7 @@ function KyprRow({
       title="開く"
       onClick={() => onOpen(item.id)}
     >
-      <Avatar kind={item.kind} name={item.name} host={item.host} />
+      <Avatar kind={item.kind} name={item.name} host={item.host} favicon={item.faviconUrl} />
       <span className="kypr-row-text">
         <span className="kypr-row-name">{item.name || '（名前なし）'}</span>
         <span className="kypr-row-sub">{item.subtitle || item.host || KIND_LABEL[item.kind]}</span>
@@ -998,7 +1012,13 @@ function KyprList({
         {showPage && data.page ? (
           <section className="kypr-hero">
             <div className="kypr-hero-site">
-              <Avatar kind="login" name={data.page.host} host={data.page.host} size="sm" />
+              <Avatar
+                kind="login"
+                name={data.page.host}
+                host={data.page.host}
+                favicon={data.page.faviconUrl}
+                size="sm"
+              />
               <span className="kypr-row-text">
                 <span className="kypr-hero-host">{data.page.host}</span>
                 <span className="kypr-row-sub">
@@ -1276,6 +1296,7 @@ function formatPasskeyDate(iso: string): string {
 
 function KyprDetail({
   id,
+  favicon,
   readOnly,
   autofillIdentityId,
   onAutofillChanged,
@@ -1287,6 +1308,8 @@ function KyprDetail({
   onEdit
 }: {
   id: string
+  /** 一覧で付いていた favicon（ログインで、履歴にあるホストのときだけ）。 */
+  favicon: string | null
   readOnly: boolean
   /** フォーム自動入力に使う個人情報（この Mac の設定。無ければ一番古いもの）。 */
   autofillIdentityId: string | null
@@ -1427,7 +1450,7 @@ function KyprDetail({
         ) : null}
       </div>
       <div className="kypr-detail-hero">
-        <Avatar kind={detail.kind} name={str('name')} host={host} size="lg" />
+        <Avatar kind={detail.kind} name={str('name')} host={host} favicon={favicon} size="lg" />
         <span className="kypr-row-text">
           <span className="kypr-detail-name">
             {(detail.kind === 'totp'
@@ -2302,7 +2325,7 @@ export function KyprInline(): React.JSX.Element | null {
             void window.nemo.kyprInlinePick(row.id).then((result) => setMessage(actionFailureText(result)))
           }}
         >
-          <Avatar kind={row.kind} name={row.name} host={row.host} size="sm" />
+          <Avatar kind={row.kind} name={row.name} host={row.host} favicon={row.faviconUrl} size="sm" />
           <span className="kypr-row-text">
             <span className="kypr-row-name">{row.name || '（名前なし）'}</span>
             <span className="kypr-row-sub">{row.subtitle}</span>

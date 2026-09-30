@@ -126,6 +126,52 @@ export function getFaviconsByUrlOrHost(urls: string[]): Map<string, string> {
 }
 
 /**
+ * kypr の一覧用: ホスト → favicon を、**そのホストを Nemo で開いたことがあるときだけ**引く。
+ *
+ * 保管庫のホストから favicon の URL を推測して取りに行くと、使っているサイトの一覧がそのまま外へ出る。
+ * 返すのは、履歴にある（= 既に開いた）サイトが自身で申告した favicon の URL だけ。
+ * **表示するときの通信は出る**（https の URL は UI のセッションで読み込む。キャッシュはページ側と別）ので、
+ * 「通信が出ない」ではなく「開いたことのないサイトへは出ない」が保証の範囲。
+ * `www.` の有無は保管庫と履歴で揃っていないことが多いので両方の形で引き、https を先に見る。
+ * 保管庫のホストはポートを持たないので、無ければ同じホストの別ポートの行も使う。
+ * favicon は UI の CSP（`img-src 'self' crx: data: https:`）で出せる https / data:image/ だけ返す。
+ * 範囲比較にする理由は `getFaviconsByUrlOrHost` と同じ（主キーの索引に乗せる）。
+ */
+export function getFaviconsForHosts(hosts: string[]): Map<string, string> {
+  const found = new Map<string, string>()
+  const db = getDb()
+  if (!db || !hasFaviconColumn() || hosts.length === 0) return found
+  try {
+    const byOrigin = db.prepare(
+      `SELECT favicon_url FROM pages
+       WHERE url >= ? AND url < ? AND (favicon_url LIKE 'https:%' OR favicon_url LIKE 'data:image/%')
+       ORDER BY last_visited_at DESC LIMIT 1`
+    )
+    for (const host of new Set(hosts)) {
+      const bare = host.replace(/^www\./, '')
+      const names = [...new Set([host, bare, `www.${bare}`])]
+      const schemes = ['https', 'http']
+      // `scheme://name/` の行 → 最後に「同じホストのどのポートでも」（`https://host:8443/` を拾う）
+      const ranges = [
+        ...schemes.flatMap((scheme) => names.map((name) => [`${scheme}://${name}/`, `${scheme}://${name}0`])),
+        ...schemes.flatMap((scheme) => names.map((name) => [`${scheme}://${name}:`, `${scheme}://${name};`]))
+      ]
+      for (const [lower, upper] of ranges) {
+        // 上限は区切りの次の文字（`/` → `0`、`:` → `;`）
+        const row = byOrigin.get(lower, upper) as { favicon_url: string } | undefined
+        if (row) {
+          found.set(host, row.favicon_url)
+          break
+        }
+      }
+    }
+  } catch (error) {
+    logError('history.query_failed', error)
+  }
+  return found
+}
+
+/**
  * URL → favicon をまとめて引く（コマンドバーの候補用）。
  *
  * 1件ずつ引かない。候補は最大 12 件で、入力1文字ごとに走る場所なので

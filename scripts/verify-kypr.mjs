@@ -637,6 +637,40 @@ try {
     synced.ok === true && (await json('window.nemo.kyprStatus()')).itemCount === 10,
     JSON.stringify(synced)
   )
+
+  // サイトのアイコン: 同期の後、開いたサイト（127.0.0.1。favicon は SVG）の favicon を PNG に描き直して保管庫に書く
+  let written = null
+  for (let i = 0; i < 40 && !written; i++) {
+    await other.sync()
+    written = other.iconFor('127.0.0.1')
+    if (!written) await new Promise((r) => setTimeout(r, 250))
+  }
+  const png = written ? Buffer.from(written.slice(written.indexOf(',') + 1), 'base64') : Buffer.alloc(0)
+  const pngSize = png.length >= 24 ? [png.readUInt32BE(16), png.readUInt32BE(20)] : null
+  const iconRowId = await other.iconId('127.0.0.1')
+  const iconRevision = mock.state.items.get(iconRowId)?.revision ?? null
+  check(
+    'サイトのアイコン: 開いたサイトの favicon（SVG）を 64px までの PNG にして保管庫に書く。一覧の件数は変わらない',
+    written?.startsWith('data:image/png;base64,') === true &&
+      pngSize !== null &&
+      pngSize[0] === pngSize[1] &&
+      pngSize[0] > 0 &&
+      pngSize[0] <= 64 &&
+      png.length <= 8 * 1024 &&
+      (await json('window.nemo.kyprStatus()')).itemCount === 10,
+    JSON.stringify({ written: written?.slice(0, 30) ?? null, pngSize, bytes: png.length })
+  )
+  // 一度も開いていないサイト（kyprmark-url.example）のアイコンは作らない
+  await json('window.nemo.kyprSync()')
+  await new Promise((r) => setTimeout(r, 1500))
+  await other.sync()
+  check(
+    'サイトのアイコン: 2 回目の同期では書き直さない。開いていないサイトのアイコンは作らない',
+    iconRevision !== null &&
+      mock.state.items.get(iconRowId)?.revision === iconRevision &&
+      other.iconFor('kyprmark-url.example') === null,
+    JSON.stringify({ iconRevision, now: mock.state.items.get(iconRowId)?.revision ?? null })
+  )
   await page.ev(
     "document.getElementById('username').value = ''; document.getElementById('password').value = ''"
   )
@@ -1899,8 +1933,14 @@ try {
   const liveBefore = (await json('window.nemo.kyprStatus()')).itemCount
   // Nemo で作ったアイテムの手前まで戻す（それより後に作った・変えた行は、サーバーから無くなる）
   mock.rollback(mock.state.items.get(created.id).revision - 1)
-  // サイトのアイコンの行（I）はサーバーにあるが一覧の件数には入らないので、数えない
-  const liveOnServer = [...mock.state.items.values()].filter((it) => it.data !== null && it.id !== I.id).length
+  // サイトのアイコンの行はサーバーにあるが一覧の件数には入らないので、別の端末（アイコンを entries に入れない）で数える。
+  // other のトークンは前の段で消えているので、入り直す
+  const counter = await VaultSession.unlock(
+    { api: createApi(origin), cache: new MemoryCacheStore(), derive: deriveKeys },
+    PASSWORD
+  )
+  const liveOnServer = counter.entries.size
+  counter.lock()
   const rolled = await json('window.nemo.kyprSync()')
   const afterRollback = (await json('window.nemo.kyprStatus()')).itemCount
   check(
@@ -2079,6 +2119,8 @@ try {
   const crashes1 = findUncaughtExceptions(userData)
   check('未処理の例外が出ていない', crashes1.length === 0, crashes1.join(' / '))
   await stopApp(app.child)
+  // ロック中の件数はキャッシュの行数（サイトのアイコンの行も含む）なので、止めた時点の行数と比べる
+  const cacheRowsAtStop = JSON.parse(fs.readFileSync(path.join(userData, 'kypr', 'cache.json'), 'utf8')).items.length
 
   /* ================= 2 回目の起動（Touch ID が通らない・使わないとロック） ================= */
   app = await bootApp(userData, origin, { NEMO_KYPR_TEST_TOUCHID: 'fail', NEMO_KYPR_TEST_IDLE_MS: '2500' })
@@ -2086,8 +2128,8 @@ try {
   status = await json('window.nemo.kyprStatus()')
   check(
     '再起動するとロックされている（キャッシュはある）',
-    // ロック中の件数はキャッシュの行数（復号していないので種類が分からない）。サイトのアイコンの行（I）の 1 件を含む
-    status.state === 'locked' && status.itemCount === afterRollback + 1,
+    // ロック中の件数はキャッシュの行数（復号していないので種類が分からない。サイトのアイコンの行を含む）
+    status.state === 'locked' && status.itemCount === cacheRowsAtStop && cacheRowsAtStop > afterRollback,
     JSON.stringify({ state: status.state, n: status.itemCount })
   )
   const touchFail = await json('window.nemo.kyprUnlockTouchId()')
@@ -2640,8 +2682,8 @@ try {
     : 0
   check(
     '（前提）userData に kypr のキャッシュがあり、暗号文が入っている',
-    // キャッシュにはサイトのアイコンの行（I）も入る
-    cacheItems === afterRollback + 1,
+    // キャッシュにはサイトのアイコンの行も入る（一覧の件数より多い）
+    cacheItems > afterRollback,
     `items=${cacheItems}`
   )
   const scan = findMarkers(userData)

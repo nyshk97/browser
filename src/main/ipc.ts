@@ -114,6 +114,7 @@ import {
   syncKyprIfStale,
   touchKypr,
   unlockKyprWithTouchId,
+  kyprVaultIcon,
   withKyprFavicons
 } from './kypr/index.js'
 import {
@@ -1368,7 +1369,7 @@ export function registerIpcHandlers(): void {
         : null
     const page =
       url && host
-        ? { url, host, faviconUrl: tabFavicon ?? getFaviconsForHosts([host]).get(host) ?? null }
+        ? { url, host, faviconUrl: tabFavicon ?? getFaviconsForHosts([host]).get(host) ?? kyprVaultIcon(host) }
         : null
     const items = withKyprFavicons(kyprSummaries())
     // このページに合うものは一覧の部分集合なので、favicon は一覧の分を使い回す（履歴を 2 回引かない）

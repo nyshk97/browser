@@ -11,6 +11,9 @@ import {
   type IconItem,
   iconId,
   iconIdKey,
+  isIconDataUri,
+  isIconHost,
+  newIconItem,
   type IdentityItem,
   isWeakerKdf,
   type KdfParams,
@@ -141,6 +144,24 @@ export class UnlockError extends Error {
 }
 
 export class ConflictError extends Error {}
+
+// サイトのアイコンを書き直すのは、前回の書き込みからこれだけたっているときだけ（docs/crypto-spec.md「サイトのアイコン」）
+export const ICON_REFRESH_MS = 30 * 24 * 60 * 60 * 1000;
+// 1 回の saveIcons で書く件数の上限
+export const ICON_WRITE_LIMIT = 20;
+
+export interface IconWrite {
+  host: string;
+  dataUri: string;
+}
+
+// saveIcons の結果（どれもホスト。gone は完全削除済みで二度と作れない id）
+export interface IconWriteResult {
+  created: string[];
+  updated: string[];
+  skipped: string[];
+  gone: string[];
+}
 export class SessionExpiredError extends Error {}
 
 // この端末で覚えておく鍵（Nemo の Touch ID・iOS の Face ID）。マスターパスワードの代わりに解除できる
@@ -473,6 +494,86 @@ export class VaultSession {
   // ホスト（loginIconHost で作ったもの）のアイコンの data: URI。無ければ null
   iconFor(host: string | null): string | null {
     return host === null ? null : (this.#iconByHost.get(host) ?? null);
+  }
+
+  // そのホストのアイコンを書く（favicon を描く）必要があるか。無い・使えない・前回の書き込みから ICON_REFRESH_MS たった。
+  // 中身が同じかは描いてから saveIcons が見る。ゴミ箱の中・知らない schema のものは書かない
+  async iconNeedsWrite(host: string, now = Date.now()): Promise<boolean> {
+    const row = this.#icons.get(await this.iconId(host));
+    if (!row) return true;
+    if (row.deletedAt !== null || row.raw.schema !== 1) return false;
+    const icon = usableIcon(row.raw);
+    if (!icon || icon.host !== host) return true;
+    const at = Date.parse(icon.updatedAt);
+    return !Number.isFinite(at) || now - at >= ICON_REFRESH_MS;
+  }
+
+  // サイトのアイコンを作る・書き直す（書くのは Nemo だけ）。1 回に limit 件まで。
+  // まとめて作って 409 / 410 なら（サーバーはどの id かを返さない）、同期してから 1 件ずつ送り直す。
+  // 410 の id は結果の gone に入れる（トゥームストーンは同期で手元から消えるので、呼び出し側が覚えて skipIds に渡す）
+  async saveIcons(
+    icons: IconWrite[],
+    opts: { skipIds?: ReadonlySet<string>; limit?: number; now?: number } = {},
+  ): Promise<IconWriteResult> {
+    const now = opts.now ?? Date.now();
+    const limit = opts.limit ?? ICON_WRITE_LIMIT;
+    const result: IconWriteResult = { created: [], updated: [], skipped: [], gone: [] };
+    const creates: IconItem[] = [];
+    const updates: { item: IconItem; revision: number }[] = [];
+    for (const { host, dataUri } of icons) {
+      if (creates.length + updates.length >= limit) break;
+      const id = isIconHost(host) && isIconDataUri(dataUri) ? await this.iconId(host) : null;
+      if (id === null || opts.skipIds?.has(id) || !(await this.iconNeedsWrite(host, now))) {
+        result.skipped.push(host);
+        continue;
+      }
+      const row = this.#icons.get(id);
+      if (!row) {
+        creates.push(newIconItem(id, host, dataUri));
+        continue;
+      }
+      if (usableIcon(row.raw)?.dataUri === dataUri) {
+        result.skipped.push(host);
+        continue;
+      }
+      const at = new Date(now).toISOString();
+      updates.push({ item: { ...row.raw, type: "icon", schema: 1, host, dataUri, updatedAt: at } as IconItem, revision: row.revision });
+    }
+
+    if (creates.length > 0) {
+      try {
+        await this.create(creates);
+        result.created.push(...creates.map((c) => c.host));
+      } catch (e) {
+        if (!(e instanceof ApiError && (e.status === 409 || e.status === 410))) throw e;
+        await this.sync();
+        for (const c of creates) {
+          if (this.#icons.has(c.id)) {
+            result.skipped.push(c.host);
+            continue;
+          }
+          try {
+            await this.create([c]);
+            result.created.push(c.host);
+          } catch (e1) {
+            if (e1 instanceof ApiError && e1.status === 410) result.gone.push(c.id);
+            else if (e1 instanceof ApiError && e1.status === 409) result.skipped.push(c.host);
+            else throw e1;
+          }
+        }
+      }
+    }
+    for (const { item, revision } of updates) {
+      try {
+        await this.update(item, revision);
+        result.updated.push(item.host);
+      } catch (e) {
+        if (e instanceof ConflictError) result.skipped.push(item.host);
+        else if (e instanceof ApiError && e.status === 410) result.gone.push(item.id);
+        else throw e;
+      }
+    }
+    return result;
   }
 
   // cursor は同期の位置（GET /api/items の revision）。書き込みの応答では進めない

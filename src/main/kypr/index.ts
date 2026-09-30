@@ -73,6 +73,7 @@ import { getFaviconsForHosts } from '../store/history.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { FileCacheStore, kyprDir } from './cache-store.js'
+import { vaultIconFor, writeKyprSiteIcons } from './site-icons.js'
 import { deriveInWorker, derivePassphraseInWorker } from './kdf.js'
 import { forgetDeviceKeys, hasDeviceKeys, loadDeviceKeys, saveDeviceKeys } from './device-keys.js'
 import { deviceTokenStore } from './device-token.js'
@@ -226,6 +227,8 @@ function attach(next: VaultSession): void {
   touchKypr()
   leakForVerify()
   notify()
+  // Web・iOS 向けのサイトのアイコン（履歴の favicon）を裏で書く
+  writeKyprSiteIcons(next)
 }
 
 function unlockFailure(error: unknown): KyprUnlockResult {
@@ -355,6 +358,7 @@ export async function syncKypr(): Promise<KyprActionResult> {
     else await current.sync()
     lastSyncAt = Date.now()
     notify()
+    writeKyprSiteIcons(current)
     return { ok: true }
   } catch (error) {
     return actionFailure(error, 'sync')
@@ -455,14 +459,22 @@ const byName = (a: KyprSummary, b: KyprSummary): number => a.name.localeCompare(
 
 /**
  * ログインの行に favicon を付ける（ポップアップ・入力欄の候補に渡す直前に 1 回）。
- * **履歴にあるホストだけ**（`getFaviconsForHosts`）。開いたことのないサイトの favicon は推測して取りに行かない
+ * **履歴にあるホストだけ**（`getFaviconsForHosts`）。開いたことのないサイトの favicon は推測して取りに行かない。
+ * 履歴に無ければ、保管庫のサイトのアイコン（別の Mac の Nemo が書いたもの。PNG の data: URI）を使う
  */
+/** 保管庫のサイトのアイコン（ポップアップの見出し用。履歴に無いときに使う）。 */
+export function kyprVaultIcon(host: string): string | null {
+  return vaultIconFor(session, host)
+}
+
 export function withKyprFavicons(rows: KyprSummary[]): KyprSummary[] {
   const hosts = rows.flatMap((row) => (row.kind === 'login' && row.host ? [row.host] : []))
   if (hosts.length === 0) return rows
   const favicons = getFaviconsForHosts(hosts)
   return rows.map((row) =>
-    row.kind === 'login' && row.host ? { ...row, faviconUrl: favicons.get(row.host) ?? null } : row
+    row.kind === 'login' && row.host
+      ? { ...row, faviconUrl: favicons.get(row.host) ?? vaultIconFor(session, row.host) }
+      : row
   )
 }
 

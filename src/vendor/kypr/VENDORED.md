@@ -3,7 +3,7 @@
 このディレクトリは kypr（private リポジトリ `nyshk97/kypr`）の暗号・同期のコードのコピー。**手で編集しない**。
 直すときは kypr 側を直し、kypr で `mise run export-nemo` を実行してコピーし直す。
 
-- コピー元のコミット: `346f1e82a028c8a4904f0338a60590e41fc748d4`
+- コピー元のコミット: `e498bd1a2ff63556212ea0334fb3f7d3c0628a94`
 - 中身: `crypto/`（packages/crypto/src。CLI は除く）・`client/`（packages/client/src）・`test-vectors/`
 - `"@kypr/crypto"` の import は相対パス（`../crypto/index.ts`）に書き換えてある
 - 仕様: kypr の `docs/crypto-spec.md`

@@ -1,6 +1,7 @@
 /// <reference lib="dom" />
 import { contextBridge, ipcRenderer } from 'electron'
 import { KYPR_PRODUCTION_SERVER } from '../shared/kypr-config.js'
+import { installKyprPasskey } from '../shared/kypr-passkey-shim.js'
 import { installKyprWebAuthn } from '../shared/kypr-webauthn-shim.js'
 
 /**
@@ -25,6 +26,23 @@ function kyprWebAuthnCandidate(): boolean {
   return (
     location.protocol === 'http:' && (location.hostname === '127.0.0.1' || location.hostname === 'localhost')
   )
+}
+
+/*
+ * kypr のパスキーの認証器（`src/shared/kypr-passkey-shim.js`）を http / https のメインフレームに入れる。
+ * 入れるだけなら IPC は撃たない（main に聞くのはページが WebAuthn を呼んだときだけ）。答えるかどうかは main
+ * （`src/main/kypr/passkey-authenticator.ts`。Claude のウィンドウ・kypr の Web の origin では答えずに内側へ渡す）。
+ * **PRF の認証器より先に入れる**（PRF の shim が外側で、kypr の形でない要求をこちらに渡す）
+ */
+if (window.top === window && (location.protocol === 'https:' || location.protocol === 'http:')) {
+  try {
+    contextBridge.executeInMainWorld({
+      func: installKyprPasskey,
+      args: [(req: Record<string, unknown>) => ipcRenderer.invoke('nemo:kypr-passkey', req)]
+    })
+  } catch (error) {
+    console.error('[nemo] kypr passkey failed', error)
+  }
 }
 
 if (window.top === window && kyprWebAuthnCandidate()) {

@@ -4265,6 +4265,11 @@ body[data-view='call'] {
   color: var(--kypr-link);
 }
 
+.kypr-passkey-date {
+  margin-left: 8px;
+  color: var(--nemo-ink-dim);
+}
+
 .kypr-actions {
   display: flex;
   flex-wrap: wrap;

@@ -31,6 +31,8 @@ import { IDENTITY_FIELDS, identitySummary, isValidIdentityDate } from '../../ven
 import { noteSearchText, noteTemplate } from '../../vendor/kypr/client/note-templates.ts'
 import {
   IDENTITY_KEYS,
+  isPasskeyOnlyLogin,
+  loginPasskeys,
   newCardItem,
   newIdentityItem,
   newLoginItem,
@@ -170,6 +172,14 @@ export function touchKypr(): void {
   lastUseAt = Date.now()
 }
 
+/**
+ * 解除中の保管庫のセッション（ロック中は null）。**パスキーの認証器（`passkey-authenticator.ts`）だけが使う**
+ * （パスキーを作って書く・候補を選ぶ。ほかの読み書きはこのファイルの関数を通す）
+ */
+export function kyprSessionForPasskeys(): VaultSession | null {
+  return session
+}
+
 export function kyprState(): KyprStatus['state'] {
   if (!server) return 'disabled'
   if (session) return 'unlocked'
@@ -280,12 +290,15 @@ export async function signInKypr(
   return { ok: true }
 }
 
-/** Touch ID で解除する。覚えた鍵をサーバーが認めなければ捨てて、マスターパスワードに回す。 */
-export async function unlockKyprWithTouchId(): Promise<KyprUnlockResult> {
+/**
+ * Touch ID で解除する。覚えた鍵をサーバーが認めなければ捨てて、マスターパスワードに回す。
+ * `reason` は Touch ID のダイアログの文言（パスキーの認証器は、この解除をそのまま本人確認にするのでサイトを入れる）
+ */
+export async function unlockKyprWithTouchId(reason = 'kypr のロックを解除'): Promise<KyprUnlockResult> {
   if (!server) return { ok: false, reason: 'disabled' }
   if (session) return { ok: true }
   if (!hasDeviceKeys()) return { ok: false, reason: 'no-device-keys' }
-  if (!(await promptTouchId('kypr のロックを解除'))) {
+  if (!(await promptTouchId(reason))) {
     log('kypr.touch_id', { ok: false })
     return { ok: false, reason: 'touch-id-failed' }
   }
@@ -523,12 +536,16 @@ export function kyprGeneration(): number {
   return generation
 }
 
-/** 入力に使うログイン（ゴミ箱の中・ログイン以外は null）。 */
+/**
+ * 入力に使うログイン（ゴミ箱の中・ログイン以外は null）。**パスキーだけのログインも null**
+ * （候補には `matchingLogins` が出さないが、ID を名指しする経路では空のパスワードが入ってしまう）
+ */
 export function kyprLoginForFill(
   id: string
 ): { username: string; password: string; uris: { uri: string; match?: number | null }[] } | null {
   const entry = session?.entries.get(id)
   if (!entry || entry.deletedAt !== null || entry.state.kind !== 'login') return null
+  if (isPasskeyOnlyLogin(entry.state.item)) return null
   const { username, password, uris } = entry.state.item
   return { username, password, uris }
 }
@@ -612,6 +629,24 @@ export function kyprItem(id: string, withSecrets = false): KyprItemDetail | null
         error: null,
         noteFields: noteFieldsOf(s.item.fields),
         noteTemplateName: noteTemplate(s.item.template)?.name ?? null
+      }
+    }
+    if (s.kind === 'login') {
+      // パスキーの秘密鍵は renderer に渡さない（見せる 3 つだけ別に渡す。編集の保存は既存の平文に重ねるので消えない）
+      delete item['passkeys']
+      return {
+        ...base,
+        kind: 'login',
+        editable: true,
+        item,
+        secrets,
+        error: null,
+        passkeys: loginPasskeys(s.item).map((p) => ({
+          rpId: p.rpId,
+          userName: p.userName,
+          createdAt: p.createdAt
+        })),
+        passkeyOnly: isPasskeyOnlyLogin(s.item)
       }
     }
     return { ...base, kind: s.kind, editable: true, item, secrets, error: null }

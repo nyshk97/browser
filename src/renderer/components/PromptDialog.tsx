@@ -24,7 +24,63 @@ export function PromptDialog({ prompt }: { prompt: Prompt }): React.JSX.Element 
       return <DisplayChoicePrompt prompt={prompt} />
     case 'notice':
       return <NoticePrompt prompt={prompt} />
+    case 'kypr-passkey-choice':
+      return <KyprPasskeyChoicePrompt prompt={prompt} />
   }
+}
+
+/**
+ * kypr のパスキー: サインインに使うアカウント・作ったパスキーを入れるログインを選ぶ。
+ * 選んだあとに Touch ID が出る。Esc はキャンセル（画面共有の選択と同じ理由で、ここで拾う）。
+ */
+function KyprPasskeyChoicePrompt({
+  prompt
+}: {
+  prompt: Extract<Prompt, { type: 'kypr-passkey-choice' }>
+}): React.JSX.Element {
+  const first = useRef<HTMLButtonElement>(null)
+  useEffect(() => first.current?.focus(), [])
+  const answer = (choiceId: string | null): void => {
+    void window.nemo.resolvePrompt(prompt.id, { kind: 'kypr-passkey-choice', choiceId })
+  }
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || event.metaKey || event.ctrlKey || event.altKey) return
+      event.preventDefault()
+      void window.nemo.resolvePrompt(prompt.id, { kind: 'kypr-passkey-choice', choiceId: null })
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [prompt.id])
+  return (
+    <div className="dialog" data-testid="prompt-kypr-passkey-choice">
+      <div className="dialog-title">
+        {prompt.purpose === 'sign-in'
+          ? `${prompt.rpId} にサインインするパスキーを選んでください`
+          : `${prompt.rpId} のパスキーを入れるログインを選んでください`}
+      </div>
+      <div className="display-choices">
+        {prompt.choices.map((choice, index) => (
+          <button
+            key={choice.id}
+            type="button"
+            ref={index === 0 ? first : undefined}
+            className={index === 0 ? 'primary' : undefined}
+            data-choice-id={choice.id}
+            onClick={() => answer(choice.id)}
+          >
+            <span className="display-name">{choice.label || '（名前なし）'}</span>
+            {choice.detail ? <span className="display-meta">{choice.detail}</span> : null}
+          </button>
+        ))}
+      </div>
+      <div className="dialog-actions">
+        <button type="button" onClick={() => answer(null)}>
+          キャンセル
+        </button>
+      </div>
+    </div>
+  )
 }
 
 /**

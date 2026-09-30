@@ -18,7 +18,7 @@ import { findTabByWebContents } from '../registry.js'
 import { getSecretBackend } from '../store/secret-backend.js'
 import { kyprDir } from './cache-store.js'
 import { kyprServerOrigin } from './index.js'
-import { promptTouchId } from './touch-id.js'
+import { holdWebAuthnRequest, promptTouchId } from './touch-id.js'
 
 /**
  * kypr の Web 版の Touch ID 解除に答える、Nemo 内蔵の小さな認証器
@@ -34,7 +34,7 @@ import { promptTouchId } from './touch-id.js'
  * - 送り手は main で確かめる（preload の判定は信用しない）。全部: メインフレーム・kypr の origin・通常のページセッション。
  *   `create` / `get` だけ追加で、タブがウィンドウ内で表示中で、ウィンドウが表示されていて最小化されていない
  *   （OS のフォーカスは求めない。自走検証がターミナル前面でも揺れないように）
- * - 同時に来た要求は、処理中のものがあればすぐ断る（Touch ID のダイアログを重ねない）
+ * - 同時に来た要求は、処理中のものがあればすぐ断る（Touch ID のダイアログを重ねない。ロックはパスキーの認証器と共通）
  * - Nemo の kypr のログアウトでは消さない（Web 版の IndexedDB の記録とは無関係に生きている）
  */
 
@@ -91,8 +91,6 @@ function shownToUser(event: IpcMainInvokeEvent): boolean {
 }
 
 const b64url = (buf: Buffer): string => buf.toString('base64url')
-
-let busy = false
 
 async function create(origin: string, req: unknown): Promise<Reply> {
   const host = new URL(origin).hostname
@@ -178,15 +176,15 @@ async function onRequest(event: IpcMainInvokeEvent, req: unknown): Promise<Reply
     log('kypr.webauthn', { op, ok: false, reason: 'hidden' })
     return { ok: false, reason: 'not-allowed' }
   }
-  if (busy) {
+  const release = holdWebAuthnRequest()
+  if (!release) {
     log('kypr.webauthn', { op, ok: false, reason: 'busy' })
     return { ok: false, reason: 'not-allowed' }
   }
-  busy = true
   try {
     return op === 'create' ? await create(origin, req) : await get(origin, req)
   } finally {
-    busy = false
+    release()
   }
 }
 

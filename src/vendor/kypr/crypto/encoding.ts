@@ -63,3 +63,21 @@ export function fromHex(s: string): Uint8Array<ArrayBuffer> {
 export function randomBytes(n: number): Uint8Array<ArrayBuffer> {
   return crypto.getRandomValues(new Uint8Array(n));
 }
+
+// base64url（パディングなし。WebAuthn の credentialId などに使う）
+export function b64urlEncode(b: Uint8Array): string {
+  return b64Encode(b).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+const B64URL_RE = /^[A-Za-z0-9_-]*$/;
+
+// base64url（パディングなし）の正規形だけを受け付ける
+export function b64urlDecode(s: unknown): Uint8Array<ArrayBuffer> {
+  if (typeof s !== "string" || !B64URL_RE.test(s) || s.length % 4 === 1) {
+    throw new KyprCryptoError("malformed", "base64url の形式が不正");
+  }
+  const padded = s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4);
+  const out = b64Decode(padded);
+  if (b64urlEncode(out) !== s) throw new KyprCryptoError("malformed", "base64url が正規形でない");
+  return out;
+}

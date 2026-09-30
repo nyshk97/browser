@@ -45,7 +45,7 @@ export const KNOWN_TARGETS = [
   'autofill', // フォーム自動入力（保管庫・Jev のモック。自分で起動する）
   'metrics', // メモリ・CPU の定期記録と UI 例外（自分で起動する。OPT_IN_ONLY を見る）
   'session-cookies', // セッション cookie（ログイン）の再起動をまたぐ引き継ぎ（自分で 3 回起動する）
-  'kypr', // kypr（パスワードマネージャー。模擬サーバー・Touch ID とクリップボードの差し替え。自分で 4 回起動する）
+  'kypr', // kypr（パスワードマネージャー。模擬サーバー・Touch ID とクリップボードの差し替え。自分で 6 回起動する）
   'agent' // Claude in Nemo（ブリッジ経由の MCP・エージェント窓。自分で起動する。OPT_IN_ONLY を見る）
 ]
 
@@ -276,6 +276,13 @@ export const OWNERS = new Map([
   ['src/shared/kypr-webauthn-shim.js', ['kypr']],
   ['scripts/kypr-webauthn.test.mjs', ['kypr']],
   ['scripts/kypr-webauthn-shim.test.mjs', ['kypr']],
+  // ほかのサイトのパスキーの認証器（`verify-kypr.mjs` が 4・5 回目の起動で、localhost の RP での登録・サインインを
+  // サーバー側のライブラリで検証し、断る要求・裏のタブ・ロック中・シークレット・ポップアップの詳細まで見る）
+  ['src/main/kypr/passkey-authenticator.ts', ['kypr']],
+  ['src/shared/kypr-passkey.js', ['kypr']],
+  ['src/shared/kypr-passkey-shim.js', ['kypr']],
+  ['scripts/kypr-passkey.test.mjs', ['kypr']],
+  ['scripts/kypr-passkey-shim.test.mjs', ['kypr']],
   ['src/main/kypr/kdf.ts', ['kypr']],
   ['src/main/kypr/kdf-worker.ts', ['kypr']],
   ['src/renderer/components/Kypr.tsx', ['kypr']],
@@ -298,6 +305,7 @@ export const OWNERS = new Map([
   ['src/vendor/kypr/client/card.ts', ['kypr']],
   ['src/vendor/kypr/client/generator.ts', ['kypr']],
   ['src/vendor/kypr/client/identity.ts', ['kypr', 'autofill']],
+  ['src/vendor/kypr/client/passkey.ts', ['kypr']],
   ['src/vendor/kypr/client/index.ts', ['kypr']],
   ['src/vendor/kypr/client/note-templates.ts', ['kypr']],
   ['src/vendor/kypr/client/psl-data.ts', ['kypr']],

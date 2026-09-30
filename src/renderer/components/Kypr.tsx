@@ -1267,6 +1267,13 @@ function KyprTotpBig({
   )
 }
 
+/** パスキーを作った日時（ローカルの日付だけ。読めなければそのまま）。 */
+function formatPasskeyDate(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`
+}
+
 function KyprDetail({
   id,
   readOnly,
@@ -1393,6 +1400,8 @@ function KyprDetail({
   // セキュアメモの項目は値のあるものだけ（伏せ字の値は main が空にして渡すので `hasValue` で見る）
   const noteFields = detail.kind === 'note' ? (detail.noteFields ?? []).filter((f) => f.hasValue) : []
   const isAutofill = detail.kind === 'identity' && !detail.deleted && autofillIdentityId === detail.id
+  // パスキーの削除は kypr の Web / iOS で行う（ここでは見せるだけ）
+  const passkeys = detail.passkeys ?? []
 
   return (
     <div className="kypr-body kypr-detail">
@@ -1439,7 +1448,11 @@ function KyprDetail({
       {detail.kind === 'totp' && !detail.deleted ? (
         <KyprTotpBig id={detail.id} onFill={onFillTotp} onCopy={onCopyTotp} />
       ) : null}
-      {visibleFields.length > 0 || noteFields.length > 0 || uris.length > 0 || str('notes') ? (
+      {visibleFields.length > 0 ||
+      noteFields.length > 0 ||
+      uris.length > 0 ||
+      passkeys.length > 0 ||
+      str('notes') ? (
         <div className="kypr-fields">
           {visibleFields.map((f, i) => {
             const secret = f.secret ?? SECRET_FIELDS.has(f.key)
@@ -1555,6 +1568,20 @@ function KyprDetail({
               </span>
             </div>
           ) : null}
+          {passkeys.length > 0 ? (
+            <div className="kypr-field" data-kypr-passkeys={passkeys.length}>
+              <span className="kypr-field-text">
+                <span className="kypr-field-label">パスキー</span>
+                {passkeys.map((p, i) => (
+                  <span key={i} className="kypr-field-value">
+                    {p.rpId}
+                    {p.userName ? ` · ${p.userName}` : ''}
+                    <span className="kypr-passkey-date">{formatPasskeyDate(p.createdAt)}</span>
+                  </span>
+                ))}
+              </span>
+            </div>
+          ) : null}
           {str('notes') ? (
             <div className="kypr-field notes">
               <span className="kypr-field-text">
@@ -1577,7 +1604,7 @@ function KyprDetail({
       ) : null}
       {message ? <p className="kypr-error">{message}</p> : null}
       <div className="kypr-actions">
-        {detail.kind === 'login' && !detail.deleted ? (
+        {detail.kind === 'login' && !detail.deleted && !detail.passkeyOnly ? (
           <button
             type="button"
             className="kypr-primary"

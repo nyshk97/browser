@@ -118,6 +118,159 @@
       "c": "/4v7mVow4wnVOzaAgwS985Q6Wupwi/EKPUWVbe6+BaCem/FK+/5l/Dtc+LM4liP/0eUSqJyvlrG2qHpWM3F77tNruLIJXa58JMF/WuHcRvIyBjCR0CORqfawvYq2FR9VHjcP+tI4xY9epRqIQnAi5H1iRCcw8+1g1iWlaibCGFfS7xIihujJfqDsNT4XVD7tFVVYROks8zO24H1q32zY87tgyrIeCpBnLOOJbcULs6E6gV+Fx297u9yvwDNc5x4+kfJDZun6HWOPIy+AdmSmY8bwFmdVn5y/Hqkv00o/2OzhgFm2VQyFS3vzk/AKuD9nI1/JCrZ5ZxoL8L7g1SdXk/i5HbefX66NwxkSB/thgb/UoJXknQdNSN4nVPx6bFW9htWxEk3NzJshHoAcR28VdVMTpUl56DOZOQEF448dFhELHNE30Q=="
     }
   },
+  "passkeyLoginItem": {
+    "vaultKey": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+    "id": "5d8e1f3a-7b2c-4d9e-8f6a-1c3b5e7d9f20",
+    "nonce": "000000000000000000000009",
+    "plaintext": "{\"id\":\"5d8e1f3a-7b2c-4d9e-8f6a-1c3b5e7d9f20\",\"type\":\"login\",\"schema\":1,\"name\":\"例のサイト\",\"username\":\"alice@example.com\",\"password\":\"\",\"uris\":[{\"uri\":\"https://example.com\",\"match\":null}],\"passkeys\":[{\"credentialId\":\"j04tHAuaeGdWRTQjEvHg0A\",\"rpId\":\"example.com\",\"userHandle\":\"dXNlci0xMjM0\",\"userName\":\"alice@example.com\",\"userDisplayName\":\"Alice\",\"rpName\":\"例のサイト\",\"privateKey\":\"MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsznHCLrjC_92k2KmfE_QoB9cOL6SGfY36skj9J4MojahRANCAAQxkZDeZVR9apKkCH626VM81KbS179RjB9oGsy1EmWsZqn5TR6hkxM-5fBpWvRVHnUEjJHrBIvvi7sWQXPPnVHj\",\"alg\":-7,\"counter\":0,\"discoverable\":true,\"createdAt\":\"2026-09-30T00:00:00.000Z\",\"futurePasskeyKey\":[1]}],\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-30T00:00:00.000Z\",\"updatedAt\":\"2026-09-30T00:00:00.000Z\"}",
+    "envelope": {
+      "v": 1,
+      "alg": "A256GCM",
+      "n": "AAAAAAAAAAAAAAAJ",
+      "c": "2kuLiWs8pIjysweqx7tJhKBOwu/CHKNTanVdCHs6oMG8FYhtbCPlnxO5rrH3+8EZNH6Js9IFmRR6cQULjrn5ROhmmLUirQq51YAE6PpvHp2Cd+THge2fAh+zZwrhbO1IOlpRR1uEtiGq+WNIOMwP7XqkLk3KWyL+wJhuI0vqGaDxSejmAUED2Q5l1SoB9YfNjfSm/uJU0d5BV4QXPRsAdCzzxpIK6/0+jpgwqaNa6svVyVH85pE4v+8ZmQpZL3QZT5ENqCInF28x2jjJz9C5TG+V5RNmKu8WK7vCFXa14WlSDqqt4NfFR++Rp1vl+MDCyakEUrKGQjLIwu5Fa4ZmLDiBwhv3nsHi3vvaWTc79GON1QgfcpOEh1Pz+9hk9RB937Xkycn8kaFVifBK+BxmT5VMq5geweXU+EkWiL3yJi+U149fq88QAWRINx4JKF+uG6oOl5VoJWaAcMgc8fkzw13Tj56ZjwfdD3Z7zHJn+WKGRuat0BYa7V1EpfvSMHo0bLQtgpBlpudismk+mFBmfPkqdwyYBIX1AVuoqnt7uMeX0DS3gimVHa3zr70KirtQYD/EL0Sw7yYAba6+VV+GGy2MlIfjgnuWu7xnvkwP+UhB4ixAFW32/2AQNFa/ZXeUbavvNcDij5yvGuSqdMYEmrR99c2jUGIel2886z3TgB5wIu77v8E3FYN2ZTeNO++acs15E5zZc5vJRJKwq8b0tswZTxpVCGctZ1/BERyVMpHzSf+zWlB5kFA7LBIWnU62qZkLVeQWZj1ISLvPWpPnsGhkq2uxk6vH+wlbLV4eWueFFB5YLvf6m6HqvoJbgt5Et7FX8QrO0+ApH1z/TiMkHWlVxMwhVl/+xJSS4cSkjyw4qSxKRnGgW/lUyUBh1CK7TtEetjlWgooVO3lVBLi5LNfX/Wr5vXURRHr+0pGDBjZkGCsEKz44uv2sQ27rFBrTDwBF8TQpZBezQmS3QhiAoF+NRjN1Wd0HG8ejnHZfJKu5wuV8bOBPjeN0IYeEcEDmAdsGC40Sl2u4Ika+VDRsa/te/mH7NzIfPL2ThvpjzKA="
+    }
+  },
+  "loginItemMalformed": [
+    "{\"id\":\"5d8e1f3a-7b2c-4d9e-8f6a-1c3b5e7d9f20\",\"type\":\"login\",\"schema\":1,\"name\":\"例のサイト\",\"username\":\"alice@example.com\",\"password\":\"\",\"uris\":[{\"uri\":\"https://example.com\",\"match\":null}],\"passkeys\":{},\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-30T00:00:00.000Z\",\"updatedAt\":\"2026-09-30T00:00:00.000Z\"}",
+    "{\"id\":\"5d8e1f3a-7b2c-4d9e-8f6a-1c3b5e7d9f20\",\"type\":\"login\",\"schema\":1,\"name\":\"例のサイト\",\"username\":\"alice@example.com\",\"password\":\"\",\"uris\":[{\"uri\":\"https://example.com\",\"match\":null}],\"passkeys\":null,\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-30T00:00:00.000Z\",\"updatedAt\":\"2026-09-30T00:00:00.000Z\"}",
+    "{\"id\":\"5d8e1f3a-7b2c-4d9e-8f6a-1c3b5e7d9f20\",\"type\":\"login\",\"schema\":1,\"name\":\"例のサイト\",\"username\":\"alice@example.com\",\"password\":\"\",\"uris\":[{\"uri\":\"https://example.com\",\"match\":null}],\"passkeys\":[\"文字列\"],\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-30T00:00:00.000Z\",\"updatedAt\":\"2026-09-30T00:00:00.000Z\"}",
+    "{\"id\":\"5d8e1f3a-7b2c-4d9e-8f6a-1c3b5e7d9f20\",\"type\":\"login\",\"schema\":1,\"name\":\"例のサイト\",\"username\":\"alice@example.com\",\"password\":\"\",\"uris\":[{\"uri\":\"https://example.com\",\"match\":null}],\"passkeys\":[{\"credentialId\":\"\",\"rpId\":\"example.com\",\"userHandle\":\"dXNlci0xMjM0\",\"userName\":\"alice@example.com\",\"userDisplayName\":\"Alice\",\"rpName\":\"例のサイト\",\"privateKey\":\"MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsznHCLrjC_92k2KmfE_QoB9cOL6SGfY36skj9J4MojahRANCAAQxkZDeZVR9apKkCH626VM81KbS179RjB9oGsy1EmWsZqn5TR6hkxM-5fBpWvRVHnUEjJHrBIvvi7sWQXPPnVHj\",\"alg\":-7,\"counter\":0,\"discoverable\":true,\"createdAt\":\"2026-09-30T00:00:00.000Z\"}],\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-30T00:00:00.000Z\",\"updatedAt\":\"2026-09-30T00:00:00.000Z\"}",
+    "{\"id\":\"5d8e1f3a-7b2c-4d9e-8f6a-1c3b5e7d9f20\",\"type\":\"login\",\"schema\":1,\"name\":\"例のサイト\",\"username\":\"alice@example.com\",\"password\":\"\",\"uris\":[{\"uri\":\"https://example.com\",\"match\":null}],\"passkeys\":[{\"credentialId\":\"a+b/\",\"rpId\":\"example.com\",\"userHandle\":\"dXNlci0xMjM0\",\"userName\":\"alice@example.com\",\"userDisplayName\":\"Alice\",\"rpName\":\"例のサイト\",\"privateKey\":\"MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsznHCLrjC_92k2KmfE_QoB9cOL6SGfY36skj9J4MojahRANCAAQxkZDeZVR9apKkCH626VM81KbS179RjB9oGsy1EmWsZqn5TR6hkxM-5fBpWvRVHnUEjJHrBIvvi7sWQXPPnVHj\",\"alg\":-7,\"counter\":0,\"discoverable\":true,\"createdAt\":\"2026-09-30T00:00:00.000Z\"}],\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-30T00:00:00.000Z\",\"updatedAt\":\"2026-09-30T00:00:00.000Z\"}",
+    "{\"id\":\"5d8e1f3a-7b2c-4d9e-8f6a-1c3b5e7d9f20\",\"type\":\"login\",\"schema\":1,\"name\":\"例のサイト\",\"username\":\"alice@example.com\",\"password\":\"\",\"uris\":[{\"uri\":\"https://example.com\",\"match\":null}],\"passkeys\":[{\"credentialId\":\"j04tHAuaeGdWRTQjEvHg0A\",\"rpId\":\"\",\"userHandle\":\"dXNlci0xMjM0\",\"userName\":\"alice@example.com\",\"userDisplayName\":\"Alice\",\"rpName\":\"例のサイト\",\"privateKey\":\"MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsznHCLrjC_92k2KmfE_QoB9cOL6SGfY36skj9J4MojahRANCAAQxkZDeZVR9apKkCH626VM81KbS179RjB9oGsy1EmWsZqn5TR6hkxM-5fBpWvRVHnUEjJHrBIvvi7sWQXPPnVHj\",\"alg\":-7,\"counter\":0,\"discoverable\":true,\"createdAt\":\"2026-09-30T00:00:00.000Z\"}],\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-30T00:00:00.000Z\",\"updatedAt\":\"2026-09-30T00:00:00.000Z\"}",
+    "{\"id\":\"5d8e1f3a-7b2c-4d9e-8f6a-1c3b5e7d9f20\",\"type\":\"login\",\"schema\":1,\"name\":\"例のサイト\",\"username\":\"alice@example.com\",\"password\":\"\",\"uris\":[{\"uri\":\"https://example.com\",\"match\":null}],\"passkeys\":[{\"credentialId\":\"j04tHAuaeGdWRTQjEvHg0A\",\"rpId\":\"example.com\",\"userHandle\":\"\",\"userName\":\"alice@example.com\",\"userDisplayName\":\"Alice\",\"rpName\":\"例のサイト\",\"privateKey\":\"MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsznHCLrjC_92k2KmfE_QoB9cOL6SGfY36skj9J4MojahRANCAAQxkZDeZVR9apKkCH626VM81KbS179RjB9oGsy1EmWsZqn5TR6hkxM-5fBpWvRVHnUEjJHrBIvvi7sWQXPPnVHj\",\"alg\":-7,\"counter\":0,\"discoverable\":true,\"createdAt\":\"2026-09-30T00:00:00.000Z\"}],\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-30T00:00:00.000Z\",\"updatedAt\":\"2026-09-30T00:00:00.000Z\"}",
+    "{\"id\":\"5d8e1f3a-7b2c-4d9e-8f6a-1c3b5e7d9f20\",\"type\":\"login\",\"schema\":1,\"name\":\"例のサイト\",\"username\":\"alice@example.com\",\"password\":\"\",\"uris\":[{\"uri\":\"https://example.com\",\"match\":null}],\"passkeys\":[{\"credentialId\":\"j04tHAuaeGdWRTQjEvHg0A\",\"rpId\":\"example.com\",\"userHandle\":\"dXNlci0xMjM0\",\"userDisplayName\":\"Alice\",\"rpName\":\"例のサイト\",\"privateKey\":\"MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsznHCLrjC_92k2KmfE_QoB9cOL6SGfY36skj9J4MojahRANCAAQxkZDeZVR9apKkCH626VM81KbS179RjB9oGsy1EmWsZqn5TR6hkxM-5fBpWvRVHnUEjJHrBIvvi7sWQXPPnVHj\",\"alg\":-7,\"counter\":0,\"discoverable\":true,\"createdAt\":\"2026-09-30T00:00:00.000Z\"}],\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-30T00:00:00.000Z\",\"updatedAt\":\"2026-09-30T00:00:00.000Z\"}",
+    "{\"id\":\"5d8e1f3a-7b2c-4d9e-8f6a-1c3b5e7d9f20\",\"type\":\"login\",\"schema\":1,\"name\":\"例のサイト\",\"username\":\"alice@example.com\",\"password\":\"\",\"uris\":[{\"uri\":\"https://example.com\",\"match\":null}],\"passkeys\":[{\"credentialId\":\"j04tHAuaeGdWRTQjEvHg0A\",\"rpId\":\"example.com\",\"userHandle\":\"dXNlci0xMjM0\",\"userName\":\"alice@example.com\",\"userDisplayName\":\"Alice\",\"rpName\":\"例のサイト\",\"privateKey\":1,\"alg\":-7,\"counter\":0,\"discoverable\":true,\"createdAt\":\"2026-09-30T00:00:00.000Z\"}],\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-30T00:00:00.000Z\",\"updatedAt\":\"2026-09-30T00:00:00.000Z\"}",
+    "{\"id\":\"5d8e1f3a-7b2c-4d9e-8f6a-1c3b5e7d9f20\",\"type\":\"login\",\"schema\":1,\"name\":\"例のサイト\",\"username\":\"alice@example.com\",\"password\":\"\",\"uris\":[{\"uri\":\"https://example.com\",\"match\":null}],\"passkeys\":[{\"credentialId\":\"j04tHAuaeGdWRTQjEvHg0A\",\"rpId\":\"example.com\",\"userHandle\":\"dXNlci0xMjM0\",\"userName\":\"alice@example.com\",\"userDisplayName\":\"Alice\",\"rpName\":\"例のサイト\",\"privateKey\":\"MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsznHCLrjC_92k2KmfE_QoB9cOL6SGfY36skj9J4MojahRANCAAQxkZDeZVR9apKkCH626VM81KbS179RjB9oGsy1EmWsZqn5TR6hkxM-5fBpWvRVHnUEjJHrBIvvi7sWQXPPnVHj\",\"alg\":\"-7\",\"counter\":0,\"discoverable\":true,\"createdAt\":\"2026-09-30T00:00:00.000Z\"}],\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-30T00:00:00.000Z\",\"updatedAt\":\"2026-09-30T00:00:00.000Z\"}",
+    "{\"id\":\"5d8e1f3a-7b2c-4d9e-8f6a-1c3b5e7d9f20\",\"type\":\"login\",\"schema\":1,\"name\":\"例のサイト\",\"username\":\"alice@example.com\",\"password\":\"\",\"uris\":[{\"uri\":\"https://example.com\",\"match\":null}],\"passkeys\":[{\"credentialId\":\"j04tHAuaeGdWRTQjEvHg0A\",\"rpId\":\"example.com\",\"userHandle\":\"dXNlci0xMjM0\",\"userName\":\"alice@example.com\",\"userDisplayName\":\"Alice\",\"rpName\":\"例のサイト\",\"privateKey\":\"MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsznHCLrjC_92k2KmfE_QoB9cOL6SGfY36skj9J4MojahRANCAAQxkZDeZVR9apKkCH626VM81KbS179RjB9oGsy1EmWsZqn5TR6hkxM-5fBpWvRVHnUEjJHrBIvvi7sWQXPPnVHj\",\"alg\":-7,\"counter\":0.5,\"discoverable\":true,\"createdAt\":\"2026-09-30T00:00:00.000Z\"}],\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-30T00:00:00.000Z\",\"updatedAt\":\"2026-09-30T00:00:00.000Z\"}",
+    "{\"id\":\"5d8e1f3a-7b2c-4d9e-8f6a-1c3b5e7d9f20\",\"type\":\"login\",\"schema\":1,\"name\":\"例のサイト\",\"username\":\"alice@example.com\",\"password\":\"\",\"uris\":[{\"uri\":\"https://example.com\",\"match\":null}],\"passkeys\":[{\"credentialId\":\"j04tHAuaeGdWRTQjEvHg0A\",\"rpId\":\"example.com\",\"userHandle\":\"dXNlci0xMjM0\",\"userName\":\"alice@example.com\",\"userDisplayName\":\"Alice\",\"rpName\":\"例のサイト\",\"privateKey\":\"MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsznHCLrjC_92k2KmfE_QoB9cOL6SGfY36skj9J4MojahRANCAAQxkZDeZVR9apKkCH626VM81KbS179RjB9oGsy1EmWsZqn5TR6hkxM-5fBpWvRVHnUEjJHrBIvvi7sWQXPPnVHj\",\"alg\":-7,\"counter\":0,\"discoverable\":\"true\",\"createdAt\":\"2026-09-30T00:00:00.000Z\"}],\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-30T00:00:00.000Z\",\"updatedAt\":\"2026-09-30T00:00:00.000Z\"}",
+    "{\"id\":\"5d8e1f3a-7b2c-4d9e-8f6a-1c3b5e7d9f20\",\"type\":\"login\",\"schema\":1,\"name\":\"例のサイト\",\"username\":\"alice@example.com\",\"password\":\"\",\"uris\":[{\"uri\":\"https://example.com\",\"match\":null}],\"passkeys\":[{\"credentialId\":\"j04tHAuaeGdWRTQjEvHg0A\",\"rpId\":\"example.com\",\"userHandle\":\"dXNlci0xMjM0\",\"userName\":\"alice@example.com\",\"userDisplayName\":\"Alice\",\"rpName\":\"例のサイト\",\"privateKey\":\"MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsznHCLrjC_92k2KmfE_QoB9cOL6SGfY36skj9J4MojahRANCAAQxkZDeZVR9apKkCH626VM81KbS179RjB9oGsy1EmWsZqn5TR6hkxM-5fBpWvRVHnUEjJHrBIvvi7sWQXPPnVHj\",\"alg\":-7,\"counter\":0,\"discoverable\":true,\"createdAt\":\"2026-09-30\"}],\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-30T00:00:00.000Z\",\"updatedAt\":\"2026-09-30T00:00:00.000Z\"}"
+  ],
+  "passkeyAuthenticator": {
+    "passkey": {
+      "credentialId": "j04tHAuaeGdWRTQjEvHg0A",
+      "rpId": "example.com",
+      "userHandle": "dXNlci0xMjM0",
+      "userName": "alice@example.com",
+      "userDisplayName": "Alice",
+      "rpName": "例のサイト",
+      "privateKey": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsznHCLrjC_92k2KmfE_QoB9cOL6SGfY36skj9J4MojahRANCAAQxkZDeZVR9apKkCH626VM81KbS179RjB9oGsy1EmWsZqn5TR6hkxM-5fBpWvRVHnUEjJHrBIvvi7sWQXPPnVHj",
+      "alg": -7,
+      "counter": 0,
+      "discoverable": true,
+      "createdAt": "2026-09-30T00:00:00.000Z"
+    },
+    "publicKeyX": "319190de65547d6a92a4087eb6e9533cd4a6d2d7bf518c1f681accb51265ac66",
+    "publicKeyY": "a9f94d1ea193133ee5f0695af4551e75048c91eb048bef8bbb164173cf9d51e3",
+    "cosePublicKey": "a5010203262001215820319190de65547d6a92a4087eb6e9533cd4a6d2d7bf518c1f681accb51265ac66225820a9f94d1ea193133ee5f0695af4551e75048c91eb048bef8bbb164173cf9d51e3",
+    "spki": "3059301306072a8648ce3d020106082a8648ce3d03010703420004319190de65547d6a92a4087eb6e9533cd4a6d2d7bf518c1f681accb51265ac66a9f94d1ea193133ee5f0695af4551e75048c91eb048bef8bbb164173cf9d51e3",
+    "registrationAuthenticatorData": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d000000000000000000000000000000000000000000108f4e2d1c0b9a78675645342312f1e0d0a5010203262001215820319190de65547d6a92a4087eb6e9533cd4a6d2d7bf518c1f681accb51265ac66225820a9f94d1ea193133ee5f0695af4551e75048c91eb048bef8bbb164173cf9d51e3",
+    "attestationObject": "a363666d74646e6f6e656761747453746d74a06861757468446174615894a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19475d000000000000000000000000000000000000000000108f4e2d1c0b9a78675645342312f1e0d0a5010203262001215820319190de65547d6a92a4087eb6e9533cd4a6d2d7bf518c1f681accb51265ac66225820a9f94d1ea193133ee5f0695af4551e75048c91eb048bef8bbb164173cf9d51e3",
+    "assertionAuthenticatorData": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce19471d00000000",
+    "clientDataHash": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+    "signature": "304402204f66f7fd972dc6c77e4a80f96c18ae5ee0758d77499c3a981ba6e5021ef62665022025498d0ab543563b9524e2f324bcac826bde74f25e5978cb05556ab5627b6a2f"
+  },
+  "rpIdChecks": [
+    {
+      "origin": "https://example.com",
+      "rpId": "example.com",
+      "allowed": true
+    },
+    {
+      "origin": "https://login.example.com",
+      "rpId": "example.com",
+      "allowed": true
+    },
+    {
+      "origin": "https://a.b.example.co.jp",
+      "rpId": "example.co.jp",
+      "allowed": true
+    },
+    {
+      "origin": "https://example.com:8443",
+      "rpId": "example.com",
+      "allowed": true
+    },
+    {
+      "origin": "https://example.com",
+      "rpId": "login.example.com",
+      "allowed": false
+    },
+    {
+      "origin": "https://evil-example.com",
+      "rpId": "example.com",
+      "allowed": false
+    },
+    {
+      "origin": "https://example.co.jp",
+      "rpId": "co.jp",
+      "allowed": false
+    },
+    {
+      "origin": "https://foo.github.io",
+      "rpId": "github.io",
+      "allowed": false
+    },
+    {
+      "origin": "https://foo.github.io",
+      "rpId": "foo.github.io",
+      "allowed": true
+    },
+    {
+      "origin": "https://example.com",
+      "rpId": "com",
+      "allowed": false
+    },
+    {
+      "origin": "http://example.com",
+      "rpId": "example.com",
+      "allowed": false
+    },
+    {
+      "origin": "http://localhost:5173",
+      "rpId": "localhost",
+      "allowed": true
+    },
+    {
+      "origin": "https://localhost",
+      "rpId": "localhost",
+      "allowed": true
+    },
+    {
+      "origin": "https://127.0.0.1",
+      "rpId": "127.0.0.1",
+      "allowed": false
+    },
+    {
+      "origin": "https://[::1]",
+      "rpId": "::1",
+      "allowed": false
+    },
+    {
+      "origin": "https://example.com",
+      "rpId": "Example.com",
+      "allowed": false
+    },
+    {
+      "origin": "https://example.com",
+      "rpId": "example.com.",
+      "allowed": false
+    },
+    {
+      "origin": "https://example.com",
+      "rpId": "",
+      "allowed": false
+    },
+    {
+      "origin": "file:///x",
+      "rpId": "x",
+      "allowed": false
+    },
+    {
+      "origin": "not an origin",
+      "rpId": "example.com",
+      "allowed": false
+    }
+  ],
   "noteItem": {
     "vaultKey": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
     "id": "7c9e4a2b-1f3d-4b8e-a6c5-0d9f8e7a6b5c",

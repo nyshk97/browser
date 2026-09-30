@@ -32,18 +32,51 @@ export function touchIdAvailable(): boolean {
   }
 }
 
-/** 通れば true。キャンセル・失敗・使えないは false（呼び出し側はマスターパスワードに回す）。 */
+/** Touch ID のダイアログを出している最中か（どの経路からでも 2 枚目は出さない）。 */
+let prompting = false
+
+/**
+ * 通れば true。キャンセル・失敗・使えないは false（呼び出し側はマスターパスワードに回す）。
+ * **別の経路の Touch ID が出ている間は、出さずに false**（ダイアログを重ねない）。
+ */
 export async function promptTouchId(reason: string): Promise<boolean> {
-  const m = mode()
-  if (m === 'ok' || m === 'fail') await testDelay()
-  if (m === 'ok') return true
-  if (m === 'fail' || m === 'unavailable') return false
-  if (!touchIdAvailable()) return false
-  try {
-    await systemPreferences.promptTouchID(reason)
-    return true
-  } catch (error) {
-    log('kypr.touch_id_failed', { error: error instanceof Error ? error.message.slice(0, 80) : 'unknown' })
+  if (prompting) {
+    log('kypr.touch_id_busy', {})
     return false
+  }
+  prompting = true
+  try {
+    const m = mode()
+    if (m === 'ok' || m === 'fail') await testDelay()
+    if (m === 'ok') return true
+    if (m === 'fail' || m === 'unavailable') return false
+    if (!touchIdAvailable()) return false
+    try {
+      await systemPreferences.promptTouchID(reason)
+      return true
+    } catch (error) {
+      log('kypr.touch_id_failed', { error: error instanceof Error ? error.message.slice(0, 80) : 'unknown' })
+      return false
+    }
+  } finally {
+    prompting = false
+  }
+}
+
+/** WebAuthn の要求（kypr の Web 版の PRF・パスキー）を処理中か。 */
+let requestHeld = false
+
+/**
+ * WebAuthn の要求を 1 件だけ通すロック（PRF の認証器とパスキーの認証器で共通）。取れたら離す関数、
+ * 処理中の要求があれば null（呼び出し側はすぐ断る）。アカウントの選択から Touch ID まで握る
+ */
+export function holdWebAuthnRequest(): (() => void) | null {
+  if (requestHeld) return null
+  requestHeld = true
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    requestHeld = false
   }
 }

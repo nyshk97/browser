@@ -257,7 +257,13 @@ node scripts/ext-webstore-key.mjs <id>  # Web Store の CRX から公開鍵を�
 - サーバーは dev 版も常用版も本番（`https://kypr.tools97.com`）
 - 暗号・同期のコードは kypr からコピーしている（`src/vendor/kypr/`。**手で直さない**。kypr 側を直して
   `mise run export-nemo` でコピーし直す。コピー元のコミットは `src/vendor/kypr/VENDORED.md`）
-- パスキーはまだ使えない（Bitwarden 拡張を外したため。kypr の次の段階で入れる）
+- **パスキーは kypr の保管庫に作って使う**（`src/main/kypr/passkey-authenticator.ts`。計画は
+  `docs/plans/2026-09-30-1700-kypr-passkeys.md`）。サイトがパスキーを求めると、毎回 Touch ID を出して kypr の鍵で
+  登録・署名する（kypr がロック中なら、その Touch ID で解除もする。端末の鍵が無ければ kypr のポップアップが開くので、
+  解除してからもう一度押す）。候補やログインが複数あれば選ぶダイアログが先に出る。作ったパスキーはログインの
+  `passkeys` に入って同期され、iPhone の kypr の自動入力からも使える。ポップアップのログインの詳細に出る
+  （削除は kypr の Web / iOS）。パスワードが空でパスキーだけのログインは、パスワードの自動入力に出さない。
+  Touch ID が使えない（蓋を閉じている）ときは断る。ユーザー名欄の自動補完（conditional）には未対応
 - **例外として、kypr の Web 版（`https://kypr.tools97.com`）の Touch ID 解除だけは Nemo が答える**
   （`src/main/kypr/web-authenticator.ts`。計画は `docs/plans/2026-09-29-1212-kypr-web-touch-id.md`）。
   Web 版はパスキーの PRF 拡張の出力で鍵を包むので、kypr の origin のメインフレームにだけ PRF を返す小さな認証器を入れている

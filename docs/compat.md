@@ -81,10 +81,15 @@ isUVPAA() が true になった時点でシムは自動的に素通しになる�
 プロファイルで `https://example.com` を開き、CDP から
 `navigator.credentials.get({ publicKey: { challenge: new Uint8Array(32), rpId: 'example.com', timeout: 8000 } })`
 を isolated world（シムが見えない）で撃って 12 秒後も pending かを見れば再確認できる。
-**Bitwarden 拡張は外した（2026-09-28）ので、いまの Nemo にはパスキーで答えられるものが無い**
-（シムが即座に NotAllowedError を返し、多くのサイトはパスワードでのログインに落ちる）。
-パスキーは kypr の次の段階で Nemo に入れる。それまでパスキーしか登録していないアカウントには Nemo から入れない。
-**例外は kypr の Web 版の origin だけ**: `src/preload/kypr-page.ts` がこのシムの**外側**に kypr 用の認証器
+**パスキーは kypr が答える**（2026-09-30。Bitwarden 拡張は 2026-09-28 に外した）: `src/preload/kypr-page.ts` が
+このシムの**外側**に kypr のパスキーの認証器（`src/shared/kypr-passkey-shim.js`。答えるのは main の
+`src/main/kypr/passkey-authenticator.ts`。計画は `docs/plans/2026-09-30-1700-kypr-passkeys.md`）を入れ、
+modal の `create` / `get` を kypr の保管庫の鍵で登録・署名する（毎回 Touch ID。ES256・attestation none）。
+kypr で答えないもの（サインアウト中・kypr に無いパスキー・`cross-platform` の create・セキュリティキー向けだけの get・
+http の localhost 以外・Claude のウィンドウ）は main が `pass` を返し、このシムが今までどおり扱う。
+isUVPAA は kypr にログインしていて Touch ID が使えるときだけ true（呼ばれるたびに main に聞く）。
+`mediation: 'conditional'`（ユーザー名欄の自動補完）は今までどおり素通し。
+**kypr の Web 版の origin だけは、さらに外側に** PRF を返す kypr 用の認証器
 （`src/shared/kypr-webauthn-shim.js`。答えるのは main の `src/main/kypr/web-authenticator.ts`）を入れ、
 isUVPAA を true にして PRF 付きの `create` / `get` に答える（Web 版の Touch ID 解除用。署名は作らない）。
 外側に入るのは preload の登録順（extension-shim → kypr-page）による。逆になると kypr の要求がこのシムで

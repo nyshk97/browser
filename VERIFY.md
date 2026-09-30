@@ -162,7 +162,7 @@ mise run verify:only split
 | **Live Folder（GitHub の PR）**・取得のバックオフ・トークン | `mise run verify:only live-folder restart` + 下の「Live Folder（GitHub の PR）」 |
 | **拡張アイコンの popup の位置**（ツールバーの View オフセット） | `mise run verify:ext` |
 | 拡張まわり・Electron のバージョン | `mise run verify:ext`（+ 実機で実物の拡張）。拡張の端末ごと ON/OFF・DevTools パネルへの `chrome.*` 補完（`chrome.debugger` / `webRequest` の tabId）もここ |
-| **kypr（パスワードマネージャー）**・解除 / Touch ID / ロック・同期・照合・入力（ポップアップ / ⌘⇧L / 欄の下の候補）・作成 / 編集 / ゴミ箱・コピー | `mise run verify:only kypr`（模擬サーバーと差し替えで 4 回起動する。91 件）+ 下の「kypr」 |
+| **kypr（パスワードマネージャー）**・解除 / Touch ID / ロック・同期・照合・入力（ポップアップ / ⌘⇧L / 欄の下の候補）・作成 / 編集 / ゴミ箱・コピー | `mise run verify:only kypr`（模擬サーバーと差し替えで 6 回起動する。149 件）+ 下の「kypr」 |
 | パッケージング・ネイティブ依存・fuses | `mise run package` → `mise run verify:packaged` |
 | 履歴 / アーカイブ・シークレット・設定画面 | `mise run verify`（`verify-phase2.mjs` が含まれる） |
 | **履歴 DB のスキーマ**（列追加・インデックス） | `mise run verify:db-migration` |
@@ -1350,9 +1350,22 @@ Touch ID の解除と失敗・サーバーが覚えた鍵を拒否したとき�
 **Web 版の Touch ID 解除**（Nemo 内蔵の認証器）は、模擬サーバーの `/webauthn.html`（kypr の `device-unlock.ts` と同じ
 呼び出しをするテストページ）で見る: kypr の origin で isUVPAA が true・有効にするとき PRF が返り解除で同じ出力・
 `signalUnknownCredential` で消える・処理中の 2 件目は即 NotAllowedError（`NEMO_KYPR_TEST_TOUCHID_MS` で Touch ID の
-差し替えに時間をかけて作る）・保存が暗号化の形式・同じポートの `localhost`（kypr 以外）では今までどおり・裏のタブと
+差し替えに時間をかけて作る）・保存が暗号化の形式・`foreign.localhost`（kypr 以外でパスキーも扱えない http）では今までどおり・裏のタブと
 シークレットでは答えない・PRF の出力が userData に無い・再起動後に Touch ID が通らなければ NotAllowedError で秘密は残る。
 kypr の Web 版の options が変わったら、テストページと `src/shared/kypr-webauthn.js` の判定を合わせる。
+
+**ほかのサイトのパスキー**（kypr の保管庫の鍵で登録・署名する認証器）は、4・5 回目の起動で模擬サーバーの
+`http://localhost:<port>/passkey.html`（IP アドレスは rpId にできないので localhost で開く RP のページ）で見る。
+応答は `toJSON()` で受け取り、**Node の `@simplewebauthn/server` でサーバー側の検証**（challenge・origin・rpId・UV・署名・
+counter 0）を通す。選ぶダイアログ（`prompt-kypr-passkey-choice`）はオーバーレイの DOM のボタンを押して答える:
+入れる先を選ばせる（新しいログイン）/ ユーザー名が 1 件合えば選ばせない / 候補 2 件で選ばせる / allowCredentials・
+excludeCredentials（InvalidStateError）・rpId 違い（SecurityError）・ES256 なし（NotSupportedError）・空の user.id
+（TypeError）・kypr に無いパスキー（内側で即 NotAllowedError）・詳細に秘密鍵を渡さない・パスキーだけのログインを入力しない・
+ポップアップの詳細の描画・裏のタブ・ロック中（端末の鍵なし → ポップアップ / あり → Touch ID で解除して署名）・シークレット・
+秘密鍵が userData に無い・Touch ID の失敗（5 回目）。保管庫の中身は「別の端末」（Node の VaultSession）で復号して照合する。
+純粋ロジックと shim は `scripts/kypr-passkey.test.mjs` / `scripts/kypr-passkey-shim.test.mjs`（重ね順の 3 層も見る）。
+**実サイトは人が見る**: webauthn.io で登録 → サインイン（毎回 Touch ID）・Nemo で作ったパスキーで iPhone から、
+iPhone で作ったもので Nemo からサインインできる。
 
 **外のクリックは `window.nemo.focusForVerify('page' | 'toolbar')`（`webContents.focus()`）で撃つ**。
 実物のクリックも押した View をファーストレスポンダにするだけで、閉じる判定は main がその View の `focus` で拾う

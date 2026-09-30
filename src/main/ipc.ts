@@ -1800,6 +1800,11 @@ function validateAnswer(value: unknown): PromptAnswer {
       const id = answer['displayId']
       return { kind: 'display-choice', displayId: typeof id === 'number' && Number.isFinite(id) ? id : null }
     }
+    case 'kypr-passkey-choice': {
+      // 文字列以外はキャンセル扱い（出した選択肢に無い id は main 側で弾く）
+      const id = answer['choiceId']
+      return { kind: 'kypr-passkey-choice', choiceId: typeof id === 'string' && id.length <= 200 ? id : null }
+    }
     default:
       throw new Error('invalid answer')
   }

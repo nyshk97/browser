@@ -13,7 +13,7 @@
  * 使い方:
  *   node scripts/verify-kypr.mjs   （事前に out/ がビルドされていること）
  */
-import { createHash, createHmac } from 'node:crypto'
+import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
@@ -29,6 +29,7 @@ import {
   stopChildren,
   waitForHttp
 } from './lib/harness.mjs'
+import { verifyAuthenticationResponse, verifyRegistrationResponse } from '@simplewebauthn/server'
 import { connectTo, connectUi, listTargets, waitFor } from './lib/cdp.mjs'
 import { createKyprMockServer } from './lib/kypr-mock-server.mjs'
 import { createApi, MemoryCacheStore, VaultSession } from '../src/vendor/kypr/client/index.ts'
@@ -173,8 +174,54 @@ document.title = 'kypr の Touch ID（準備完了）'
 ` +
   '</script>'
 
+// ほかのサイトのパスキー（kypr の保管庫の鍵で登録・署名する）の検査に使う RP のページ。
+// challenge・user.id などは検証スクリプトが渡し、応答は toJSON() の形で返す（サーバー側の検証は Node の
+// @simplewebauthn/server）。IP アドレスは rpId にできないので http://localhost で開く
+const PASSKEY_PAGE =
+  '<!doctype html><meta charset="utf-8"><title>パスキーの RP</title><p>passkey</p><script>' +
+  String.raw`
+const unb64u = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0))
+const run = (fn) => fn().then((v) => JSON.stringify({ ok: true, ...v }), (e) => JSON.stringify({ ok: false, error: e && e.name }))
+const descriptors = (ids) => (ids || []).map((id) => ({ type: 'public-key', id: unb64u(id), transports: ['hybrid', 'internal'] }))
+window.pk = {
+  available: () => run(async () => ({
+    uvpaa: await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(),
+    caps: await PublicKeyCredential.getClientCapabilities()
+  })),
+  create: (o) => run(async () => {
+    const cred = await navigator.credentials.create({
+      publicKey: {
+        rp: o.rp,
+        user: { id: unb64u(o.userId), name: o.name, displayName: o.name },
+        challenge: unb64u(o.challenge),
+        pubKeyCredParams: o.algs.map((alg) => ({ type: 'public-key', alg })),
+        authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
+        excludeCredentials: descriptors(o.exclude),
+        attestation: 'none',
+        extensions: { credProps: true }
+      }
+    })
+    return {
+      json: cred.toJSON(),
+      isPKC: cred instanceof PublicKeyCredential,
+      isResponse: cred.response instanceof AuthenticatorAttestationResponse,
+      ext: cred.getClientExtensionResults()
+    }
+  }),
+  get: (o) => run(async () => {
+    const cred = await navigator.credentials.get({
+      publicKey: { rpId: o.rpId, challenge: unb64u(o.challenge), allowCredentials: descriptors(o.allow), userVerification: 'required' }
+    })
+    return { json: cred.toJSON(), isPKC: cred instanceof PublicKeyCredential, isResponse: cred.response instanceof AuthenticatorAssertionResponse }
+  })
+}
+document.title = 'パスキーの RP（準備完了）'
+` +
+  '</script>'
+
 const pages = {
   '/login.html': LOGIN_PAGE,
+  '/passkey.html': PASSKEY_PAGE,
   '/webauthn.html': WEBAUTHN_PAGE,
   // 欄の無いトップの中に、別オリジン（localhost）のログインの iframe
   '/frame.html': (_req, server) =>
@@ -1877,14 +1924,15 @@ try {
       ),
     JSON.stringify(rows.map((r) => ({ ...r, encrypted: `${r.encrypted.slice(0, 10)}…` })))
   )
-  // kypr 以外の origin（同じポートの localhost）: 今までどおり
-  const foreign = await webPage(`http://localhost:${port}/webauthn.html?n=2`)
+  // kypr 以外の origin で、パスキーの認証器も扱えないもの（http の localhost 以外。*.localhost は Chromium がループバックに
+  // 解決する）: 今までどおり。http の localhost はパスキーの認証器が答えるので、4 回目の起動で見る
+  const foreign = await webPage(`http://foreign.localhost:${port}/webauthn.html?n=2`)
   const foreignAvail = await call(foreign, 'available()')
   const foreignStart = Date.now()
   const foreignCreate = await call(foreign, 'platformCreate()')
   const foreignKypr = await call(foreign, `enable(${JSON.stringify(SALT_A)})`)
   check(
-    'Web 版: kypr 以外の origin では isUVPAA は false のまま、端末内蔵の要求は即 NotAllowedError',
+    'Web 版: kypr 以外の origin（パスキーも扱えない http）では isUVPAA は false のまま、端末内蔵の要求は即 NotAllowedError',
     foreignAvail.available === false &&
       foreignCreate.error === 'NotAllowedError' &&
       foreignKypr.error === 'NotAllowedError' &&
@@ -2001,6 +2049,469 @@ try {
     JSON.stringify({ state: status.state, server: status.server, reason: status.disabledReason })
   )
   check('そのときツールバーの状態は disabled', (await windowKypr())?.state === 'disabled')
+  await stopApp(app.child)
+
+  /* ================= 4 回目の起動（ほかのサイトのパスキー。kypr の保管庫の鍵で登録・署名する） ================= */
+  // 入れる先の候補になるログイン（ユーザー名 dave。rpId localhost に URL の照合で合う）
+  const PK = newLoginItem({
+    name: 'Passkey RP',
+    username: 'dave',
+    password: 'pw-dave',
+    uris: [{ uri: `http://localhost:${port}` }]
+  })
+  // 「別の端末」は開き直す（1 回目の起動の端末の登録の取り消しなどでセッションが切れている）
+  const pkOther = await VaultSession.unlock(
+    { api: createApi(origin), cache: new MemoryCacheStore(), derive: deriveKeys },
+    PASSWORD
+  )
+  await pkOther.create([PK])
+  const dataPk = makeDir('passkey')
+  app = await bootApp(dataPk, origin)
+  ui = await connectUi(app.cdp)
+  const signPk = await json(`window.nemo.kyprSignIn(${JSON.stringify(PASSWORD)}, false)`)
+  check('4 回目: 端末の鍵を覚えずにサインインできる', signPk.ok === true, JSON.stringify(signPk))
+
+  const RP = `http://localhost:${port}`
+  const pkPage = async (q, ui_ = ui) => {
+    await ui_.ev(`window.nemo.createTab(${JSON.stringify(`${RP}/passkey.html?${q}`)})`)
+    const p = await connectTo(app.cdp, `/passkey.html?${q}`, { type: 'page' })
+    await waitFor(p, "window.pk ? 'ok' : ''")
+    return p
+  }
+  // 選ばせるダイアログが出たまま答えないと永久に待つので、上限を付ける
+  const pkCall = async (p, expr, ms = 20000) =>
+    JSON.parse(
+      await Promise.race([
+        p.ev(`window.pk.${expr}`),
+        sleep(ms).then(() => JSON.stringify({ ok: false, error: 'verify-timeout' }))
+      ])
+    )
+  const newChallenge = () => randomBytes(32).toString('base64url')
+  const CHOICE = '[data-testid="prompt-kypr-passkey-choice"]'
+  /** 選ばせるダイアログを待ち、`pick(選択肢)` が返す id のボタンを押す。出なければ null。 */
+  const answerChoice = async (pick) => {
+    const overlay = await connectTo(app.cdp, 'view=overlay', { exclude: 'private=1' })
+    const shown = await waitFor(overlay, `document.querySelector('${CHOICE}') ? 'ok' : ''`, {
+      timeoutMs: 10000
+    }).catch(() => '')
+    if (shown !== 'ok') return null
+    const choices = JSON.parse(
+      await overlay.ev(
+        `JSON.stringify([...document.querySelectorAll('${CHOICE} [data-choice-id]')].map((b) => ({ id: b.dataset.choiceId, text: b.textContent })))`
+      )
+    )
+    const id = pick(choices)
+    await overlay.ev(`document.querySelector('${CHOICE} [data-choice-id="${id}"]').click()`)
+    return choices
+  }
+  const verifyReg = (res, challenge) =>
+    verifyRegistrationResponse({
+      response: res.json,
+      expectedChallenge: challenge,
+      expectedOrigin: RP,
+      expectedRPID: 'localhost',
+      requireUserVerification: true
+    }).catch((e) => ({ verified: false, error: e.message }))
+  const verifyAuth = (res, challenge, reg) =>
+    verifyAuthenticationResponse({
+      response: res.json,
+      expectedChallenge: challenge,
+      expectedOrigin: RP,
+      expectedRPID: 'localhost',
+      credential: {
+        id: reg.registrationInfo.credential.id,
+        publicKey: reg.registrationInfo.credential.publicKey,
+        counter: 0
+      },
+      requireUserVerification: true
+    }).catch((e) => ({ verified: false, error: e.message }))
+  const pkLogs = () => readLogLines(dataPk).filter((line) => line.includes('kypr.passkey'))
+  const rp = { id: 'localhost', name: 'Local RP' }
+
+  const page1 = await pkPage('n=1')
+  const pkAvail = await pkCall(page1, 'available()')
+  check(
+    'パスキー: http://localhost では isUVPAA と passkeyPlatformAuthenticator が true（サイトがパスキーのボタンを出す）',
+    pkAvail.uvpaa === true && pkAvail.caps?.passkeyPlatformAuthenticator === true,
+    JSON.stringify(pkAvail)
+  )
+
+  // 登録 1: ユーザー名 carol に合うログインが無く、rpId に合うログイン（Passkey RP ほか）がある → 選ばせる → 新しいログイン
+  const chCarol = newChallenge()
+  const carolUser = randomBytes(16).toString('base64url')
+  const pendingCarol = pkCall(
+    page1,
+    `create(${JSON.stringify({ rp, userId: carolUser, name: 'carol', challenge: chCarol, algs: [-7, -257] })})`
+  )
+  const saveChoices = await answerChoice(() => 'new')
+  const carol = await pendingCarol
+  const regCarol = carol.ok ? await verifyReg(carol, chCarol) : { verified: false }
+  check(
+    'パスキー: 登録の応答が PublicKeyCredential の形で返り、サーバー側の検証（challenge・origin・rpId・UV）を通る',
+    carol.ok === true &&
+      carol.isPKC === true &&
+      carol.isResponse === true &&
+      carol.ext?.credProps?.rk === true &&
+      regCarol.verified === true &&
+      regCarol.registrationInfo?.credentialBackedUp === true,
+    JSON.stringify({
+      ok: carol.ok,
+      error: carol.error,
+      isPKC: carol.isPKC,
+      verified: regCarol.verified,
+      e: regCarol.error
+    })
+  )
+  check(
+    'パスキー: ユーザー名の合うログインが無く rpId の合うログインがあれば、入れる先を選ばせる（新しいログインも選べる）',
+    Array.isArray(saveChoices) &&
+      saveChoices.some((c) => c.id === 'new') &&
+      saveChoices.some((c) => c.id === PK.id),
+    JSON.stringify(saveChoices?.map((c) => c.text))
+  )
+
+  // 登録 2: ユーザー名 dave が 1 件だけ合う → 選ばせずにそのログインへ足す
+  const chDave = newChallenge()
+  const daveUser = randomBytes(16).toString('base64url')
+  const dave = await pkCall(
+    page1,
+    `create(${JSON.stringify({ rp, userId: daveUser, name: 'dave', challenge: chDave, algs: [-7] })})`,
+    10000
+  )
+  const regDave = dave.ok ? await verifyReg(dave, chDave) : { verified: false }
+  await pkOther.sync()
+  const pkItem = pkOther.entries.get(PK.id)?.state.item
+  const carolEntry = [...pkOther.entries.values()].find(
+    (e) =>
+      e.state.kind === 'login' &&
+      (e.state.item.passkeys ?? []).some((pk) => pk.credentialId === carol.json?.id)
+  )
+  const carolItem = carolEntry?.state.item
+  check(
+    'パスキー: ユーザー名の合うログインが 1 件ならそこに足す（選ばせない。パスワードは変えない）',
+    dave.ok === true &&
+      regDave.verified === true &&
+      pkItem?.passkeys?.length === 1 &&
+      pkItem.passkeys[0].credentialId === dave.json.id &&
+      pkItem.passkeys[0].userHandle === daveUser &&
+      pkItem.password === 'pw-dave',
+    JSON.stringify({
+      ok: dave.ok,
+      error: dave.error,
+      verified: regDave.verified,
+      n: pkItem?.passkeys?.length
+    })
+  )
+  check(
+    'パスキー: 新しいログインは名前が rp.name・ユーザー名が user.name・パスワードが空・URI が https://<rpId>（別の端末で復号して照合）',
+    carolItem?.name === 'Local RP' &&
+      carolItem.username === 'carol' &&
+      carolItem.password === '' &&
+      carolItem.uris?.[0]?.uri === 'https://localhost' &&
+      carolItem.passkeys?.[0]?.rpId === 'localhost' &&
+      carolItem.passkeys[0].userHandle === carolUser &&
+      carolItem.passkeys[0].alg === -7 &&
+      carolItem.passkeys[0].counter === 0,
+    JSON.stringify({ name: carolItem?.name, user: carolItem?.username, uri: carolItem?.uris?.[0]?.uri })
+  )
+
+  // サインイン: allowCredentials が空 → 候補が 2 件 → 選ばせる（dave を選ぶ）
+  const chGet1 = newChallenge()
+  const pendingGet1 = pkCall(
+    page1,
+    `get(${JSON.stringify({ rpId: 'localhost', challenge: chGet1, allow: [] })})`
+  )
+  const signChoices = await answerChoice(() => dave.json.id)
+  const got1 = await pendingGet1
+  const authDave = got1.ok && regDave.verified ? await verifyAuth(got1, chGet1, regDave) : { verified: false }
+  check(
+    'パスキー: 候補が 2 件以上なら選ばせ、選んだパスキーの署名がサーバー側の検証を通る（userHandle も返る）',
+    signChoices?.length === 2 &&
+      got1.ok === true &&
+      got1.isPKC === true &&
+      got1.isResponse === true &&
+      got1.json.id === dave.json.id &&
+      got1.json.response.userHandle === daveUser &&
+      authDave.verified === true &&
+      authDave.authenticationInfo?.newCounter === 0,
+    JSON.stringify({
+      n: signChoices?.length,
+      ok: got1.ok,
+      error: got1.error,
+      verified: authDave.verified,
+      e: authDave.error
+    })
+  )
+  // allowCredentials に 1 件 → 選ばせない
+  const chGet2 = newChallenge()
+  const got2 = await pkCall(
+    page1,
+    `get(${JSON.stringify({ rpId: 'localhost', challenge: chGet2, allow: [carol.json?.id] })})`,
+    10000
+  )
+  const authCarol =
+    got2.ok && regCarol.verified ? await verifyAuth(got2, chGet2, regCarol) : { verified: false }
+  check(
+    'パスキー: allowCredentials に載ったものだけが候補（1 件なら選ばせずに署名する）',
+    got2.ok === true && got2.json.id === carol.json.id && authCarol.verified === true,
+    JSON.stringify({ ok: got2.ok, error: got2.error, verified: authCarol.verified })
+  )
+
+  // 断る要求
+  const excluded = await pkCall(
+    page1,
+    `create(${JSON.stringify({ rp, userId: carolUser, name: 'carol', challenge: newChallenge(), algs: [-7], exclude: [carol.json?.id] })})`,
+    10000
+  )
+  await pkOther.sync()
+  const carolAfter = pkOther.entries.get(carolEntry?.id)?.state.item
+  check(
+    'パスキー: excludeCredentials に載ったパスキーを持っていれば InvalidStateError（保管庫は変えない）',
+    excluded.ok === false &&
+      excluded.error === 'InvalidStateError' &&
+      carolAfter?.passkeys?.length === 1 &&
+      pkLogs().some((line) => line.includes('excluded')),
+    JSON.stringify({ excluded, n: carolAfter?.passkeys?.length })
+  )
+  const wrongRp = await pkCall(
+    page1,
+    `create(${JSON.stringify({ rp: { id: 'example.com', name: 'x' }, userId: carolUser, name: 'x', challenge: newChallenge(), algs: [-7] })})`,
+    10000
+  )
+  const noEs256 = await pkCall(
+    page1,
+    `create(${JSON.stringify({ rp, userId: carolUser, name: 'x', challenge: newChallenge(), algs: [-257] })})`,
+    10000
+  )
+  const emptyUser = await pkCall(
+    page1,
+    `create(${JSON.stringify({ rp, userId: '', name: 'x', challenge: newChallenge(), algs: [-7] })})`,
+    10000
+  )
+  check(
+    'パスキー: rpId が origin に合わなければ SecurityError・ES256 が無ければ NotSupportedError・user.id が空なら TypeError',
+    wrongRp.error === 'SecurityError' &&
+      noEs256.error === 'NotSupportedError' &&
+      emptyUser.error === 'TypeError',
+    JSON.stringify({ wrongRp, noEs256, emptyUser })
+  )
+  const unknownStart = Date.now()
+  const unknown = await pkCall(
+    page1,
+    `get(${JSON.stringify({ rpId: 'localhost', challenge: newChallenge(), allow: [randomBytes(16).toString('base64url')] })})`,
+    10000
+  )
+  check(
+    'パスキー: kypr に無いパスキーの要求は内側に渡し、今までどおりすぐ NotAllowedError',
+    unknown.error === 'NotAllowedError' &&
+      Date.now() - unknownStart < 5000 &&
+      pkLogs().some((line) => line.includes('no-candidate')),
+    JSON.stringify({ unknown, ms: Date.now() - unknownStart })
+  )
+
+  // 詳細にパスキーを出すが、秘密鍵は renderer に渡さない。パスキーだけのログインは入力しない
+  const carolDetail = await json(`window.nemo.kyprItem(${JSON.stringify(carolEntry?.id)})`)
+  const carolEdit = await json(`window.nemo.kyprItemForEdit(${JSON.stringify(carolEntry?.id)})`)
+  check(
+    'パスキー: 詳細・編集に渡すのは rpId・ユーザー名・作った日時だけ（item に passkeys を入れない）',
+    carolDetail?.item &&
+      !('passkeys' in carolDetail.item) &&
+      carolEdit?.item &&
+      !('passkeys' in carolEdit.item) &&
+      carolDetail.passkeys?.length === 1 &&
+      Object.keys(carolDetail.passkeys[0]).sort().join(',') === 'createdAt,rpId,userName' &&
+      carolDetail.passkeyOnly === true &&
+      !JSON.stringify(carolEdit).includes(carolItem?.passkeys?.[0]?.privateKey ?? '(none)'),
+    JSON.stringify({ passkeys: carolDetail?.passkeys, passkeyOnly: carolDetail?.passkeyOnly })
+  )
+  const fillPasskeyOnly = await json(`window.nemo.kyprFill(${JSON.stringify(carolEntry?.id)})`)
+  check(
+    'パスキー: パスキーだけのログインは ID を名指ししても入力しない',
+    fillPasskeyOnly.ok === false && fillPasskeyOnly.reason === 'not-found',
+    JSON.stringify(fillPasskeyOnly)
+  )
+  await ui.ev("window.nemo.setOverlay('kypr')")
+  const pkPopup = await connectTo(app.cdp, 'view=overlay', { exclude: 'private=1' })
+  await waitFor(pkPopup, `document.querySelector('[data-kypr-id="${carolEntry?.id}"]') ? 'ok' : ''`, {
+    timeoutMs: 8000
+  }).catch(() => '')
+  await pkPopup.ev(
+    `document.querySelector('.kypr-scroll > .kypr-row[data-kypr-id="${carolEntry?.id}"]')?.click()`
+  )
+  const pkShown = await waitFor(
+    pkPopup,
+    "document.querySelector('.kypr-detail [data-kypr-passkeys]') ? 'ok' : ''",
+    {
+      timeoutMs: 5000
+    }
+  ).catch(() => '')
+  const pkDetailText = String(await pkPopup.ev("document.querySelector('.kypr-detail')?.innerText ?? ''"))
+  check(
+    'パスキー: ポップアップのログインの詳細にパスキー（rpId・ユーザー名）が出て、パスキーだけなら「このページに入力」を出さない',
+    pkShown === 'ok' &&
+      pkDetailText.includes('パスキー') &&
+      pkDetailText.includes('localhost · carol') &&
+      !pkDetailText.includes('このページに入力'),
+    pkDetailText.replace(/\s+/g, ' ').slice(0, 200)
+  )
+  await ui.ev('window.nemo.setOverlay(null)')
+
+  // 裏のタブ: page2 を開くと page1 は裏に回る
+  const page2 = await pkPage('n=2')
+  const hiddenPk = await pkCall(
+    page1,
+    `get(${JSON.stringify({ rpId: 'localhost', challenge: newChallenge(), allow: [dave.json?.id] })})`,
+    10000
+  )
+  check(
+    'パスキー: 裏のタブからは Touch ID を求めずに NotAllowedError',
+    hiddenPk.error === 'NotAllowedError' && pkLogs().some((line) => line.includes('hidden')),
+    JSON.stringify(hiddenPk)
+  )
+
+  // ロック中・端末の鍵が無い: kypr のポップアップを開いて断る
+  await ui.ev('window.nemo.kyprLock()')
+  const lockedNoKeys = await pkCall(
+    page2,
+    `get(${JSON.stringify({ rpId: 'localhost', challenge: newChallenge(), allow: [dave.json?.id] })})`,
+    10000
+  )
+  const lockedOverlay = await waitFor(
+    ui,
+    "window.nemo.getOverlayState().then((s) => (s.kind === 'kypr' ? 'ok' : ''))",
+    { timeoutMs: 5000 }
+  ).catch(() => '')
+  check(
+    'パスキー: ロック中で端末の鍵が無ければ、kypr のポップアップ（解除の画面）を開いて NotAllowedError',
+    lockedNoKeys.error === 'NotAllowedError' && lockedOverlay === 'ok',
+    JSON.stringify({ lockedNoKeys, lockedOverlay })
+  )
+  await ui.ev('window.nemo.setOverlay(null)')
+  // ロック中・端末の鍵がある: Touch ID で解除して、そのまま署名する
+  const signPk2 = await json(`window.nemo.kyprSignIn(${JSON.stringify(PASSWORD)}, true)`)
+  await ui.ev('window.nemo.kyprLock()')
+  const chLocked = newChallenge()
+  const lockedGet = await pkCall(
+    page2,
+    `get(${JSON.stringify({ rpId: 'localhost', challenge: chLocked, allow: [dave.json?.id] })})`,
+    10000
+  )
+  const authLocked =
+    lockedGet.ok && regDave.verified ? await verifyAuth(lockedGet, chLocked, regDave) : { verified: false }
+  check(
+    'パスキー: ロック中でも端末の鍵があれば Touch ID で解除し、そのまま署名する',
+    signPk2.ok === true &&
+      lockedGet.ok === true &&
+      authLocked.verified === true &&
+      (await json('window.nemo.kyprStatus()')).state === 'unlocked',
+    JSON.stringify({ signPk2, ok: lockedGet.ok, error: lockedGet.error, verified: authLocked.verified })
+  )
+
+  // シークレットウィンドウでも使える
+  await ui.ev('window.nemo.createPrivateWindow()')
+  const pkPrivateUi = await connectTo(app.cdp, 'private=1', {})
+  await waitFor(pkPrivateUi, "typeof window.nemo === 'object' ? 'ok' : ''")
+  const privatePk = await pkPage('private=1', pkPrivateUi)
+  const chPrivate = newChallenge()
+  const privateGet = await pkCall(
+    privatePk,
+    `get(${JSON.stringify({ rpId: 'localhost', challenge: chPrivate, allow: [dave.json?.id] })})`,
+    10000
+  )
+  const authPrivate =
+    privateGet.ok && regDave.verified ? await verifyAuth(privateGet, chPrivate, regDave) : { verified: false }
+  check(
+    'パスキー: シークレットウィンドウでもサインインできる',
+    privateGet.ok === true && authPrivate.verified === true,
+    JSON.stringify({ ok: privateGet.ok, error: privateGet.error, verified: authPrivate.verified })
+  )
+
+  // 秘密鍵は userData のどこにも（暗号化された保管庫の外に）、credentialId はログに出ない
+  const pkSecrets = [carolItem?.passkeys?.[0]?.privateKey, pkItem?.passkeys?.[0]?.privateKey].filter(Boolean)
+  const pkIds = [carol.json?.id, dave.json?.id].filter(Boolean)
+  const pkHits = []
+  let pkScanned = 0
+  const walkPk = (d) => {
+    for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, entry.name)
+      if (entry.isDirectory()) walkPk(p)
+      else if (entry.isFile()) {
+        pkScanned += 1
+        let buf
+        try {
+          buf = fs.readFileSync(p)
+        } catch {
+          continue
+        }
+        for (const secret of pkSecrets) {
+          const raw = Buffer.from(secret, 'base64url')
+          if (
+            buf.includes(raw) ||
+            buf.includes(Buffer.from(secret)) ||
+            buf.includes(Buffer.from(raw.toString('base64')))
+          )
+            pkHits.push(path.relative(dataPk, p))
+        }
+      }
+    }
+  }
+  walkPk(dataPk)
+  const pkLogText = readLogLines(dataPk).join('\n')
+  const pkIdInLogs = pkIds.some(
+    (id) => pkLogText.includes(id) || pkLogText.includes(Buffer.from(id, 'base64url').toString('hex'))
+  )
+  check(
+    'パスキー: 秘密鍵は userData のどこにも、credentialId はログに出ない',
+    pkSecrets.length === 2 &&
+      pkScanned > 0 &&
+      pkHits.length === 0 &&
+      !pkIdInLogs &&
+      pkLogText.includes('kypr.passkey'),
+    `secrets=${pkSecrets.length} files=${pkScanned} hits=${pkHits.slice(0, 3).join(' / ')} idInLogs=${pkIdInLogs}`
+  )
+  const crashesPk = findUncaughtExceptions(dataPk)
+  check('4 回目: 未処理の例外が出ていない', crashesPk.length === 0, crashesPk.join(' / '))
+  await stopApp(app.child)
+
+  /* ================= 5 回目の起動（パスキー: Touch ID が通らない） ================= */
+  app = await bootApp(dataPk, origin, { NEMO_KYPR_TEST_TOUCHID: 'fail' })
+  ui = await connectUi(app.cdp)
+  const failPage = await pkPage('n=5')
+  const lockedFail = await pkCall(
+    failPage,
+    `get(${JSON.stringify({ rpId: 'localhost', challenge: newChallenge(), allow: [dave.json?.id] })})`,
+    10000
+  )
+  check(
+    '5 回目 パスキー: ロック中に Touch ID の解除が通らなければ NotAllowedError（ポップアップは開かない）',
+    lockedFail.error === 'NotAllowedError' &&
+      (await json('window.nemo.getOverlayState()')).kind === null &&
+      (await json('window.nemo.kyprStatus()')).state === 'locked',
+    JSON.stringify(lockedFail)
+  )
+  const signPk3 = await json(`window.nemo.kyprSignIn(${JSON.stringify(PASSWORD)}, false)`)
+  const touchFailGet = await pkCall(
+    failPage,
+    `get(${JSON.stringify({ rpId: 'localhost', challenge: newChallenge(), allow: [dave.json?.id] })})`,
+    10000
+  )
+  const touchFailCreate = await pkCall(
+    failPage,
+    `create(${JSON.stringify({ rp, userId: randomBytes(16).toString('base64url'), name: 'dave', challenge: newChallenge(), algs: [-7] })})`,
+    10000
+  )
+  await pkOther.sync()
+  check(
+    '5 回目 パスキー: 解除中でも Touch ID が通らなければ、サインインも登録も NotAllowedError（保管庫は変えない）',
+    signPk3.ok === true &&
+      touchFailGet.error === 'NotAllowedError' &&
+      touchFailCreate.error === 'NotAllowedError' &&
+      pkOther.entries.get(PK.id)?.state.item.passkeys?.length === 1 &&
+      readLogLines(dataPk).some((line) => line.includes('kypr.passkey') && line.includes('touch-id')),
+    JSON.stringify({ touchFailGet, touchFailCreate })
+  )
+  const crashesPk2 = findUncaughtExceptions(dataPk)
+  check('5 回目: 未処理の例外が出ていない', crashesPk2.length === 0, crashesPk2.join(' / '))
   await stopApp(app.child)
 
   /* ---- 平文が残っていないこと ---- */

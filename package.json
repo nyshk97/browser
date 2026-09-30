@@ -30,6 +30,9 @@
     "test-pages": "node scripts/test-server.mjs"
   },
   "pnpm": {
+    "overrides": {
+      "@peculiar/asn1-schema": "2.10.0"
+    },
     "onlyBuiltDependencies": [
       "electron",
       "esbuild",
@@ -41,6 +44,7 @@
     "@electron/fuses": "2.1.3",
     "@electron/rebuild": "4.2.0",
     "@eslint/js": "10.0.1",
+    "@simplewebauthn/server": "14.0.3",
     "@types/adm-zip": "0.5.7",
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "24.10.1",

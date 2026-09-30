@@ -1,6 +1,6 @@
 // ログインの URI と、自動入力する画面の URL の照合（docs/crypto-spec.md「URL の照合」）。
 // match は Bitwarden の URI 一致方式（0 ドメイン・1 ホスト・2 前方一致・3 完全一致・4 正規表現・5 一致させない。null は 0）
-import type { LoginItem, TotpItem } from "../crypto/index.ts";
+import { isPasskeyOnlyLogin, type LoginItem, type TotpItem } from "../crypto/index.ts";
 import { PSL_RULES } from "./psl-data.ts";
 
 // Public Suffix List で「登録可能なドメイン」（eTLD+1）を切り出す。private section（github.io 等）も含める
@@ -157,7 +157,8 @@ export function loginMatchesPage(
 }
 
 // 保管庫のアイテムのうち、画面の URL に合うログイン（docs/crypto-spec.md「URL の照合」）。
-// **ゴミ箱の中（deletedAt あり）・隔離したもの（復号できない error）・ログイン以外は出さない**。
+// **ゴミ箱の中（deletedAt あり）・隔離したもの（復号できない error）・ログイン以外・パスキーだけのログイン
+// （パスワードが空でパスキーを持つ。入れると空のパスワードが入る）は出さない**。
 // Web・Nemo の候補とバッジはこれを通す（弾き忘れを呼び出し側に残さない）
 export function matchingLogins<T extends { deletedAt: string | null; state: { kind: string } }>(
   entries: Iterable<T>,
@@ -169,7 +170,8 @@ export function matchingLogins<T extends { deletedAt: string | null; state: { ki
   const out: T[] = [];
   for (const entry of entries) {
     if (entry.deletedAt !== null || entry.state.kind !== "login") continue;
-    const item = (entry.state as { kind: "login"; item: Pick<LoginItem, "uris"> }).item;
+    const item = (entry.state as { kind: "login"; item: Pick<LoginItem, "uris" | "password" | "passkeys"> }).item;
+    if (isPasskeyOnlyLogin(item)) continue;
     if (item.uris.some((u) => uriMatches(u.uri, u.match, page, psl))) out.push(entry);
   }
   return out;

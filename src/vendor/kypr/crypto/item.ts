@@ -1,4 +1,4 @@
-import { utf8Decode, utf8Encode } from "./encoding.ts";
+import { b64urlDecode, utf8Decode, utf8Encode } from "./encoding.ts";
 import { open, seal } from "./envelope.ts";
 import type { Envelope } from "./envelope-shape.ts";
 import { KyprCryptoError } from "./errors.ts";
@@ -10,7 +10,25 @@ export interface LoginUri {
   [key: string]: unknown;
 }
 
-// ログインアイテムの平文（schema 1）。知らないキーは保存し直すときもそのまま残す
+// パスキー（ログインの passkeys の要素）。バイト列は base64url（パディングなし）。要素の中の知らないキーは残す。
+// 形は docs/crypto-spec.md「パスキー」
+export interface Passkey {
+  credentialId: string;
+  rpId: string;
+  userHandle: string;
+  userName: string;
+  userDisplayName: string;
+  rpName: string;
+  privateKey: string;
+  alg: number;
+  counter: number;
+  discoverable: boolean;
+  createdAt: string;
+  [key: string]: unknown;
+}
+
+// ログインアイテムの平文（schema 1）。知らないキーは保存し直すときもそのまま残す。
+// passkeys は後から足したキーで、無ければ [] として読む（loginPasskeys）。無いまま読み書きし、空で書き足さない
 export interface LoginItem {
   id: string;
   type: "login";
@@ -19,6 +37,7 @@ export interface LoginItem {
   username: string;
   password: string;
   uris: LoginUri[];
+  passkeys?: Passkey[];
   notes: string;
   extra: Record<string, unknown>;
   createdAt: string;
@@ -189,6 +208,48 @@ function isUriList(x: unknown): x is LoginUri[] {
   );
 }
 
+// 空でない base64url（正規形）か。Swift（Passkey.init(json:)）と同じ判定
+function isNonEmptyB64url(x: unknown): boolean {
+  try {
+    return b64urlDecode(x).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function isPasskeyList(x: unknown): x is Passkey[] {
+  return (
+    Array.isArray(x) &&
+    x.every(
+      (p) =>
+        isObject(p) &&
+        isNonEmptyB64url(p.credentialId) &&
+        typeof p.rpId === "string" &&
+        p.rpId !== "" &&
+        isNonEmptyB64url(p.userHandle) &&
+        typeof p.userName === "string" &&
+        typeof p.userDisplayName === "string" &&
+        typeof p.rpName === "string" &&
+        isNonEmptyB64url(p.privateKey) &&
+        Number.isInteger(p.alg) &&
+        Number.isInteger(p.counter) &&
+        typeof p.discoverable === "boolean" &&
+        typeof p.createdAt === "string" &&
+        ISO_UTC_RE.test(p.createdAt),
+    )
+  );
+}
+
+// ログインのパスキー（無ければ []）
+export function loginPasskeys(item: Pick<LoginItem, "passkeys">): Passkey[] {
+  return item.passkeys ?? [];
+}
+
+// パスワードが空でパスキーを持つログイン。パスワードの自動入力の候補に出さない（出すと空のパスワードが入る）
+export function isPasskeyOnlyLogin(item: Pick<LoginItem, "password" | "passkeys">): boolean {
+  return item.password === "" && loginPasskeys(item).length > 0;
+}
+
 export function isLoginItem(x: Record<string, unknown>): x is LoginItem {
   return (
     x.type === "login" &&
@@ -199,6 +260,7 @@ export function isLoginItem(x: Record<string, unknown>): x is LoginItem {
     typeof x.password === "string" &&
     typeof x.notes === "string" &&
     isUriList(x.uris) &&
+    (x.passkeys === undefined || isPasskeyList(x.passkeys)) &&
     isObject(x.extra) &&
     typeof x.createdAt === "string" &&
     ISO_UTC_RE.test(x.createdAt) &&

@@ -577,6 +577,20 @@ export interface KyprItemDetail {
   noteFields?: KyprNoteField[]
   /** セキュアメモのテンプレート名（テンプレートなし・知らないテンプレートは null）。 */
   noteTemplateName?: string | null
+  /**
+   * ログインのパスキー（見せる 3 つだけ。**秘密鍵は渡さない**。`item` にも `passkeys` を入れない）。ログイン以外は無い。
+   * 削除は kypr の Web / iOS で行う
+   */
+  passkeys?: KyprPasskeySummary[]
+  /** パスワードが空でパスキーを持つログイン（入力しない。kypr の `isPasskeyOnlyLogin`）。 */
+  passkeyOnly?: boolean
+}
+
+/** ログインの詳細に出すパスキー 1 つ。 */
+export interface KyprPasskeySummary {
+  rpId: string
+  userName: string
+  createdAt: string
 }
 
 /** セキュアメモの項目 1 つ（詳細に出す形）。 */
@@ -1001,6 +1015,19 @@ export interface DisplayChoicePrompt {
   displays: ShareDisplayChoice[]
 }
 
+/**
+ * kypr のパスキー: サインインに使うパスキー（`sign-in`）か、作ったパスキーを入れるログイン（`save`）を選ばせる
+ * （候補が 2 件以上のとき。`src/main/kypr/passkey-authenticator.ts`）。選んだあとに Touch ID が出る。
+ * `save` の選択肢には `new`（新しいログイン）が入る。
+ */
+export interface KyprPasskeyChoicePrompt {
+  type: 'kypr-passkey-choice'
+  id: string
+  purpose: 'sign-in' | 'save'
+  rpId: string
+  choices: { id: string; label: string; detail: string }[]
+}
+
 export type Prompt =
   | PermissionPrompt
   | AuthPrompt
@@ -1009,6 +1036,7 @@ export type Prompt =
   | SystemMediaPrompt
   | DisplayChoicePrompt
   | NoticePrompt
+  | KyprPasskeyChoicePrompt
 
 /* ------------------------------------------------------------------ *
  * HTTP 認証の自動入力
@@ -1727,3 +1755,5 @@ export type PromptAnswer =
   | { kind: 'system-media'; openSettings: boolean }
   /** `displayId` が null ならキャンセル（ページ側は `NotAllowedError`）。 */
   | { kind: 'display-choice'; displayId: number | null }
+  /** `choiceId` が null ならキャンセル（ページ側は `NotAllowedError`）。 */
+  | { kind: 'kypr-passkey-choice'; choiceId: string | null }

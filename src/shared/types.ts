@@ -325,7 +325,10 @@ export interface AutofillRunResult {
     | 'no-fields'
     | 'collect-failed'
     | 'fill-failed'
-    | 'agent'
+    /** Claude のウィンドウ: Claude が JS を実行したページなので入れない。 */
+    | 'agent-script'
+    /** Claude のウィンドウ: ページの状態を確かめられないので入れない。 */
+    | 'agent-page'
   /** 集めた欄の数（分割グループは 1 つと数える）。 */
   fields: number
   /** ルールで決めて入れた欄。 */
@@ -338,6 +341,8 @@ export interface AutofillRunResult {
   filled: number
   /** 入れた欄のうち身分証の項目（パスポート・免許証・保険証）の数。 */
   documents?: number
+  /** Claude のウィンドウの iframe で、伏せられないので入れなかった身分証の番号の入力要素の数。 */
+  withheld?: number
   /** 英語のフォームと判定した（氏名はローマ字・住所は英語の住所で入れた）。 */
   english?: boolean
   jevMs: number | null
@@ -540,6 +545,8 @@ export interface KyprPanelData {
   items: KyprSummary[]
   /** フォーム自動入力に使う個人情報（設定で選んだもの。無ければ一番古いもの。0 件なら null）。 */
   autofillIdentityId: string | null
+  /** Claude のウィンドウで、このページには入れられない理由（Claude が JS を実行した等）。入れられるなら null。 */
+  agentRefusal: 'agent-script' | 'agent-page' | null
 }
 
 /** 詳細・編集で渡す平文。**開いたときだけ**渡す。 */
@@ -607,7 +614,10 @@ export type KyprActionResult =
         | 'session-expired'
         | 'no-target'
         | 'url-mismatch'
-        | 'agent'
+        /** Claude のウィンドウ: Claude が JS を実行したページなので入れない。 */
+        | 'agent-script'
+        /** Claude のウィンドウ: ページの状態を確かめられないので入れない。 */
+        | 'agent-page'
         | 'failed'
     }
 
@@ -1563,6 +1573,11 @@ export interface NemoUiApi {
    * 外のクリックと同じく、kypr のポップアップが閉じるかを見るのに使う
    */
   focusForVerify(target: 'page' | 'toolbar'): Promise<boolean>
+  /**
+   * Claude のウィンドウを「ユーザーが操作している（key）」とみなす（**本番では何もしない**。Claude のウィンドウの UI からだけ）。
+   * kypr の入口（欄の下の候補・右クリック・⌘⇧L）の判定だけが変わる
+   */
+  agentKeyForVerify(on: boolean): Promise<boolean>
   /** kypr のコピーの確認（`NEMO_KYPR_TEST_CLIPBOARD=memory` のときだけ値が返る）。 */
   kyprClipboardForVerify(): Promise<string | null>
   autofillForVerify(key: string, x: number, y: number, frameUrl?: string): Promise<AutofillRunResult | null>

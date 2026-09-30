@@ -7,6 +7,7 @@ import type { AgentConnection } from './connection.js'
 import { isWindowKey, pageFor } from './connection.js'
 import type { AgentPage } from './page.js'
 import { KeyParseError, parseKeySequence, parseModifiers } from './keys.js'
+import { markScriptExposure } from './fill-gate.js'
 import { sensitivePageKind, sensitivePageMessage } from '../../shared/agent-sensitive-pages.js'
 import { isBlockedAgentHost } from '../../shared/settings-schema.js'
 import { getSettings } from '../store/settings.js'
@@ -556,10 +557,18 @@ async function computer(
 async function javascriptTool(page: AgentPage, args: Record<string, unknown>): Promise<ToolResult> {
   const code = typeof args['text'] === 'string' ? args['text'] : ''
   if (!code.trim()) return fail('text を指定してください')
-  const state = await page.page<{ tainted?: boolean }>('state')
-  if (state.tainted) {
+  // **実行する前に**この document（と opener でつながったページ）に「Claude が JS を実行した」を付ける。
+  // 付けたページには kypr・フォーム自動入力が値を入れない（仕込まれた JS に拾わせない）。
+  // taint（ユーザーがパスワード等を入れた）の確認も同じ呼び出しの中で排他に行う（別々に見ると間に入力が割り込める）
+  const marked = await markScriptExposure(page)
+  if (marked === 'tainted') {
     return fail(
       'このページではユーザーがパスワード等を入力したため、javascript_tool は使えません（ページを移動すると使えるようになります）。read_page / get_page_text / screenshot を使ってください。'
+    )
+  }
+  if (marked !== 'ok') {
+    return fail(
+      'ページの状態を確かめられないため、javascript_tool を実行できません。少し待ってからやり直してください。'
     )
   }
   return page.withAgentActive(

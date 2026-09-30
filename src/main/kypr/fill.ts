@@ -3,7 +3,7 @@ import { loginMatchesPage, parsePage } from '../../vendor/kypr/client/url-match.
 import { KYPR_PAGE_SOURCE, KYPR_WORLD_ID } from '../../shared/kypr-page-source.js'
 import type { KyprActionResult, KyprDraft, KyprTotpDraft, KyprTotpQrResult } from '../../shared/types.js'
 import { log, logError } from '../log.js'
-import { isAgentContents } from '../agent/contents.js'
+import { agentFillRefusal, isAgentContents, rememberAgentSecrets } from '../agent/contents.js'
 import { subFrameRunner, type PageRunner } from '../autofill/frame-runner.js'
 import {
   copyKyprTotp,
@@ -113,7 +113,7 @@ async function findTarget(wc: WebContents, options: { mainOnly?: boolean } = {})
 
 /** 入れる先のフレームの URL（ポップアップの「このページ」の照合に使う）。欄が無ければトップの URL。 */
 export async function kyprTargetUrl(wc: WebContents): Promise<string | null> {
-  if (wc.isDestroyed() || isAgentContents(wc)) return null
+  if (wc.isDestroyed()) return null
   const target = await findTarget(wc)
   if (!target) return parsePage(wc.getURL()) ? wc.getURL() : null
   const url = target.frame.url
@@ -126,7 +126,12 @@ export async function fillKyprLogin(
   itemId: string,
   options: { mainOnly?: boolean } = {}
 ): Promise<KyprActionResult> {
-  if (isAgentContents(wc)) return { ok: false, reason: 'agent' }
+  // エージェント窓: Claude が JS を実行した document には入れない（`agent/fill-gate.ts`）
+  const refused = await agentFillRefusal(wc)
+  if (refused) {
+    log('kypr.fill', { ok: false, reason: refused })
+    return { ok: false, reason: refused }
+  }
   const login = kyprLoginForFill(itemId)
   if (!login) return { ok: false, reason: 'not-found' }
   const target = await findTarget(wc, options)
@@ -139,6 +144,16 @@ export async function fillKyprLogin(
     if (target.frame.isDestroyed() || !loginMatchesPage(login, target.frame.url)) {
       log('kypr.fill', { ok: false, reason: 'url-mismatch', inSubFrame: target.frame !== wc.mainFrame })
       return { ok: false, reason: 'url-mismatch' }
+    }
+    // エージェント窓: **流し込む直前に**パスワードを伏せる値として覚えさせる（read_page / スクショに出さない・
+    // taint して javascript_tool を断る）。入口の後に Claude が JS を実行していたらここで断る。覚えさせられなければ入れない。
+    // iframe にも入れてよい（type=password は伏せ字で描かれ、read_page / get_page_text はメインフレームしか読まない）
+    const refusedNow = login.password
+      ? await rememberAgentSecrets(wc, [login.password])
+      : await agentFillRefusal(wc)
+    if (refusedNow) {
+      log('kypr.fill', { ok: false, reason: refusedNow })
+      return { ok: false, reason: refusedNow }
     }
     const result = (await target.runner.run(
       `${KYPR_PAGE_SOURCE};globalThis.__nemoKypr.fill(${JSON.stringify(login.username)}, ${JSON.stringify(login.password)})`
@@ -170,7 +185,12 @@ export async function fillKyprLogin(
  * 別のサイトのコードを入れない）。合わない・欄が無いときはコピーする（`copied: true`）。
  */
 export async function fillKyprTotp(wc: WebContents, itemId: string): Promise<KyprActionResult> {
-  if (isAgentContents(wc)) return { ok: false, reason: 'agent' }
+  // エージェント窓: Claude が JS を実行した document には入れない（コピーにも回さない。コピーはポップアップのボタンで）
+  const refused = await agentFillRefusal(wc)
+  if (refused) {
+    log('kypr.fill_totp', { ok: false, reason: refused })
+    return { ok: false, reason: refused }
+  }
   const totp = await kyprTotpForFill(itemId)
   if (!totp) return { ok: false, reason: 'not-found' }
   const fallback = async (reason: string): Promise<KyprActionResult> => {
@@ -184,12 +204,21 @@ export async function fillKyprTotp(wc: WebContents, itemId: string): Promise<Kyp
   const focused = wc.focusedFrame
   const frame =
     focused && focused !== main && focused.parent === main && !focused.isDestroyed() ? focused : main
+  // エージェント窓: iframe の中はスクショの伏せ字が効かない（塗るのはメインフレームの要素だけ）ので入れずにコピーに回す
+  if (frame !== main && isAgentContents(wc)) return fallback('agent-iframe')
   const runner = frame === main ? mainRunner(wc) : await subFrameRunner(wc, frame)
   if (!runner) return fallback('no-runner')
   try {
     // **入れる直前に、入れる先のフレームの URL で照合し直す**
     if (frame.isDestroyed() || !loginMatchesPage({ uris: totp.uris }, frame.url))
       return await fallback('url-mismatch')
+    // エージェント窓: 流し込む直前にコードを伏せる値として覚えさせる（入口の後に Claude が JS を実行していたら断る。
+    // 覚えさせられなければ入れない）
+    const refusedNow = await rememberAgentSecrets(wc, [totp.code])
+    if (refusedNow) {
+      log('kypr.fill_totp', { ok: false, reason: refusedNow })
+      return { ok: false, reason: refusedNow }
+    }
     const ok =
       (await runner.run(
         `${KYPR_PAGE_SOURCE};globalThis.__nemoKypr.fillCode(${JSON.stringify(totp.code)})`
@@ -216,7 +245,7 @@ export function kyprTotpDraftFrom(wc: WebContents | null): KyprTotpDraft {
     period: 30,
     uri: ''
   }
-  if (!wc || wc.isDestroyed() || isAgentContents(wc)) return empty
+  if (!wc || wc.isDestroyed()) return empty
   const page = parsePage(wc.getURL())
   return page ? { ...empty, uri: new URL(page.url).origin } : empty
 }
@@ -226,7 +255,7 @@ export function kyprTotpDraftFrom(wc: WebContents | null): KyprTotpDraft {
  * `otpauth://totp/` として読める QR だけを拾う。URL はページのオリジン
  */
 export async function kyprTotpFromPageQr(wc: WebContents | null): Promise<KyprTotpQrResult> {
-  if (!wc || wc.isDestroyed() || isAgentContents(wc)) return { ok: false, reason: 'no-page' }
+  if (!wc || wc.isDestroyed()) return { ok: false, reason: 'no-page' }
   const page = parsePage(wc.getURL())
   if (!page) return { ok: false, reason: 'no-page' }
   try {
@@ -250,7 +279,6 @@ export async function quickFillKypr(
   wc: WebContents,
   matchesFor: (url: string) => { id: string }[]
 ): Promise<KyprActionResult | null> {
-  if (isAgentContents(wc)) return { ok: false, reason: 'agent' }
   const url = await kyprTargetUrl(wc)
   if (!url) return null
   const matches = matchesFor(url)
@@ -261,7 +289,7 @@ export async function quickFillKypr(
 /** 新規作成の下書き（今のページのオリジン・ホスト名、メインフレームのログイン欄の値を 1 回だけ読む）。 */
 export async function kyprDraftFrom(wc: WebContents | null): Promise<KyprDraft> {
   const empty: KyprDraft = { name: '', uri: '', username: '', password: '' }
-  if (!wc || wc.isDestroyed() || isAgentContents(wc)) return empty
+  if (!wc || wc.isDestroyed()) return empty
   const page = parsePage(wc.getURL())
   if (!page) return empty
   const origin = new URL(page.url).origin

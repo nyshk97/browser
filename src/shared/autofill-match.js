@@ -16,6 +16,10 @@
  * 純粋関数だけを置く（`scripts/autofill.test.mjs` から直接テストする）。
  */
 import { DATE_KEYS, formatForElement, matchSelectOption } from './autofill-values.js'
+import { PROFILE_FIELDS } from './autofill-schema.js'
+
+/** 伏せる項目（身分証の番号。`ProfileField.secret`）。Claude のウィンドウで入れた値を read_page 等から伏せる。 */
+const SECRET_KEYS = new Set(PROFILE_FIELDS.filter((field) => field.secret === true).map((field) => field.key))
 
 /** Jev のモデル。**alias を使わない**（閾値を合わせた版から黙って中身が変わるため）。 */
 export const JEV_MODEL = 'jev-1.13.0'
@@ -715,14 +719,20 @@ export function resolveConflicts(decisions, confirms = new Set()) {
 /**
  * 決まった項目を、入力欄ごとの値に落とす。
  *
+ * `secretValues` / `secretElements` は伏せる項目（`ProfileField.secret`）に入れる値と入力要素（Claude のウィンドウ用）。
+ *
  * @param {Collected} collected
  * @param {Map<number, Decision>} decisions
  * @param {Record<string, string>} values `deriveValues` の戻り
- * @returns {{ steps: FillStep[], filledFields: { rule: number, jev: number }, documents: number, skipped: number }}
+ * @returns {{ steps: FillStep[], filledFields: { rule: number, jev: number }, documents: number, skipped: number, secretValues: string[], secretElements: number[] }}
  */
 export function buildFillPlan(collected, decisions, values) {
   /** @type {FillStep[]} */
   const steps = []
+  /** @type {string[]} */
+  const secretValues = []
+  /** @type {number[]} */
+  const secretElements = []
   const filledFields = { rule: 0, jev: 0 }
   let documents = 0
   let skipped = 0
@@ -737,6 +747,7 @@ export function buildFillPlan(collected, decisions, values) {
     const hints = hintText(field)
     /** @type {FillStep[]} */
     const fieldSteps = []
+    const secretsBefore = secretValues.length
     field.members.forEach((elementIndex, position) => {
       const part = /** @type {string} */ (parts[position])
       const element = collected.elements[elementIndex]
@@ -751,9 +762,16 @@ export function buildFillPlan(collected, decisions, values) {
       // 並び違いも黙って通る。分割グループなら 1 つでも収まらなければグループごと入れない）
       if (value === null || (element.maxLength !== null && value.length > element.maxLength)) return
       fieldSteps.push({ element: elementIndex, value })
+      if (SECRET_KEYS.has(part)) {
+        secretValues.push(value)
+        secretElements.push(elementIndex)
+      }
     })
     // **グループは全部埋まるときだけ入れる**（電話の 3 つ目だけ空、のような半端を作らない）
     if (fieldSteps.length === 0 || fieldSteps.length !== field.members.length) {
+      // 入れないグループの分は伏せる値からも外す
+      secretValues.length = secretsBefore
+      secretElements.length = secretsBefore
       skipped += 1
       continue
     }
@@ -761,7 +779,7 @@ export function buildFillPlan(collected, decisions, values) {
     filledFields[decision.source] += 1
     if (decision.option in DOCUMENT_OPTIONS) documents += 1
   }
-  return { steps, filledFields, documents, skipped }
+  return { steps, filledFields, documents, skipped, secretValues, secretElements }
 }
 
 /** @param {CollectedField} field */

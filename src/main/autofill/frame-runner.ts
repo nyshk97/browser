@@ -1,6 +1,7 @@
 import type { WebContents, WebFrameMain } from 'electron'
 import { log, logError } from '../log.js'
 import { AUTOFILL_WORLD_ID } from '../../shared/autofill-collect-source.js'
+import { prepareAgentDebugger } from '../agent/contents.js'
 
 /**
  * 自動入力のページ側スクリプトを**isolated world で**走らせる口。
@@ -100,6 +101,12 @@ const OWNER_REGION = `function () {
  * iframe に isolated world を作る。見つからない・付けないときは null（呼び出し側は「集められなかった」にする）。
  */
 export async function subFrameRunner(wc: WebContents, frame: WebFrameMain): Promise<PageRunner | null> {
+  // エージェント窓のページは agent が debugger を持つ。**先に agent に付けさせてから相乗りする**
+  // （ここで先に attach すると、後片付けの detach で agent の debugger（ダイアログの横取り・ガード）ごと外れる）
+  if (!(await prepareAgentDebugger(wc))) {
+    log('autofill.frame_agent_debugger_unavailable', {})
+    return null
+  }
   const dbg = wc.debugger
   const attachedHere = !dbg.isAttached()
   const sessions = new Set<string>()

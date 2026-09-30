@@ -1,6 +1,7 @@
 import { clipboard, Menu, type BaseWindow, type MenuItemConstructorOptions, type WebContents } from 'electron'
 import { log } from './log.js'
 import { runAutofill } from './autofill/index.js'
+import { agentUserAtWindow, isAgentContents } from './agent/contents.js'
 
 /**
  * ページ本体の右クリックメニュー。
@@ -14,6 +15,10 @@ import { runAutofill } from './autofill/index.js'
  * - 画像の上: 名前を付けて画像を保存 / 画像をコピー / 画像アドレスをコピー
  * - 常に: 検証（その座標の要素を DevTools で開く）
  *
+ * **Claude のウィンドウ（エージェント窓）では「フォーム自動入力」だけ**を、**窓が key のとき**（ユーザーがその窓を
+ * 操作している）の入力欄の上でだけ出す。Claude の CDP の右クリックでもネイティブメニューが出て画面に残るので、
+ * key でないとき・入力欄でないときは何も出さない。
+ *
  * 「画像を保存」は `downloadURL` で通常のダウンロード経路（`will-download`）に流す。
  * 保存先の確認・一覧への掲載は既存の handler がそのまま面倒を見る。
  */
@@ -26,6 +31,8 @@ export function attachContextMenu(
   openInAgent: () => ((url: string) => void) | undefined = () => undefined
 ): void {
   wc.on('context-menu', (_event, params) => {
+    const agent = isAgentContents(wc)
+    if (agent && !agentUserAtWindow(wc)) return
     /*
      * iframe の中の入力欄でも出す（Brevo や Google フォームなどの埋め込みフォーム）。iframe では
      * CDP で isolated world を作って走らせる（`autofill/frame-runner.ts`。メインワールドは使わない）。
@@ -42,14 +49,21 @@ export function attachContextMenu(
               if (
                 result.reason === 'kypr-locked' ||
                 result.reason === 'kypr-signed-out' ||
-                result.reason === 'no-identity'
+                result.reason === 'no-identity' ||
+                // Claude のウィンドウで入れられないページ（ポップアップに理由を出す）
+                result.reason === 'agent-script' ||
+                result.reason === 'agent-page'
               ) {
                 openKypr()
               }
             })
           }
         : undefined
-    const template = buildContextMenuTemplate(wc, params, { autofill, openInAgent: openInAgent() })
+    if (agent && !autofill) return
+    const template: MenuItemConstructorOptions[] =
+      agent && autofill
+        ? [{ label: 'フォーム自動入力', click: autofill }]
+        : buildContextMenuTemplate(wc, params, { autofill, openInAgent: openInAgent() })
     log('context_menu.open', {
       mediaType: params.mediaType,
       link: Boolean(params.linkURL),

@@ -175,9 +175,12 @@ export class AgentPage {
       this.attached = null
       this.interceptFileChooser = null
     })
-    wc.debugger.on('message', (_event, method, params) =>
+    // **子セッション（`sessionId` 付き）のイベントは捨てる**。kypr・自動入力が iframe に入るとき、同じ debugger で
+    // `Target.setAutoAttach` した iframe のイベントが届く（メインの console / network の記録に混ぜない）
+    wc.debugger.on('message', (_event, method, params, sessionId) => {
+      if (sessionId) return
       this.onCdpEvent(method, params as Record<string, unknown>)
-    )
+    })
     // 起きた直後から ガード（印刷・showPicker・execCommand('copy')）を入れる
     void this.ensureDebugger().catch((error: unknown) => logError('agent.debugger_attach_failed', error, {}))
   }
@@ -280,6 +283,11 @@ export class AgentPage {
   }
 
   /* ---------------- CDP ---------------- */
+
+  /** agent の debugger を付けておく（kypr・自動入力が iframe に CDP で入る前。`contents.ts` の `prepareAgentDebugger`）。 */
+  readyDebugger(): Promise<void> {
+    return this.ensureDebugger()
+  }
 
   private ensureDebugger(): Promise<void> {
     if (this.attached) return this.attached

@@ -25,6 +25,7 @@ import { advanceSwitcher } from './tab-switcher.js'
 import { showAgentWindow } from './agent/index.js'
 import { kyprMatches, kyprState } from './kypr/index.js'
 import { quickFillKypr } from './kypr/fill.js'
+import { agentUserAtWindow } from './agent/contents.js'
 
 /**
  * ⌘⇧L。入れる先のフレームに合うログインが 1 件ならそのまま入れる。0 件・2 件以上・ロック中はポップアップを開く
@@ -34,6 +35,12 @@ async function kyprShortcut(win: NemoWindow): Promise<void> {
   const state = kyprState()
   if (state === 'disabled') return
   const wc = win.getForegroundTab()?.webContents
+  // Claude のウィンドウ: **窓が key のとき**（ユーザーが操作している）だけ。Claude の CDP のキーがページで処理されずに
+  // メニューへ回ってきた場合に入れない
+  if (win.isAgent && (!wc || wc.isDestroyed() || !agentUserAtWindow(wc))) {
+    log('kypr.shortcut', { filled: false, reason: 'agent-not-key' })
+    return
+  }
   if (state === 'unlocked' && wc && !wc.isDestroyed()) {
     const result = await quickFillKypr(wc, kyprMatches)
     log('kypr.shortcut', { filled: result?.ok === true, reason: result && !result.ok ? result.reason : null })
@@ -97,8 +104,6 @@ const MINI_BLOCKED_COMMANDS = new Set([
  * ⌘T / ⌘L / ⌘W / 戻る / 進む / リロード / 拡大縮小は通す（引き継ぎでユーザーが手で操作するため）。
  */
 const AGENT_BLOCKED_COMMANDS = new Set([
-  // kypr はエージェント用ウィンドウでは使わせない
-  'kypr-fill',
   'pin-tab',
   'add-favorite',
   'toggle-fullscreen',

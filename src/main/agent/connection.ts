@@ -16,6 +16,7 @@ import {
 import { agentActivityLabel } from '../../shared/agent-activity.js'
 import { AGENT_PROTOCOL_VERSION, AGENT_TOOL_NAMES } from '../../shared/agent-tools.js'
 import { AgentPage } from './page.js'
+import { isAgentContents } from './contents.js'
 import { isBlockedForAgent, runTool, type ToolResult } from './tools.js'
 
 /**
@@ -77,6 +78,13 @@ export function adoptAgentContents(wc: WebContents): void {
     }
   })
   pages.set(wc, page)
+}
+
+/** agent セッションの WebContents の操作口（タブに載っていない popup の子も含む）。 */
+export function agentPageOf(wc: WebContents): AgentPage | null {
+  if (wc.isDestroyed() || !isAgentContents(wc)) return null
+  if (!pages.has(wc)) adoptAgentContents(wc)
+  return pages.get(wc) ?? null
 }
 
 export function pageFor(tab: NemoTab): AgentPage | null {

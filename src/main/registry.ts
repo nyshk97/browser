@@ -319,6 +319,8 @@ function ensureAgentSession(): string {
   const agentSession = session.fromPartition(AGENT_PARTITION)
   applySessionSecurityDefaults(agentSession, 'agent', findWindowIdForPageContents, AGENT_PARTITION)
   registerPageShim(agentSession)
+  // kypr のログイン欄の下の候補の見張り（候補を出すのは窓が key のときだけ。`kypr/inline.ts`）
+  registerKyprPagePreload(agentSession)
   installDownloadHandler(agentSession, AGENT_PARTITION, { fixedSubdir: 'Nemo Agent' })
   agentSessionPrepared = true
   log('window.agent_session_created', {})
@@ -1128,20 +1130,21 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
   // DevTools の中の拡張パネルに `chrome.debugger` の空実装を配る（preload はサブフレームに届かない）
   wc.on('devtools-opened', () => attachDevToolsExtensionShim(wc))
   // ページ本体の右クリック（画像の保存・検証だけ。Electron は標準では何も出さない）。
-  // **エージェント窓では出さない**（CDP の右クリックでもネイティブメニューが出て画面に残る。
-  // フォーム自動入力の項目もエージェントのページに向けない）
-  if (!win().isAgent)
-    attachContextMenu(
-      wc,
-      () => (win().isDestroyed ? null : win().baseWindow),
-      () => {
-        // 小窓はポップアップを持たない
-        if (!win().isDestroyed && win().kind !== 'mini') win().setOverlay('kypr')
-      },
-      // 常用の窓のリンクを Claude のウィンドウで開く（マジックリンク型のログインの受け渡し）
-      () =>
-        agentHooks?.hasAgentWindow() ? (url: string) => agentHooks?.openUrlInAgentWindow(url) : undefined
-    )
+  // **エージェント窓では、窓が key のときの入力欄の「フォーム自動入力」だけ**（context-menu.ts が絞る。
+  // CDP の右クリックでもネイティブメニューが出て画面に残るので、Claude の操作では出さない）
+  attachContextMenu(
+    wc,
+    () => (win().isDestroyed ? null : win().baseWindow),
+    () => {
+      // 小窓はポップアップを持たない
+      if (!win().isDestroyed && win().kind !== 'mini') win().setOverlay('kypr')
+    },
+    // 常用の窓のリンクを Claude のウィンドウで開く（マジックリンク型のログインの受け渡し）
+    () =>
+      !win().isAgent && agentHooks?.hasAgentWindow()
+        ? (url: string) => agentHooks?.openUrlInAgentWindow(url)
+        : undefined
+  )
 
   // ページが自分で閉じた（`window.close()`）ときの後始末。
   //
@@ -2360,8 +2363,7 @@ export class NemoWindow {
       isPrivate: this.isPrivate,
       kind: this.kind,
       agent: this.agent ? { ...this.agent } : null,
-      // エージェント用ウィンドウには kypr を出さない（アイコンも候補も）
-      kypr: this.isAgent ? null : kyprBadge(foreground?.webContents?.getURL() ?? null)
+      kypr: kyprBadge(foreground?.webContents?.getURL() ?? null)
     }
   }
 

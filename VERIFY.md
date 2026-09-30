@@ -1342,7 +1342,7 @@ Touch ID の解除と失敗・サーバーが覚えた鍵を拒否したとき�
 出ない / 出た直後の押下を無視 / スクロールで閉じる / ロック中）・シークレットウィンドウ・使わないときのロック・
 宛先の渡し忘れで起動しない・userData に平文が無いこと・ポップアップの描画（このページのカード・一覧・ロゴ）と
 ツールバーのロゴと件数・ポップアップの閉じ方（Esc では閉じない / 詳細の Esc は一覧へ / ページを押すと閉じる /
-ツールバーのアイコンを押すと閉じて開き直さない）。エージェント窓に出ないことは `verify:only agent` が見る。
+ツールバーのアイコンを押すと閉じて開き直さない）。Claude のウィンドウ（エージェント窓）での入力・伏せ字・断る条件は `verify:only agent` が見る。
 
 **Web 版の Touch ID 解除**（Nemo 内蔵の認証器）は、模擬サーバーの `/webauthn.html`（kypr の `device-unlock.ts` と同じ
 呼び出しをするテストページ）で見る: kypr の origin で isUVPAA が true・有効にするとき PRF が返り解除で同じ出力・
@@ -1410,7 +1410,7 @@ node --test scripts/agent-sensitive-pages.test.mjs   # Claude に操作させな
 Nemo 側の socket の差し替え（`NEMO_AGENT_SOCKET`）は未パッケージのときだけ効く。
 unix socket のパスは 104 バイトまでなので、使い捨ての置き場は `os.tmpdir()` 直下の短い名前にする。
 
-自走検証が見るもの（65 件）:
+自走検証が見るもの（94 件。2026-09-30 時点）:
 
 - ブリッジだけで initialize / tools/list が返り、定義の正本（`src/shared/agent-tools.js`）と一致する。未知のメソッドは -32601
 - 最初のツール呼び出しでエージェント窓が開く（`agent=1` の UI）・窓の名前はプロジェクト名
@@ -1431,6 +1431,16 @@ unix socket のパスは 104 バイトまでなので、使い捨ての置き場
 - stdin を閉じる（Claude Code が終わる）と窓が閉じる / Nemo が落ちている間もブリッジは生きていて、戻ったら繋ぎ直す /
   設定 OFF で接続が切れ、窓が閉じ、socket が消える
 - 診断ログに入力値・URL のパスが出ない
+- **kypr**（kypr の模擬サーバー・Jev の模擬を `NEMO_KYPR_TEST_*` / `NEMO_JEV_TEST_ENDPOINT` で渡す。本物には触らない）:
+  Claude のウィンドウのポップアップからログイン・コードが入り、**入れたパスワード・コード（autocomplete の無い欄）・旅券番号は read_page に出ない**
+  （氏名は出る）・入れた後は javascript_tool を断る・**javascript_tool を実行したページとそこから `window.open` で開いたタブには入れない**
+  （開いたタブは `w.opener = null` で切られても・開いた側が移動しても入れない。自分が移動すれば入る）・⌘⇧L と欄の下の候補は窓が key のときだけ（Claude の CDP のクリック・⌘⇧L では出ない / 入らない）・
+  iframe はパスワードだけ入れ、コードはコピーに回し、自動入力は旅券番号の欄を空のまま残す・iframe に入った後も agent の debugger が外れない・
+  kypr の Web 版の Touch ID（内蔵の認証器）は Claude のウィンドウでは入らない。
+  伏せ字と JS 判定を外すと 5 件、key の判定を外すと 2 件、生まれた時点の opener の記録を外すと 2 件 FAIL することを確認済み（2026-09-30）。
+  **窓を実クリックで key にはできない**（合成マウスはユーザーの操作を奪う）ので、key の側は `window.nemo.agentKeyForVerify(true)`
+  （`NEMO_VERIFY_DIAGNOSTICS=1` のときだけ。kypr の入口の判定だけを差し替える）で見る。**ページへの CDP のマウスは撃たない**
+  （実マウス扱いで窓が本当に key になり、後の検査が Claude の入力を断られて崩れる）
 
 **パッケージ版の通し**は、dist の `Nemo.app` を使い捨ての `NEMO_USER_DATA_DIR`（`settings.json` で `agentEnabled: true`・
 Live Folder OFF）と `--use-mock-keychain` で起動し、`Contents/Resources/nemo-mcp-bridge.mjs` を `NEMO_AGENT_SOCKET=<userData>/agent.sock` で
@@ -1447,6 +1457,9 @@ Live Folder OFF）と `--use-mock-keychain` で起動し、`Contents/Resources/n
 - Claude の窓をクリックすると操作できる（focusable が切り替わる）・ターミナルへ戻ると Claude が続けられる
 - Claude Code を 2 セッション同時に使い、窓が別々に出てそれぞれ終了時に閉じる
 - 右クリックの「Claude のウィンドウで開く」と小窓の「Claude」ボタン
+- **kypr を実物で**: Claude に実サイトのログインを頼む → 引き継ぎで Claude のウィンドウのツールバーの kypr（か欄の下の候補）から入れる →
+  done → Claude が続けられ、返答・read_page にパスワードが出ていない。Claude の番のあと**最初の実クリックで**欄の下に候補が出る・
+  右クリックで「フォーム自動入力」が出る（key の判定が間に合う）
 
 ## Arc からの移行（Phase 2-2）
 

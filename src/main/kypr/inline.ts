@@ -1,8 +1,8 @@
-import { ipcMain, type IpcMainEvent } from 'electron'
+import { ipcMain, type IpcMainEvent, type WebContents } from 'electron'
 import type { KyprInlineState } from '../../shared/types.js'
 import { log } from '../log.js'
-import { findTabByWebContents, type NemoWindow } from '../registry.js'
-import { isAgentContents } from '../agent/contents.js'
+import { findTabByWebContents, type NemoTab, type NemoWindow } from '../registry.js'
+import { agentFillRefusal, agentUserAtWindow, isAgentContents } from '../agent/contents.js'
 import { kyprMatches, kyprState, syncKyprIfStale } from './index.js'
 
 /**
@@ -22,6 +22,11 @@ interface Shown {
 }
 
 let shown: Shown | null = null
+/**
+ * タブごとの欄の知らせの通し番号（focus / blur / hide のたびに進める）。Claude のウィンドウでは候補を出す前に
+ * 非同期の判定を待つので、その間に欄から外れていたら（番号が進んでいたら）出さない
+ */
+const fieldSeq = new WeakMap<NemoTab, number>()
 let blurTimer: ReturnType<typeof setTimeout> | null = null
 
 /** 候補の View の大きさ（行数で変わる）。 */
@@ -55,8 +60,10 @@ function onField(event: IpcMainEvent, message: unknown): void {
   if (typeof message !== 'object' || message === null) return
   const msg = message as Record<string, unknown>
   const found = findTabByWebContents(wc)
-  if (!found || isAgentContents(wc) || found.win.isAgent) return
+  if (!found) return
   const { win, tab } = found
+  const seq = (fieldSeq.get(tab) ?? 0) + 1
+  fieldSeq.set(tab, seq)
 
   if (msg['type'] === 'hide') {
     if (shown?.tabKey === tab.key) hideKyprInline(win)
@@ -76,12 +83,32 @@ function onField(event: IpcMainEvent, message: unknown): void {
   }
   if (msg['type'] !== 'focus') return
 
-  // 前面のタブでなければ出さない（裏のタブ・分割の相方から来たものは無視する）
-  if (win.getForegroundTab() !== tab || (win.overlay !== null && win.overlay !== 'kypr-inline')) return
   const rect = msg['rect'] as Record<string, unknown> | undefined
   const nums = ['x', 'y', 'width', 'height'].map((k) => Number(rect?.[k]))
   if (nums.some((n) => !Number.isFinite(n))) return
-  const [x, y, width, height] = nums as [number, number, number, number]
+  const [x, y, , height] = nums as [number, number, number, number]
+
+  if (!isAgentContents(wc)) {
+    show(win, tab, wc, x, y, height)
+    return
+  }
+  // Claude のウィンドウ: **窓が key のとき**（ユーザーが操作している）だけ出す。Claude の CDP のクリックでも
+  // trusted な pointerdown になるので、key を見ないと Claude の操作で候補が出る。
+  // Claude が JS を実行したページでも出さない（選んでも入れないので）
+  if (!agentUserAtWindow(wc)) return
+  void agentFillRefusal(wc).then((refused) => {
+    if (refused) {
+      log('kypr.inline_skipped', { reason: refused })
+      return
+    }
+    if (fieldSeq.get(tab) !== seq) return
+    if (!win.isDestroyed && !wc.isDestroyed() && agentUserAtWindow(wc)) show(win, tab, wc, x, y, height)
+  })
+}
+
+function show(win: NemoWindow, tab: NemoTab, wc: WebContents, x: number, y: number, height: number): void {
+  // 前面のタブでなければ出さない（裏のタブ・分割の相方から来たものは無視する）
+  if (win.getForegroundTab() !== tab || (win.overlay !== null && win.overlay !== 'kypr-inline')) return
 
   const state = kyprState()
   if (state === 'disabled' || state === 'signed-out') return
@@ -110,7 +137,6 @@ function onField(event: IpcMainEvent, message: unknown): void {
     anchor.y = Math.max(Math.round(view.y + y * zoom - anchor.height - 2), 0)
   }
   anchor.x = Math.min(Math.max(anchor.x, 0), Math.max(content.width - WIDTH - 8, 0))
-  void width
 
   shown = { win, tabKey: tab.key, url, state: { locked: state !== 'unlocked', rows, shownAt: Date.now() } }
   win.kyprAnchor = anchor

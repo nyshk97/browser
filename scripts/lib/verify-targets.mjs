@@ -185,9 +185,9 @@ export const OWNERS = new Map([
   // 項目の表は kypr のポップアップ（個人情報の詳細・編集）も読む
   ['src/shared/autofill-schema.js', ['autofill', 'kypr']],
   ['src/shared/autofill-values.js', ['autofill']],
-  ['src/shared/autofill-match.js', ['autofill']],
+  ['src/shared/autofill-match.js', ['autofill', 'agent']],
   ['src/shared/autofill-collect-source.js', ['autofill']],
-  ['src/main/autofill/index.ts', ['autofill']],
+  ['src/main/autofill/index.ts', ['autofill', 'agent']],
   ['src/main/autofill/jev.ts', ['autofill']],
   ['src/main/store/jev-key.ts', ['autofill']],
   ['src/renderer/components/Autofill.tsx', ['autofill']],
@@ -201,7 +201,7 @@ export const OWNERS = new Map([
   ['scripts/autofill-survey.mjs', ['autofill']],
   ['scripts/autofill-survey-urls.txt', ['autofill']],
   // iframe へ入れる口は kypr の入力も使う（`kypr/fill.ts`）
-  ['src/main/autofill/frame-runner.ts', ['autofill', 'kypr']],
+  ['src/main/autofill/frame-runner.ts', ['autofill', 'kypr', 'agent']],
   ['scripts/autofill.test.mjs', ['autofill']],
   ['scripts/autofill-documents.test.mjs', ['autofill']],
   ['scripts/autofill-english.test.mjs', ['autofill']],
@@ -227,8 +227,9 @@ export const OWNERS = new Map([
   ['src/shared/agent-tools.js', ['agent']],
   ['src/shared/agent-page-source.js', ['agent']],
   ['src/main/agent/connection.ts', ['agent']],
+  ['src/main/agent/fill-gate.ts', ['agent']],
   // 自動入力の入口（`autofill/index.ts`）もエージェント窓の判定に使う
-  ['src/main/agent/contents.ts', ['agent', 'autofill']],
+  ['src/main/agent/contents.ts', ['agent', 'autofill', 'kypr']],
   ['src/main/agent/index.ts', ['agent']],
   ['src/main/agent/keys.ts', ['agent']],
   ['src/main/agent/page.ts', ['agent']],
@@ -260,10 +261,10 @@ export const OWNERS = new Map([
   // フォーム自動入力に使う個人情報の決め方（kypr のポップアップの「フォーム自動入力に使う」と自動入力の両方）
   ['src/shared/kypr-identity.js', ['kypr', 'autofill']],
   ['scripts/kypr-identity.test.mjs', ['kypr', 'autofill']],
-  ['src/main/kypr/fill.ts', ['kypr']],
+  ['src/main/kypr/fill.ts', ['kypr', 'agent']],
   // ページの QR を読む（ワンタイムコードの登録）。`verify-kypr.mjs` がテストページの QR を読む
   ['src/main/kypr/qr.ts', ['kypr']],
-  ['src/main/kypr/inline.ts', ['kypr']],
+  ['src/main/kypr/inline.ts', ['kypr', 'agent']],
   ['src/main/kypr/cache-store.ts', ['kypr']],
   ['src/main/kypr/device-keys.ts', ['kypr']],
   ['src/main/kypr/touch-id.ts', ['kypr', 'autofill']],

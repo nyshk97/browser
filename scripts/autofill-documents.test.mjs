@@ -250,6 +250,34 @@ test('buildFillPlan: 期限の年月日の select に入れ、身分証の数を
     { element: 3, optionIndex: 1 }
   ])
   assert.equal(plan.documents, 2)
+  // 伏せる値（Claude のウィンドウ用）は番号だけ。期限は伏せない
+  assert.deepEqual(plan.secretValues, ['123456789012'])
+  assert.deepEqual(plan.secretElements, [0])
+})
+
+test('buildFillPlan: 伏せる値は secret の項目の実際に入れる値（保険証の記号・番号の分割も）で、入れない欄の分は外す', () => {
+  const collected = collectedOf(
+    [
+      { label: '氏名', members: [0] },
+      { label: '記号・番号', members: [1, 2] },
+      { label: '旅券番号', members: [3] }
+    ],
+    // 旅券番号の欄は maxlength が足りず入れない（伏せる値にも入れない）
+    [el(), el(), el(), el({ maxLength: 3 })]
+  )
+  const decisions = new Map([
+    [0, jev('family_name')],
+    [1, jev('insurance_symbol')],
+    [2, jev('passport_number')]
+  ])
+  const plan = buildFillPlan(collected, decisions, VALUES)
+  assert.deepEqual(plan.secretValues, ['1234', '56'])
+  assert.deepEqual(plan.secretElements, [1, 2])
+  assert.equal(
+    plan.steps.some((step) => step.element === 3),
+    false
+  )
+  assert.equal(plan.secretValues.includes('山田'), false)
 })
 
 test('buildJevRequests: 身分証の候補を出し、身分証の値は送らない', () => {

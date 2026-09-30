@@ -67,6 +67,10 @@ export function unlockFailureText(reason: KyprUnlockFailure, retryAfter?: number
   }
 }
 
+/** Claude のウィンドウで、Claude が JS を実行したページ（`agent/fill-gate.ts`）。 */
+const AGENT_SCRIPT_TEXT =
+  'このページでは Claude がスクリプトを実行したため入力できません。新しいタブで開き直してから入力してください。'
+
 export function actionFailureText(result: KyprActionResult): string | null {
   if (result.ok) return null
   switch (result.reason) {
@@ -87,6 +91,10 @@ export function actionFailureText(result: KyprActionResult): string | null {
       return '入力欄のあるページ（フレーム）のアドレスが、このログインの URL と合いません。'
     case 'invalid':
       return '入力を確かめてください。'
+    case 'agent-script':
+      return AGENT_SCRIPT_TEXT
+    case 'agent-page':
+      return 'このページの状態を確かめられないため入力しませんでした。少し待ってからもう一度試してください。'
     default:
       return 'うまくいきませんでした。'
   }
@@ -915,6 +923,11 @@ function KyprList({
   return (
     <div className="kypr-list">
       <div className="kypr-scroll" ref={listRef}>
+        {data.agentRefusal === 'agent-script' ? (
+          <p className="kypr-error kypr-pad" id="kypr-agent-refusal">
+            {AGENT_SCRIPT_TEXT}
+          </p>
+        ) : null}
         {showPage && data.page ? (
           <section className="kypr-hero">
             <div className="kypr-hero-site">

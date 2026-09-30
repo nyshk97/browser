@@ -18,6 +18,10 @@
  *   5. 引き継ぎ: request_user_action の後は入力系が断られ、帯に「操作待ち」・通常窓の入口に「別ウィンドウで操作待ち」が出る。resume で戻る
  *   6. 切断で窓が閉じる / Nemo の再起動をまたいでブリッジが繋ぎ直す / 設定 OFF で接続が切れて socket が消える
  *   7. 診断ログにページ由来の値が出ていない / 未処理の例外が無い
+ *   8. kypr（計画 2026-09-30「Claude のウィンドウで kypr」）: ユーザーの操作（ポップアップ・窓が key のときの
+ *      ⌘⇧L / 欄の下の候補）で入り、入れたパスワード・コード・身分証の番号は read_page に出ない。
+ *      Claude が javascript_tool を実行したページ（と、そこから開いたタブ）には入れない。iframe にはパスワードだけ。
+ *      kypr の模擬サーバー（`scripts/lib/kypr-fixture.mjs`）と Jev の模擬を使う（本物には触らない）
  *
  * 使い方:
  *   node scripts/verify-agent.mjs   （事前に out/ がビルドされていること）
@@ -40,7 +44,10 @@ import {
   waitForHttp
 } from './lib/harness.mjs'
 import { connect, connectTo, connectUi, listTargets, waitFor } from './lib/cdp.mjs'
+import { createKyprVault, profileToKypr } from './lib/kypr-fixture.mjs'
 import { AGENT_TOOLS } from '../src/shared/agent-tools.js'
+import { normalizeProfile } from '../src/shared/autofill-schema.js'
+import { newIdentityItem, newLoginItem, newTotpItem } from '../src/vendor/kypr/crypto/index.ts'
 
 const require = createRequire(import.meta.url)
 const electronPath = require('electron')
@@ -54,6 +61,13 @@ function check(name, ok, detail = '') {
 }
 
 const SECRET = 'Nemo-Secret-7731'
+
+/* kypr（模擬サーバーの保管庫。本物には触らない） */
+const KYPR_MASTER = 'agent-verify-master-1'
+const KYPR_PW = 'Kypr-Agent-Pw-5821'
+const KYPR_USER = 'agent-user@example.com'
+const PASSPORT = 'TK7654321'
+const PROFILE = normalizeProfile({ family_name: '山田', given_name: '太郎', passport_number: PASSPORT })
 
 /* ------------------------------------------------------------------ *
  * テスト用のページ
@@ -76,6 +90,38 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>agent-veri
 </body></html>`
 
 const NEXT = `<!doctype html><title>next page</title><body>next</body>`
+/** kypr のログイン（ユーザー名・パスワード・ワンタイムコードの欄。コードの欄は autocomplete の無い type=text）。 */
+const KYPR_LOGIN = `<!doctype html><html><head><meta charset="utf-8"><title>kypr login</title></head><body>
+<form><label>User <input id="u" name="username" autocomplete="username"></label>
+<label>Password <input id="p" name="password" type="password"></label>
+<label>Code <input id="otp" name="code"></label></form>
+<button id="open" onclick="window.open(location.pathname + '?child=1')">open child</button>
+</body></html>`
+/** 個人情報（氏名はルール、旅券番号は Jev の模擬で決まる）。 */
+const IDENTITY = `<!doctype html><html><head><meta charset="utf-8"><title>identity</title></head><body>
+<form style="padding:20px"><label>氏名 <input id="name" autocomplete="name"></label><br>
+<label>旅券番号 <input id="passport" name="passport"></label></form></body></html>`
+const frameOf = (src) =>
+  `<!doctype html><html><head><meta charset="utf-8"><title>frame</title></head><body><iframe src="${src}" width="700" height="320"></iframe></body></html>`
+
+/** Jev の模擬（`NEMO_JEV_TEST_ENDPOINT`）。見出しで答えを決める（値は届かない）。 */
+function jevAnswer(body) {
+  const answers = {}
+  for (const [id, question] of Object.entries(body.questions ?? {})) {
+    const field = question.instructions?.field ?? {}
+    const label = field.label || field.nearby_text || ''
+    if (id.startsWith('own')) answers[id] = { type: 'noul', noul: 0.93 }
+    else {
+      const choice = label.includes('旅券番号')
+        ? 'passport_number'
+        : label.includes('氏名')
+          ? 'full_name'
+          : 'none'
+      answers[id] = { type: 'choice', choice, confidence: 0.97, probabilities: { [choice]: 0.97 } }
+    }
+  }
+  return { model: 'jev-1.13.0', answers, usage: { input_tokens: 1, output_tokens: 1 } }
+}
 const UNLOAD = `<!doctype html><title>unload guard</title><body><input id="t" value="dirty">
 <script>addEventListener('beforeunload', (e) => { e.preventDefault(); e.returnValue = 'x' })</script></body>`
 
@@ -97,6 +143,25 @@ const server = http.createServer((req, res) => {
   } else if (url.pathname === '/unload') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
     res.end(UNLOAD)
+  } else if (url.pathname === '/kypr-login') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    res.end(KYPR_LOGIN)
+  } else if (url.pathname === '/kypr-frame') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    res.end(frameOf('/kypr-login?in-frame=1'))
+  } else if (url.pathname === '/identity') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    res.end(IDENTITY)
+  } else if (url.pathname === '/identity-frame') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    res.end(frameOf('/identity?f=1'))
+  } else if (url.pathname === '/v1/systemone' && req.method === 'POST') {
+    let raw = ''
+    req.on('data', (chunk) => (raw += chunk))
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(jevAnswer(JSON.parse(raw))))
+    })
   } else if (url.pathname === '/download') {
     res.writeHead(200, {
       'content-type': 'application/octet-stream',
@@ -169,6 +234,8 @@ function startBridge(socketPath) {
 
 const spawned = []
 const tempDirs = []
+/** kypr の模擬サーバー（後片付けで閉じる）。 */
+let kyprMock = null
 function makeDir(prefix) {
   // unix socket の sun_path は 104 バイトまで。tmpdir 直下に短い名前で作る
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
@@ -183,6 +250,24 @@ try {
     throw new Error('out/ が無い。先に pnpm build する')
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   const origin = `http://127.0.0.1:${server.address().port}`
+
+  // kypr の保管庫（模擬サーバー）。ログイン・ワンタイムコードはこの検証のページの origin に合わせる
+  const kypr = await createKyprVault(KYPR_MASTER)
+  kyprMock = kypr.mock
+  const LOGIN = newLoginItem({
+    name: 'Agent Site',
+    username: KYPR_USER,
+    password: KYPR_PW,
+    uris: [{ uri: origin }]
+  })
+  const TOTP = newTotpItem({
+    name: 'Agent Otp',
+    account: 'me',
+    secret: 'JBSWY3DPEHPK3PXP',
+    uris: [{ uri: origin }]
+  })
+  const IDENT = newIdentityItem({ name: '自分', ...profileToKypr(PROFILE) })
+  await kypr.other.create([LOGIN, TOTP, IDENT])
 
   const userData = makeDir('nav-data-')
   const socketDir = makeDir('nav-')
@@ -205,7 +290,12 @@ try {
         NEMO_USER_DATA_DIR: userData,
         NEMO_AGENT_SOCKET: socketPath,
         NEMO_DOWNLOAD_DIR: downloadDir,
-        NEMO_VERIFY_DIAGNOSTICS: '1'
+        NEMO_VERIFY_DIAGNOSTICS: '1',
+        NEMO_KYPR_TEST_SERVER: kypr.origin,
+        NEMO_HTTP_AUTH_TEST_CRYPTO: 'memory',
+        NEMO_KYPR_TEST_TOUCHID: 'ok',
+        NEMO_KYPR_TEST_CLIPBOARD: 'memory',
+        NEMO_JEV_TEST_ENDPOINT: `${origin}/v1/systemone`
       }
     })
     spawned.push(child)
@@ -267,19 +357,20 @@ try {
     Boolean(agentUi) && !before.some((t) => t.url.includes('agent=1'))
   )
   check('窓の名前はプロジェクト名', ctxJson?.window === 'Claude — agent-verify-project', ctxJson?.window)
-  // kypr（パスワードマネージャー）はエージェント窓では使わせない（ツールバーのアイコンの元になる状態を渡さない・IPC も断る）
+  // kypr はエージェント窓でも使える（ツールバーのアイコンの元になる状態を渡す・IPC も通る）。入れる検査は 8.
   if (agentUi) {
     const agentSession = await connect(agentUi.webSocketDebuggerUrl)
     await waitFor(agentSession, "typeof window.nemo === 'object' ? 'ok' : ''")
     const agentState = JSON.parse(await agentSession.ev('window.nemo.getWindowState().then(JSON.stringify)'))
     const kyprCall = await agentSession.ev(
-      "window.nemo.kyprStatus().then(() => 'allowed', (e) => 'rejected: ' + String(e && e.message).slice(-60))"
+      "window.nemo.kyprStatus().then((s) => 'allowed:' + s.state, (e) => 'rejected: ' + String(e && e.message).slice(-60))"
     )
     check(
-      'エージェント窓には kypr を出さない（状態は null・IPC は断る）',
-      agentState.kind === 'agent' && agentState.kypr === null && kyprCall.startsWith('rejected'),
+      'エージェント窓にも kypr を出す（状態を渡す・IPC は通る）',
+      agentState.kind === 'agent' && agentState.kypr !== null && kyprCall.startsWith('allowed'),
       `kind=${agentState.kind} kypr=${JSON.stringify(agentState.kypr)} ipc=${kyprCall}`
     )
+    agentSession.close()
   }
   const tabId = ctxJson?.tabs?.[0]?.tabId
 
@@ -683,6 +774,325 @@ try {
     `${savedWindows?.length ?? '?'} 窓`
   )
 
+  /* ---- 8. kypr（Claude のウィンドウで、ユーザーの操作で入れる） ---- */
+  const signIn = JSON.parse(
+    await ui.ev(`window.nemo.kyprSignIn(${JSON.stringify(KYPR_MASTER)}, true).then(JSON.stringify)`)
+  )
+  check(
+    '（前提）kypr の模擬サーバーの保管庫に通常窓からログインできる',
+    signIn.ok === true,
+    JSON.stringify(signIn)
+  )
+  await ui.ev("window.nemo.saveJevKey('agent-verify-jev-key').then(String)")
+  const agentUiTarget = (await listTargets(app.cdp)).find(
+    (t) => t.url.includes('view=sidebar') && t.url.includes('agent=1')
+  )
+  const agentUi2 = await connect(agentUiTarget.webSocketDebuggerUrl)
+  await waitFor(agentUi2, "typeof window.nemo === 'object' ? 'ok' : ''")
+  const aj = async (expression) => JSON.parse(await agentUi2.ev(`${expression}.then(JSON.stringify)`))
+  const agentTabKey = async (part) =>
+    (await aj('window.nemo.getWindowState()')).tabs.find((t) => t.url.includes(part))?.key ?? null
+  /** Claude の navigate で開き、ページに CDP で繋ぐ（値の確かめ用。**マウスは撃たない**: 実マウス扱いで窓が key になりうる） */
+  const openForKypr = async (pathAndQuery) => {
+    const nav = await bridge.call('navigate', { tabId, url: `${origin}${pathAndQuery}` })
+    const session = await connectTo(app.cdp, pathAndQuery, { type: 'page' })
+    await waitFor(session, "document.readyState === 'complete' ? 'ok' : ''")
+    return { nav, session }
+  }
+  const readValue = (session, expr) => session.ev(`String(${expr} ?? '')`)
+
+  // --- ポップアップから入れる（窓が key でなくてよい。ポップアップは Nemo の View で CDP から届かない） ---
+  let { session: kp } = await openForKypr('/kypr-login')
+  const kyprPanel = await aj('window.nemo.kyprPanel()')
+  check(
+    'kypr: Claude のウィンドウのポップアップに、このページに合うログインとコードが出る',
+    kyprPanel.matches.some((m) => m.id === LOGIN.id) &&
+      kyprPanel.totpMatches.some((m) => m.id === TOTP.id) &&
+      kyprPanel.agentRefusal === null,
+    JSON.stringify({
+      m: kyprPanel.matches.length,
+      t: kyprPanel.totpMatches.length,
+      r: kyprPanel.agentRefusal
+    })
+  )
+  const popupFill = await aj(`window.nemo.kyprFill(${JSON.stringify(LOGIN.id)})`)
+  const filledUser = await readValue(kp, "document.getElementById('u').value")
+  const filledPw = await readValue(kp, "document.getElementById('p').value")
+  check(
+    'kypr: ポップアップからログインを入れられる',
+    popupFill.ok === true && filledUser === KYPR_USER && filledPw === KYPR_PW,
+    JSON.stringify({ popupFill, u: filledUser, p: filledPw ? '(入っている)' : '' })
+  )
+  const kyprTree = await bridge.call('read_page', { tabId })
+  check(
+    'kypr: 入れたパスワードは read_page に出ない',
+    !kyprTree.text.includes(KYPR_PW) && kyprTree.text.includes('[redacted]'),
+    kyprTree.text.split('\n').find((line) => line.includes('Password')) ?? ''
+  )
+  const jsAfterKypr = await bridge.call('javascript_tool', {
+    tabId,
+    text: "document.getElementById('p').value"
+  })
+  check(
+    'kypr: 入れた後の javascript_tool は断る（taint）',
+    jsAfterKypr.isError && !jsAfterKypr.text.includes(KYPR_PW),
+    jsAfterKypr.text.slice(0, 80)
+  )
+  // コード（autocomplete の無い type=text の欄）: 既存の伏せ字では拾えない値。入れる前に覚えさせるので出ない
+  await kp.ev("document.getElementById('otp').focus(), 'ok'")
+  const totpFill = await aj(`window.nemo.kyprFillTotp(${JSON.stringify(TOTP.id)})`)
+  const codeInPage = await readValue(kp, "document.getElementById('otp').value")
+  const codeTree = await bridge.call('read_page', { tabId })
+  check(
+    'kypr: ワンタイムコードを入れられ、入れたコードは read_page に出ない',
+    totpFill.ok === true &&
+      !totpFill.copied &&
+      /^\d{6}$/.test(codeInPage) &&
+      !codeTree.text.includes(codeInPage),
+    `${JSON.stringify(totpFill)} / ${codeTree.text.split('\n').find((line) => line.includes('Code')) ?? ''}`
+  )
+
+  // --- javascript_tool を実行したページには入れない ---
+  ;({ session: kp } = await openForKypr('/kypr-login?js=1'))
+  await bridge.call('javascript_tool', { tabId, text: '1 + 1' })
+  const refusedFill = await aj(`window.nemo.kyprFill(${JSON.stringify(LOGIN.id)})`)
+  const refusedPanel = await aj('window.nemo.kyprPanel()')
+  const refusedTotp = await aj(`window.nemo.kyprFillTotp(${JSON.stringify(TOTP.id)})`)
+  check(
+    'kypr: Claude が javascript_tool を実行したページには入れない（ポップアップにも理由が出る）',
+    refusedFill.ok === false &&
+      refusedFill.reason === 'agent-script' &&
+      refusedTotp.reason === 'agent-script' &&
+      refusedPanel.agentRefusal === 'agent-script' &&
+      (await readValue(kp, "document.getElementById('p').value")) === '',
+    JSON.stringify({ refusedFill, refusedTotp, panel: refusedPanel.agentRefusal })
+  )
+  // 記録のある document が window.open で開いたタブ（opener から DOM を触れる）にも入れない
+  const openRef = (await bridge.call('read_page', { tabId })).text.match(
+    /button "open child" \[(ref_\d+)\]/
+  )?.[1]
+  await bridge.call('computer', { tabId, action: 'left_click', ref: openRef })
+  let childKey = null
+  for (let i = 0; i < 50 && !childKey; i += 1) {
+    childKey = await agentTabKey('child=1')
+    if (!childKey) await sleep(100)
+  }
+  const childPage = await connectTo(app.cdp, 'child=1', { type: 'page' })
+  await waitFor(childPage, "document.readyState === 'complete' ? 'ok' : ''")
+  await agentUi2.ev(`window.nemo.selectTab(${JSON.stringify(childKey)}).then(() => 'ok')`)
+  const childFill = await aj(`window.nemo.kyprFill(${JSON.stringify(LOGIN.id)})`)
+  check(
+    'kypr: javascript_tool を実行したページが開いたタブにも入れない',
+    childFill.ok === false &&
+      childFill.reason === 'agent-script' &&
+      (await readValue(childPage, "document.getElementById('p').value")) === '',
+    JSON.stringify(childFill)
+  )
+  const childTabId = JSON.parse((await bridge.call('tabs_context')).text).tabs.find((t) =>
+    t.url.includes('child=1')
+  )?.tabId
+  if (childTabId) await bridge.call('tabs_close', { tabId: childTabId })
+  // opener を切っても（`w.opener = null`）、開いた側が移動しても、JS を実行したページが開いたタブには入れない
+  // （生まれた時点で記録する。生の opener をたどるだけだと、どちらも入ってしまう）
+  const openedByScript = async (query, afterOpen) => {
+    await openForKypr(`/kypr-login?${query}`)
+    const opened = await bridge.call('javascript_tool', {
+      tabId,
+      text: `window.__w = window.open(location.pathname + '?${query}-child=1'); ${afterOpen}; 'opened'`
+    })
+    let key = null
+    for (let i = 0; i < 50 && !key; i += 1) {
+      key = await agentTabKey(`${query}-child=1`)
+      if (!key) await sleep(100)
+    }
+    return { opened: opened.text, key }
+  }
+  const tryChild = async (key, part) => {
+    const session = await connectTo(app.cdp, part, { type: 'page' })
+    await waitFor(session, "document.readyState === 'complete' ? 'ok' : ''")
+    await agentUi2.ev(`window.nemo.selectTab(${JSON.stringify(key)}).then(() => 'ok')`)
+    const result = await aj(`window.nemo.kyprFill(${JSON.stringify(LOGIN.id)})`)
+    const pw = await readValue(session, "document.getElementById('p').value")
+    const ctx = JSON.parse((await bridge.call('tabs_context')).text)
+    const child = ctx.tabs.find((t) => t.url.includes(part))
+    if (child) await bridge.call('tabs_close', { tabId: child.tabId })
+    return { result, pw }
+  }
+  const nulled = await openedByScript('nulled', 'window.__w.opener = null')
+  const nulledTry = nulled.key ? await tryChild(nulled.key, 'nulled-child=1') : null
+  check(
+    'kypr: JS を実行したページが開いて opener を切った（w.opener = null）タブにも入れない',
+    nulledTry?.result.ok === false && nulledTry.result.reason === 'agent-script' && nulledTry.pw === '',
+    JSON.stringify({ opened: nulled.opened, key: Boolean(nulled.key), result: nulledTry?.result })
+  )
+  const orphan = await openedByScript('orphan', 'void 0')
+  await bridge.call('navigate', { tabId, url: `${origin}/next` })
+  const orphanTry = orphan.key ? await tryChild(orphan.key, 'orphan-child=1') : null
+  check(
+    'kypr: JS を実行したページが開いたタブは、開いた側が移動した後も入れない',
+    orphanTry?.result.ok === false && orphanTry.result.reason === 'agent-script' && orphanTry.pw === '',
+    JSON.stringify({ opened: orphan.opened, key: Boolean(orphan.key), result: orphanTry?.result })
+  )
+  // 移動（新しい document）すれば入れられる
+  ;({ session: kp } = await openForKypr('/kypr-login?js=2'))
+  const afterNav = await aj(`window.nemo.kyprFill(${JSON.stringify(LOGIN.id)})`)
+  check(
+    'kypr: 移動した後の新しいページには入れられる',
+    afterNav.ok === true && (await readValue(kp, "document.getElementById('p').value")) === KYPR_PW,
+    JSON.stringify(afterNav)
+  )
+
+  // --- ページ起点の入口（⌘⇧L・欄の下の候補）は窓が key のときだけ ---
+  ;({ session: kp } = await openForKypr('/kypr-login?key=1'))
+  await agentUi2.ev("window.nemo.runCommandForVerify('kypr-fill').then(String)")
+  await sleep(500)
+  const shortcutNotKey = await readValue(kp, "document.getElementById('p').value")
+  // Claude の CDP のキーで ⌘⇧L（ページで処理されなければメニューへ回る経路）
+  const uRef = (await bridge.call('read_page', { tabId })).text.match(/textbox "User" \[(ref_\d+)\]/)?.[1]
+  await bridge.call('computer', { tabId, action: 'left_click', ref: uRef })
+  await bridge.call('computer', { tabId, action: 'key', text: 'cmd+shift+l' })
+  await sleep(500)
+  const shortcutCdp = await readValue(kp, "document.getElementById('p').value")
+  const overlayNotKey = (await aj('window.nemo.getOverlayState()')).kind
+  check(
+    'kypr: 窓が key でないとき ⌘⇧L は入れず、Claude のクリック・キー（CDP）で候補も出さず入れない',
+    shortcutNotKey === '' && shortcutCdp === '' && overlayNotKey !== 'kypr-inline',
+    JSON.stringify({ shortcutNotKey, shortcutCdp, overlay: overlayNotKey })
+  )
+  await agentUi2.ev('window.nemo.agentKeyForVerify(true).then(String)')
+  await agentUi2.ev("window.nemo.runCommandForVerify('kypr-fill').then(String)")
+  let shortcutKey = ''
+  for (let i = 0; i < 30 && !shortcutKey; i += 1) {
+    shortcutKey = await readValue(kp, "document.getElementById('p').value")
+    if (!shortcutKey) await sleep(100)
+  }
+  check('kypr: 窓が key のとき ⌘⇧L で入る（合うログインが 1 件）', shortcutKey === KYPR_PW)
+  ;({ session: kp } = await openForKypr('/kypr-login?key=2'))
+  const uRef2 = (await bridge.call('read_page', { tabId })).text.match(/textbox "User" \[(ref_\d+)\]/)?.[1]
+  await bridge.call('computer', { tabId, action: 'left_click', ref: uRef2 })
+  const inlineShown = await waitFor(
+    agentUi2,
+    "window.nemo.getOverlayState().then((s) => s.kind === 'kypr-inline' ? 'ok' : '')",
+    { timeoutMs: 5000 }
+  ).catch(() => '')
+  check('kypr: 窓が key のときは欄の下に候補が出る', inlineShown === 'ok')
+  await agentUi2.ev('window.nemo.kyprInlineDismiss().then(String)')
+  await agentUi2.ev('window.nemo.agentKeyForVerify(false).then(String)')
+
+  const detachedLines = () =>
+    readLogLines(userData).filter((line) => line.includes('"event":"agent.debugger_detached"'))
+  const detachedBefore = detachedLines().length
+  // --- iframe: パスワードは入れる / コードは入れずにコピーに回す ---
+  ;({ session: kp } = await openForKypr('/kypr-frame'))
+  await waitFor(kp, "document.querySelector('iframe')?.contentDocument?.getElementById('p') ? 'ok' : ''")
+  const frameFill = await aj(`window.nemo.kyprFill(${JSON.stringify(LOGIN.id)})`)
+  const framePw = await readValue(
+    kp,
+    "document.querySelector('iframe').contentDocument.getElementById('p').value"
+  )
+  check(
+    'kypr: iframe のパスワードの欄には入れる',
+    frameFill.ok === true && framePw === KYPR_PW,
+    JSON.stringify(frameFill)
+  )
+  await kp.ev("document.querySelector('iframe').contentDocument.getElementById('otp').focus(), 'ok'")
+  const frameTotp = await aj(`window.nemo.kyprFillTotp(${JSON.stringify(TOTP.id)})`)
+  const frameCode = await readValue(
+    kp,
+    "document.querySelector('iframe').contentDocument.getElementById('otp').value"
+  )
+  const clip = await aj('window.nemo.kyprClipboardForVerify()')
+  check(
+    'kypr: iframe のコードの欄には入れず、コピーに回す',
+    frameTotp.ok === true && frameTotp.copied === true && frameCode === '' && /^\d{6}$/.test(clip ?? ''),
+    JSON.stringify({ frameTotp, frameCode, clip: clip ? '(コード)' : clip })
+  )
+
+  // --- フォーム自動入力（個人情報） ---
+  ;({ session: kp } = await openForKypr('/identity'))
+  const idKey = await agentTabKey('/identity')
+  const rect = JSON.parse(
+    await kp.ev(
+      "(() => { const r = document.getElementById('passport').getBoundingClientRect(); return JSON.stringify({ x: r.left + 5, y: r.top + r.height / 2 }) })()"
+    )
+  )
+  const idResult = await aj(`window.nemo.autofillForVerify(${JSON.stringify(idKey)}, ${rect.x}, ${rect.y})`)
+  const idName = await readValue(kp, "document.getElementById('name').value")
+  const idPassport = await readValue(kp, "document.getElementById('passport').value")
+  const idTree = await bridge.call('read_page', { tabId })
+  check(
+    '自動入力: Claude のウィンドウでも入り、旅券番号は read_page に出ず、氏名は出る',
+    idResult?.ok === true &&
+      idPassport === PASSPORT &&
+      idName.includes('山田') &&
+      !idTree.text.includes(PASSPORT) &&
+      idTree.text.includes('山田'),
+    `${JSON.stringify({ ok: idResult?.ok, reason: idResult?.reason, jevError: idResult?.jevError })} / ${idTree.text
+      .split('\n')
+      .filter((line) => line.includes('旅券') || line.includes('氏名'))
+      .join(' / ')}`
+  )
+  ;({ session: kp } = await openForKypr('/identity?js=1'))
+  await bridge.call('javascript_tool', { tabId, text: '1' })
+  const idRefused = await aj(
+    `window.nemo.autofillForVerify(${JSON.stringify(await agentTabKey('js=1'))}, ${rect.x}, ${rect.y})`
+  )
+  check(
+    '自動入力: Claude が javascript_tool を実行したページには入れない',
+    idRefused?.ok === false &&
+      idRefused.reason === 'agent-script' &&
+      (await readValue(kp, "document.getElementById('name').value")) === '',
+    JSON.stringify(idRefused)
+  )
+  ;({ session: kp } = await openForKypr('/identity-frame'))
+  await waitFor(
+    kp,
+    "document.querySelector('iframe')?.contentDocument?.getElementById('passport') ? 'ok' : ''"
+  )
+  const idFrame = await aj(
+    `window.nemo.autofillForVerify(${JSON.stringify(await agentTabKey('/identity-frame'))}, -1, -1, ${JSON.stringify(`${origin}/identity?f=1`)})`
+  )
+  const frameName = await readValue(
+    kp,
+    "document.querySelector('iframe').contentDocument.getElementById('name').value"
+  )
+  const framePassport = await readValue(
+    kp,
+    "document.querySelector('iframe').contentDocument.getElementById('passport').value"
+  )
+  check(
+    '自動入力: iframe では旅券番号の欄だけ空のまま残し、氏名は入れる',
+    idFrame?.ok === true && idFrame.withheld === 1 && framePassport === '' && frameName.includes('山田'),
+    JSON.stringify({ ok: idFrame?.ok, reason: idFrame?.reason, withheld: idFrame?.withheld, name: frameName })
+  )
+  // iframe に CDP で入った後も agent の debugger は付いたまま（先に agent が付け、相乗りした側は detach しない）
+  const shotAfterFrame = await bridge.call('computer', { tabId, action: 'screenshot' })
+  const detached = detachedLines().slice(detachedBefore)
+  check(
+    'iframe に入った後も agent の debugger は外れていない（スクショも撮れる）',
+    detached.length === 0 && Boolean(shotAfterFrame.image),
+    `前 ${detachedBefore} 回 / iframe の間に ${detached.length} 回外れた ${detached.join(' ').slice(0, 300)}`
+  )
+
+  // --- Web 版 kypr の Touch ID（Nemo 内蔵の認証器）は Claude のウィンドウでは出ない ---
+  const uvpaa = async (url) => {
+    await bridge.call('navigate', { tabId, url })
+    const r = await bridge.call('javascript_tool', {
+      tabId,
+      text: 'JSON.stringify({ uv: await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(), caps: await (PublicKeyCredential.getClientCapabilities ? PublicKeyCredential.getClientCapabilities() : null) })'
+    })
+    return r.text
+  }
+  const onKypr = await uvpaa(`${kypr.origin}/`)
+  const onOther = await uvpaa(`${origin}/next`)
+  check(
+    'kypr の Web 版の Touch ID（内蔵の認証器）は Claude のウィンドウでは入らない（kypr の origin でも素の値）',
+    onKypr === onOther && onKypr.startsWith('{'),
+    `kypr=${onKypr.slice(0, 120)} / other=${onOther.slice(0, 120)}`
+  )
+  agentUi2.close()
+  await bridge.call('navigate', { tabId, url: `${origin}/page` })
+
   /* ---- 6. 切断で窓が閉じる ---- */
   bridge.child.stdin.end()
   await stopChild(bridge.child).catch(() => {})
@@ -735,7 +1145,13 @@ try {
   /* ---- 7. ログ ---- */
   const lines = readLogLines(userData)
   const leaked = lines.filter(
-    (line) => line.includes(SECRET) || line.includes('こんにちは') || line.includes('/page')
+    (line) =>
+      line.includes(SECRET) ||
+      line.includes('こんにちは') ||
+      line.includes('/page') ||
+      line.includes(KYPR_PW) ||
+      line.includes(PASSPORT) ||
+      line.includes('山田')
   )
   check(
     '診断ログにページ由来の値（入力・URL のパス）が出ない',
@@ -750,6 +1166,7 @@ try {
 } finally {
   await stopChildren(spawned.filter((child) => child.exitCode === null)).catch(() => {})
   server.close()
+  await kyprMock?.close()
   for (const dir of tempDirs) {
     const uncaught = dir.includes('nav-data-') ? findUncaughtExceptions(dir) : []
     if (uncaught.length > 0) {

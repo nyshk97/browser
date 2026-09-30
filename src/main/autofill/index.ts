@@ -23,7 +23,7 @@ import { getSettings } from '../store/settings.js'
 import { kyprIdentityForFill, kyprState, kyprStatus, unlockKyprWithTouchId } from '../kypr/index.js'
 import { askJev } from './jev.js'
 import { mainFrameRunner, subFrameRunner, type PageRunner } from './frame-runner.js'
-import { isAgentContents } from '../agent/contents.js'
+import { agentFillRefusal, isAgentContents, rememberAgentSecrets } from '../agent/contents.js'
 
 /**
  * 実行中のタブ。**同じタブでの 2 回目は弾く**（収集した要素はページ側の 1 か所に持つので、
@@ -53,12 +53,12 @@ export async function runAutofill(
   frame: WebFrameMain | null = null,
   debug = false
 ): Promise<AutofillRunResult> {
-  // エージェント用ウィンドウでは動かさない（プロフィールをエージェントのページに入れない。
-  // 右クリックメニューもエージェント窓には出していないが、入口をここで一元的に閉じる）
-  if (isAgentContents(wc)) {
+  // エージェント窓: Claude が JS を実行した document には入れない（`agent/fill-gate.ts`。入口をここで一元的に閉じる）
+  const agentRefusal = await agentFillRefusal(wc)
+  if (agentRefusal) {
     const refused: AutofillRunResult = {
       ok: false,
-      reason: 'agent',
+      reason: agentRefusal,
       fields: 0,
       rule: 0,
       jev: 0,
@@ -273,9 +273,30 @@ async function collectAndFill(
   result.documents = plan.documents
   result.left = result.fields - result.rule - result.jev
 
-  if (plan.steps.length > 0 && !wc.isDestroyed()) {
+  // エージェント窓: 身分証の番号は伏せる。iframe の中はスクショの伏せ字が効かない（塗るのはメインフレームの要素だけ）ので
+  // その欄だけ入れない。メインフレームでは**流し込む直前に**伏せる値として覚えさせ、覚えさせられなければ何も入れない。
+  // 入口の判定から流し込むまでに Touch ID・Jev の待ちが挟まるので、Claude が JS を実行していないかをここで確かめ直す
+  // （伏せる値があるときは world の中で排他に確かめる `rememberAgentSecrets`、無いときは `agentFillRefusal`）
+  let steps = plan.steps
+  if (isAgentContents(wc)) {
+    const secrets = !inSubFrame && plan.secretElements.length > 0
+    if (inSubFrame && plan.secretElements.length > 0) {
+      const withheld = new Set(plan.secretElements)
+      steps = steps.filter((step) => !withheld.has(step.element))
+      result.withheld = plan.steps.length - steps.length
+    }
+    const refusedNow = secrets
+      ? await rememberAgentSecrets(wc, plan.secretValues)
+      : await agentFillRefusal(wc)
+    if (refusedNow) {
+      result.reason = refusedNow
+      return finish()
+    }
+  }
+
+  if (steps.length > 0 && !wc.isDestroyed()) {
     try {
-      const filled = (await runner.run(`globalThis.__nemoAutofillFill(${JSON.stringify(plan.steps)})`)) as {
+      const filled = (await runner.run(`globalThis.__nemoAutofillFill(${JSON.stringify(steps)})`)) as {
         filled?: unknown
       } | null
       result.filled = typeof filled?.filled === 'number' ? filled.filled : 0

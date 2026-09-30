@@ -13,6 +13,8 @@
  *   パスワード系の欄へ入った値を覚え、read_page / get_page_text / スクショの伏せ字に使う。
  *   キー入力を経ない自動入力（untrusted な input / change）も拾う（`before-input-event` だけだと取りこぼす。実測）
  * - taint（この document でユーザーがパスワード系の欄に入力した）。javascript_tool を断る根拠
+ * - scriptRan（この document で Claude が javascript_tool を実行した / opener でつながったページで実行した）。
+ *   kypr・フォーム自動入力がこの document に値を入れない根拠（仕込まれた JS に拾わせない）。遷移で消える
  * - 「一度でもパスワード欄だった要素」（「パスワードを表示」で type=text に変わっても伏せる。実測で漏れた）
  *
  * ソースを文字列で持つのは `autofill-collect-source.js` と同じ理由（ビルドの変換を通さない）。
@@ -30,6 +32,7 @@ export const AGENT_PAGE_SOURCE = String.raw`
 
   let agentActive = false
   let tainted = false
+  let scriptRan = false
   const secrets = new Set()
   const everPassword = new WeakSet()
   const refs = new Map()
@@ -418,13 +421,24 @@ export const AGENT_PAGE_SOURCE = String.raw`
       agentActive = value === true
       return { ok: true }
     },
-    state: () => ({ tainted, secrets: secrets.size, url: location.href }),
-    // Nemo の UI（将来の自作パスワードマネージャー）がこのページに資格情報を入れたときに呼ぶ
+    state: () => ({ tainted, scriptRan, secrets: secrets.size, url: location.href }),
+    // Nemo の UI（kypr・フォーム自動入力）がこのページに値を入れる**前に**呼ぶ。
+    // **scriptRan と tainted は同じ world の中で排他に立てる**（main 側で確かめてから立てると、その間に
+    // javascript_tool が割り込める）。Claude が JS を実行した document では覚えずに断る
     rememberSecrets: (values) => {
+      if (scriptRan) return { ok: false, reason: 'script' }
       for (const value of Array.isArray(values) ? values : []) {
         if (typeof value === 'string' && value.length >= 4) secrets.add(value)
       }
       tainted = true
+      return { ok: true }
+    },
+    // javascript_tool の実行前に main が呼ぶ（この document には kypr が値を入れない）。
+    // 実行する document（onlyIfClean）では、ユーザーが秘密を入れていたら立てずに断る。
+    // opener でつながったページには taint によらず立てる
+    markScriptRan: (onlyIfClean) => {
+      if (onlyIfClean === true && tainted) return { ok: false, reason: 'tainted' }
+      scriptRan = true
       return { ok: true }
     },
     tree,

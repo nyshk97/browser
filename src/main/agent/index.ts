@@ -1,13 +1,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { app, dialog, session, type WebContents } from 'electron'
+import { app, dialog, session } from 'electron'
 import { log } from '../log.js'
 import { AGENT_PARTITION } from '../paths.js'
 import { forgetSessionCookies } from '../store/session-cookies.js'
 import {
   clearAgentPresentationDeferral,
   createTab,
-  findTabByWebContents,
   presentAgentWindow,
   removeWindow,
   setAgentHooks,
@@ -15,7 +14,8 @@ import {
   type NemoWindow
 } from '../registry.js'
 import { getSettings, onSettingsChanged } from '../store/settings.js'
-import { isAgentContents } from './contents.js'
+import { isAgentContents, setAgentFillHooks } from './contents.js'
+import { agentFillHooks, noteAgentContentsCreated } from './fill-gate.js'
 import {
   adoptAgentContents,
   allConnections,
@@ -69,10 +69,16 @@ export function startAgent(): void {
     openUrlInAgentWindow
   })
 
+  // kypr・フォーム自動入力がエージェント窓のページに値を入れるときの判定（contents.ts の口に実体を差し込む）
+  setAgentFillHooks(agentFillHooks)
+
   // agent セッションの WebContents（タブ・popup の子）が生まれたら操作口を付ける。
   // `-run-dialog` の差し替えは生成直後でないと間に合わない
   app.on('web-contents-created', (_event, wc) => {
-    if (isAgentContents(wc)) adoptAgentContents(wc)
+    if (!isAgentContents(wc)) return
+    adoptAgentContents(wc)
+    // opener を生まれた時点で記録する（kypr が「JS を実行したページが開いたタブ」に入れないため。fill-gate.ts）
+    noteAgentContentsCreated(wc)
   })
 
   let enabled = getSettings().agentEnabled
@@ -157,17 +163,5 @@ export function showAgentWindow(windowId?: number): void {
   target.baseWindow.focus()
 }
 
-/**
- * **パスワードを入れる口**（計画 Phase 6）。Nemo の UI 起点（ページの外。CDP からは届かない）で
- * エージェント窓のページに資格情報を入れたら、入れた側がこれを呼ぶ。
- * ページを taint し（javascript_tool を断る）、値を覚えて read_page / get_page_text / スクショで伏せる。
- * 初版には呼び出し元が無い（自作のパスワードマネージャーを差し込む先）。
- */
-export async function noteCredentialsEntered(wc: WebContents, values: string[]): Promise<void> {
-  if (!isAgentContents(wc)) return
-  const found = findTabByWebContents(wc)
-  const page = found ? pageFor(found.tab) : null
-  await page?.page('rememberSecrets', values)
-}
-
 export { allConnections }
+export { setAgentKeyForVerify } from './fill-gate.js'

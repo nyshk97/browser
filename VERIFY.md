@@ -1384,6 +1384,12 @@ iPhone で作ったもので Nemo からサインインできる。
 コピー元（kypr の `packages/`）を直したら、kypr で `mise run export-nemo` を実行してコピーし直し、
 `node --test scripts/kypr-vendor.test.mjs`（テストベクタ）→ `mise run verify:only kypr` を回す。
 
+**サイトのアイコン（`src/main/kypr/site-icons.ts`）を触ったら、実際の履歴でも書かせる**: `pnpm build && node scripts/repro-kypr-site-icons.mjs`。
+常用版の履歴の写しと偽の kypr サーバー（履歴で https の favicon を持つホストのログイン 60 件）で使い捨ての dev 版を解除し、
+落ちないこと・アイコンが書かれること・全部 64px 以下の正方形の PNG であることを見る（2026-09-30: 20 件・16〜64px で PASS）。
+`verify:only kypr` の favicon は data: の SVG だけで、https の favicon を取りに行く経路を通らない（1.10.5 はそこで落ちて、自走検証では見つからなかった）。
+落ちると「Electron が予期しない理由で終了しました」が出て、**閉じるまで次の Electron が起動しない**。
+
 ### 本物の kypr の Worker と突き合わせる（手元）
 
 模擬サーバーは本物（`~/kypr/apps/api`）と同じ応答の形にしてあるが、ずれていないかは本物で確かめる。

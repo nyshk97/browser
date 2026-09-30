@@ -25,7 +25,7 @@ Nemo は v1.10.2 から、kypr のログインのアイコンに履歴の favico
 ### Phase 4b: 書く [AI🤖]
 - [x] kypr の `VaultSession` に、ホストから行の情報（id・revision・updatedAt・使えるか）を返すメソッドを足して export し直す（`baseRevision` と 30 日の判定に要る）
 - [x] favicon を PNG に描き直す処理
-- [ ] ~~解除中の同期の後にアイコンを作る・書き直す（上の決めごと）~~ 1.10.6 で止めた（ログ）。原因を調べて戻す
+- [x] 解除中の同期の後にアイコンを作る・書き直す（上の決めごと。1.10.6 で止め、原因を直して戻した。ログ）
 - [x] 表示: 履歴に無いホストは保管庫のアイコンを使う
 - [x] `scripts/verify-kypr.mjs` に、書いたアイコンの形・2 回目で書かないこと・一覧に出ないことを足す
 
@@ -43,6 +43,10 @@ Nemo は v1.10.2 から、kypr のログインのアイコンに履歴の favico
 - 単独では落ちない: `session.fetch`（`AbortSignal` あり・なし）・隠れた `WebContentsView`（作る→about:blank→executeJavaScript→close）・main での HMAC 300 回
 - 1.10.6 で `writeKyprSiteIcons` の呼び出しを止めた（`site-icons.ts` は残す）。同じ再現で解除して 30 秒落ちないことを確認。自走検証の「書く」2 件は外した（153 件 PASS）
 - 罠: 使い捨ての Electron が落ちると「Electron が予期しない理由で終了しました」のダイアログが出て、閉じるまで次の Electron が `whenReady` の前で止まる（起動しない）
+
+- **原因**: 段階ごとに止めるログ付きのビルドで切り分けた（履歴の参照だけ・id の計算と判定まで・隠れたビューまで、はどれも落ちない）。**favicon を常用のページのセッション（`persist:nemo`）で `session.fetch` した最初の 1 件で落ちる**（`https://github.githubassets.com/favicons/favicon-dark.png`）。素の Electron のセッションでは落ちないので、拡張の入ったセッションでタブを持たない要求を出すと落ちると見ている（アドレス 0 の読み出し）
+- 直し方: 描くための保存しない専用のセッション（`nemo-kypr-icon-render`。拡張も cookie も無い）で取る。`<img>` に https の URL を直接渡す案は、別のオリジンの画像で canvas が汚れて `toDataURL` が拒まれるので使えない（20 件とも描けなかった）
+- 確認: 実際の履歴で書かせる `scripts/repro-kypr-site-icons.mjs` を足した（20 件書けて、16〜64px の正方形。落ちない）。`verify:only kypr` 155 件 PASS（書く検査 2 件を戻した）・`pnpm test` 569 件 PASS
 
 ### 方針変更
 - 4b の最初のステップ「行の情報を返すメソッド」は、`iconNeedsWrite(host)` と `saveIcons` にした（呼び出し側に revision を渡さず、判定ごと kypr に置く）

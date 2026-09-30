@@ -1672,6 +1672,53 @@ try {
     again.ok === true && (await json('window.nemo.kyprStatus()')).touchIdEnrolled === true
   )
 
+  /* ---- 14b. ロック中の ⌘⇧L は、ポップアップを開かずにその場で Touch ID を出す ---- */
+  // 合うログインが 1 件（Site B）のページ。Touch ID の差し替えは 300ms かかるので、その間にもう一度押す
+  await ui.ev(
+    `window.nemo.navigate(${JSON.stringify(tabKey)}, ${JSON.stringify(`http://localhost:${port}/login.html?touch=1`)})`
+  )
+  page = await connectTo(app.cdp, `localhost:${port}/login.html?touch=1`, { type: 'page' })
+  await waitFor(page, "document.readyState === 'complete' && document.getElementById('password') ? 'ok' : ''")
+  await ui.ev('window.nemo.setOverlay(null)')
+  await ui.ev('window.nemo.kyprLock()')
+  const shortcutUnlocks = () =>
+    readLogLines(userData).filter((line) => line.includes('kypr.shortcut_unlock')).length
+  const touchBusy = () => readLogLines(userData).filter((line) => line.includes('kypr.touch_id_busy')).length
+  const unlocksBefore = shortcutUnlocks()
+  const busyBefore = touchBusy()
+  const lockedBefore = (await json('window.nemo.kyprStatus()')).state
+  await ui.ev("window.nemo.runCommandForVerify('kypr-fill')")
+  await ui.ev("window.nemo.runCommandForVerify('kypr-fill')")
+  await waitFor(page, "document.getElementById('password').value ? 'ok' : ''", { timeoutMs: 8000 }).catch(
+    () => ''
+  )
+  v = await values(page)
+  const lockedShortcut = {
+    lockedBefore,
+    state: (await json('window.nemo.kyprStatus()')).state,
+    overlay: await overlayKind(),
+    u: v.u,
+    unlocks: shortcutUnlocks() - unlocksBefore,
+    busy: touchBusy() - busyBefore
+  }
+  check(
+    'ロック中の ⌘⇧L: Touch ID で解除して、合うログインが 1 件ならそのまま入る（ポップアップは開かない）',
+    lockedShortcut.lockedBefore === 'locked' &&
+      lockedShortcut.state === 'unlocked' &&
+      lockedShortcut.overlay === null &&
+      lockedShortcut.u === 'bob' &&
+      v.p === 'pw-B',
+    JSON.stringify(lockedShortcut)
+  )
+  check(
+    'Touch ID を待つ間の 2 回目の ⌘⇧L は無視する（Touch ID は 1 回だけ・ポップアップも開かない）',
+    lockedShortcut.unlocks === 1 && lockedShortcut.busy === 0 && lockedShortcut.overlay === null,
+    JSON.stringify({ unlocks: lockedShortcut.unlocks, busy: lockedShortcut.busy })
+  )
+  // 落ちたときに後ろの節（解除中が前提）を巻き込まない
+  if (lockedShortcut.state !== 'unlocked') await json('window.nemo.kyprUnlockTouchId()')
+  await ui.ev('window.nemo.setOverlay(null)')
+
   /* ---- 15. ログイン欄の下の候補 ---- */
   await ui.ev(
     `window.nemo.navigate(${JSON.stringify(tabKey)}, ${JSON.stringify(`${origin}/login.html?inline=1`)})`
@@ -2010,6 +2057,26 @@ try {
     touchFail.ok === false && touchFail.reason === 'touch-id-failed',
     JSON.stringify(touchFail)
   )
+  // ⌘⇧L: Touch ID が通らなければポップアップ（マスターパスワード）を開く
+  const failUnlocksBefore = readLogLines(userData).filter((line) => line.includes('kypr.shortcut_unlock')).length
+  await ui.ev("window.nemo.runCommandForVerify('kypr-fill')")
+  await waitFor(ui, "window.nemo.getOverlayState().then((s) => s.kind === 'kypr' ? 'ok' : '')", {
+    timeoutMs: 8000
+  }).catch(() => '')
+  const failShortcut = {
+    overlay: (await json('window.nemo.getOverlayState()')).kind,
+    state: (await json('window.nemo.kyprStatus()')).state,
+    tried: readLogLines(userData).filter(
+      (line) => line.includes('kypr.shortcut_unlock') && line.includes('touch-id-failed')
+    ).length,
+    before: failUnlocksBefore
+  }
+  check(
+    'ロック中の ⌘⇧L で Touch ID が通らなければ、ポップアップを開いてロックのまま',
+    failShortcut.overlay === 'kypr' && failShortcut.state === 'locked' && failShortcut.tried === 1,
+    JSON.stringify(failShortcut)
+  )
+  await ui.ev('window.nemo.setOverlay(null)')
   const pw2 = await json(`window.nemo.kyprSignIn(${JSON.stringify(PASSWORD)}, true)`)
   check('マスターパスワードでは解除できる', pw2.ok === true)
   await waitFor(ui, "window.nemo.kyprStatus().then((s) => s.state === 'locked' ? 'ok' : '')", {

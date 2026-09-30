@@ -23,16 +23,23 @@ import {
 import { checkForUpdatesManually } from './updater.js'
 import { advanceSwitcher } from './tab-switcher.js'
 import { showAgentWindow } from './agent/index.js'
-import { kyprMatches, kyprState } from './kypr/index.js'
+import { kyprMatches, kyprState, kyprStatus, unlockKyprWithTouchId } from './kypr/index.js'
 import { quickFillKypr } from './kypr/fill.js'
 import { agentUserAtWindow } from './agent/contents.js'
 
+/** ⌘⇧L から出した Touch ID を待っている間か（2 回目の ⌘⇧L は無視する）。 */
+let shortcutUnlocking = false
+
 /**
- * ⌘⇧L。入れる先のフレームに合うログインが 1 件ならそのまま入れる。0 件・2 件以上・ロック中はポップアップを開く
+ * ⌘⇧L。入れる先のフレームに合うログインが 1 件ならそのまま入れる。0 件・2 件以上はポップアップを開く
  * （小窓はポップアップを持たないので、1 件のときだけ入れる）。
+ *
+ * **ロック中で Touch ID を覚えていれば、ポップアップを開かずにその場で Touch ID を出す**（右クリックの
+ * フォーム自動入力と同じ）。通れば解除済みと同じ動き、キャンセル・失敗・鍵が使えないときはポップアップ
+ * （マスターパスワード・合言葉の欄）。ポップアップが開いているときは今まで通り閉じるだけ。
  */
 async function kyprShortcut(win: NemoWindow): Promise<void> {
-  const state = kyprState()
+  let state = kyprState()
   if (state === 'disabled') return
   const wc = win.getForegroundTab()?.webContents
   // Claude のウィンドウ: **窓が key のとき**（ユーザーが操作している）だけ。Claude の CDP のキーがページで処理されずに
@@ -40,6 +47,32 @@ async function kyprShortcut(win: NemoWindow): Promise<void> {
   if (win.isAgent && (!wc || wc.isDestroyed() || !agentUserAtWindow(wc))) {
     log('kypr.shortcut', { filled: false, reason: 'agent-not-key' })
     return
+  }
+  if (state === 'locked' && win.overlay !== 'kypr') {
+    const status = kyprStatus()
+    if (status.touchIdEnrolled && status.touchIdAvailable) {
+      // 出ている間に押し直すと、promptTouchId が「出し中」で断ってポップアップが開いてしまう
+      if (shortcutUnlocking) return
+      shortcutUnlocking = true
+      let unlocked
+      try {
+        unlocked = await unlockKyprWithTouchId()
+      } finally {
+        shortcutUnlocking = false
+      }
+      log('kypr.shortcut_unlock', { ok: unlocked.ok, reason: unlocked.ok ? null : unlocked.reason })
+      if (!unlocked.ok) {
+        if (win.kind !== 'mini' && !win.isDestroyed) win.setOverlay('kypr')
+        return
+      }
+      if (win.isDestroyed) return
+      // Touch ID を待つ間にタブを移っていたら、押したときのページではないので入れずにポップアップへ
+      if (win.getForegroundTab()?.webContents !== wc) {
+        if (win.kind !== 'mini') win.setOverlay('kypr')
+        return
+      }
+      state = kyprState()
+    }
   }
   if (state === 'unlocked' && wc && !wc.isDestroyed()) {
     const result = await quickFillKypr(wc, kyprMatches)

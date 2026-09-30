@@ -457,16 +457,16 @@ function summaryOf(entry: VaultEntry): KyprSummary {
 
 const byName = (a: KyprSummary, b: KyprSummary): number => a.name.localeCompare(b.name, 'ja')
 
-/**
- * ログインの行に favicon を付ける（ポップアップ・入力欄の候補に渡す直前に 1 回）。
- * **履歴にあるホストだけ**（`getFaviconsForHosts`）。開いたことのないサイトの favicon は推測して取りに行かない。
- * 履歴に無ければ、保管庫のサイトのアイコン（別の Mac の Nemo が書いたもの。PNG の data: URI）を使う
- */
 /** 保管庫のサイトのアイコン（ポップアップの見出し用。履歴に無いときに使う）。 */
 export function kyprVaultIcon(host: string): string | null {
   return vaultIconFor(session, host)
 }
 
+/**
+ * ログインの行に favicon を付ける（ポップアップ・入力欄の候補に渡す直前に 1 回）。
+ * **履歴にあるホストだけ**（`getFaviconsForHosts`）。開いたことのないサイトの favicon は推測して取りに行かない。
+ * 履歴に無ければ、保管庫のサイトのアイコン（別の Mac の Nemo が書いたもの。PNG の data: URI）を使う
+ */
 export function withKyprFavicons(rows: KyprSummary[]): KyprSummary[] {
   const hosts = rows.flatMap((row) => (row.kind === 'login' && row.host ? [row.host] : []))
   if (hosts.length === 0) return rows

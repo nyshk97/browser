@@ -49,7 +49,7 @@ function saveGone(ids: Set<string>): void {
   }
 }
 
-/** 描けなかった favicon（起動しているあいだだけ覚えて、同期のたびに描き直さない）。 */
+/** 描けなかった favicon（起動しているあいだだけ覚えて、同期のたびに描き直さない）。取れなかった（通信の失敗）ものは入れない。 */
 const failed = new Set<string>()
 
 /**
@@ -65,6 +65,8 @@ async function faviconSource(url: string): Promise<string | null> {
     .fromPartition(RENDER_PARTITION)
     .fetch(url, { signal: AbortSignal.timeout(RENDER_TIMEOUT_MS) })
   if (!res.ok) return null
+  // 大きすぎるものは本文を読む前にやめる（無ければ読んでから見る）
+  if (Number(res.headers.get('content-length') ?? 0) > FETCH_MAX_BYTES) return null
   const body = Buffer.from(await res.arrayBuffer())
   if (body.length === 0 || body.length > FETCH_MAX_BYTES) return null
   const type = res.headers.get('content-type')?.split(';')[0]?.trim() ?? ''
@@ -103,18 +105,25 @@ function pngBytes(dataUri: string): number {
   return Buffer.from(dataUri.slice(dataUri.indexOf(',') + 1), 'base64').length
 }
 
-/** 描き直した PNG の data: URI（64px、大きすぎれば 32px）。描けなければ null。 */
-async function rasterize(view: WebContentsView, url: string): Promise<string | null> {
-  const src = await faviconSource(url)
-  if (!src) return null
-  const pngs = (await view.webContents.executeJavaScript(
-    `(${RENDER})(${JSON.stringify(src)}, [64, 32])`
-  )) as unknown
-  if (!Array.isArray(pngs)) return null
+/**
+ * 描き直した PNG の data: URI（64px、大きすぎれば 32px）。取れなかった（通信の失敗。次の同期でやり直す）ときは
+ * `fetchFailed`、描けなかったときは `png: null`
+ */
+type Rasterized = { png: string | null } | { fetchFailed: true }
+
+async function rasterize(view: WebContentsView, url: string): Promise<Rasterized> {
+  const src = await faviconSource(url).catch(() => null)
+  if (!src) return { fetchFailed: true }
+  // 描く側のプロセスが落ちると executeJavaScript が返らないので、上限を付ける
+  const pngs = (await Promise.race([
+    view.webContents.executeJavaScript(`(${RENDER})(${JSON.stringify(src)}, [64, 32])`),
+    new Promise((resolve) => setTimeout(() => resolve(null), RENDER_TIMEOUT_MS * 2))
+  ])) as unknown
+  if (!Array.isArray(pngs)) return { png: null }
   for (const png of pngs) {
-    if (typeof png === 'string' && pngBytes(png) <= PNG_MAX_BYTES && isIconDataUri(png)) return png
+    if (typeof png === 'string' && pngBytes(png) <= PNG_MAX_BYTES && isIconDataUri(png)) return { png }
   }
-  return null
+  return { png: null }
 }
 
 let writing: Promise<void> | null = null
@@ -157,14 +166,16 @@ async function write(session: VaultSession): Promise<void> {
     view.webContents.on('will-navigate', (event) => event.preventDefault())
     await view.webContents.loadURL('about:blank')
     for (const t of targets) {
-      const dataUri = await rasterize(view, t.url).catch(() => null)
-      if (dataUri) icons.push({ host: t.host, dataUri })
+      const r = await rasterize(view, t.url).catch((): Rasterized => ({ png: null }))
+      if ('fetchFailed' in r) continue
+      if (r.png) icons.push({ host: t.host, dataUri: r.png })
       else failed.add(t.url)
     }
   } finally {
     view.webContents.close()
   }
-  if (icons.length === 0) return
+  // 描いている間にロックされた（トークンが無い）なら書かない（「ロックされています」をエラーとして残さない）
+  if (icons.length === 0 || session.readOnly) return
 
   const result = await session.saveIcons(icons, { skipIds: gone })
   if (result.gone.length > 0) {

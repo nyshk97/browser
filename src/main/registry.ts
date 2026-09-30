@@ -1524,6 +1524,13 @@ export class NemoWindow {
    * その直後の開く要求を捨てて「押すと閉じる」にする
    */
   private kyprDismissedToChromeAt = 0
+  /**
+   * 全画面で保存されていたが、背面で復元したので全画面に戻さなかった（外部 URL で起こされたとき）。
+   * 立っている間は `toSaved()` が `fullScreen: true` を返し、**次の起動まで持ち越す**
+   * （持ち越さないと、リンクを 1 回踏んだだけで全画面だったことが消える）。
+   * ユーザーが全画面に出入りしたら、その操作が正なので下ろす
+   */
+  private fullScreenDeferred = false
   private destroyed = false
   private uiReady = false
   private pendingAfterReady: (() => void)[] = []
@@ -1642,10 +1649,12 @@ export class NemoWindow {
 
     this.baseWindow.on('resize', () => this.layout())
     this.baseWindow.on('enter-full-screen', () => {
+      this.fullScreenDeferred = false
       this.layout()
       this.pushState()
     })
     this.baseWindow.on('leave-full-screen', () => {
+      this.fullScreenDeferred = false
       this.layout()
       this.pushState()
     })
@@ -2441,10 +2450,18 @@ export class NemoWindow {
    *
    * **野良タブ本体はもう保存しない**（正は共有定義ストア `ephemeral-tabs.json`）。
    * ここに残るのはウィンドウごとのビューの状態:
-   * bounds・アクティブだった一時タブ定義・分割の組（定義 ID の対）だけ。
+   * bounds・アクティブだった一時タブ定義・分割の組（定義 ID の対）・全画面だったかだけ。
    */
   toSaved(): SavedWindow {
-    const bounds = this.baseWindow.isDestroyed() ? null : this.baseWindow.getBounds()
+    const inFullScreen = !this.baseWindow.isDestroyed() && this.baseWindow.isFullScreen()
+    const fullScreen = inFullScreen || this.fullScreenDeferred
+    // 全画面中は**全画面に入る前の大きさ**を残す。`getBounds()` だと画面いっぱいの大きさが残り、
+    // 次の起動で全画面を抜けたときに元の大きさへ戻らない（持ち越し中は全画面でないので `getBounds()` のまま）
+    const bounds = this.baseWindow.isDestroyed()
+      ? null
+      : inFullScreen
+        ? this.baseWindow.getNormalBounds()
+        : this.baseWindow.getBounds()
     const active = this.getActiveTab()
     // アクティブがピン / Favorite / ローカルタブなら null（復元は先頭定義へ倒す。
     // 旧実装の `Math.max(findIndex, 0)` と同等）
@@ -2464,7 +2481,12 @@ export class NemoWindow {
       const right = pair.right.ephemeralId
       if (left && right) splits.push([left, right])
     }
-    return { bounds, activeEphemeralId, splits }
+    return { bounds, activeEphemeralId, splits, fullScreen }
+  }
+
+  /** 全画面に戻すのを次の起動へ持ち越す（`fullScreenDeferred` を見よ）。 */
+  deferFullScreen(): void {
+    this.fullScreenDeferred = true
   }
 
   destroy(): void {

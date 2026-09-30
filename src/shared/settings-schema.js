@@ -483,6 +483,8 @@ export const SESSION_VERSION = 5
  * @property {{ x: number, y: number, width: number, height: number } | null} bounds
  * @property {string | null} activeEphemeralId 選択していた一時タブ定義（ピン / Favorite なら null）
  * @property {[string, string][]} splits 左右に並べた組（一時タブ定義 ID で `[左, 右]`）
+ * @property {boolean} fullScreen 全画面だったか。**版を上げずに足した**ので、無い（版 5 の初期の）データは false で読む。
+ *   全画面中の `bounds` は全画面に入る前の大きさ（`getNormalBounds()`）で、画面いっぱいの大きさではない
  */
 
 /**
@@ -540,7 +542,8 @@ export function normalizeSession(raw) {
       windows.push({
         bounds: normalizeBounds(value['bounds']),
         activeEphemeralId: normalizeDefinitionRef(value['activeEphemeralId']),
-        splits: normalizeIdSplits(value['splits'])
+        splits: normalizeIdSplits(value['splits']),
+        fullScreen: value['fullScreen'] === true
       })
     }
   }

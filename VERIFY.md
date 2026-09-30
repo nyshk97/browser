@@ -401,6 +401,19 @@ mise run verify:only split
 - **移行後も元のアクティブタブが選ばれたまま**であること（先頭・中間のピンタブが落ちてもずれない）
 - 版 1 の `pins.json` が読めること / **2階層目のフォルダが中身を親へ平坦化して読める**こと
 
+全画面の復元（`mise run build && node scripts/check-session-fullscreen.mjs`。**verify-all には入れていない** ——
+全画面は専用の Space へ切り替わるので、回すたびに数秒画面が奪われる。セッションの保存・復元の全画面まわりを触ったときだけ回す）:
+
+- `fullScreen: true` で保存したウィンドウが全画面で戻る / **`fullScreen` の無い版 5 の旧データは全画面にならない**
+- **全画面のウィンドウが 2 枚でも両方戻る**（続けて `setFullScreen(true)` を呼ぶと 2 枚目が無視される。実際に踏んだので、
+  前のウィンドウの `enter-full-screen` を待ってから次へ進めている。`index.ts` の `enterFullScreenInOrder`）
+- 全画面中の保存の `bounds` が**画面いっぱいでなく全画面に入る前の大きさ**（`getNormalBounds()`）。
+  **全画面への切り替え完了より後の保存を待って読む**（ウィンドウ作成時の保存を読むと `getBounds()` のままでも PASS する。実際に踏んだ）
+- 全画面を抜けると `fullScreen: false`・元の大きさで保存される
+- **外部 URL（argv）で起こされたときは、全画面で保存されていても全画面にしない**（背面で復元するので Space を奪わない）。
+  保存は `fullScreen: true` のまま**次の起動へ持ち越し**、次の普通の起動で全画面に戻る
+- 持ち越し中にユーザーが全画面に出入りしたら、その操作が正（抜けたなら `fullScreen: false`）
+
 履歴 DB の列追加（`mise run verify:db-migration` / `scripts/verify-db-migration.mjs`）:
 
 - **旧スキーマの `history.db`（`favicon_url` の無い `pages`）を置いてから起動する**。

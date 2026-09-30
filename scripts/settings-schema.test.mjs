@@ -717,6 +717,21 @@ test('版 5: 正しい splits（定義 ID の対）はそのまま残る', () =>
   ])
 })
 
+test('版 5: fullScreen は true のときだけ true（無い古いデータ・壊れた値は false）', () => {
+  const result = normalizeSession({
+    windows: [
+      { bounds: null, activeEphemeralId: null, splits: [], fullScreen: true },
+      { bounds: null, activeEphemeralId: null, splits: [] },
+      { bounds: null, activeEphemeralId: null, splits: [], fullScreen: 'true' },
+      { bounds: null, activeEphemeralId: null, splits: [], fullScreen: 1 }
+    ]
+  })
+  assert.deepEqual(
+    result.windows.map((win) => win.fullScreen),
+    [true, false, false, false]
+  )
+})
+
 /* ------------------------------------------------------------------ *
  * 一時タブの共有定義（ephemeral-tabs.json）
  * ------------------------------------------------------------------ */

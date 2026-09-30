@@ -1,4 +1,4 @@
-import { app, session } from 'electron'
+import { app, session, type BaseWindow } from 'electron'
 import { ElectronChromeExtensions } from 'electron-chrome-extensions'
 import { APP_ID, PAGE_PARTITION, UI_PARTITION, applyUserDataDir, channel, isDevChannel } from './paths.js'
 import {
@@ -143,6 +143,35 @@ function toChromiumLocale(tag: string): string {
   const regional = new Set(['en-GB', 'en-US', 'es-419', 'pt-BR', 'pt-PT', 'zh-CN', 'zh-TW', 'zh-HK', 'fr-CA'])
   if (regional.has(tag)) return tag
   return tag.split('-')[0] ?? tag
+}
+
+/**
+ * 復元したウィンドウを **1 枚ずつ**全画面に戻す。前のウィンドウの `enter-full-screen` を待ってから次へ進む。
+ * 続けて `setFullScreen(true)` を呼ぶと、前のウィンドウが切り替わっている最中の呼び出しが無視され、
+ * 2 枚目以降が普通のウィンドウのまま開く（2 枚で実測）。
+ * 切り替えが来ないまま止まらないよう、一定時間で次へ進む。
+ */
+function enterFullScreenInOrder(windows: BaseWindow[]): void {
+  const next = windows.shift()
+  if (!next) return
+  if (next.isDestroyed()) {
+    enterFullScreenInOrder(windows)
+    return
+  }
+  let done = false
+  const proceed = (timedOut: boolean): void => {
+    if (done) return
+    done = true
+    clearTimeout(timer)
+    next.off('enter-full-screen', onEntered)
+    // 待ち切れずに次へ進むと、次の `setFullScreen(true)` が無視されうる。起きたら追えるように残す
+    if (timedOut) log('session.fullscreen_timeout', { remaining: windows.length })
+    enterFullScreenInOrder(windows)
+  }
+  const onEntered = (): void => proceed(false)
+  const timer = setTimeout(() => proceed(true), 3000)
+  next.on('enter-full-screen', onEntered)
+  next.setFullScreen(true)
 }
 
 /**
@@ -320,6 +349,7 @@ app
     const wokenByUrl = hasPendingOpenUrls()
     const shouldRestore = getSettings().restoreSession && restored.windows.length > 0
     const startupWindows: ReturnType<typeof createWindow>[] = []
+    const fullScreenQueue: BaseWindow[] = []
     if (shouldRestore) {
       log('session.restoring', {
         windows: restored.windows.length,
@@ -333,6 +363,13 @@ app
           hidden: wokenByUrl
         })
         startupWindows.push(win)
+        // 全画面で終えたウィンドウは全画面で戻す。**背面で復元するときは戻さず、次の起動へ持ち越す**
+        // （全画面は専用の Space へ切り替わるので、外部 URL で起こされただけで前面を奪う）。
+        // Claude のウィンドウ（`fullscreenable: false`）と小窓・シークレットはセッションに載らないので来ない
+        if (saved.fullScreen) {
+          if (wokenByUrl) win.deferFullScreen()
+          else fullScreenQueue.push(win.baseWindow)
+        }
         win.whenUiReady(() => {
           /*
            * 版 5: 野良タブの正は共有定義ストアにある。ウィンドウには
@@ -385,6 +422,7 @@ app
           win.layout()
         })
       }
+      enterFullScreenInOrder(fullScreenQueue)
     } else if (!wokenByUrl) {
       // 復元するものが無くても空タブは作らない。起動直後は「タブなし」の
       // 空状態（EmptyState）で待ち、最初のタブは ⌘T やサイドバーから作る。

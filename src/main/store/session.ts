@@ -12,7 +12,7 @@ import { addEphemeralTab, flushEphemeralTabs } from './ephemeral-tabs.js'
  * `cleanExit` は復元の可否ではなく、UI に「前回は異常終了した」と出すためだけに使う。
  *
  * 版 5 から野良タブの正は共有定義ストア（`ephemeral-tabs.json`）にあり、
- * ここに残るのはウィンドウごとの bounds・アクティブ定義・分割の組だけ。
+ * ここに残るのはウィンドウごとの bounds・アクティブ定義・分割の組・全画面だったかだけ。
  */
 
 export type { SavedTab, SavedWindow, SessionData } from '../../shared/settings-schema.js'
@@ -99,7 +99,7 @@ function migrateLegacyWindows(legacy: LegacySavedWindow[]): SavedWindow[] {
       const right = defIds[rightIndex]
       return left && right ? [[left, right]] : []
     })
-    return { bounds: win.bounds, activeEphemeralId, splits }
+    return { bounds: win.bounds, activeEphemeralId, splits, fullScreen: false }
   })
 }
 

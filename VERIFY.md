@@ -162,7 +162,7 @@ mise run verify:only split
 | **Live Folder（GitHub の PR）**・取得のバックオフ・トークン | `mise run verify:only live-folder restart` + 下の「Live Folder（GitHub の PR）」 |
 | **拡張アイコンの popup の位置**（ツールバーの View オフセット） | `mise run verify:ext` |
 | 拡張まわり・Electron のバージョン | `mise run verify:ext`（+ 実機で実物の拡張）。拡張の端末ごと ON/OFF・DevTools パネルへの `chrome.*` 補完（`chrome.debugger` / `webRequest` の tabId）もここ |
-| **kypr（パスワードマネージャー）**・解除 / Touch ID / ロック・同期・照合・入力（ポップアップ / ⌘⇧L / 欄の下の候補）・作成 / 編集 / ゴミ箱・コピー | `mise run verify:only kypr`（模擬サーバーと差し替えで 6 回起動する。152 件）+ 下の「kypr」 |
+| **kypr（パスワードマネージャー）**・解除 / Touch ID / ロック・同期・照合・入力（ポップアップ / ⌘⇧L / 欄の下の候補）・作成 / 編集 / ゴミ箱・コピー | `mise run verify:only kypr`（模擬サーバーと差し替えで 6 回起動する。155 件。2026-09-30）+ 下の「kypr」 |
 | パッケージング・ネイティブ依存・fuses | `mise run package` → `mise run verify:packaged` |
 | 履歴 / アーカイブ・シークレット・設定画面 | `mise run verify`（`verify-phase2.mjs` が含まれる） |
 | **履歴 DB のスキーマ**（列追加・インデックス） | `mise run verify:db-migration` |

@@ -645,10 +645,12 @@ Chromium は隠れたページで `requestAnimationFrame` を止める。Meet �
 **Web の favicon・iOS のアプリアイコンと同じロゴ**（青い角丸に横向きの鍵。`KyprMark`）を使う。
 形を変えるときは kypr 側（`apps/web/public/favicon.svg`・`apps/ios/scripts/make-icon.swift`）と一緒に変える。
 一覧の頭文字アイコンの色も Web 版の `Avatar` と同じ計算にして、同じアイテムが同じ色になるようにする。
-ログインのアイコンは、**そのサイトを Nemo で開いたことがあれば履歴の favicon**（薄いグレーの地に 85% で載せる）、無ければ頭文字。
+ログインのアイコンは、**そのサイトを Nemo で開いたことがあれば履歴の favicon**（薄いグレーの地に 85% で載せる）、無ければ保管庫のサイトのアイコン、それも無ければ頭文字。
 保管庫のホストから favicon の URL を推測して取りに行かない（どのサイトを使っているかが外へ出る）。
 表示のときは、開いたことのあるサイトが申告した URL へ通信が出る（UI のセッションで読むのでページ側のキャッシュは効かない）。
-Web 版・iOS 版は頭文字のまま。
+**サイトのアイコン**は保管庫に入った PNG の data: URI で、別の Mac の Nemo が書いたものも使える。
+Nemo は解除中の同期の後に、履歴にある favicon を 64px までの PNG に描き直して保管庫に書き、Web 版・iOS 版もそれを出す
+（`src/main/kypr/site-icons.ts`。書くのは開いたことのあるサイトだけ。kypr の `docs/crypto-spec.md`「サイトのアイコン」）。
 
 ## 書かないもの
 

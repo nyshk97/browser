@@ -19,7 +19,7 @@ import http from 'node:http'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { connectUi, sleep } from './lib/cdp.mjs'
+import { connect, connectUi, listTargets, sleep } from './lib/cdp.mjs'
 import { readLogLines } from './lib/harness.mjs'
 import { timings } from './lib/timings.mjs'
 import { normalizePrUrl } from '../src/shared/live-folder-schema.js'
@@ -856,6 +856,36 @@ async function main() {
       await ui.ev('window.nemo.getWindowState().then((s) => JSON.stringify(s.tabs.map((t) => t.key)))')
     )) {
       await ui.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
+    }
+    // 前のスイートが残した**別のウィンドウ**も、タブごと閉じる。一時タブは全ウィンドウで共有の定義なので、
+    // 別のウィンドウのタブも一時タブの行に並ぶ（フル検証でだけ前提が 4 行になった）。シークレットの
+    // タブは共有の定義に入らないので残す。close-window は自分の renderer ごと消えるので応答を待たない
+    {
+      const own = new URLSearchParams(await ui.ev('location.search')).get('window')
+      const others = (await listTargets(CDP)).filter(
+        (t) =>
+          t.url.includes('view=sidebar') &&
+          !t.url.includes('private=1') &&
+          new URL(t.url).searchParams.get('window') !== own
+      )
+      for (const target of others) {
+        // **接続先は URL で部分一致させない**（`window=1` が `window=18` にも当たり、自分のウィンドウを閉じて止まった）
+        const side = await connect(target.webSocketDebuggerUrl)
+        for (const key of JSON.parse(
+          await side.ev('window.nemo.getWindowState().then((s) => JSON.stringify(s.tabs.map((t) => t.key)))')
+        )) {
+          await side.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
+        }
+        await side.ev(`(window.nemo.runCommandForVerify('close-window'), 'ok')`)
+        side.close()
+      }
+      for (let i = 0; i < 30; i += 1) {
+        const left = (await listTargets(CDP)).filter(
+          (t) => t.url.includes('view=sidebar') && others.some((o) => o.url === t.url)
+        )
+        if (left.length === 0) break
+        await sleep(300)
+      }
     }
     const t0 = await ui.ev(`window.nemo.createTab('about:blank', { background: true })`)
     const t1 = await ui.ev(`window.nemo.createTab('about:blank', { background: true })`)

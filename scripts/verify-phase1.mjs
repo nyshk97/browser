@@ -54,6 +54,40 @@ async function expectThrows(name, fn, detail = '') {
 const ui = await connectUi(CDP)
 const overlay = await connectUi(CDP, 'overlay')
 
+/**
+ * 検査で作った別のウィンドウを閉じる。**先にタブを閉じる**（一時タブは全ウィンドウで共有の定義なので、
+ * タブを残したままだと後続のスイート（ピン留めの ↑↓）の一時タブの並びに紛れ込む）。
+ * close-window は自分の renderer ごと消えるので応答を待たない（シークレットウィンドウの後片付けと同じ）。
+ */
+async function closeExtraWindow(windowId) {
+  // **接続先は URL で部分一致させない**（`window=1` が `window=18` にも当たる）。window の値が一致するものに直接つなぐ
+  const target = (await listTargets(CDP)).find((t) => {
+    const u = new URL(t.url)
+    return (
+      u.searchParams.get('view') === 'sidebar' &&
+      u.searchParams.get('window') === String(windowId) &&
+      !u.searchParams.has('private')
+    )
+  })
+  if (!target) return false
+  const side = await connect(target.webSocketDebuggerUrl)
+  const keys = await side
+    .ev('window.nemo.getWindowState().then(s => JSON.stringify(s.tabs.map(t => t.key)))')
+    .then(JSON.parse)
+  for (const key of keys) await side.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
+  await side.ev(`(window.nemo.runCommandForVerify('close-window'), 'ok')`)
+  side.close()
+  const deadline = Date.now() + 10000
+  let left = true
+  while (left && Date.now() < deadline) {
+    left = (await listTargets(CDP)).some(
+      (t) => new URL(t.url).searchParams.get('window') === String(windowId)
+    )
+    if (left) await sleep(300)
+  }
+  return !left
+}
+
 const state = () => ui.ev('window.nemo.getWindowState().then(s => JSON.stringify(s))').then(JSON.parse)
 const shared = () => ui.ev('window.nemo.getSharedState().then(s => JSON.stringify(s))').then(JSON.parse)
 
@@ -571,6 +605,10 @@ await ui.ev(`window.nemo.addFavorite(${JSON.stringify(reopened)}).then(() => 'ok
   }
 }
 
+// 背景タブの検査（1-3）で開いた login.html はここまで候補の検査が使う。閉じ漏れると後続のスイート
+// （ピン留めの ↑↓）の一時タブの並びに紛れ込むので、使い終わったここで閉じる
+await ui.ev(`window.nemo.closeTab(${JSON.stringify(bgKey)}).then(() => 'ok')`)
+
 /* ------------------------------------------------------------------ *
  * 1-5c 候補の上下移動（↑↓ と ⌃P / ⌃N）と、コマンドバーの縦位置
  * ------------------------------------------------------------------ */
@@ -1002,6 +1040,7 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
     `(() => { const b = [...document.querySelectorAll('.dialog-actions button')].find(x => x.textContent === '開かない'); b.click(); return 'ok' })()`
   )
   page.close()
+  await ui.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
 }
 
 /*
@@ -1156,6 +1195,7 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
     (await overlay.ev(`document.querySelector('[data-testid]') ? 'open' : 'closed'`)) === 'closed'
   )
   page.close()
+  await ui.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
 }
 
 // ---- 画面共有（getDisplayMedia）----
@@ -1558,6 +1598,8 @@ if (process.env.NEMO_VERIFY_UNLOAD_CHOICE !== 'leave' || !process.env.NEMO_USER_
   )
   // sticky user activation が無いと Chromium は beforeunload のキャンセル自体を
   // 無視する（＝バグを踏まずに検査が空振りする）。実クリック相当で付けてから撃つ
+  await waitFor(page, "document.readyState === 'complete' ? 'ok' : ''")
+  await sleep(500)
   await page.send('Input.dispatchMouseEvent', {
     type: 'mousePressed',
     x: 10,
@@ -1611,7 +1653,11 @@ if (process.env.NEMO_VERIFY_UNLOAD_CHOICE !== 'leave' || !process.env.NEMO_USER_
  * ------------------------------------------------------------------ */
 
 {
-  // 0.05 分（3秒）に縮めて実際に寝ることを確認する
+  // 0.05 分（3秒）に縮めて実際に寝ることを確認する。寝かせる背景タブはここで開く
+  // （前の検査の閉じ漏れを当てにしない。閉じ漏れは後続のスイートの一時タブの並びを崩す）
+  const sleeper = await ui.ev(
+    `window.nemo.createTab('${PAGES}/index.html?probe=sleep', { background: true })`
+  )
   await ui.ev('window.nemo.updateSettings({ tabSleepMinutes: 0.05 }).then(() => "ok")')
   const asleep = await waitFor(
     ui,
@@ -1620,6 +1666,7 @@ if (process.env.NEMO_VERIFY_UNLOAD_CHOICE !== 'leave' || !process.env.NEMO_USER_
   )
   check('非アクティブタブが sleep する', asleep === 'slept')
   await ui.ev('window.nemo.updateSettings({ tabSleepMinutes: 30 }).then(() => "ok")')
+  await ui.ev(`window.nemo.closeTab(${JSON.stringify(sleeper)}).then(() => 'ok')`)
 }
 
 {
@@ -1631,6 +1678,9 @@ if (process.env.NEMO_VERIFY_UNLOAD_CHOICE !== 'leave' || !process.env.NEMO_USER_
   // ページ側に印を置き、ウィンドウを移しても WebContents が作り直されていないことを見る
   const page = await connectTo(CDP, 'probe=move')
   await page.ev(`(() => { window.__nemo_move_marker = 'kept'; return 'ok' })()`)
+  const knownSidebars = new Set(
+    (await listTargets(CDP)).filter((t) => t.url.includes('view=sidebar')).map((t) => t.url)
+  )
   await ui.ev(`window.nemo.moveTabToNewWindow(${JSON.stringify(key)}).then(() => 'ok')`)
   // 移動は新しいウィンドウの UI が用意できてから走る。
   // 固定 sleep で待つと遅いマシンで間欠的に落ちるので、結果そのものを待つ。
@@ -1643,6 +1693,16 @@ if (process.env.NEMO_VERIFY_UNLOAD_CHOICE !== 'leave' || !process.env.NEMO_USER_
   const marker = await page.ev('window.__nemo_move_marker ?? "lost"')
   check('別ウィンドウへ移しても WebContents を作り直さない', marker === 'kept', marker)
   page.close()
+  // 移動先のウィンドウを片付ける
+  const moved = (await listTargets(CDP)).find(
+    (t) => t.url.includes('view=sidebar') && !knownSidebars.has(t.url)
+  )
+  const movedWindow = moved?.url.match(/window=(\d+)/)?.[1] ?? null
+  check(
+    '移動先のウィンドウを閉じられた（後続の検査の一時タブの並びを崩さない）',
+    movedWindow !== null && (await closeExtraWindow(movedWindow)),
+    moved?.url ?? '移動先のウィンドウが見つからない'
+  )
 }
 
 /* ------------------------------------------------------------------ *
@@ -1665,8 +1725,8 @@ if (process.env.NEMO_VERIFY_UNLOAD_CHOICE !== 'leave' || !process.env.NEMO_USER_
  *
  * **専用のウィンドウを作ってそこで確かめる**。ここではタブを全部閉じるので、
  * 元のウィンドウでやると後続（phase2 / pins …）の前提を壊す。
- * 最後にタブを 1 つ作って空のウィンドウを残さない（残すと `connectUi` が
- * そちらを掴んだときに軒並み落ちる）。
+ * 最後にウィンドウごと閉じる（空のウィンドウを残すと `connectUi` がそちらを掴んだときに
+ * 軒並み落ちる。タブを残すと一時タブの共有の定義として後続のピン留めの ↑↓ に紛れ込む）。
  * ------------------------------------------------------------------ */
 
 {
@@ -1738,10 +1798,10 @@ if (process.env.NEMO_VERIFY_UNLOAD_CHOICE !== 'leave' || !process.env.NEMO_USER_
       }).catch(() => 'visible のまま')
       check('タブができたら隠す', hidden === 'hidden', hidden)
       empty.close()
-    } else {
-      await side.ev(`window.nemo.createTab('${PAGES}/index.html').then(() => 'ok')`)
     }
     side.close()
+    // このウィンドウごと片付ける（タブを残すと一時タブの共有の定義として後続のスイートに紛れ込む）
+    check('空状態の検証用のウィンドウを閉じられた', await closeExtraWindow(windowId))
   }
 }
 

@@ -340,6 +340,7 @@ try {
       'Chrome 拡張',
       'GitHub の PR',
       'Basic 認証',
+      'kypr',
       'Basic 認証の引き継ぎ',
       'フォーム自動入力',
       'ブックマークの引き継ぎ',

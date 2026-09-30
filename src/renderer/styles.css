@@ -4110,6 +4110,16 @@ body[data-view='call'] {
   white-space: nowrap;
 }
 
+/* この Mac が kypr に登録されていないとき（マスターパスワードと合言葉を縦に並べる） */
+.kypr-password.stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.kypr-password.stacked input {
+  flex: none;
+}
+
 .kypr-check {
   display: flex;
   align-items: center;

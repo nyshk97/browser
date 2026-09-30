@@ -514,6 +514,8 @@ export interface KyprStatus {
   lastSyncAt: number | null
   /** キャッシュにあるアイテムの数（ロック中も分かる）。 */
   itemCount: number
+  /** この Mac は kypr に登録されていない（合言葉が要る）。解除の画面に合言葉の欄を出す。 */
+  needsPassphrase: boolean
 }
 
 export type KyprItemKind = 'login' | 'card' | 'note' | 'identity' | 'totp' | 'unknown' | 'error'
@@ -589,6 +591,8 @@ export type KyprUnlockFailure =
   | 'temporary'
   | 'no-device-keys'
   | 'touch-id-failed'
+  /** この Mac は kypr に登録されていない（合言葉が設定済み）。合言葉を付けて入り直す */
+  | 'device-required'
 
 export type KyprUnlockResult = { ok: true } | { ok: false; reason: KyprUnlockFailure; retryAfter?: number }
 
@@ -1444,8 +1448,11 @@ export interface NemoUiApi {
   kyprStatus(): Promise<KyprStatus>
   /** ポップアップの中身（このページに合うログインと、全件の一覧）。 */
   kyprPanel(): Promise<KyprPanelData>
-  /** マスターパスワードで解除する（初回のログインも同じ）。`rememberTouchId` なら Touch ID 用に鍵を覚える。 */
-  kyprSignIn(password: string, rememberTouchId: boolean): Promise<KyprUnlockResult>
+  /**
+   * マスターパスワードで解除する（初回のログインも同じ）。`rememberTouchId` なら Touch ID 用に鍵を覚える。
+   * `passphrase` は、この Mac が kypr に登録されていないとき（`KyprStatus.needsPassphrase`）だけ渡す
+   */
+  kyprSignIn(password: string, rememberTouchId: boolean, passphrase?: string): Promise<KyprUnlockResult>
   kyprUnlockTouchId(): Promise<KyprUnlockResult>
   kyprLock(): Promise<void>
   /** ログアウト（キャッシュと覚えた鍵を消す）。 */

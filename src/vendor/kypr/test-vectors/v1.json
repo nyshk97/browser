@@ -67,6 +67,34 @@
       "wrapKey": "0c26bbb2de897ed729db9c5ca271a3013906ebb7489c53dd4738b8b97d52c035"
     }
   ],
+  "passphrase": [
+    {
+      "passphrase": "となりの 🐈 は三毛",
+      "kdf": {
+        "alg": "argon2id",
+        "v": 19,
+        "m": 65536,
+        "t": 3,
+        "p": 1,
+        "salt": "AAECAwQFBgcICQoLDA0ODw=="
+      },
+      "stretched": "6b377df1e41cbb7b12a80d12e0fec5c319951ce71a89e3496b10567b1da80766",
+      "passphraseKey": "85ef9f30038e55df099813923c35ad872b9485126abc8ffb6661b623ca939b68"
+    },
+    {
+      "passphrase": "correct horse battery staple",
+      "kdf": {
+        "alg": "argon2id",
+        "v": 19,
+        "m": 65536,
+        "t": 3,
+        "p": 1,
+        "salt": "AAECAwQFBgcICQoLDA0ODw=="
+      },
+      "stretched": "0d1a3c6523c8f06e4e0af9c515aa5b5448cfebd6838f2d52c3d8b6ef8ddc3c2e",
+      "passphraseKey": "97594357a19ef7cba72c579b143d89b3050c9034571488ef92e5830500668b60"
+    }
+  ],
   "wrap": {
     "wrapKey": "758423bd868fd69a13a5de616e7735ebb4a5eb425913882c7fc74cf2382a7f94",
     "vaultKey": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",

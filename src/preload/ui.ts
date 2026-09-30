@@ -196,8 +196,13 @@ const api: NemoUiApi = {
 
   kyprStatus: () => ipcRenderer.invoke('nemo:kypr-status') as Promise<KyprStatus>,
   kyprPanel: () => ipcRenderer.invoke('nemo:kypr-panel') as Promise<KyprPanelData>,
-  kyprSignIn: (password, rememberTouchId) =>
-    ipcRenderer.invoke('nemo:kypr-sign-in', password, rememberTouchId) as Promise<KyprUnlockResult>,
+  kyprSignIn: (password, rememberTouchId, passphrase) =>
+    ipcRenderer.invoke(
+      'nemo:kypr-sign-in',
+      password,
+      rememberTouchId,
+      passphrase
+    ) as Promise<KyprUnlockResult>,
   kyprUnlockTouchId: () => ipcRenderer.invoke('nemo:kypr-unlock-touch-id') as Promise<KyprUnlockResult>,
   kyprLock: () => ipcRenderer.invoke('nemo:kypr-lock') as Promise<void>,
   kyprSignOut: () => ipcRenderer.invoke('nemo:kypr-sign-out') as Promise<void>,

@@ -8,7 +8,13 @@
  * ほかに、自走検証のログインのテストページ（`/login.html` など）も同じサーバーから返す。
  *
  * 検証から触る口: `offline`（true なら接続をすぐ切る = サーバーに届かない）・`rejectAuth`（ログインを 401 にする）・
- * `kdfOverride`（prelogin の KDF パラメータを差し替える）・`requests`（受け取ったリクエストの記録）
+ * `kdfOverride`（prelogin の KDF パラメータを差し替える）・`requests`（受け取ったリクエストの記録）・
+ * `passphraseHash`（合言葉の SHA-256(passphraseKey) の hex。null なら未設定で端末を確かめない）・
+ * `devices`（端末トークンの SHA-256 → 端末。消せば取り消したのと同じ）
+ *
+ * 端末の登録と合言葉（kypr の `docs/crypto-spec.md`「端末の登録と合言葉」）: 合言葉が設定済みで端末トークンが無効なら、
+ * passphraseKey が無ければ authKey を確かめる前に 401 `device-required`、あれば両方確かめて同じ 401 `bad-password`。
+ * `register: true` なら端末を登録して `deviceToken` を返す
  */
 import { createHash, randomUUID } from 'node:crypto'
 import http from 'node:http'
@@ -27,6 +33,12 @@ export function createKyprMockServer({ pages = {} } = {}) {
     items: new Map(),
     tokens: new Set(),
     logins: 0,
+    /** @type {string | null} */
+    passphraseHash: null,
+    /** @type {Map<string, {id: string, name: string}>} */
+    devices: new Map(),
+    /** 最後のログインの本文（送った値を確かめる） */
+    lastLogin: null,
     /** @type {{ method: string, path: string, body: string }[]} */
     requests: []
   }
@@ -36,6 +48,13 @@ export function createKyprMockServer({ pages = {} } = {}) {
     res.end(JSON.stringify(body))
   }
   const fail = (res, status, error, extra = {}) => send(res, status, { error, ...extra })
+
+  const register = (name) => {
+    const id = randomUUID()
+    const token = randomUUID()
+    state.devices.set(sha256Hex(token), { id, name: String(name ?? '') })
+    return { id, token }
+  }
 
   const mutate = (res, id, body, apply) => {
     const it = state.items.get(id)
@@ -93,16 +112,41 @@ export function createKyprMockServer({ pages = {} } = {}) {
         }
         const token = randomUUID()
         state.tokens.add(token)
-        return send(res, 201, { token, wrappedVaultKey: state.account.wrappedVaultKey })
+        const device = register(body.deviceName)
+        return send(res, 201, {
+          token,
+          wrappedVaultKey: state.account.wrappedVaultKey,
+          deviceId: device.id,
+          deviceToken: device.token
+        })
       }
       if (p === '/api/login' && req.method === 'POST') {
         if (!state.account) return fail(res, 404, 'no-account')
+        state.lastLogin = body
+        const device =
+          typeof body.deviceToken === 'string' ? state.devices.get(sha256Hex(body.deviceToken)) : undefined
+        const needPassphrase = state.passphraseHash !== null && !device
+        if (needPassphrase && body.passphraseKey === undefined) return fail(res, 401, 'device-required')
         if (state.rejectAuth || sha256Hex(b64(body.authKey)) !== state.account.authHash)
+          return fail(res, 401, 'bad-password')
+        if (needPassphrase && sha256Hex(b64(body.passphraseKey)) !== state.passphraseHash)
           return fail(res, 401, 'bad-password')
         state.logins += 1
         const token = randomUUID()
         state.tokens.add(token)
-        return send(res, 200, { token, wrappedVaultKey: state.account.wrappedVaultKey })
+        let deviceId = device?.id ?? null
+        let deviceToken
+        if (!device && body.register === true) {
+          const registered = register(body.deviceName)
+          deviceId = registered.id
+          deviceToken = registered.token
+        }
+        return send(res, 200, {
+          token,
+          wrappedVaultKey: state.account.wrappedVaultKey,
+          deviceId,
+          deviceToken
+        })
       }
       if (p === '/api/logout') {
         const token = (req.headers.authorization ?? '').replace(/^Bearer /, '')

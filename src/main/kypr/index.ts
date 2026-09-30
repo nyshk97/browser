@@ -66,8 +66,9 @@ import { log, logError } from '../log.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { FileCacheStore, kyprDir } from './cache-store.js'
-import { deriveInWorker } from './kdf.js'
+import { deriveInWorker, derivePassphraseInWorker } from './kdf.js'
 import { forgetDeviceKeys, hasDeviceKeys, loadDeviceKeys, saveDeviceKeys } from './device-keys.js'
+import { deviceTokenStore } from './device-token.js'
 import { promptTouchId, touchIdAvailable } from './touch-id.js'
 
 /**
@@ -88,6 +89,11 @@ let lastSyncAt: number | null = null
 let lastSyncAttemptAt = 0
 let lastUseAt = 0
 let syncing: Promise<void> | null = null
+/**
+ * この Mac は kypr に登録されていない（合言葉が設定済みで、サーバーが device-required を返した）。
+ * 解除の画面に合言葉の欄を出す。合言葉で入れたら（この Mac を登録したら）下ろす。
+ */
+let needsPassphrase = false
 /** 一覧の世代（変わるたびに増やす。バッジの件数の覚えを捨てる）。 */
 let generation = 0
 const listeners = new Set<() => void>()
@@ -149,6 +155,8 @@ function deps(): ClientDeps {
     api: createApi(server.url, (input, init) => fetch(input, init)),
     cache,
     derive: deriveInWorker,
+    derivePassphrase: derivePassphraseInWorker,
+    device: deviceTokenStore,
     reloginOnExpiry: true
   }
 }
@@ -173,7 +181,8 @@ export function kyprStatus(): KyprStatus {
     touchIdAvailable: touchIdAvailable(),
     touchIdEnrolled: hasDeviceKeys(),
     lastSyncAt,
-    itemCount: session ? session.entries.size : cache.itemCount()
+    itemCount: session ? session.entries.size : cache.itemCount(),
+    needsPassphrase
   }
 }
 
@@ -215,20 +224,46 @@ function unlockFailure(error: unknown): KyprUnlockResult {
   return { ok: false, reason: 'temporary' }
 }
 
-/** マスターパスワードで解除する（この Mac で初めてのログインも同じ）。 */
-export async function signInKypr(password: string, rememberTouchId: boolean): Promise<KyprUnlockResult> {
+/**
+ * この Mac が登録されていなかった（device-required）。キャッシュと端末トークンは共通のクライアントが消している。
+ * Touch ID の鍵も捨て、解除の画面に合言葉の欄を出す
+ */
+function onDeviceRequired(): void {
+  forgetDeviceKeys()
+  needsPassphrase = true
+  notify()
+}
+
+/**
+ * マスターパスワードで解除する（この Mac で初めてのログインも同じ）。
+ * `passphrase` は、この Mac が登録されていないとき（`needsPassphrase`）だけ。Nemo は自分の Mac なので、合言葉で入ったら登録する
+ */
+export async function signInKypr(
+  password: string,
+  rememberTouchId: boolean,
+  passphrase?: string
+): Promise<KyprUnlockResult> {
   if (!server) return { ok: false, reason: 'disabled' }
   if (typeof password !== 'string' || password === '' || password.length > 1024) {
     return { ok: false, reason: 'bad-password' }
   }
+  if (passphrase !== undefined && (passphrase === '' || passphrase.length > 1024)) {
+    return { ok: false, reason: 'bad-password' }
+  }
   let next: VaultSession
   try {
-    next = await VaultSession.unlock(deps(), password)
+    next = await VaultSession.unlock(
+      deps(),
+      password,
+      passphrase === undefined ? undefined : { passphrase, register: true }
+    )
   } catch (error) {
     const result = unlockFailure(error)
+    if (!result.ok && result.reason === 'device-required') onDeviceRequired()
     log('kypr.sign_in', { ok: false, reason: result.ok ? null : result.reason })
     return result
   }
+  needsPassphrase = false
   // 導出を待つ間に別の経路（Touch ID）で解除されていたら、そちらを残して今回のものは捨てる
   if (session) {
     next.lock()
@@ -265,6 +300,7 @@ export async function unlockKyprWithTouchId(): Promise<KyprUnlockResult> {
   } catch (error) {
     const result = unlockFailure(error)
     if (!result.ok && result.reason === 'bad-password') forgetDeviceKeys()
+    if (!result.ok && result.reason === 'device-required') onDeviceRequired()
     log('kypr.touch_id', { ok: false, reason: result.ok ? null : result.reason })
     return result
   } finally {

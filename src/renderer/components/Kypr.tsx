@@ -60,6 +60,8 @@ export function unlockFailureText(reason: KyprUnlockFailure, retryAfter?: number
       return 'この Mac では Touch ID の設定がまだです。マスターパスワードで解除してください。'
     case 'touch-id-failed':
       return 'Touch ID で解除できませんでした。マスターパスワードで解除してください。'
+    case 'device-required':
+      return 'この Mac は kypr に登録されていません。マスターパスワードに加えて合言葉を入れてください。'
     case 'disabled':
       return 'kypr は使えません。'
     default:
@@ -317,24 +319,31 @@ export function KyprUnlock({
   hero?: boolean
 }): React.JSX.Element {
   const [password, setPassword] = useState('')
+  const [passphrase, setPassphrase] = useState('')
   const [remember, setRemember] = useState(true)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const signedOut = status.state === 'signed-out'
   const canTouchId = !signedOut && status.touchIdEnrolled && status.touchIdAvailable
+  // この Mac が kypr に登録されていない（合言葉が設定済み）。合言葉を入れて入ると、この Mac を登録する
+  const needsPassphrase = status.needsPassphrase
 
   useEffect(() => inputRef.current?.focus(), [])
 
   const signIn = (): void => {
-    if (!password || busy) return
+    if (!password || busy || (needsPassphrase && !passphrase)) return
     setBusy(true)
     setMessage(null)
     void window.nemo
-      .kyprSignIn(password, remember)
+      .kyprSignIn(password, remember, needsPassphrase ? passphrase : undefined)
       .then((result) => {
         if (result.ok) {
           setPassword('')
+          setPassphrase('')
+          onDone()
+        } else if (result.reason === 'device-required') {
+          // 合言葉の欄を出す（状態は main が持つので読み直す）。マスターパスワードは残す
           onDone()
         } else setMessage(unlockFailureText(result.reason, result.retryAfter))
       })
@@ -347,7 +356,8 @@ export function KyprUnlock({
     void window.nemo
       .kyprUnlockTouchId()
       .then((result) => {
-        if (result.ok) onDone()
+        // device-required は合言葉の欄の案内が出るので、同じ文言を重ねない
+        if (result.ok || result.reason === 'device-required') onDone()
         else setMessage(unlockFailureText(result.reason))
       })
       .finally(() => setBusy(false))
@@ -384,8 +394,15 @@ export function KyprUnlock({
         </button>
       ) : null}
       {hero && canTouchId ? <div className="kypr-or">または</div> : null}
+      {needsPassphrase ? (
+        <p className="kypr-note kypr-passphrase-note">
+          この Mac は kypr
+          に登録されていません。マスターパスワードに加えて合言葉を入れてください。入れると、この Mac
+          を登録します。
+        </p>
+      ) : null}
       <form
-        className="kypr-password"
+        className={`kypr-password${needsPassphrase ? ' stacked' : ''}`}
         onSubmit={(event) => {
           event.preventDefault()
           signIn()
@@ -400,7 +417,22 @@ export function KyprUnlock({
           spellCheck={false}
           onChange={(event) => setPassword(event.target.value)}
         />
-        <button type="submit" className="btn" disabled={!password || busy}>
+        {needsPassphrase ? (
+          <input
+            className="kypr-passphrase"
+            type="password"
+            value={passphrase}
+            placeholder="合言葉"
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(event) => setPassphrase(event.target.value)}
+          />
+        ) : null}
+        <button
+          type="submit"
+          className="btn"
+          disabled={!password || (needsPassphrase && !passphrase) || busy}
+        >
           {busy ? '解除中…' : signedOut ? 'ログイン' : '解除'}
         </button>
       </form>

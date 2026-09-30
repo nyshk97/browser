@@ -27,11 +27,55 @@ import { type ApiCaller, ApiError, NetworkError } from "./api.ts";
 import type { CachedAccount, CachedItem, CacheSnapshot, VaultCacheStore } from "./cache.ts";
 
 export type DeriveKeys = (password: string, kdf: KdfParams) => Promise<{ authKey: Uint8Array; wrapKey: Uint8Array }>;
+// 合言葉の検証値（derivePassphraseKey）を作る。Argon2id を回すので、呼び出し側が Worker などで実行する
+export type DerivePassphrase = (passphrase: string, kdf: KdfParams) => Promise<Uint8Array>;
+
+// この端末の登録（サーバーが発行した端末トークン）の置き場所（docs/crypto-spec.md「端末の登録と合言葉」）。
+// 渡さなければ端末を登録しない（合言葉を設定したあとは、毎回合言葉が要る）
+export interface DeviceStore {
+  // 端末の一覧に出す名前
+  name: string;
+  load(): Promise<string | null>;
+  save(token: string): Promise<void>;
+  clear(): Promise<void>;
+}
+
+// 登録していない端末からログインするときの 2 つ目の要素。register なら、この端末を登録する
+export interface SecondFactor {
+  passphrase: string;
+  register: boolean;
+}
+
+export interface DeviceInfo {
+  id: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt: string;
+}
+
+export interface DeviceList {
+  devices: DeviceInfo[];
+  // この端末の id。一時利用（登録していない端末）なら null
+  currentDeviceId: string | null;
+  passphraseSet: boolean;
+}
+
+interface LoginResponse {
+  token: string;
+  wrappedVaultKey: Envelope;
+  // 古いサーバーは返さない（undefined）。null なら一時利用のセッション
+  deviceId?: string | null;
+  deviceToken?: string;
+}
 
 export interface ClientDeps {
   api: ApiCaller;
   cache: VaultCacheStore;
   derive: DeriveKeys;
+  // 合言葉で入る・合言葉を設定するときに要る
+  derivePassphrase?: DerivePassphrase;
+  // この端末の登録。無ければ登録しない
+  device?: DeviceStore;
   // セッションが切れたら（401）、手元の authKey で 1 回だけログインし直して続ける（Nemo）。
   // 既定は false で、切れたら SessionExpiredError を投げる（Web はロックして入れ直させる）
   reloginOnExpiry?: boolean;
@@ -69,6 +113,8 @@ export type UnlockFailure =
   | { code: "no-account" }
   | { code: "offline-no-cache" }
   | { code: "setup-rejected"; reason: string }
+  // 登録していない端末から入ろうとした（合言葉が設定済み）。合言葉を付けて送り直す
+  | { code: "device-required" }
   // 通信の失敗・Worker の失敗など、やり直せば直りうるもの
   | { code: "temporary"; message: string };
 
@@ -102,6 +148,50 @@ function asUnlockError(e: unknown, mapBadPassword: "bad-password" | "tampered" =
   throw e;
 }
 
+// サーバーが「この端末は登録されていない」と言った。取り消された端末かもしれないので、
+// 端末トークンとキャッシュ（暗号文・包んだ保管庫鍵・Touch ID の鍵）を消してから知らせる
+async function forgetDevice(deps: ClientDeps): Promise<never> {
+  await Promise.all([deps.device?.clear(), deps.cache.clear()].map((p) => p?.catch(() => {})));
+  throw new UnlockError({ code: "device-required" });
+}
+
+// POST /api/login。端末トークン・合言葉・登録の希望を添え、発行された端末トークンを保存する。
+// 失敗はそのまま投げる（device-required だけは端末の記録を消して UnlockError にする）
+async function loginRequest(
+  deps: ClientDeps,
+  authKey: Uint8Array,
+  kdf: KdfParams,
+  second?: SecondFactor,
+): Promise<LoginResponse> {
+  const body: Record<string, unknown> = { authKey: b64Encode(authKey) };
+  // 読めないときは投げる（「トークン無し」と取り違えると、device-required でキャッシュまで消してしまう）
+  const deviceToken = deps.device ? await deps.device.load() : null;
+  if (deviceToken) body.deviceToken = deviceToken;
+  if (second) {
+    if (!deps.derivePassphrase) throw new Error("合言葉の鍵を作れません");
+    const passphraseKey = await deps.derivePassphrase(second.passphrase, kdf).catch(asUnlockError);
+    body.passphraseKey = b64Encode(passphraseKey);
+    passphraseKey.fill(0);
+  }
+  // 合言葉が未設定のあいだに新しいクライアントで入った端末は、そのまま登録する（移行）
+  if (deps.device && (second ? second.register : true)) {
+    body.register = true;
+    body.deviceName = deps.device.name;
+  }
+  let res: LoginResponse;
+  try {
+    res = await deps.api<LoginResponse>("/api/login", { method: "POST", body });
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401 && e.code === "device-required") return forgetDevice(deps);
+    throw e;
+  }
+  // 保存に失敗しても解除は続ける（サーバーでは登録済み。次のログインで登録し直される）
+  if (res.deviceToken && deps.device) {
+    await deps.device.save(res.deviceToken).catch((e) => console.error("端末トークンを保存できませんでした", e));
+  }
+  return res;
+}
+
 async function decryptEntry(vaultKey: Uint8Array, it: CachedItem): Promise<VaultEntry> {
   let state: EntryState;
   try {
@@ -120,6 +210,8 @@ export class VaultSession {
   #vaultKey: Uint8Array;
   #authKey: Uint8Array;
   #token: string | null;
+  // 合言葉で入り、この端末を登録しなかった（一時利用）。合言葉を覚えていないのでログインし直せない
+  #temporary = false;
   #account: CachedAccount;
   #listeners = new Set<() => void>();
 
@@ -143,6 +235,11 @@ export class VaultSession {
     return this.#token === null;
   }
 
+  // 合言葉で一時的に入った（この端末を登録していない）。キャッシュは呼び出し側がメモリにする
+  get temporary(): boolean {
+    return this.#temporary;
+  }
+
   // 初回登録。SETUP_TOKEN はサーバーの secret と照合される
   static async setup(deps: ClientDeps, setupToken: string, password: string): Promise<VaultSession> {
     const kdf = newKdfParams();
@@ -150,11 +247,11 @@ export class VaultSession {
     const vaultKey = generateVaultKey();
     const wrappedVaultKey = await wrapVaultKey(wrapKey, vaultKey);
     wrapKey.fill(0);
-    let res: { token: string };
+    let res: { token: string; deviceId?: string; deviceToken?: string };
     try {
       res = await deps.api("/api/setup", {
         method: "POST",
-        body: { setupToken, kdf, authKey: b64Encode(authKey), wrappedVaultKey },
+        body: { setupToken, kdf, authKey: b64Encode(authKey), wrappedVaultKey, deviceName: deps.device?.name },
       });
     } catch (e) {
       if (e instanceof ApiError) throw new UnlockError({ code: "setup-rejected", reason: e.code });
@@ -162,13 +259,16 @@ export class VaultSession {
     }
     const account = { kdf, wrappedVaultKey };
     await deps.cache.clear();
+    // 保管庫を作った端末はそのまま登録済みになる
+    if (res.deviceToken && deps.device) await deps.device.save(res.deviceToken);
     await deps.cache.saveAccount(account);
     await deps.cache.apply(0, [], [], true);
     return new VaultSession(deps, { vaultKey, authKey }, res.token, account, 0);
   }
 
-  // オンラインならログインして同期する。サーバーに届かなければキャッシュから読み取り専用で開く
-  static async unlock(deps: ClientDeps, password: string): Promise<VaultSession> {
+  // オンラインならログインして同期する。サーバーに届かなければキャッシュから読み取り専用で開く。
+  // 登録していない端末で合言葉が要れば device-required を投げるので、second を付けて呼び直す
+  static async unlock(deps: ClientDeps, password: string, second?: SecondFactor): Promise<VaultSession> {
     const cache = await deps.cache.load();
     let kdf: KdfParams;
     try {
@@ -188,9 +288,9 @@ export class VaultSession {
     }
 
     const { authKey, wrapKey } = await deps.derive(password, kdf).catch(asUnlockError);
-    let res: { token: string; wrappedVaultKey: Envelope };
+    let res: LoginResponse;
     try {
-      res = await deps.api("/api/login", { method: "POST", body: { authKey: b64Encode(authKey) } });
+      res = await loginRequest(deps, authKey, kdf, second);
     } catch (e) {
       if (e instanceof NetworkError && cache.account && sameKdf) {
         // 導出済みの wrapKey でキャッシュを開く（Argon2 を二度回さない）
@@ -198,6 +298,7 @@ export class VaultSession {
       }
       wrapKey.fill(0);
       authKey.fill(0);
+      if (e instanceof UnlockError) throw e;
       if (e instanceof NetworkError) return VaultSession.unlockOffline(deps, password);
       if (e instanceof ApiError && e.status === 401) throw new UnlockError({ code: "bad-password" });
       if (e instanceof ApiError && e.status === 429) {
@@ -216,6 +317,7 @@ export class VaultSession {
     if (!sameAccount) await deps.cache.clear();
     await deps.cache.saveAccount(account);
     const session = new VaultSession(deps, { vaultKey, authKey }, res.token, account, sameAccount ? cache.revision : 0);
+    session.#temporary = second !== undefined && res.deviceId === null;
     return VaultSession.#finishOnline(session, sameAccount ? cache.items : []);
   }
 
@@ -227,9 +329,9 @@ export class VaultSession {
     if (!cache.account) throw new UnlockError({ code: "offline-no-cache" });
     const vaultKey = keys.vaultKey.slice();
     const authKey = keys.authKey.slice();
-    let res: { token: string; wrappedVaultKey: Envelope };
+    let res: LoginResponse;
     try {
-      res = await deps.api("/api/login", { method: "POST", body: { authKey: b64Encode(authKey) } });
+      res = await loginRequest(deps, authKey, cache.account.kdf);
     } catch (e) {
       if (e instanceof NetworkError) {
         const session = new VaultSession(deps, { vaultKey, authKey }, null, cache.account, cache.revision);
@@ -335,12 +437,16 @@ export class VaultSession {
   }
 
   // 手元の authKey でログインし直す（切れたセッション・読み取り専用で開いた後にサーバーに届くようになったとき）
+  // 一時利用（合言葉で入った）のセッションは合言葉を覚えていないので、ログインし直せない
   async #relogin(): Promise<void> {
-    let res: { token: string; wrappedVaultKey: Envelope };
+    if (this.temporary) throw new SessionExpiredError("一時利用のセッションが切れました");
+    let res: LoginResponse;
     try {
-      res = await this.#deps.api("/api/login", { method: "POST", body: { authKey: b64Encode(this.#authKey) } });
+      res = await loginRequest(this.#deps, this.#authKey, this.#account.kdf);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 401) throw new SessionExpiredError("ログインし直せませんでした");
+      if (e instanceof UnlockError || (e instanceof ApiError && e.status === 401)) {
+        throw new SessionExpiredError("ログインし直せませんでした");
+      }
       throw e;
     }
     if (JSON.stringify(res.wrappedVaultKey) !== JSON.stringify(this.#account.wrappedVaultKey)) {
@@ -443,6 +549,44 @@ export class VaultSession {
 
   purge(id: string) {
     return this.#action(id, "purge");
+  }
+
+  // 登録済みの端末の一覧と、合言葉が設定済みか
+  devices(): Promise<DeviceList> {
+    return this.#call<DeviceList>("/api/devices");
+  }
+
+  // 端末を取り消す（その端末のセッションも切れる）。この端末自身は取り消せない
+  async revokeDevice(id: string): Promise<void> {
+    await this.#call(`/api/devices/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  // 合言葉を設定する・変える。マスターパスワードを入れ直してもらい、サーバーが authKey で確かめる
+  // （手元の authKey を送ると、開いたままの画面だけで変えられてしまう）。違えば UnlockError（bad-password）
+  async setPassphrase(password: string, passphrase: string): Promise<void> {
+    if (!this.#deps.derivePassphrase) throw new Error("合言葉の鍵を作れません");
+    if (passphrase === "") throw new Error("合言葉が空です");
+    if (passphrase.normalize("NFC") === password.normalize("NFC")) throw new Error("合言葉はマスターパスワードと別のものにしてください");
+    const kdf = this.#account.kdf;
+    const { authKey, wrapKey } = await this.#deps.derive(password, kdf).catch(asUnlockError);
+    wrapKey.fill(0);
+    let passphraseKey: Uint8Array | null = null;
+    try {
+      passphraseKey = await this.#deps.derivePassphrase(passphrase, kdf).catch(asUnlockError);
+      await this.#call("/api/passphrase", {
+        method: "PUT",
+        body: { authKey: b64Encode(authKey), passphraseKey: b64Encode(passphraseKey) },
+      });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 403 && e.code === "bad-password") throw new UnlockError({ code: "bad-password" });
+      if (e instanceof ApiError && e.status === 429) {
+        throw new UnlockError({ code: "locked", retryAfter: e.retryAfter ?? 60, canOpenOffline: false });
+      }
+      throw e;
+    } finally {
+      authKey.fill(0);
+      passphraseKey?.fill(0);
+    }
   }
 
   // kypr-export v1。ゴミ箱の中身は含め、トゥームストーンは（キャッシュに無いので）含まれない

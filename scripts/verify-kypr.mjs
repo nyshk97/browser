@@ -13,7 +13,7 @@
  * 使い方:
  *   node scripts/verify-kypr.mjs   （事前に out/ がビルドされていること）
  */
-import { createHmac } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
@@ -35,6 +35,7 @@ import { createApi, MemoryCacheStore, VaultSession } from '../src/vendor/kypr/cl
 import {
   b64Encode,
   deriveKeys,
+  derivePassphraseKey,
   generateVaultKey,
   newCardItem,
   newKdfParams,
@@ -48,11 +49,21 @@ const require = createRequire(import.meta.url)
 const electronPath = require('electron')
 
 const PASSWORD = 'nemo-verify マスター 🔑'
+/** 合言葉（kypr の「端末の登録と合言葉」）。これも userData に平文で残ってはいけない。 */
+const PASSPHRASE = 'nemo-verify の合言葉 KYPRPASSPHRASE'
 /** 平文の目印。**このアイテムの URL は一度も開かない**（開くと履歴に正当に残る）。 */
 const MARK = 'KYPRMARK7d3'
 /** ワンタイムコードの秘密鍵（Base32 として読める文字だけ）。これも userData に平文で残ってはいけない。 */
 const TOTP_SECRET = 'KYPRTOTPSEQRETQQ'
-const MARKERS = [MARK, 'kyprmark-url', '4111111111111111', 'pw-A-secret', 'pw-created-secret', TOTP_SECRET]
+const MARKERS = [
+  MARK,
+  'kyprmark-url',
+  '4111111111111111',
+  'pw-A-secret',
+  'pw-created-secret',
+  TOTP_SECRET,
+  'KYPRPASSPHRASE'
+]
 
 /** TOTP のコード（SHA1・6 桁・30 秒）。kypr の実装とは別に node:crypto で計算する（RFC 6238）。 */
 function nodeTotp(secret, unixSeconds) {
@@ -381,6 +392,20 @@ try {
 
   const signIn = await json(`window.nemo.kyprSignIn(${JSON.stringify(PASSWORD)}, true)`)
   check('マスターパスワードで解除できる', signIn.ok === true, JSON.stringify(signIn))
+  const deviceTokenFile = path.join(userData, 'kypr', 'device-token.json')
+  const firstLogin = mock.state.lastLogin ?? {}
+  check(
+    '合言葉が未設定なので、最初のログインでこの Mac を登録し、端末トークンを暗号化して保存する',
+    firstLogin.register === true &&
+      String(firstLogin.deviceName ?? '').startsWith('Nemo') &&
+      fs.existsSync(deviceTokenFile) &&
+      JSON.parse(fs.readFileSync(deviceTokenFile, 'utf8')).encrypted !== undefined,
+    JSON.stringify({
+      register: firstLogin.register,
+      name: firstLogin.deviceName,
+      file: fs.existsSync(deviceTokenFile)
+    })
+  )
   status = await json('window.nemo.kyprStatus()')
   check(
     '解除後: unlocked・9 件・Touch ID の鍵を覚えた',
@@ -1249,6 +1274,101 @@ try {
     online.ok === true && status.readOnly === false,
     JSON.stringify(online)
   )
+
+  /* ---- 13b. 端末の登録と合言葉（kypr の「端末の登録と合言葉」） ---- */
+  // 合言葉を設定する（模擬サーバーに検証値を直接置く。本物は Web の「端末と合言葉」で設定する）
+  mock.state.passphraseHash = createHash('sha256')
+    .update(await derivePassphraseKey(PASSPHRASE, kdf))
+    .digest('hex')
+  await ui.ev('window.nemo.kyprLock()')
+  const registeredIn = await json(`window.nemo.kyprSignIn(${JSON.stringify(PASSWORD)}, true)`)
+  check(
+    '合言葉を設定したあとも、登録済みの Mac は合言葉なしで入れる（端末トークンを添える）',
+    registeredIn.ok === true &&
+      typeof mock.state.lastLogin?.deviceToken === 'string' &&
+      mock.state.lastLogin?.passphraseKey === undefined,
+    JSON.stringify(registeredIn)
+  )
+  const itemsRegistered = (await json('window.nemo.kyprStatus()')).itemCount
+  // 別の端末から取り消された（模擬サーバーの端末を消す）
+  mock.state.devices.clear()
+  await ui.ev('window.nemo.kyprLock()')
+  const cacheBeforeRevoke = (await json('window.nemo.kyprStatus()')).itemCount
+  const required = await json(`window.nemo.kyprSignIn(${JSON.stringify(PASSWORD)}, true)`)
+  status = await json('window.nemo.kyprStatus()')
+  check(
+    '取り消されると device-required。キャッシュ・Touch ID の鍵・端末トークンを消して、合言葉を求める',
+    cacheBeforeRevoke > 0 &&
+      required.ok === false &&
+      required.reason === 'device-required' &&
+      status.needsPassphrase === true &&
+      status.state === 'signed-out' &&
+      status.itemCount === 0 &&
+      status.touchIdEnrolled === false &&
+      !fs.existsSync(deviceTokenFile),
+    JSON.stringify({ before: cacheBeforeRevoke, required, status })
+  )
+  await ui.ev("window.nemo.setOverlay('kypr')")
+  const passphraseShown = await waitFor(
+    overlayUi,
+    "document.querySelector('.kypr-password.stacked .kypr-passphrase') && document.querySelector('.kypr-passphrase-note') ? 'ok' : ''",
+    { timeoutMs: 8000 }
+  ).catch(() => '')
+  check('ポップアップのログインの画面に合言葉の欄と案内が出る', passphraseShown === 'ok')
+  await ui.ev('window.nemo.setOverlay(null)')
+  const wrongPassphrase = await json(
+    `window.nemo.kyprSignIn(${JSON.stringify(PASSWORD)}, true, '違う合言葉')`
+  )
+  check(
+    '合言葉が違えば bad-password（合言葉の欄は出したまま）',
+    wrongPassphrase.ok === false &&
+      wrongPassphrase.reason === 'bad-password' &&
+      (await json('window.nemo.kyprStatus()')).needsPassphrase === true,
+    JSON.stringify(wrongPassphrase)
+  )
+  const withPassphrase = await json(
+    `window.nemo.kyprSignIn(${JSON.stringify(PASSWORD)}, true, ${JSON.stringify(PASSPHRASE)})`
+  )
+  status = await json('window.nemo.kyprStatus()')
+  check(
+    '合言葉で入ると、この Mac を登録し直して保管庫を取り直す（Touch ID の鍵も覚え直す）',
+    withPassphrase.ok === true &&
+      mock.state.lastLogin?.register === true &&
+      typeof mock.state.lastLogin?.passphraseKey === 'string' &&
+      status.needsPassphrase === false &&
+      status.itemCount === itemsRegistered &&
+      status.touchIdEnrolled === true &&
+      fs.existsSync(deviceTokenFile) &&
+      mock.state.devices.size === 1,
+    JSON.stringify({ withPassphrase, n: status.itemCount, devices: mock.state.devices.size })
+  )
+  await ui.ev('window.nemo.kyprLock()')
+  const afterRegister = await json(`window.nemo.kyprSignIn(${JSON.stringify(PASSWORD)}, true)`)
+  check(
+    '登録し直したので、次からは合言葉なしで入れる',
+    afterRegister.ok === true,
+    JSON.stringify(afterRegister)
+  )
+  // Touch ID で解除しようとしたときに取り消されていた
+  mock.state.devices.clear()
+  await ui.ev('window.nemo.kyprLock()')
+  const touchRevoked = await json('window.nemo.kyprUnlockTouchId()')
+  status = await json('window.nemo.kyprStatus()')
+  check(
+    'Touch ID の解除でも、取り消されていれば device-required で覚えた鍵とキャッシュを消す',
+    touchRevoked.ok === false &&
+      touchRevoked.reason === 'device-required' &&
+      status.needsPassphrase === true &&
+      status.touchIdEnrolled === false &&
+      status.itemCount === 0,
+    JSON.stringify({ touchRevoked, status })
+  )
+  const reRegistered = await json(
+    `window.nemo.kyprSignIn(${JSON.stringify(PASSWORD)}, true, ${JSON.stringify(PASSPHRASE)})`
+  )
+  check('合言葉でもう一度登録できる', reRegistered.ok === true, JSON.stringify(reRegistered))
+  // 後ろの検査（rejectAuth・弱い KDF 等）に合言葉を持ち込まない
+  mock.state.passphraseHash = null
 
   /* ---- 14. ロックと Touch ID ---- */
   await ui.ev('window.nemo.kyprLock()')

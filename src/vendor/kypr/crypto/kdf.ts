@@ -4,6 +4,8 @@ import { type KdfParams, parseKdfParams } from "./params.ts";
 
 export const INFO_AUTH = "kypr-auth-v1";
 export const INFO_WRAP = "kypr-wrap-v1";
+// 合言葉（新しい端末からログインするときの 2 つ目の要素）の検証値。暗号には使わない
+export const INFO_PASSPHRASE = "kypr-passphrase-v1";
 
 // masterKey = Argon2id(NFC(password), salt)。範囲の検証を通してから走らせる
 export async function deriveMasterKey(password: string, params: unknown): Promise<Uint8Array<ArrayBuffer>> {
@@ -41,4 +43,13 @@ export async function deriveKeys(password: string, params: KdfParams): Promise<D
   const [authKey, wrapKey] = await Promise.all([hkdf32(masterKey, INFO_AUTH), hkdf32(masterKey, INFO_WRAP)]);
   masterKey.fill(0);
   return { authKey, wrapKey };
+}
+
+// passphraseKey = HKDF(Argon2id(NFC(合言葉), アカウントの KDF パラメータ), "kypr-passphrase-v1")。
+// サーバーは SHA-256(passphraseKey) だけを持つ（authKey と同じ扱い）。合言葉は暗号には混ぜない
+export async function derivePassphraseKey(passphrase: string, params: KdfParams): Promise<Uint8Array<ArrayBuffer>> {
+  const stretched = await deriveMasterKey(passphrase, params);
+  const key = await hkdf32(stretched, INFO_PASSPHRASE);
+  stretched.fill(0);
+  return key;
 }

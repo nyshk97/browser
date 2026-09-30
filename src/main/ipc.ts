@@ -1350,10 +1350,12 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.handle(
     'nemo:kypr-sign-in',
-    async (event, password: unknown, remember: unknown): Promise<KyprUnlockResult> => {
+    async (event, password: unknown, remember: unknown, passphrase: unknown): Promise<KyprUnlockResult> => {
       requireWindow(event)
       if (typeof password !== 'string') return { ok: false, reason: 'bad-password' }
-      return signInKypr(password, remember === true)
+      if (passphrase !== undefined && typeof passphrase !== 'string')
+        return { ok: false, reason: 'bad-password' }
+      return signInKypr(password, remember === true, passphrase)
     }
   )
   ipcMain.handle('nemo:kypr-unlock-touch-id', async (event): Promise<KyprUnlockResult> => {

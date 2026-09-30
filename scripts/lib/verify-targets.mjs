@@ -267,6 +267,8 @@ export const OWNERS = new Map([
   ['src/main/kypr/inline.ts', ['kypr', 'agent']],
   ['src/main/kypr/cache-store.ts', ['kypr']],
   ['src/main/kypr/device-keys.ts', ['kypr']],
+  // 端末トークン（kypr の「端末の登録と合言葉」）。`verify-kypr.mjs` が登録・取り消し・合言葉で入り直すまで見る
+  ['src/main/kypr/device-token.ts', ['kypr']],
   ['src/main/kypr/touch-id.ts', ['kypr', 'autofill']],
   // kypr の Web 版の Touch ID 解除に答える認証器（`verify-kypr.mjs` が模擬サーバーのテストページで create / get まで見る）
   ['src/main/kypr/web-authenticator.ts', ['kypr']],

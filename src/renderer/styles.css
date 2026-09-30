@@ -3634,15 +3634,16 @@ body[data-view='call'] {
   font-size: 21px;
 }
 
-/* favicon は白い地に載せる（黒い favicon が暗い面に沈まないように。透過の周りも揃って見える） */
+/* favicon は薄いグレーの地に載せる（黒い favicon が暗い面に沈まないように。白より目立たない）。
+   favicon は画像自体に余白があるので、こちらの余白は小さく取る */
 .kypr-av.fav {
-  background: #fff;
+  background: #e4e4ea;
   box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.18);
 }
 
 .kypr-av.fav img {
-  width: 62.5%;
-  height: 62.5%;
+  width: 85%;
+  height: 85%;
   object-fit: contain;
 }
 

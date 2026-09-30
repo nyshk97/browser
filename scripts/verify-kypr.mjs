@@ -830,6 +830,10 @@ try {
       passportNumber: `${MARK}PP`,
       passportExpiry: '2031-04-30',
       licenseExpiry: '2029-06-15',
+      // 自動入力に出さない項目（kypr の noAutofill）と、自動入力の候補にしない年金番号
+      licensePin1: '4321',
+      myNumber: `${MARK}MN`,
+      pensionNumber: '1234-567890',
       notes: ''
     }
     const badDate = await json(
@@ -851,6 +855,7 @@ try {
         remote?.kind === 'identity' &&
         remote.item.passportNumber === `${MARK}PP` &&
         remote.item.licenseExpiry === '2029-06-15' &&
+        remote.item.myNumber === `${MARK}MN` &&
         remote.item.insurerNumber === '',
       JSON.stringify({ created, kind: remote?.kind })
     )
@@ -859,7 +864,11 @@ try {
       '個人情報: 詳細では旅券番号を空にして渡し、名前だけ secrets に入れる',
       detail?.kind === 'identity' &&
         detail.item.passportNumber === '' &&
-        detail.secrets.includes('passportNumber') &&
+        detail.item.myNumber === '' &&
+        detail.item.licensePin1 === '' &&
+        ['passportNumber', 'myNumber', 'licensePin1', 'pensionNumber'].every((k) =>
+          detail.secrets.includes(k)
+        ) &&
         detail.item.familyName === '山田',
       JSON.stringify({ kind: detail?.kind, secrets: detail?.secrets })
     )
@@ -893,8 +902,11 @@ try {
       '個人情報: 詳細に見出し（氏名・パスポート …）が出て、旅券番号は伏せ、性別は日本語、既定の印が付く',
       shown.groups.includes('氏名') &&
         shown.groups.includes('パスポート') &&
+        shown.groups.includes('マイナンバーカード') &&
+        shown.groups.includes('年金') &&
         !shown.groups.includes('健康保険証') &&
         !shown.text.includes(`${MARK}PP`) &&
+        !shown.text.includes(`${MARK}MN`) &&
         shown.text.includes('男性') &&
         shown.text.includes('2031-04-30') &&
         shown.autofillTag,
@@ -913,11 +925,33 @@ try {
     )
     check(
       '個人情報: 編集画面に見出しごとの欄・性別の切り替え・秘密の値（編集を開いたときだけ）',
-      editor.groups.length === 9 && editor.gender === '男性' && editor.passport === `${MARK}PP`,
+      editor.groups.length === 11 && editor.gender === '男性' && editor.passport === `${MARK}PP`,
       JSON.stringify({
         groups: editor.groups,
         gender: editor.gender,
         passport: editor.passport === `${MARK}PP`
+      })
+    )
+    // 編集画面から保存し直しても、kypr で増えた項目（暗証番号・マイナンバー・年金番号）が空で上書きされない
+    await popup.ev("document.querySelector('.kypr-editor button[type=submit]')?.click()")
+    await waitFor(
+      popup,
+      "document.querySelector('.kypr-detail [data-kypr-field=\"familyName\"]') ? 'ok' : ''",
+      { timeoutMs: 5000 }
+    )
+    await other.sync()
+    const resaved = other.entries.get(created.id)?.state
+    check(
+      '個人情報: 編集画面から保存し直しても、暗証番号・マイナンバー・年金番号が残る',
+      resaved?.kind === 'identity' &&
+        resaved.item.licensePin1 === '4321' &&
+        resaved.item.myNumber === `${MARK}MN` &&
+        resaved.item.pensionNumber === '1234-567890',
+      JSON.stringify({
+        kind: resaved?.kind,
+        pin: resaved?.item.licensePin1 === '4321',
+        myNumber: resaved?.item.myNumber === `${MARK}MN`,
+        pension: resaved?.item.pensionNumber === '1234-567890'
       })
     )
     popup.close()
@@ -930,6 +964,188 @@ try {
       purgedIdentity.ok === true,
       JSON.stringify(purgedIdentity)
     )
+  }
+
+  /* ---- 10d. セキュアメモの項目（テンプレート・伏せ字） ---- */
+  // 件数の検査を崩さないよう、最後にゴミ箱 → 完全削除する
+  {
+    const field = (key, label, value, secret = false) => ({ key, label, value, secret, multiline: false })
+    const NF = newNoteItem({
+      name: 'Bank',
+      template: 'bank',
+      fields: [
+        field('bankName', '銀行名', 'KYPR銀行'),
+        field('accountNumber', '口座番号', '7654321'),
+        field('pin', 'キャッシュカードの暗証番号', `${MARK}-pin`, true),
+        // 自分で足した項目は key が全部 ""（位置・key・ラベルが揃ったときだけ値を出す）
+        field('', 'メモ 1', `${MARK}-custom`, true),
+        field('', 'メモ 2', '', true),
+        field('contractNumber', '契約番号', '')
+      ]
+    })
+    await other.create([NF])
+    await json('window.nemo.kyprSync()')
+    const notePanel = await json('window.nemo.kyprPanel()')
+    const noteRow = notePanel.items.find((i) => i.id === NF.id)
+    check(
+      'メモの項目: 一覧の 2 行目はテンプレート名。一覧に項目の値が入っていない',
+      noteRow?.subtitle === '銀行口座' &&
+        // 一覧には名前に MARK を含むログインがあるので、メモの値そのもので見る
+        ![`${MARK}-pin`, `${MARK}-custom`, '7654321', 'KYPR銀行'].some((v) =>
+          JSON.stringify(notePanel).includes(v)
+        ),
+      JSON.stringify(noteRow)
+    )
+    const noteDetail = await json(`window.nemo.kyprItem(${JSON.stringify(NF.id)})`)
+    const noteForEdit = await json(`window.nemo.kyprItemForEdit(${JSON.stringify(NF.id)})`)
+    const nf = noteDetail?.noteFields ?? []
+    check(
+      'メモの項目: 詳細・編集とも伏せ字の値は空で渡し（値の有無は hasValue）、平文の fields は渡さない',
+      nf.length === 6 &&
+        nf[1].value === '7654321' &&
+        nf[2].value === '' &&
+        nf[2].hasValue === true &&
+        nf[3].hasValue === true &&
+        nf[4].hasValue === false &&
+        noteDetail.noteTemplateName === '銀行口座' &&
+        !('fields' in noteDetail.item) &&
+        !JSON.stringify(noteDetail).includes(MARK) &&
+        !JSON.stringify(noteForEdit).includes(MARK),
+      JSON.stringify({
+        n: nf.length,
+        hasValue: nf.map((f) => f.hasValue),
+        template: noteDetail?.noteTemplateName
+      })
+    )
+    const ref = (i) => JSON.stringify({ index: nf[i].index, key: nf[i].key, label: nf[i].label })
+    const reveal = (r) => json(`window.nemo.kyprRevealNoteField(${JSON.stringify(NF.id)}, ${r})`)
+    const revealedPin = await reveal(ref(2))
+    const revealedCustom = await reveal(ref(3))
+    // 位置は 3 のまま、ラベルだけ隣（メモ 2）: 並びが変わったのと同じ。key が "" 同士でも出さない
+    const shifted = await reveal(JSON.stringify({ index: 3, key: '', label: 'メモ 2' }))
+    const plain = await reveal(ref(1))
+    check(
+      'メモの項目: 「表示」は位置・key・ラベルが揃った伏せ字の項目だけ（ずれていれば null）',
+      revealedPin === `${MARK}-pin` &&
+        revealedCustom === `${MARK}-custom` &&
+        shifted === null &&
+        plain === null,
+      JSON.stringify({
+        pin: revealedPin === `${MARK}-pin`,
+        custom: revealedCustom === `${MARK}-custom`,
+        shifted,
+        plain
+      })
+    )
+    const copyNote = (r) => json(`window.nemo.kyprCopyNoteField(${JSON.stringify(NF.id)}, ${r})`)
+    const copiedAccount = await copyNote(ref(1))
+    const clipAccount = await json('window.nemo.kyprClipboardForVerify()')
+    const copiedPin = await copyNote(ref(2))
+    const clipPin = await json('window.nemo.kyprClipboardForVerify()')
+    const copiedEmpty = await copyNote(ref(4))
+    check(
+      'メモの項目: コピーは main が書く（伏せ字も）。空の項目はコピーしない',
+      copiedAccount === true &&
+        clipAccount === '7654321' &&
+        copiedPin === true &&
+        clipPin === `${MARK}-pin` &&
+        copiedEmpty === false,
+      JSON.stringify({ copiedAccount, clipAccount, copiedPin, copiedEmpty })
+    )
+    const search = (q) => json(`window.nemo.kyprSearchNotes(${JSON.stringify(q)})`)
+    const byAccount = await search('7654321')
+    const byBank = await search('kypr銀行')
+    const bySecret = await search(`${MARK}-pin`)
+    check(
+      'メモの項目: 検索は伏せ字でない項目の値で引け（大文字小文字は問わない）、伏せ字の値では引けない',
+      byAccount.includes(NF.id) && byBank.includes(NF.id) && !bySecret.includes(NF.id),
+      JSON.stringify({ byAccount: byAccount.length, byBank: byBank.length, bySecret: bySecret.length })
+    )
+
+    // ポップアップの描画（一覧の検索 → 詳細 → 「表示」）
+    await ui.ev("window.nemo.setOverlay('kypr')")
+    const popup = await connectTo(app.cdp, 'view=overlay', { exclude: 'private=1' })
+    await waitFor(popup, "document.querySelector('.kypr-search input') ? 'ok' : ''", { timeoutMs: 8000 })
+    await popup.ev(`(() => {
+      const input = document.querySelector('.kypr-search input')
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '7654321')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })()`)
+    await waitFor(
+      popup,
+      `document.querySelectorAll('.kypr-scroll > .kypr-row').length === 1 && document.querySelector('.kypr-scroll > .kypr-row[data-kypr-id="${NF.id}"]') ? 'ok' : ''`,
+      { timeoutMs: 5000 }
+    )
+      .then(() => check('メモの項目: 一覧の検索で項目の値（口座番号）から引ける', true))
+      .catch(async () =>
+        check(
+          'メモの項目: 一覧の検索で項目の値（口座番号）から引ける',
+          false,
+          await popup.ev(
+            "[...document.querySelectorAll('.kypr-scroll > .kypr-row')].map((r) => r.dataset.kyprId).join()"
+          )
+        )
+      )
+    await popup.ev(`document.querySelector('.kypr-scroll > .kypr-row[data-kypr-id="${NF.id}"]')?.click()`)
+    await waitFor(popup, "document.querySelector('.kypr-detail [data-kypr-note-field]') ? 'ok' : ''", {
+      timeoutMs: 5000
+    })
+    const readNote = async () =>
+      JSON.parse(
+        await popup.ev(`JSON.stringify({
+          text: document.querySelector('.kypr-detail').innerText,
+          rows: [...document.querySelectorAll('.kypr-detail [data-kypr-note-field]')].map((el) => el.dataset.kyprNoteField)
+        })`)
+      )
+    const noteShown = await readNote()
+    check(
+      'メモの項目: 詳細にテンプレート名と値のある項目だけが出て、伏せ字は「表示」まで伏せる',
+      noteShown.rows.join() === '0,1,2,3' &&
+        noteShown.text.includes('銀行口座') &&
+        noteShown.text.includes('KYPR銀行') &&
+        noteShown.text.includes('7654321') &&
+        !noteShown.text.includes(MARK),
+      JSON.stringify(noteShown)
+    )
+    await popup.ev(
+      `document.querySelector('.kypr-detail [data-kypr-note-field="2"] button[title="表示"]')?.click()`
+    )
+    await waitFor(
+      popup,
+      `document.querySelector('.kypr-detail [data-kypr-note-field="2"]')?.innerText.includes(${JSON.stringify(`${MARK}-pin`)}) ? 'ok' : ''`,
+      { timeoutMs: 5000 }
+    ).catch(() => '')
+    const afterReveal = await readNote()
+    check(
+      'メモの項目: 「表示」を押した項目だけ値が出る',
+      afterReveal.text.includes(`${MARK}-pin`) && !afterReveal.text.includes(`${MARK}-custom`),
+      JSON.stringify({
+        pin: afterReveal.text.includes(`${MARK}-pin`),
+        custom: afterReveal.text.includes(`${MARK}-custom`)
+      })
+    )
+    popup.close()
+    await ui.ev('window.nemo.setOverlay(null)')
+
+    // Nemo で名前・本文を編集しても、項目・テンプレートは消えない（保存は既存の平文に重ねる）
+    const noteSaved = await json(
+      `window.nemo.kyprSave({ id: ${JSON.stringify(NF.id)}, type: 'note', fields: { name: 'Bank (edited)', notes: 'x' } })`
+    )
+    await other.sync()
+    const remoteNote = other.entries.get(NF.id)?.state
+    check(
+      'メモの項目: Nemo で名前・本文を編集しても、項目とテンプレートは残る',
+      noteSaved.ok === true &&
+        remoteNote?.kind === 'note' &&
+        remoteNote.item.name === 'Bank (edited)' &&
+        remoteNote.item.template === 'bank' &&
+        remoteNote.item.fields.length === 6 &&
+        remoteNote.item.fields[2].value === `${MARK}-pin`,
+      JSON.stringify({ noteSaved, kind: remoteNote?.kind, n: remoteNote?.item.fields?.length })
+    )
+    await json(`window.nemo.kyprTrash(${JSON.stringify(NF.id)})`)
+    const purgedNote = await json(`window.nemo.kyprPurge(${JSON.stringify(NF.id)})`)
+    check('メモの項目: 片付けた（ゴミ箱 → 完全削除）', purgedNote.ok === true, JSON.stringify(purgedNote))
   }
 
   /* ---- 10c. ワンタイムコード（TOTP） ---- */

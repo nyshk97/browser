@@ -212,6 +212,11 @@ const api: NemoUiApi = {
   kyprItemForEdit: (id) =>
     ipcRenderer.invoke('nemo:kypr-item-for-edit', id) as Promise<KyprItemDetail | null>,
   kyprCopy: (id, field) => ipcRenderer.invoke('nemo:kypr-copy', id, field) as Promise<boolean>,
+  kyprRevealNoteField: (id, ref) =>
+    ipcRenderer.invoke('nemo:kypr-reveal-note-field', id, ref) as Promise<string | null>,
+  kyprCopyNoteField: (id, ref) =>
+    ipcRenderer.invoke('nemo:kypr-copy-note-field', id, ref) as Promise<boolean>,
+  kyprSearchNotes: (query) => ipcRenderer.invoke('nemo:kypr-search-notes', query) as Promise<string[]>,
   kyprFill: (id) => ipcRenderer.invoke('nemo:kypr-fill', id) as Promise<KyprActionResult>,
   kyprTotpCodes: (ids) =>
     ipcRenderer.invoke('nemo:kypr-totp-codes', ids) as Promise<Record<string, KyprTotpCode>>,

@@ -26,12 +26,25 @@ export interface LoginItem {
   [key: string]: unknown;
 }
 
-// セキュアメモの平文（schema 1）。本文はプレーンテキスト
+// 項目（ラベル・値）。今はセキュアメモだけが読み書きする。key はテンプレートの項目の固定の名前（自分で足した項目は ""）。
+// 要素の中の知らないキーは保存し直すときもそのまま残す
+export interface NoteField {
+  key: string;
+  label: string;
+  value: string;
+  secret: boolean;
+  multiline: boolean;
+  [key: string]: unknown;
+}
+
+// セキュアメモの平文（schema 1）。本文はプレーンテキスト。template は "" でテンプレートなし（知らない値は普通のメモとして出す）
 export interface NoteItem {
   id: string;
   type: "note";
   schema: 1;
   name: string;
+  template: string;
+  fields: NoteField[];
   notes: string;
   extra: Record<string, unknown>;
   createdAt: string;
@@ -87,13 +100,25 @@ export const IDENTITY_KEYS = [
   "jobTitle",
   "organizationUrl",
   "passportNumber",
+  "passportIssueDate",
   "passportExpiry",
   "licenseNumber",
+  "licenseIssueDate",
   "licenseExpiry",
+  "licensePin1",
+  "licensePin2",
+  "myNumber",
+  "myNumberCardExpiry",
+  "myNumberCertExpiry",
+  "myNumberSignPassword",
+  "myNumberAuthPin",
+  "myNumberResidentPin",
+  "myNumberInfoPin",
   "insuranceSymbol",
   "insuranceNumber",
   "insuranceBranch",
   "insurerNumber",
+  "pensionNumber",
 ] as const;
 
 export type IdentityKey = (typeof IDENTITY_KEYS)[number];
@@ -195,14 +220,52 @@ function hasCommonFields(x: Record<string, unknown>): boolean {
   );
 }
 
-export function isNoteItem(x: Record<string, unknown>): x is NoteItem {
-  return x.type === "note" && x.schema === 1 && hasCommonFields(x);
+// 項目の並びとして読めるか。要素のキーの型だけを見る（無い key は ""、無い secret / multiline は false として読む）
+function isFieldList(x: unknown): boolean {
+  const optString = (v: unknown) => v === undefined || typeof v === "string";
+  const optBool = (v: unknown) => v === undefined || typeof v === "boolean";
+  return (
+    Array.isArray(x) &&
+    x.every(
+      (f) =>
+        isObject(f) &&
+        optString(f.key) &&
+        typeof f.label === "string" &&
+        typeof f.value === "string" &&
+        optBool(f.secret) &&
+        optBool(f.multiline),
+    )
+  );
+}
+
+// セキュアメモとして読めるか。あるキーの型だけを見る（無い template / fields は normalizeNoteItem が既定値で埋める）
+export function isNoteItem(x: Record<string, unknown>): boolean {
+  return (
+    x.type === "note" &&
+    x.schema === 1 &&
+    hasCommonFields(x) &&
+    (x.template === undefined || typeof x.template === "string") &&
+    (x.fields === undefined || isFieldList(x.fields))
+  );
+}
+
+// 無いキーを既定値で埋めて NoteItem にする（知らないキーは要素の中も残す）。isNoteItem が true のものだけ渡す
+export function normalizeNoteItem(x: Record<string, unknown>): NoteItem {
+  const fields = ((x.fields ?? []) as Record<string, unknown>[]).map((f) => ({
+    ...f,
+    key: f.key ?? "",
+    secret: f.secret ?? false,
+    multiline: f.multiline ?? false,
+  }));
+  return { ...x, template: x.template ?? "", fields } as NoteItem;
 }
 
 export function newNoteItem(fields: Partial<Omit<NoteItem, "id" | "type" | "schema">> = {}): NoteItem {
   const now = nowIso();
   return {
     name: "",
+    template: "",
+    fields: [],
     notes: "",
     extra: {},
     createdAt: now,
@@ -369,7 +432,7 @@ export async function decryptItem(vaultKey: Uint8Array, id: string, envelope: un
   }
   if (parsed.type === "note" && parsed.schema === 1) {
     if (!isNoteItem(parsed)) throw new KyprCryptoError("malformed", "セキュアメモの項目が不正");
-    return { kind: "note", item: parsed };
+    return { kind: "note", item: normalizeNoteItem(parsed) };
   }
   if (parsed.type === "card" && parsed.schema === 1) {
     if (!isCardItem(parsed)) throw new KyprCryptoError("malformed", "カードの項目が不正");

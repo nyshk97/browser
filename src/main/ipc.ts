@@ -89,6 +89,7 @@ import { clearJevKey, hasJevKey, saveJevKey } from './store/jev-key.js'
 import { runAutofill } from './autofill/index.js'
 import {
   copyKyprField,
+  copyKyprNoteField,
   copyKyprTotp,
   generateKyprPassword,
   kyprAutofillIdentityId,
@@ -104,7 +105,9 @@ import {
   kyprTotpMatches,
   lockKypr,
   revealKyprField,
+  revealKyprNoteField,
   saveKyprItem,
+  searchKyprNotes,
   signInKypr,
   signOutKypr,
   syncKypr,
@@ -171,6 +174,7 @@ import type {
   KyprInlineState,
   KyprItemDetail,
   KyprItemInput,
+  KyprNoteFieldRef,
   KyprPanelData,
   KyprStatus,
   KyprTotpCheck,
@@ -1325,6 +1329,16 @@ export function registerIpcHandlers(): void {
     return wc && !wc.isDestroyed() ? wc : null
   }
   const idOf = (value: unknown): string => requireString(value, 'kypr item id')
+  const noteFieldRefOf = (value: unknown): KyprNoteFieldRef => {
+    if (typeof value !== 'object' || value === null) throw new Error('invalid kypr note field')
+    const { index, key, label } = value as Record<string, unknown>
+    if (typeof index !== 'number' || !Number.isInteger(index) || index < 0)
+      throw new Error('invalid kypr note field')
+    // key はテンプレートの項目の名前（自分で足した項目は ""）、ラベルは空のこともある
+    if (typeof key !== 'string' || typeof label !== 'string' || key.length > 4096 || label.length > 4096)
+      throw new Error('invalid kypr note field')
+    return { index, key, label }
+  }
 
   ipcMain.handle('nemo:kypr-status', (event): KyprStatus => {
     requireWindow(event)
@@ -1389,6 +1403,18 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('nemo:kypr-copy', (event, id: unknown, field: unknown): boolean => {
     requireWindow(event)
     return copyKyprField(idOf(id), requireString(field, 'kypr field'))
+  })
+  ipcMain.handle('nemo:kypr-reveal-note-field', (event, id: unknown, ref: unknown): string | null => {
+    requireWindow(event)
+    return revealKyprNoteField(idOf(id), noteFieldRefOf(ref))
+  })
+  ipcMain.handle('nemo:kypr-copy-note-field', (event, id: unknown, ref: unknown): boolean => {
+    requireWindow(event)
+    return copyKyprNoteField(idOf(id), noteFieldRefOf(ref))
+  })
+  ipcMain.handle('nemo:kypr-search-notes', (event, query: unknown): string[] => {
+    requireWindow(event)
+    return searchKyprNotes(requireString(query, 'kypr search query'))
   })
   ipcMain.handle('nemo:kypr-fill', async (event, id: unknown): Promise<KyprActionResult> => {
     const win = requireWindow(event)

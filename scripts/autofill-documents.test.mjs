@@ -104,6 +104,33 @@ test('resolveDocumentExpiry: 発行日（決まらなかった日付の欄）は
   assert.equal(resolveDocumentExpiry(decisions, collected).get(2)?.option, 'passport_expiry')
 })
 
+test('resolveDocumentExpiry: 発行日が決まった欄に当たったら、その書類の期限（番号 → 発行日 → 有効期限）', () => {
+  const collected = collectedOf(
+    [
+      { label: '旅券番号', members: [0] },
+      { label: '発行日', members: [1] },
+      { label: '有効期限', members: [2] },
+      { label: '免許証番号', members: [3] },
+      { label: '交付日', members: [4] },
+      { label: '有効期限', members: [5] }
+    ],
+    [el(), el(), el(), el(), el(), el()]
+  )
+  const decisions = new Map([
+    [0, jev('passport_number')],
+    [1, jev('passport_issue_date')],
+    [2, jev('document_expiry')],
+    [3, jev('license_number')],
+    [4, jev('license_issue_date')],
+    [5, jev('document_expiry')]
+  ])
+  const resolved = resolveConflicts(resolveDocumentExpiry(decisions, collected))
+  assert.equal(resolved.get(1)?.option, 'passport_issue_date')
+  assert.equal(resolved.get(2)?.option, 'passport_expiry')
+  assert.equal(resolved.get(4)?.option, 'license_issue_date')
+  assert.equal(resolved.get(5)?.option, 'license_expiry')
+})
+
 test('resolveDocumentExpiry: 日付でない欄（発行国の select）・カード番号・保険証・先頭なら空欄のまま', () => {
   const collected = collectedOf(
     [

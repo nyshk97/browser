@@ -28,6 +28,7 @@ import {
   totpTitle
 } from '../../vendor/kypr/client/totp.ts'
 import { IDENTITY_FIELDS, identitySummary, isValidIdentityDate } from '../../vendor/kypr/client/identity.ts'
+import { noteSearchText, noteTemplate } from '../../vendor/kypr/client/note-templates.ts'
 import {
   IDENTITY_KEYS,
   newCardItem,
@@ -37,6 +38,7 @@ import {
   newTotpItem,
   normalizeTotpSecret,
   nowIso,
+  type NoteField,
   totpProblem,
   type IdentityKey,
   type TotpItem,
@@ -55,6 +57,8 @@ import type {
   KyprBadge,
   KyprItemDetail,
   KyprItemInput,
+  KyprNoteField,
+  KyprNoteFieldRef,
   KyprStatus,
   KyprSummary,
   KyprTotpCheck,
@@ -397,7 +401,15 @@ function summaryOf(entry: VaultEntry): KyprSummary {
       host: null
     }
   }
-  if (s.kind === 'note') return { ...base, kind: 'note', name: s.item.name, subtitle: '', host: null }
+  // メモはテンプレート名だけ（本文も項目の値も出さない）
+  if (s.kind === 'note')
+    return {
+      ...base,
+      kind: 'note',
+      name: s.item.name,
+      subtitle: noteTemplate(s.item.template)?.name ?? '',
+      host: null
+    }
   // 身分証の番号は一覧に出さない（氏名かメールだけ）
   if (s.kind === 'identity')
     return { ...base, kind: 'identity', name: s.item.name, subtitle: identitySummary(s.item), host: null }
@@ -521,13 +533,16 @@ export function kyprLoginForFill(
   return { username, password, uris }
 }
 
+/** 自動入力に一切出さない項目（kypr の `noAutofill`。免許の暗証番号とマイナンバーカードの全部）。 */
+const NO_AUTOFILL_KEYS = new Set<string>(IDENTITY_FIELDS.filter((f) => f.noAutofill).map((f) => f.key))
+
 /**
  * フォーム自動入力に使う個人情報（`preferredId` は設定で選んだもの）。ロック中・0 件なら null。
- * 平文は main の中だけで使う（renderer には渡さない）。
+ * 平文は main の中だけで使う（renderer には渡さない）。`noAutofill` の項目は渡さない。
  */
 export function kyprIdentityForFill(
   preferredId: string | null
-): { id: string; values: Record<IdentityKey, string> } | null {
+): { id: string; values: Partial<Record<IdentityKey, string>> } | null {
   if (!session) return null
   const id = kyprAutofillIdentityId(preferredId)
   const entry = id ? session.entries.get(id) : undefined
@@ -536,7 +551,7 @@ export function kyprIdentityForFill(
   touchKypr()
   return {
     id: entry.id,
-    values: Object.fromEntries(IDENTITY_KEYS.map((k) => [k, item[k]])) as Record<IdentityKey, string>
+    values: Object.fromEntries(IDENTITY_KEYS.filter((k) => !NO_AUTOFILL_KEYS.has(k)).map((k) => [k, item[k]]))
   }
 }
 
@@ -585,11 +600,74 @@ export function kyprItem(id: string, withSecrets = false): KyprItemDetail | null
       if (typeof item[field] === 'string' && item[field] !== '') secrets.push(field)
       if (!withSecrets) item[field] = ''
     }
+    if (s.kind === 'note') {
+      // 項目は `noteFields` で別に渡す（伏せ字の値は編集でも空。メモの編集画面は項目を扱わず、保存は既存の平文に重ねるので消えない）
+      delete item['fields']
+      return {
+        ...base,
+        kind: 'note',
+        editable: true,
+        item,
+        secrets,
+        error: null,
+        noteFields: noteFieldsOf(s.item.fields),
+        noteTemplateName: noteTemplate(s.item.template)?.name ?? null
+      }
+    }
     return { ...base, kind: s.kind, editable: true, item, secrets, error: null }
   }
   if (s.kind === 'unknown')
     return { ...base, kind: 'unknown', editable: false, item: null, secrets: [], error: null }
   return { ...base, kind: 'error', editable: false, item: null, secrets: [], error: s.code }
+}
+
+/** セキュアメモの項目を詳細に出す形にする。**伏せ字の項目の値は空にする**（値の有無は `hasValue`）。 */
+function noteFieldsOf(fields: readonly NoteField[]): KyprNoteField[] {
+  return fields.map((f, index) => ({
+    index,
+    key: f.key,
+    label: f.label,
+    value: f.secret ? '' : f.value,
+    secret: f.secret,
+    multiline: f.multiline,
+    hasValue: f.value !== ''
+  }))
+}
+
+/**
+ * 指した項目（位置・`key`・ラベルが今の平文と揃ったものだけ）。詳細を開いてから同期で並びが変わった・
+ * 消えたときは null（隣の項目の値を出さない）。
+ */
+function noteFieldAt(id: string, ref: KyprNoteFieldRef): NoteField | null {
+  const entry = session?.entries.get(id)
+  if (!entry || entry.state.kind !== 'note') return null
+  const field = entry.state.item.fields[ref.index]
+  if (!field || field.key !== ref.key || field.label !== ref.label) return null
+  return field
+}
+
+/** セキュアメモの伏せ字の項目を 1 つだけ取る（詳細で「表示」を押したとき）。伏せ字でない項目は詳細に値があるので null。 */
+export function revealKyprNoteField(id: string, ref: KyprNoteFieldRef): string | null {
+  const field = noteFieldAt(id, ref)
+  if (!field?.secret) return null
+  touchKypr()
+  return field.value
+}
+
+/**
+ * セキュアメモを探す（一致した ID。ゴミ箱の中も含む。絞り込みは renderer）。本文と伏せ字でない項目の値で探す
+ * （名前・テンプレート名は一覧の `name` / `subtitle` で renderer が探す）。平文を renderer に渡さないために main で探す。
+ */
+export function searchKyprNotes(query: string): string[] {
+  const q = query.trim().toLowerCase()
+  if (!session || q === '') return []
+  const ids: string[] = []
+  for (const entry of session.entries.values()) {
+    if (entry.state.kind !== 'note') continue
+    const item = entry.state.item
+    if (`${item.notes}\n${noteSearchText(item)}`.toLowerCase().includes(q)) ids.push(entry.id)
+  }
+  return ids
 }
 
 /** 秘密の項目を 1 つだけ取る（詳細で「表示」を押したとき）。 */
@@ -683,6 +761,16 @@ export function copyKyprField(id: string, field: string): boolean {
   if (value === '') return false
   writeOurClipboard(value)
   log('kypr.copy', { kind: s.kind, field })
+  return true
+}
+
+/** セキュアメモの項目をコピーする（伏せ字の項目も。値は renderer を通さない）。 */
+export function copyKyprNoteField(id: string, ref: KyprNoteFieldRef): boolean {
+  const field = noteFieldAt(id, ref)
+  if (!field || field.value === '') return false
+  writeOurClipboard(field.value)
+  // key はテンプレートの項目の固定の名前（自分で足した項目は ""。ラベルは利用者が書くので載せない）
+  log('kypr.copy', { kind: 'note', field: field.key || 'custom' })
   return true
 }
 

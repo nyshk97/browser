@@ -526,7 +526,8 @@ export interface KyprSummary {
   kind: KyprItemKind
   name: string
   /**
-   * ログインはユーザー名、カードは「ブランド •••• 下 4 桁」、個人情報は氏名（無ければメール）、それ以外は空。
+   * ログインはユーザー名、カードは「ブランド •••• 下 4 桁」、個人情報は氏名（無ければメール）、
+   * セキュアメモはテンプレート名（テンプレートなしは空。本文も項目の値も入れない）、それ以外は空。
    * ワンタイムコードは `name` が「発行元: ラベル」で、ここは空（コードは `kyprTotpCodes` で別に取る）
    */
   subtitle: string
@@ -568,6 +569,33 @@ export interface KyprItemDetail {
   secrets: string[]
   /** 隔離したときの理由（`tampered` など）。 */
   error: string | null
+  /**
+   * セキュアメモの項目（kypr の `fields`。並びのまま）。**伏せ字の項目の値は詳細でも編集でも空**
+   * （`hasValue` で値の有無だけ分かる）。値は「表示」（`kyprRevealNoteField`）・コピーのときだけ main が出す。
+   * メモ以外は無い。`item` には `fields` を入れない。
+   */
+  noteFields?: KyprNoteField[]
+  /** セキュアメモのテンプレート名（テンプレートなし・知らないテンプレートは null）。 */
+  noteTemplateName?: string | null
+}
+
+/** セキュアメモの項目 1 つ（詳細に出す形）。 */
+export interface KyprNoteField extends KyprNoteFieldRef {
+  /** 伏せ字の項目は空（`hasValue` を見る）。 */
+  value: string
+  secret: boolean
+  multiline: boolean
+  hasValue: boolean
+}
+
+/**
+ * セキュアメモの項目の指し方。**位置と `key`・ラベルの 3 つが今の平文と揃ったときだけ**値を出す
+ * （自分で足した項目の `key` は全部 `""` なので `key` だけでは指せず、位置だけだと同期で並びが変わったときに隣の項目を指す）。
+ */
+export interface KyprNoteFieldRef {
+  index: number
+  key: string
+  label: string
 }
 
 /** 作成・更新で renderer から受け取る項目（知っている項目だけ。main が検査して既存の項目に重ねる）。 */
@@ -1466,6 +1494,12 @@ export interface NemoUiApi {
   kyprItemForEdit(id: string): Promise<KyprItemDetail | null>
   /** main がクリップボードに書く（30 秒で消す）。値は renderer を通さない。 */
   kyprCopy(id: string, field: string): Promise<boolean>
+  /** セキュアメモの伏せ字の項目を 1 つだけ取る（詳細で「表示」を押したとき）。指した項目が今の平文と揃わなければ null。 */
+  kyprRevealNoteField(id: string, ref: KyprNoteFieldRef): Promise<string | null>
+  /** セキュアメモの項目をコピーする（30 秒で消す）。指した項目が今の平文と揃わない・値が空なら false。 */
+  kyprCopyNoteField(id: string, ref: KyprNoteFieldRef): Promise<boolean>
+  /** セキュアメモを本文・伏せ字でない項目の値で探す（一致した ID）。平文を renderer に渡さないために main で探す。 */
+  kyprSearchNotes(query: string): Promise<string[]>
   /** 前面のタブに入れる（入れる先のフレームの URL で照合し直す）。 */
   kyprFill(id: string): Promise<KyprActionResult>
   /** 表示中のワンタイムコードの今のコード（id ごと）。ポップアップが 1 秒ごとに聞く。 */

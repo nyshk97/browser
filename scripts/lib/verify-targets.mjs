@@ -299,6 +299,7 @@ export const OWNERS = new Map([
   ['src/vendor/kypr/client/generator.ts', ['kypr']],
   ['src/vendor/kypr/client/identity.ts', ['kypr', 'autofill']],
   ['src/vendor/kypr/client/index.ts', ['kypr']],
+  ['src/vendor/kypr/client/note-templates.ts', ['kypr']],
   ['src/vendor/kypr/client/psl-data.ts', ['kypr']],
   ['src/vendor/kypr/client/session.ts', ['kypr']],
   ['src/vendor/kypr/client/url-match.ts', ['kypr']],

@@ -3,6 +3,7 @@ import type {
   KyprActionResult,
   KyprInlineState,
   KyprItemDetail,
+  KyprNoteField,
   KyprPanelData,
   KyprStatus,
   KyprSummary,
@@ -598,6 +599,21 @@ export function KyprPanel({ onClose }: { onClose: () => void }): React.JSX.Eleme
   const showToast = useCallback((text: string) => {
     setToast((prev) => ({ text, n: (prev?.n ?? 0) + 1 }))
   }, [])
+  const copyNoteField = useCallback(
+    (id: string, field: KyprNoteField) => {
+      void window.nemo
+        .kyprCopyNoteField(id, { index: field.index, key: field.key, label: field.label })
+        .then((ok) => {
+          // 開いてから同期で項目が変わると main が断る（隣の項目の値を出さない）
+          showToast(
+            ok
+              ? `${field.label || '項目'}をコピーしました（30 秒で消えます）`
+              : 'この項目は変わりました。開き直してください'
+          )
+        })
+    },
+    [showToast]
+  )
   const copyTotp = useCallback(
     (id: string) => {
       void window.nemo.kyprCopyTotp(id).then((ok) => {
@@ -669,6 +685,7 @@ export function KyprPanel({ onClose }: { onClose: () => void }): React.JSX.Eleme
           autofillIdentityId={data.autofillIdentityId}
           onAutofillChanged={reload}
           onCopy={copy}
+          onCopyNoteField={copyNoteField}
           onFillTotp={fillTotp}
           onCopyTotp={copyTotp}
           onBack={() => {
@@ -899,6 +916,20 @@ function KyprList({
   const listRef = useRef<HTMLDivElement>(null)
   const closeMenu = useCallback(() => setMenu(null), [])
   useEffect(() => inputRef.current?.focus(), [])
+  // セキュアメモの本文・伏せ字でない項目の値での一致（main で探す。平文を renderer に持たない）
+  // （結果は探した語と組で持ち、今の語と違う結果は使わない）
+  const [noteHits, setNoteHits] = useState<{ q: string; ids: ReadonlySet<string> }>({ q: '', ids: new Set() })
+  useEffect(() => {
+    const q = query.trim()
+    if (q === '' || q.length > 4096) return
+    let alive = true
+    void window.nemo.kyprSearchNotes(q).then((ids) => {
+      if (alive) setNoteHits({ q, ids: new Set(ids) })
+    })
+    return () => {
+      alive = false
+    }
+  }, [query, data.items])
 
   const items = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -912,10 +943,14 @@ function KyprList({
         if (filter !== 'all' && filter !== 'trash' && item.kind !== filter) return false
       }
       if (!q) return true
-      // ワンタイムコードの名前は「発行元: ラベル」、host は URL のホスト（検索の対象は発行元・ラベル・URL）
-      return [item.name, item.subtitle, item.host ?? ''].some((text) => text.toLowerCase().includes(q))
+      // ワンタイムコードの名前は「発行元: ラベル」、host は URL のホスト（検索の対象は発行元・ラベル・URL）。
+      // メモの subtitle はテンプレート名。本文・項目の値は main で探した `noteHits`
+      return (
+        [item.name, item.subtitle, item.host ?? ''].some((text) => text.toLowerCase().includes(q)) ||
+        (noteHits.q === query.trim() && noteHits.ids.has(item.id))
+      )
     })
-  }, [data.items, query, filter, mode])
+  }, [data.items, query, filter, mode, noteHits])
 
   // 検索中は「このページ」のカードを畳む（検索の結果だけを見せる）
   const showPage = data.page !== null && query.trim() === ''
@@ -1238,6 +1273,7 @@ function KyprDetail({
   autofillIdentityId,
   onAutofillChanged,
   onCopy,
+  onCopyNoteField,
   onFillTotp,
   onCopyTotp,
   onBack,
@@ -1249,6 +1285,7 @@ function KyprDetail({
   autofillIdentityId: string | null
   onAutofillChanged: () => void
   onCopy: (id: string, field: string) => void
+  onCopyNoteField: (id: string, field: KyprNoteField) => void
   onFillTotp: (id: string) => void
   onCopyTotp: (id: string) => void
   onBack: () => void
@@ -1353,6 +1390,8 @@ function KyprDetail({
   }
   const editable = detail.editable && !readOnly
   const visibleFields = fields.filter((f) => f.value !== '' || detail.secrets.includes(f.key))
+  // セキュアメモの項目は値のあるものだけ（伏せ字の値は main が空にして渡すので `hasValue` で見る）
+  const noteFields = detail.kind === 'note' ? (detail.noteFields ?? []).filter((f) => f.hasValue) : []
   const isAutofill = detail.kind === 'identity' && !detail.deleted && autofillIdentityId === detail.id
 
   return (
@@ -1387,7 +1426,7 @@ function KyprDetail({
               : str('name')) || '（名前なし）'}
           </span>
           <span className="kypr-row-sub">
-            {host ?? KIND_LABEL[detail.kind]}
+            {host ?? detail.noteTemplateName ?? KIND_LABEL[detail.kind]}
             {detail.deleted ? <span className="kypr-tag warn">ゴミ箱</span> : null}
             {isAutofill ? <span className="kypr-tag on">フォーム自動入力に使う</span> : null}
           </span>
@@ -1400,7 +1439,7 @@ function KyprDetail({
       {detail.kind === 'totp' && !detail.deleted ? (
         <KyprTotpBig id={detail.id} onFill={onFillTotp} onCopy={onCopyTotp} />
       ) : null}
-      {visibleFields.length > 0 || uris.length > 0 || str('notes') ? (
+      {visibleFields.length > 0 || noteFields.length > 0 || uris.length > 0 || str('notes') ? (
         <div className="kypr-fields">
           {visibleFields.map((f, i) => {
             const secret = f.secret ?? SECRET_FIELDS.has(f.key)
@@ -1451,6 +1490,57 @@ function KyprDetail({
                   ) : null}
                 </div>
               </Fragment>
+            )
+          })}
+          {noteFields.map((f) => {
+            // 「表示」で取った値は `revealed` に `note:<位置>` で持つ（上の段のキーと混ざらない）
+            const revealKey = `note:${f.index}`
+            const visible = !f.secret || revealed.has(revealKey)
+            return (
+              <div key={revealKey} className="kypr-field" data-kypr-note-field={f.index}>
+                <span className="kypr-field-text">
+                  <span className="kypr-field-label">{f.label || '（ラベルなし）'}</span>
+                  <span className={`kypr-field-value${f.secret ? ' mono' : ''}${f.multiline ? ' pre' : ''}`}>
+                    {!f.secret ? f.value : visible ? revealed.get(revealKey) : '••••••••••'}
+                  </span>
+                </span>
+                {f.secret ? (
+                  <button
+                    type="button"
+                    className="icon"
+                    title={visible ? '隠す' : '表示'}
+                    onClick={() => {
+                      if (revealed.has(revealKey)) {
+                        setRevealed((prev) => {
+                          const next = new Map(prev)
+                          next.delete(revealKey)
+                          return next
+                        })
+                        return
+                      }
+                      void window.nemo
+                        .kyprRevealNoteField(detail.id, { index: f.index, key: f.key, label: f.label })
+                        .then((value) => {
+                          if (value === null) {
+                            setMessage('この項目は変わりました。開き直してください')
+                            return
+                          }
+                          setRevealed((prev) => new Map(prev).set(revealKey, value))
+                        })
+                    }}
+                  >
+                    <KyprIcon name={visible ? 'eyeOff' : 'eye'} />
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="icon"
+                  title="コピー（30 秒で消えます）"
+                  onClick={() => onCopyNoteField(detail.id, f)}
+                >
+                  <KyprIcon name="copy" />
+                </button>
+              </div>
             )
           })}
           {uris.length > 0 ? (

@@ -122,14 +122,826 @@
     "vaultKey": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
     "id": "7c9e4a2b-1f3d-4b8e-a6c5-0d9f8e7a6b5c",
     "nonce": "000000000000000000000002",
-    "plaintext": "{\"id\":\"7c9e4a2b-1f3d-4b8e-a6c5-0d9f8e7a6b5c\",\"type\":\"note\",\"schema\":1,\"name\":\"リカバリーコード\",\"notes\":\"1234-5678\\n2345-6789\\n（例）\",\"extra\":{},\"createdAt\":\"2026-09-28T00:00:00.000Z\",\"updatedAt\":\"2026-09-28T00:00:00.000Z\"}",
+    "plaintext": "{\"id\":\"7c9e4a2b-1f3d-4b8e-a6c5-0d9f8e7a6b5c\",\"type\":\"note\",\"schema\":1,\"name\":\"楽天銀行\",\"template\":\"bank\",\"fields\":[{\"key\":\"bankName\",\"label\":\"銀行名\",\"value\":\"楽天銀行\",\"secret\":false,\"multiline\":false},{\"key\":\"accountNumber\",\"label\":\"口座番号\",\"value\":\"1234567\",\"secret\":false,\"multiline\":false},{\"key\":\"pin\",\"label\":\"キャッシュカードの暗証番号\",\"value\":\"0000\",\"secret\":true,\"multiline\":false},{\"key\":\"\",\"label\":\"メモ用の合言葉\",\"value\":\"1行目\\n2行目\",\"secret\":true,\"multiline\":true}],\"notes\":\"1234-5678\\n2345-6789\\n（例）\",\"extra\":{},\"createdAt\":\"2026-09-28T00:00:00.000Z\",\"updatedAt\":\"2026-09-28T00:00:00.000Z\"}",
     "envelope": {
       "v": 1,
       "alg": "A256GCM",
       "n": "AAAAAAAAAAAAAAAC",
-      "c": "OmqzaWlCKLtdTrSZzHaeNkK3eDe2ZKFriAA0ITUiLs/uq5xjMMBbU4p8wWoxLbJW8L4R5SW5A7XjZbSrSJHH2sBQn2bysOIastKcpxBUj7FmLIeWNVKm0pP+h62T9itDPR3vWdo4ZTQ+TrCveX38OfR+mOqCA+4YNE5Bn37sPRh4GczpgFFQHJtCoC4Kw7DEGZ3qUTVm0YKla/ToYyzxQgypEHSV73YKo9DPSnimpvgJl1AauwhQynwKLub3yLlYW4iDwuEbdCyYuhQSIBOdj9Rm/MvPlAFLFQoWYyIAG1lsFgeMvQEaT3fTVzvyWn2HvJ05gE/TaNaO/zw="
+      "c": "OmqzaWlCKLtdTrSZzHaeNkK3eDe2ZKFriAA0ITUiLs/uq5xjMMBbU4p8wWoxLbJW8L4R5SW5A7XjZbSrSJHH2sBQn2bysOIastKcpxBUipdxKqGUP1u22bHYRgINYcydrvIyzjyTfTp+QbGwPiL8Zb8qxr3FDOF1eFR2lDX9Mw83TpW692xTlgXmZvzgTmkhGYvq3ceSS0ILtB8YbSKwRgikEXTTlCDOPE8Y3uN5AUjYG+4AwxoTlS9IcaLl3O8JB6HEwuEDcSSNpx0fDwKdj5A1oIqcxB0JGlNLTjAKAwg/T1jJ/UVkCkCTT8KHvftnnlaTVf1qROQ5FiSi7raLsWtoUj1Hj5CkefxfWgo7q7gRFdMCW2j8mlsG/85+NbnPV5Y1SfNIquOfnjpPMBYulxzeEbBJ929Q05JBTKag973uhdcQgXWoyudFnf06P3tb9/YX/WcWQ1JNOqWzy+II/9RulbQW79C4kPVR/84P3l++wnDuxoPj6/VWFvoxxeEqwQsq1WDiuQ9fjw1ylY1KLy091FHaezaBnkvKAk/I+e+rttJEI8aj+FbUkvoOsFXDQWn3KDb2yFkm2uRZXvQZPSzscopKERUs9Tgy+4GPcfLSmhn9VrTyoF+ZPQ2N9nhlIPio4IHfrPYaTywDYCGCK741qjHcjo+93BS7QlYSRm9iec5uy01GgnYhXvC9kE2HMbVYdfgkbB22+hak7/sUPjn2FvrtefKtw/Ty0QKKxpxSuSiMNX1IyoP4zEO+ZImDiqoSCKZoNjuCJNXYSPf05Yt5G0haqd26DbgA38Y/sS+qiVwj0EePpGu3w7BzZW4Ir1ssvFFxy04STW8iHFSDRlWMwTy6NSvRZzgfoOCe79xlGu8q/LfbsWYTVwfWXJO/qQ=="
     }
   },
+  "noteItemSparse": [
+    {
+      "vaultKey": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "id": "2b6d9f1a-4c8e-4a3b-9d7f-6e1c5a8b3d02",
+      "nonce": "000000000000000000000007",
+      "plaintext": "{\"id\":\"2b6d9f1a-4c8e-4a3b-9d7f-6e1c5a8b3d02\",\"type\":\"note\",\"schema\":1,\"name\":\"リカバリーコード\",\"notes\":\"1234-5678\\n2345-6789\\n（例）\",\"extra\":{},\"createdAt\":\"2026-09-28T00:00:00.000Z\",\"updatedAt\":\"2026-09-28T00:00:00.000Z\"}",
+      "envelope": {
+        "v": 1,
+        "alg": "A256GCM",
+        "n": "AAAAAAAAAAAAAAAH",
+        "c": "SYSZFMLtzc4GeJBElONZ82lm2jwdOa+CMkVKWMFinqu47ZJ9gg4j9I0WnnyCAIQQ43RDcsAo0PeY2nbKR1k9QBkfhZm6Gl49blF0ERrIPOYc1ERYGxXrHPDhjptz9MZndoJ8N5QJrRsJOVVehbElcA6CTMPpI3LfRutYIHNqE42QjsTlvRToLVqOjKzRIL0z8GhUkBRMOsnDh9BpcWiQhF5FSxaUsLr4+WZmkuz2W6TqJ0mvkppxtfAPlnbdua+G2P+iaRtN0XqjUHVBA7cRyG6szbKrcjJkBzGQU10s2hI6ZhBTl+YcthlTpEWl/vuub9SbkSCgXt6QzeU="
+      },
+      "normalized": {
+        "id": "2b6d9f1a-4c8e-4a3b-9d7f-6e1c5a8b3d02",
+        "type": "note",
+        "schema": 1,
+        "name": "リカバリーコード",
+        "notes": "1234-5678\n2345-6789\n（例）",
+        "extra": {},
+        "createdAt": "2026-09-28T00:00:00.000Z",
+        "updatedAt": "2026-09-28T00:00:00.000Z",
+        "template": "",
+        "fields": []
+      }
+    },
+    {
+      "vaultKey": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "id": "9a3c5e7b-1d2f-4e6a-8b0c-4f7d2a9e6c13",
+      "nonce": "000000000000000000000008",
+      "plaintext": "{\"id\":\"9a3c5e7b-1d2f-4e6a-8b0c-4f7d2a9e6c13\",\"type\":\"note\",\"schema\":1,\"name\":\"リカバリーコード\",\"notes\":\"1234-5678\\n2345-6789\\n（例）\",\"extra\":{},\"createdAt\":\"2026-09-28T00:00:00.000Z\",\"updatedAt\":\"2026-09-28T00:00:00.000Z\",\"template\":\"future-template\",\"fields\":[{\"label\":\"ラベルだけ\",\"value\":\"値\",\"futureFieldKey\":[1]}],\"futureKey\":true}",
+      "envelope": {
+        "v": 1,
+        "alg": "A256GCM",
+        "n": "AAAAAAAAAAAAAAAI",
+        "c": "rP9hAX6UJUBsNZ0CpWQ5H1Vv/QiIpR0qAF2HcVDegiH3wdyviKJnZnpcvKD/eeueirv+IEi86xu5foiL2M3kFU9hinmZdJUP+MMcCz/ud0VOkpoK/6W9knJq7V7vHvkjQKq6wGriZJ5uY+N8tBqeIvEJw6vtFEH1watn17KUb5wbZAkV2CIDTVH5ESi5x1QYgkrzt+a1WFflsoHJ201eXVBOvrLz/VKjTZzpgP/kHy93vmmj7gub6+/0XxUOEU8/eOkcqNn302IXg3LhvHzNDeCQbHhLmslLNMppiD2GQSBmpl9aLOWLM2PuoUO0j3Dca1yRXsN/LFBtT/+44wcgLQdW04rIkKhEMUIwxB+VWLbkfjTB5N94GAbYGCf/4amhwv1a3hXybDcGC5YaI252B8Q2fMWpxV00bMwZNs2wJeasmvZls/4JqmCnPPmpX2N+nJzzKchdTyp9CJzGIQFuZxezoaXMvf4aTujtlOUFTUsfnm4="
+      },
+      "normalized": {
+        "id": "9a3c5e7b-1d2f-4e6a-8b0c-4f7d2a9e6c13",
+        "type": "note",
+        "schema": 1,
+        "name": "リカバリーコード",
+        "notes": "1234-5678\n2345-6789\n（例）",
+        "extra": {},
+        "createdAt": "2026-09-28T00:00:00.000Z",
+        "updatedAt": "2026-09-28T00:00:00.000Z",
+        "template": "future-template",
+        "fields": [
+          {
+            "label": "ラベルだけ",
+            "value": "値",
+            "futureFieldKey": [
+              1
+            ],
+            "key": "",
+            "secret": false,
+            "multiline": false
+          }
+        ],
+        "futureKey": true
+      }
+    }
+  ],
+  "noteItemMalformed": [
+    "{\"id\":\"2b6d9f1a-4c8e-4a3b-9d7f-6e1c5a8b3d02\",\"type\":\"note\",\"schema\":1,\"name\":\"リカバリーコード\",\"notes\":\"1234-5678\\n2345-6789\\n（例）\",\"extra\":{},\"createdAt\":\"2026-09-28T00:00:00.000Z\",\"updatedAt\":\"2026-09-28T00:00:00.000Z\",\"template\":1,\"fields\":[]}",
+    "{\"id\":\"2b6d9f1a-4c8e-4a3b-9d7f-6e1c5a8b3d02\",\"type\":\"note\",\"schema\":1,\"name\":\"リカバリーコード\",\"notes\":\"1234-5678\\n2345-6789\\n（例）\",\"extra\":{},\"createdAt\":\"2026-09-28T00:00:00.000Z\",\"updatedAt\":\"2026-09-28T00:00:00.000Z\",\"template\":null,\"fields\":[]}",
+    "{\"id\":\"2b6d9f1a-4c8e-4a3b-9d7f-6e1c5a8b3d02\",\"type\":\"note\",\"schema\":1,\"name\":\"リカバリーコード\",\"notes\":\"1234-5678\\n2345-6789\\n（例）\",\"extra\":{},\"createdAt\":\"2026-09-28T00:00:00.000Z\",\"updatedAt\":\"2026-09-28T00:00:00.000Z\",\"template\":\"\",\"fields\":{}}",
+    "{\"id\":\"2b6d9f1a-4c8e-4a3b-9d7f-6e1c5a8b3d02\",\"type\":\"note\",\"schema\":1,\"name\":\"リカバリーコード\",\"notes\":\"1234-5678\\n2345-6789\\n（例）\",\"extra\":{},\"createdAt\":\"2026-09-28T00:00:00.000Z\",\"updatedAt\":\"2026-09-28T00:00:00.000Z\",\"template\":\"\",\"fields\":[\"文字列\"]}",
+    "{\"id\":\"2b6d9f1a-4c8e-4a3b-9d7f-6e1c5a8b3d02\",\"type\":\"note\",\"schema\":1,\"name\":\"リカバリーコード\",\"notes\":\"1234-5678\\n2345-6789\\n（例）\",\"extra\":{},\"createdAt\":\"2026-09-28T00:00:00.000Z\",\"updatedAt\":\"2026-09-28T00:00:00.000Z\",\"template\":\"\",\"fields\":[{\"key\":\"\",\"label\":\"l\",\"value\":1234,\"secret\":false,\"multiline\":false}]}",
+    "{\"id\":\"2b6d9f1a-4c8e-4a3b-9d7f-6e1c5a8b3d02\",\"type\":\"note\",\"schema\":1,\"name\":\"リカバリーコード\",\"notes\":\"1234-5678\\n2345-6789\\n（例）\",\"extra\":{},\"createdAt\":\"2026-09-28T00:00:00.000Z\",\"updatedAt\":\"2026-09-28T00:00:00.000Z\",\"template\":\"\",\"fields\":[{\"key\":\"\",\"value\":\"v\",\"secret\":false,\"multiline\":false}]}",
+    "{\"id\":\"2b6d9f1a-4c8e-4a3b-9d7f-6e1c5a8b3d02\",\"type\":\"note\",\"schema\":1,\"name\":\"リカバリーコード\",\"notes\":\"1234-5678\\n2345-6789\\n（例）\",\"extra\":{},\"createdAt\":\"2026-09-28T00:00:00.000Z\",\"updatedAt\":\"2026-09-28T00:00:00.000Z\",\"template\":\"\",\"fields\":[{\"key\":null,\"label\":\"l\",\"value\":\"v\",\"secret\":false,\"multiline\":false}]}",
+    "{\"id\":\"2b6d9f1a-4c8e-4a3b-9d7f-6e1c5a8b3d02\",\"type\":\"note\",\"schema\":1,\"name\":\"リカバリーコード\",\"notes\":\"1234-5678\\n2345-6789\\n（例）\",\"extra\":{},\"createdAt\":\"2026-09-28T00:00:00.000Z\",\"updatedAt\":\"2026-09-28T00:00:00.000Z\",\"template\":\"\",\"fields\":[{\"key\":\"\",\"label\":\"l\",\"value\":\"v\",\"secret\":\"true\",\"multiline\":false}]}",
+    "{\"id\":\"2b6d9f1a-4c8e-4a3b-9d7f-6e1c5a8b3d02\",\"type\":\"note\",\"schema\":1,\"name\":\"リカバリーコード\",\"notes\":\"1234-5678\\n2345-6789\\n（例）\",\"extra\":{},\"createdAt\":\"2026-09-28T00:00:00.000Z\",\"updatedAt\":\"2026-09-28T00:00:00.000Z\",\"template\":\"\",\"fields\":[{\"key\":\"\",\"label\":\"l\",\"value\":\"v\",\"secret\":false,\"multiline\":1}]}"
+  ],
+  "noteTemplates": [
+    {
+      "id": "bank",
+      "name": "銀行口座",
+      "fields": [
+        {
+          "key": "bankName",
+          "label": "銀行名",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "bankCode",
+          "label": "金融機関コード",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "branchName",
+          "label": "支店名",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "branchCode",
+          "label": "支店番号",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "accountType",
+          "label": "口座種別",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "accountNumber",
+          "label": "口座番号",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "accountHolder",
+          "label": "口座名義（カナ）",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "pin",
+          "label": "キャッシュカードの暗証番号",
+          "secret": true,
+          "multiline": false
+        },
+        {
+          "key": "contractNumber",
+          "label": "ネットバンキングの契約番号",
+          "secret": false,
+          "multiline": false
+        }
+      ]
+    },
+    {
+      "id": "brokerage",
+      "name": "証券口座",
+      "fields": [
+        {
+          "key": "company",
+          "label": "証券会社",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "branchName",
+          "label": "支店",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "accountNumber",
+          "label": "口座番号",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "accountKind",
+          "label": "口座区分",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "tradePin",
+          "label": "取引暗証番号",
+          "secret": true,
+          "multiline": false
+        }
+      ]
+    },
+    {
+      "id": "wifi",
+      "name": "Wi-Fi",
+      "fields": [
+        {
+          "key": "ssid",
+          "label": "ネットワーク名",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "password",
+          "label": "パスワード",
+          "secret": true,
+          "multiline": false
+        },
+        {
+          "key": "security",
+          "label": "暗号化方式",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "routerModel",
+          "label": "ルーターの機種",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "adminUrl",
+          "label": "管理画面の URL",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "adminPassword",
+          "label": "管理者パスワード",
+          "secret": true,
+          "multiline": false
+        }
+      ]
+    },
+    {
+      "id": "apiKey",
+      "name": "API キー",
+      "fields": [
+        {
+          "key": "service",
+          "label": "サービス",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "key",
+          "label": "キー",
+          "secret": true,
+          "multiline": false
+        },
+        {
+          "key": "envName",
+          "label": "環境変数名",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "scope",
+          "label": "権限・スコープ",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "expiry",
+          "label": "有効期限",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "consoleUrl",
+          "label": "発行した管理画面の URL",
+          "secret": false,
+          "multiline": false
+        }
+      ]
+    },
+    {
+      "id": "server",
+      "name": "データベース・サーバー",
+      "fields": [
+        {
+          "key": "kind",
+          "label": "種類",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "host",
+          "label": "ホスト",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "port",
+          "label": "ポート",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "username",
+          "label": "ユーザー名",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "password",
+          "label": "パスワード",
+          "secret": true,
+          "multiline": false
+        },
+        {
+          "key": "database",
+          "label": "データベース名",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "connectionString",
+          "label": "接続文字列",
+          "secret": true,
+          "multiline": false
+        }
+      ]
+    },
+    {
+      "id": "license",
+      "name": "ソフトウェアライセンス",
+      "fields": [
+        {
+          "key": "product",
+          "label": "製品名",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "licenseKey",
+          "label": "ライセンスキー",
+          "secret": false,
+          "multiline": true
+        },
+        {
+          "key": "email",
+          "label": "登録メールアドレス",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "purchasedAt",
+          "label": "購入日",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "order",
+          "label": "購入元・注文番号",
+          "secret": false,
+          "multiline": false
+        }
+      ]
+    },
+    {
+      "id": "recovery",
+      "name": "リカバリーコード",
+      "fields": [
+        {
+          "key": "service",
+          "label": "サービス",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "codes",
+          "label": "コード",
+          "secret": true,
+          "multiline": true
+        },
+        {
+          "key": "issuedAt",
+          "label": "発行日",
+          "secret": false,
+          "multiline": false
+        }
+      ]
+    }
+  ],
+  "wifiQr": [
+    {
+      "fields": [
+        {
+          "key": "ssid",
+          "label": "ネットワーク名",
+          "value": "home",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "password",
+          "label": "パスワード",
+          "value": "pass1234",
+          "secret": true,
+          "multiline": false
+        },
+        {
+          "key": "security",
+          "label": "暗号化方式",
+          "value": "WPA2",
+          "secret": false,
+          "multiline": false
+        }
+      ],
+      "expected": "WIFI:T:WPA;S:home;P:pass1234;;"
+    },
+    {
+      "fields": [
+        {
+          "key": "ssid",
+          "label": "ネットワーク名",
+          "value": "home",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "password",
+          "label": "パスワード",
+          "value": "pass1234",
+          "secret": true,
+          "multiline": false
+        },
+        {
+          "key": "security",
+          "label": "暗号化方式",
+          "value": "",
+          "secret": false,
+          "multiline": false
+        }
+      ],
+      "expected": "WIFI:T:WPA;S:home;P:pass1234;;"
+    },
+    {
+      "fields": [
+        {
+          "key": "ssid",
+          "label": "ネットワーク名",
+          "value": "home",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "password",
+          "label": "パスワード",
+          "value": "pass1234",
+          "secret": true,
+          "multiline": false
+        },
+        {
+          "key": "security",
+          "label": "暗号化方式",
+          "value": "WPA3",
+          "secret": false,
+          "multiline": false
+        }
+      ],
+      "expected": "WIFI:T:WPA;S:home;P:pass1234;;"
+    },
+    {
+      "fields": [
+        {
+          "key": "ssid",
+          "label": "ネットワーク名",
+          "value": "old",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "password",
+          "label": "パスワード",
+          "value": "abcde",
+          "secret": true,
+          "multiline": false
+        },
+        {
+          "key": "security",
+          "label": "暗号化方式",
+          "value": "WEP",
+          "secret": false,
+          "multiline": false
+        }
+      ],
+      "expected": "WIFI:T:WEP;S:old;P:abcde;;"
+    },
+    {
+      "fields": [
+        {
+          "key": "ssid",
+          "label": "ネットワーク名",
+          "value": "old",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "password",
+          "label": "パスワード",
+          "value": "abcde",
+          "secret": true,
+          "multiline": false
+        },
+        {
+          "key": "security",
+          "label": "暗号化方式",
+          "value": "wep 64bit",
+          "secret": false,
+          "multiline": false
+        }
+      ],
+      "expected": "WIFI:T:WEP;S:old;P:abcde;;"
+    },
+    {
+      "fields": [
+        {
+          "key": "ssid",
+          "label": "ネットワーク名",
+          "value": "cafe",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "password",
+          "label": "パスワード",
+          "value": "",
+          "secret": true,
+          "multiline": false
+        },
+        {
+          "key": "security",
+          "label": "暗号化方式",
+          "value": "",
+          "secret": false,
+          "multiline": false
+        }
+      ],
+      "expected": "WIFI:T:nopass;S:cafe;;"
+    },
+    {
+      "fields": [
+        {
+          "key": "ssid",
+          "label": "ネットワーク名",
+          "value": "cafe",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "password",
+          "label": "パスワード",
+          "value": "",
+          "secret": true,
+          "multiline": false
+        },
+        {
+          "key": "security",
+          "label": "暗号化方式",
+          "value": "WEP",
+          "secret": false,
+          "multiline": false
+        }
+      ],
+      "expected": "WIFI:T:nopass;S:cafe;;"
+    },
+    {
+      "fields": [
+        {
+          "key": "ssid",
+          "label": "ネットワーク名",
+          "value": "a;b,c:d\\e\"f",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "password",
+          "label": "パスワード",
+          "value": "p;q,r:s\\t\"u",
+          "secret": true,
+          "multiline": false
+        },
+        {
+          "key": "security",
+          "label": "暗号化方式",
+          "value": "",
+          "secret": false,
+          "multiline": false
+        }
+      ],
+      "expected": "WIFI:T:WPA;S:a\\;b\\,c\\:d\\\\e\\\"f;P:p\\;q\\,r\\:s\\\\t\\\"u;;"
+    },
+    {
+      "fields": [
+        {
+          "key": "ssid",
+          "label": "ネットワーク名",
+          "value": "aterm-1a2b3c-g",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "password",
+          "label": "パスワード",
+          "value": "パスワード🔑",
+          "secret": true,
+          "multiline": false
+        },
+        {
+          "key": "security",
+          "label": "暗号化方式",
+          "value": "",
+          "secret": false,
+          "multiline": false
+        }
+      ],
+      "expected": "WIFI:T:WPA;S:aterm-1a2b3c-g;P:パスワード🔑;;"
+    },
+    {
+      "fields": [
+        {
+          "key": "ssid",
+          "label": "ネットワーク名",
+          "value": " sp ",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "password",
+          "label": "パスワード",
+          "value": " pw ",
+          "secret": true,
+          "multiline": false
+        },
+        {
+          "key": "security",
+          "label": "暗号化方式",
+          "value": "",
+          "secret": false,
+          "multiline": false
+        }
+      ],
+      "expected": "WIFI:T:WPA;S: sp ;P: pw ;;"
+    },
+    {
+      "fields": [
+        {
+          "key": "ssid",
+          "label": "ネットワーク名",
+          "value": "",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "password",
+          "label": "パスワード",
+          "value": "pass1234",
+          "secret": true,
+          "multiline": false
+        },
+        {
+          "key": "security",
+          "label": "暗号化方式",
+          "value": "",
+          "secret": false,
+          "multiline": false
+        }
+      ],
+      "expected": null
+    },
+    {
+      "fields": [],
+      "expected": null
+    },
+    {
+      "fields": [
+        {
+          "key": "ssid",
+          "label": "別の名前",
+          "value": "first",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "ssid",
+          "label": "ネットワーク名",
+          "value": "second",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "",
+          "label": "パスワード",
+          "value": "labelonly",
+          "secret": true,
+          "multiline": false
+        }
+      ],
+      "expected": "WIFI:T:nopass;S:first;;"
+    }
+  ],
+  "bankTransfer": [
+    {
+      "fields": [
+        {
+          "key": "bankName",
+          "label": "bankName",
+          "value": "楽天銀行",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "branchName",
+          "label": "branchName",
+          "value": "第一営業支店",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "accountType",
+          "label": "accountType",
+          "value": "普通",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "accountNumber",
+          "label": "accountNumber",
+          "value": "1234567",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "accountHolder",
+          "label": "accountHolder",
+          "value": "ヤマダ タロウ",
+          "secret": false,
+          "multiline": false
+        }
+      ],
+      "expected": "楽天銀行 第一営業支店 普通 1234567 ヤマダ タロウ"
+    },
+    {
+      "fields": [
+        {
+          "key": "accountHolder",
+          "label": "accountHolder",
+          "value": "ヤマダ タロウ",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "accountNumber",
+          "label": "accountNumber",
+          "value": " 1234567 ",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "bankName",
+          "label": "bankName",
+          "value": "PayPay銀行",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "branchName",
+          "label": "branchName",
+          "value": "",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "pin",
+          "label": "pin",
+          "value": "0000",
+          "secret": false,
+          "multiline": false
+        }
+      ],
+      "expected": "PayPay銀行 1234567 ヤマダ タロウ"
+    },
+    {
+      "fields": [
+        {
+          "key": "bankName",
+          "label": "bankName",
+          "value": "横浜銀行",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "branchName",
+          "label": "branchName",
+          "value": "本店",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "accountNumber",
+          "label": "accountNumber",
+          "value": "",
+          "secret": false,
+          "multiline": false
+        }
+      ],
+      "expected": null
+    },
+    {
+      "fields": [
+        {
+          "key": "bankName",
+          "label": "bankName",
+          "value": "横浜銀行",
+          "secret": false,
+          "multiline": false
+        },
+        {
+          "key": "accountNumber",
+          "label": "accountNumber",
+          "value": "   ",
+          "secret": false,
+          "multiline": false
+        }
+      ],
+      "expected": null
+    },
+    {
+      "fields": [],
+      "expected": null
+    }
+  ],
   "cardItem": {
     "vaultKey": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
     "id": "3d5b8f1e-6a2c-4e9d-b7f0-1c4a8e2d6b93",
@@ -146,12 +958,12 @@
     "vaultKey": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
     "id": "8e1f4a2c-5b7d-4c3e-9a6f-2d8b1e7c4f05",
     "nonce": "000000000000000000000004",
-    "plaintext": "{\"id\":\"8e1f4a2c-5b7d-4c3e-9a6f-2d8b1e7c4f05\",\"type\":\"identity\",\"schema\":1,\"name\":\"自分\",\"familyName\":\"山田\",\"givenName\":\"太郎\",\"familyNameKana\":\"ヤマダ\",\"givenNameKana\":\"タロウ\",\"familyNameRoman\":\"Yamada\",\"givenNameRoman\":\"Taro\",\"email\":\"taro@example.com\",\"tel\":\"090-1234-5678\",\"postalCode\":\"100-0001\",\"addressLevel1\":\"東京都\",\"addressLevel2\":\"千代田区\",\"addressLine1\":\"千代田1-1\",\"addressLine2\":\"〇〇タワー 1701\",\"addressLevel1En\":\"Tokyo\",\"addressLevel2En\":\"Chiyoda-ku\",\"addressLine1En\":\"1-1 Chiyoda\",\"addressLine2En\":\"Sample Tower 1701\",\"countryEn\":\"Japan\",\"birthday\":\"1990-04-01\",\"gender\":\"male\",\"organization\":\"株式会社〇〇\",\"department\":\"開発部\",\"jobTitle\":\"\",\"organizationUrl\":\"https://example.com\",\"passportNumber\":\"TK1234567\",\"passportExpiry\":\"2031-04-30\",\"licenseNumber\":\"123456789012\",\"licenseExpiry\":\"2029-06-15\",\"insuranceSymbol\":\"1234\",\"insuranceNumber\":\"56\",\"insuranceBranch\":\"01\",\"insurerNumber\":\"06123456\",\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-29T00:00:00.000Z\",\"updatedAt\":\"2026-09-29T00:00:00.000Z\"}",
+    "plaintext": "{\"id\":\"8e1f4a2c-5b7d-4c3e-9a6f-2d8b1e7c4f05\",\"type\":\"identity\",\"schema\":1,\"name\":\"自分\",\"familyName\":\"山田\",\"givenName\":\"太郎\",\"familyNameKana\":\"ヤマダ\",\"givenNameKana\":\"タロウ\",\"familyNameRoman\":\"Yamada\",\"givenNameRoman\":\"Taro\",\"email\":\"taro@example.com\",\"tel\":\"090-1234-5678\",\"postalCode\":\"100-0001\",\"addressLevel1\":\"東京都\",\"addressLevel2\":\"千代田区\",\"addressLine1\":\"千代田1-1\",\"addressLine2\":\"〇〇タワー 1701\",\"addressLevel1En\":\"Tokyo\",\"addressLevel2En\":\"Chiyoda-ku\",\"addressLine1En\":\"1-1 Chiyoda\",\"addressLine2En\":\"Sample Tower 1701\",\"countryEn\":\"Japan\",\"birthday\":\"1990-04-01\",\"gender\":\"male\",\"organization\":\"株式会社〇〇\",\"department\":\"開発部\",\"jobTitle\":\"\",\"organizationUrl\":\"https://example.com\",\"passportNumber\":\"TK1234567\",\"passportIssueDate\":\"2021-04-30\",\"passportExpiry\":\"2031-04-30\",\"licenseNumber\":\"123456789012\",\"licenseIssueDate\":\"2024-05-10\",\"licenseExpiry\":\"2029-06-15\",\"licensePin1\":\"1234\",\"licensePin2\":\"5678\",\"myNumber\":\"123456789012\",\"myNumberCardExpiry\":\"2028-09-21\",\"myNumberCertExpiry\":\"2028-09-21\",\"myNumberSignPassword\":\"HOGE1234\",\"myNumberAuthPin\":\"1111\",\"myNumberResidentPin\":\"2222\",\"myNumberInfoPin\":\"3333\",\"insuranceSymbol\":\"1234\",\"insuranceNumber\":\"56\",\"insuranceBranch\":\"01\",\"insurerNumber\":\"06123456\",\"pensionNumber\":\"1234-567890\",\"notes\":\"\",\"extra\":{},\"createdAt\":\"2026-09-29T00:00:00.000Z\",\"updatedAt\":\"2026-09-29T00:00:00.000Z\"}",
     "envelope": {
       "v": 1,
       "alg": "A256GCM",
       "n": "AAAAAAAAAAAAAAAE",
-      "c": "TNjXHIoQwadu4pG6F3Q6SV4ErnrD5FoMng/xTQfaJZie64g4GofVlKA+jGkzVMxiN63TZhFY/DdbvTI5mRhxul1u25hMOUV3p9/UsD0P1dE+iAtLu3A62Ju7IjphVwrN6qcYh8KAYZafn7xkdJHmE5B9OFES56+w52j8wrNroIaSjb4ZV0L7EcouCATn7hXmfyorEgdxOnkqMlaOnfkzflEl2cPNio35CKNWrDMe8QHLx03LlBB7SMLnRHlmo2GXyBU610X2w/9sQQNxLcp+KMyoTv/eLmqziXdAFeT/D2Hz0XqdKwupXzxj3Ur8X1RXqf/ya9/Nj1iM5/mxhspXsMqt78NbH5cCO/U37QLIotldVBSJ/1jlLIWd1wmXDcgkpjpFo3vMK1wgWnNNqJiPTHwqglBut20mvf/h6txEb8LvPGjmcLF3XE/PmQq7vuHgRvqKvUBdiTYVFNlqdFw036KCAclDwsYDtQjUww3ih7r/9DaUphFIOc30CrvS6IS6+FSBFn1N/4L0bImH45/fr/Z9GOw0d4PTFNQV6s1YT2wa0U/FprOJKCdUT/qw7XSFkFX2kFUO1iBvWvnLzrLTUZ+OOD3IDBzm1ND8jfBYzAHbu0KNeHp9J41rIL7UpDZAidPghnGnnwvlADwV49zNIEG/vFNY7aSlTF+Bf0tx9uftE1ZBkEzYYTu5o7/nzGb6ehLjCQtxHgWgpVi+WUtth4daAxzCmJYfy/V9H8KEMVAdGObxX4p/Qzstl8vj+SKIGoDMGqZP7IJeI+UeGckVeEix0yKEWx1m8X5m6v9JMXWIeQ2qsY8NIg/zMKRcJlrYcC8D+duL8dj0ROzXfWxYzfdduQ4wdSGzZ0XRxQYOdiRUDEXo1ebeOkjg9isw07klHlvyOiiGr0gzDt1DAc1KuDDcQUHdHYS/R4icd5g/dTUK95TUpgUNEXu7ws/+067Dd4jXXuuv4KhZ38Jc4pm2NRDJDVc9+CPwcjtsTExAeAa0GHd7jQhs3wPoFXyptxTcHa6JyD8bdvQNVgTk9m1kySs7rwU8wbVq76cQ5zJ0RZvCSRyZkKF+uiOMXf9IDq87AwpG5OUiG4Rbc+U8GVglVc/6XtwN+n9ebaZMATMCgG5mJ4+4VZyhxpu7+ydBlceQ/DUrtVXiS9rE9sgooTPVSUFoOskF+g1206QsHFFxE7in3uDOE0ZlhFQ2+6ZPhyo++pSBc2S1zjG8rz/6JR8Wu12zEA/fOEucon6h0CaQMEovBwof01wVKNI3Yi14J0lBzPV+Qpt2BN8bLDc8Jllht/TTd3YzRbYbiG9Wmy8vFE0fs4hh1abMhWygNH6yRbxnWjaw/GH3esmA269HNpxgVjWlkT5cEl050F5sbGhlY9b9tuZz+1isJ2Wj/p4h6IIL3Sh7knZyNbhY1ZmEjs+5RwiJ"
+      "c": "TNjXHIoQwadu4pG6F3Q6SV4ErnrD5FoMng/xTQfaJZie64g4GofVlKA+jGkzVMxiN63TZhFY/DdbvTI5mRhxul1u25hMOUV3p9/UsD0P1dE+iAtLu3A62Ju7IjphVwrN6qcYh8KAYZafn7xkdJHmE5B9OFES56+w52j8wrNroIaSjb4ZV0L7EcouCATn7hXmfyorEgdxOnkqMlaOnfkzflEl2cPNio35CKNWrDMe8QHLx03LlBB7SMLnRHlmo2GXyBU610X2w/9sQQNxLcp+KMyoTv/eLmqziXdAFeT/D2Hz0XqdKwupXzxj3Ur8X1RXqf/ya9/Nj1iM5/mxhspXsMqt78NbH5cCO/U37QLIotldVBSJ/1jlLIWd1wmXDcgkpjpFo3vMK1wgWnNNqJiPTHwqglBut20mvf/h6txEb8LvPGjmcLF3XE/PmQq7vuHgRvqKvUBdiTYVFNlqdFw036KCAclDwsYDtQjUww3ih7r/9DaUphFIOc30CrvS6IS6+FSBFn1N/4L0bImH45/fr/Z9GOw0d4PTFNQV6s1YT2wa0U/FprOJKCdUT/qw7XSFkFX2kFUO1iBvWvnLzrLTUZ+OOD3IDBzm1ND8jfBYzAHbu0KNeHp9J41rIL7UpDZAidPghnGnnwvlADwV49zNIEG/vFNY7aSlTF+Bf0tx9uftE1ZBkEzYYTu5o7/nzGb6ehLjCQtxHgWgpVi+WUtth4daAxzCmJYfy/V9H8KEMVAdGObxX4p/Qzstl8vj+SKIGoDMGqZP7IJeI+UeGckVeEix0yKEWx1m8X5m6v9JMXWIeQ2qsY8NIg/zMKRcJlrYcC8D+duL8dj0ROzXfWxYzfdduQ4wdSGzZ0XRxQYOdiRUDEXo1ebeOkjg9isw07klHlvyOiiGr0gzDt1DAc1KuDDcQUHdHYS/R4icd5g/dTUK95TUpgUNEXu7ws/+067Dd4jXXuuv4KhZ38Jc4pm2NRDJDVc9+CPwcjtsTExAeAa0GHd7jQhs3wPoFXyptxTcHa6JyD8bdvQNVgTo/W543hZ44UIsy6Rp8qUV5zFwSoTQB1nYha5+rB2WQuloBP1oU0JW7fMlHYBSZ+U5Bkk5VY+xUdAA7HRocJhQHihFyG5uNYyzS5ii3Z224DtSzovPqysjuFPpa8bg59Qx5k2WDBZ5NMkb6FYsjeFrUA4iVNrw3+vIBAoswyR4qeMfl2Z3rdTQLz79vHXw8GmwKwdY4g/0Ul7TBlGH4TnpvGLPYRt/CRJRiglBdJJmB3I0OUkVgbQtBoFuCt9adxwxP0ll5+ySKGsjFfBL3ywLxl5qBFURo9Uqrf6R3iTgTkvwEcMvGmXytW39aMvqy7tIc9UpBXDi2V1FSSlujww7KAYwKI+K98IquRu+LX2h/oIp9YJo0mfPw1qvvwh4RIqxnnXHaBXC4VWRoVGTOVszu4hZmgnPRXLQUWxgW2gHKxUP/E8svxcrwyIgwQZFR3nVWCHVQ+PesL9ii+zAGcZwlHuLOBG5pv2zqLDtRpw5MREu04vFJi4/ixSukgILupfcdMLPVhGQVVSAvu79QZNoDdWy/GGtvH5IIPXjrASuV7/nwfQAGuqOfa5aUVSm2MXQ9FgNdmUHL982r4JwithLRadUIsSywkBH+Uadjfm2U/wFPrtAg+qqKYMpm49eBOVDCFLCI882tDzFE31krWWb1+OjRNTJBtZqCJ3kv6qa6COaCc2qh3XwPxQh9vj5Khh2hgLqy5JgZTGxle3NVVCqIRRMCAIRu7zWa/AHX9GuUNuint7v5mvrvRFsi6tSpKlpgdYXPcXDwkri3bAXQd5bWvkOQY3sv7fZBMt0XgH+YBzaaPkXZWVLR87laDLQHI+qJeux50AxDoyp0x+xz3w="
     }
   },
   "totpItem": {

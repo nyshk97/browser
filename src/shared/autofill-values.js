@@ -8,7 +8,7 @@
  * 純粋関数だけを置く（`scripts/autofill.test.mjs` から直接テストする）。
  */
 
-import { PROFILE_FIELDS } from './autofill-schema.js'
+import { AUTOFILL_FIELDS } from './autofill-schema.js'
 
 /**
  * 収集スクリプトが返す入力欄 1 個（`autofill-collect-source.js` の `elements[]`）。
@@ -28,8 +28,11 @@ import { PROFILE_FIELDS } from './autofill-schema.js'
 const NAME_SEPARATOR = ' '
 const FULLWIDTH_SEPARATOR = '\u3000'
 
-/** 日付の項目（`YYYY-MM-DD`）。正は `PROFILE_FIELDS` の `type: 'date'`（`autofill-match.js` の `DATE_OPTIONS` も同じもの）。 */
-export const DATE_KEYS = PROFILE_FIELDS.filter((field) => field.type === 'date').map((field) => field.key)
+/**
+ * 日付の項目（`YYYY-MM-DD`）。正は `PROFILE_FIELDS` の `type: 'date'`（`autofill-match.js` の `DATE_OPTIONS` も同じもの）。
+ * `noAutofill`（マイナンバーカードの期限）は含めない（`AUTOFILL_FIELDS` から作る）。
+ */
+export const DATE_KEYS = AUTOFILL_FIELDS.filter((field) => field.type === 'date').map((field) => field.key)
 
 /** 分けた日付の部分 → 元の項目（`passport_expiry_year` → `passport_expiry`）。 */
 const DATE_PART_RE = new RegExp(`^(${DATE_KEYS.join('|')})_(year|month|day)$`)
@@ -222,7 +225,7 @@ export function deriveValues(profile, options = {}) {
   put('address_without_building', address)
   if (address) put('address_full', get('address_line2') ? `${address} ${get('address_line2')}` : address)
 
-  // 日付（生年月日・パスポートと免許証の有効期限）は年 / 月 / 日にも分ける
+  // 日付（生年月日・パスポートと免許証の発行日・有効期限）は年 / 月 / 日にも分ける
   for (const key of DATE_KEYS) {
     const date = /^(\d{4})-(\d{2})-(\d{2})$/.exec(get(key))
     if (!date) continue

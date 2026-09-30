@@ -12,6 +12,8 @@ export interface IdentityField {
   kind: IdentityFieldKind;
   // 詳細画面で伏せて表示し、表示・コピーの操作で出す（身分証の番号）
   secret?: true;
+  // 自動入力（iOS の「テキストを入力」・Nemo のフォームの自動入力）に出さない（カードの暗証番号と、マイナンバーカードの全部）
+  noAutofill?: true;
 }
 
 // 編集画面・詳細画面に出す順。グループはこの順で見出しになる
@@ -42,13 +44,26 @@ export const IDENTITY_FIELDS: readonly IdentityField[] = [
   { key: "jobTitle", label: "役職", group: "勤務先", hint: "代表取締役", kind: "text" },
   { key: "organizationUrl", label: "会社 URL", group: "勤務先", hint: "https://example.com", kind: "text" },
   { key: "passportNumber", label: "旅券番号", group: "パスポート", hint: "TK1234567", kind: "text", secret: true },
+  { key: "passportIssueDate", label: "発行日", group: "パスポート", hint: "2021-04-30", kind: "date" },
   { key: "passportExpiry", label: "有効期限", group: "パスポート", hint: "2031-04-30", kind: "date" },
   { key: "licenseNumber", label: "免許証番号", group: "運転免許証", hint: "123456789012", kind: "text", secret: true },
+  { key: "licenseIssueDate", label: "交付日", group: "運転免許証", hint: "2024-05-10", kind: "date" },
   { key: "licenseExpiry", label: "有効期限", group: "運転免許証", hint: "2029-06-15", kind: "date" },
+  { key: "licensePin1", label: "暗証番号 1", group: "運転免許証", hint: "1234", kind: "text", secret: true, noAutofill: true },
+  { key: "licensePin2", label: "暗証番号 2", group: "運転免許証", hint: "5678", kind: "text", secret: true, noAutofill: true },
+  // マイナンバーカードは全部自動入力に出さない（crypto-spec.md。個人番号は詳細からコピーして入れる）
+  { key: "myNumber", label: "個人番号", group: "マイナンバーカード", hint: "123456789012", kind: "text", secret: true, noAutofill: true },
+  { key: "myNumberCardExpiry", label: "カードの有効期限", group: "マイナンバーカード", hint: "2028-09-21", kind: "date", noAutofill: true },
+  { key: "myNumberCertExpiry", label: "電子証明書の有効期限", group: "マイナンバーカード", hint: "2028-09-21", kind: "date", noAutofill: true },
+  { key: "myNumberSignPassword", label: "署名用電子証明書のパスワード", group: "マイナンバーカード", hint: "英大文字と数字 6〜16 文字", kind: "text", secret: true, noAutofill: true },
+  { key: "myNumberAuthPin", label: "利用者証明用の暗証番号", group: "マイナンバーカード", hint: "数字 4 桁", kind: "text", secret: true, noAutofill: true },
+  { key: "myNumberResidentPin", label: "住民基本台帳用の暗証番号", group: "マイナンバーカード", hint: "数字 4 桁", kind: "text", secret: true, noAutofill: true },
+  { key: "myNumberInfoPin", label: "券面事項入力補助用の暗証番号", group: "マイナンバーカード", hint: "数字 4 桁", kind: "text", secret: true, noAutofill: true },
   { key: "insuranceSymbol", label: "記号", group: "健康保険証", hint: "1234", kind: "text", secret: true },
   { key: "insuranceNumber", label: "番号", group: "健康保険証", hint: "56", kind: "text", secret: true },
   { key: "insuranceBranch", label: "枝番", group: "健康保険証", hint: "01", kind: "text" },
   { key: "insurerNumber", label: "保険者番号", group: "健康保険証", hint: "06123456", kind: "text" },
+  { key: "pensionNumber", label: "基礎年金番号", group: "年金", hint: "1234-567890", kind: "text", secret: true },
 ];
 
 export const GENDER_LABELS: Record<string, string> = { "": "未設定", male: "男性", female: "女性", other: "その他" };

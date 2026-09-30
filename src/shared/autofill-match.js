@@ -103,6 +103,10 @@ export const JEV_OPTIONS = {
     '国, 国名, Country'
   ],
   passport_number: ["The filler's passport number", '旅券番号, パスポート番号, Passport No.'],
+  passport_issue_date: [
+    'Issue date of the passport (not the expiry date; the whole date, even if the form splits it into year / month / day). Only when the label or the surrounding fields show it is the passport',
+    'パスポートの発行日, 旅券の発行年月日'
+  ],
   passport_expiry: [
     'Expiry date of the passport (not the issue date; the whole date, even if the form splits it into year / month / day)',
     'パスポートの有効期限, 旅券の有効期間満了日'
@@ -110,6 +114,10 @@ export const JEV_OPTIONS = {
   license_number: [
     "The filler's driver's license number (12 digits in Japan)",
     '運転免許証番号, 免許証番号, 免許番号'
+  ],
+  license_issue_date: [
+    "Issue date of the driver's license (not the expiry date; the whole date, even if the form splits it into year / month / day). Only when the label or the surrounding fields show it is the driver's license",
+    '免許証の交付日, 運転免許証の交付年月日'
   ],
   license_expiry: [
     "Expiry date of the driver's license (not the issue date; the whole date, even if the form splits it into year / month / day)",
@@ -130,7 +138,7 @@ export const JEV_OPTIONS = {
     '有効期限, 有効期間'
   ],
   none: [
-    'None of the profile items fits: free text such as inquiry body, subject, number of employees, how you found us, coupon codes, passwords, membership / reservation / order / employee numbers, My Number (individual number), credit card number / expiry / security code, issue dates of documents, issuing country, license color, or anything else',
+    'None of the profile items fits: free text such as inquiry body, subject, number of employees, how you found us, coupon codes, passwords, membership / reservation / order / employee numbers, My Number (individual number), credit card number / expiry / security code, an issue date that does not say which document, issuing country, license color, or anything else',
     null
   ]
 }
@@ -142,8 +150,10 @@ export const JEV_OPTIONS = {
 export const DOCUMENT_OPTIONS = {
   passport_number: 'passport',
   passport_expiry: 'passport',
+  passport_issue_date: 'passport',
   license_number: 'license',
   license_expiry: 'license',
+  license_issue_date: 'license',
   insurance_symbol: 'insurance',
   insurance_number: 'insurance',
   insurance_branch: 'insurance',
@@ -152,12 +162,15 @@ export const DOCUMENT_OPTIONS = {
 }
 
 /**
- * 書類の番号の選択肢 → その書類の期限（期限の無い書類は null）。
+ * 書類の番号・発行日の選択肢 → その書類の期限（期限の無い書類は null）。
+ * 発行日も引く（「番号 → 発行日 → 有効期限」で、発行日が決まるとさかのぼりがそこで止まるため）。
  * @type {Record<string, string | null>}
  */
 const DOCUMENT_EXPIRY = {
   passport_number: 'passport_expiry',
+  passport_issue_date: 'passport_expiry',
   license_number: 'license_expiry',
+  license_issue_date: 'license_expiry',
   insurance_symbol: null,
   insurance_number: null,
   insurance_branch: null,
@@ -176,7 +189,7 @@ const CHOICE_QUESTION = 'Which profile item should be entered into this form `fi
 const OWN_QUESTION =
   "Does this form `field` ask for the form filler's OWN personal or own-company information?"
 const OWN_CRITERIA = {
-  true: "The filler's own name, contact, address, birthday, gender, the filler's own company / department / title / website, or the filler's own passport / driver's license / health insurance card numbers and expiry dates",
+  true: "The filler's own name, contact, address, birthday, gender, the filler's own company / department / title / website, or the filler's own passport / driver's license / health insurance card numbers, issue dates and expiry dates",
   false:
     "Information about someone or something else (a referrer, child, family member, fellow traveler's passport, emergency contact, workplace or delivery address that differs from home), or not personal information at all (inquiry text, budget, passwords, membership / reservation / order / employee numbers)"
 }
@@ -637,7 +650,7 @@ export function isDateLikeField(field, elements) {
  * 「有効期限」とだけ書いた欄（`document_expiry`）の書類をコードで決める。**`readJevAnswers` の後・`resolveConflicts` の前**に呼ぶ
  * （`document_expiry` のまま重複を解くと、パスポートと免許証の 2 つの「有効期限」の片方が消える）。
  *
- * 前の欄へさかのぼり、**Jev・ルールで決まらなかった日付の欄だけ飛ばす**。最初に当たった欄が身分証の番号なら
+ * 前の欄へさかのぼり、**Jev・ルールで決まらなかった日付の欄だけ飛ばす**。最初に当たった欄が身分証の番号・発行日なら
  * その書類の期限（`passport_expiry` / `license_expiry`）。それ以外（カード番号・ほかの項目・日付でない未決定の欄）や、
  * 期限の無い書類（保険証）なら捨てる（空欄のまま）。
  *

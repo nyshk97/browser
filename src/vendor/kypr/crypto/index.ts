@@ -4,6 +4,7 @@ export * from "./envelope.ts";
 export * from "./envelope-shape.ts";
 export * from "./errors.ts";
 export * from "./export-format.ts";
+export * from "./icon.ts";
 export * from "./ids.ts";
 export * from "./item.ts";
 export * from "./kdf.ts";

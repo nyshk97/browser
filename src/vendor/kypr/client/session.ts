@@ -8,6 +8,9 @@ import {
   encryptItem,
   type Envelope,
   generateVaultKey,
+  type IconItem,
+  iconId,
+  iconIdKey,
   type IdentityItem,
   isWeakerKdf,
   type KdfParams,
@@ -20,6 +23,7 @@ import {
   type TotpItem,
   parseKdfParams,
   unwrapVaultKey,
+  usableIcon,
   type VaultItem,
   wrapVaultKey,
 } from "../crypto/index.ts";
@@ -96,6 +100,15 @@ export interface VaultEntry {
   deletedAt: string | null;
   data: Envelope;
   state: EntryState;
+}
+
+// サイトのアイコン（type: "icon"）の行。entries には入れない（一覧・検索・件数・ゴミ箱のどれにも出さない）
+interface IconEntry {
+  id: string;
+  revision: number;
+  deletedAt: string | null;
+  data: Envelope;
+  raw: Record<string, unknown> & { id: string };
 }
 
 export interface WireItem {
@@ -192,10 +205,12 @@ async function loginRequest(
   return res;
 }
 
-async function decryptEntry(vaultKey: Uint8Array, it: CachedItem): Promise<VaultEntry> {
+async function decryptEntry(vaultKey: Uint8Array, it: CachedItem): Promise<VaultEntry | IconEntry> {
   let state: EntryState;
   try {
-    state = await decryptItem(vaultKey, it.id, it.data);
+    const dec = await decryptItem(vaultKey, it.id, it.data);
+    if (dec.kind === "icon") return { ...it, raw: dec.raw };
+    state = dec;
   } catch (e) {
     if (!(e instanceof KyprCryptoError)) throw e;
     state = { kind: "error", code: e.code };
@@ -206,6 +221,11 @@ async function decryptEntry(vaultKey: Uint8Array, it: CachedItem): Promise<Vault
 export class VaultSession {
   revision: number;
   entries = new Map<string, VaultEntry>();
+  // サイトのアイコン。id → 行と、使えるものの ホスト → data: URI
+  #icons = new Map<string, IconEntry>();
+  #iconByHost = new Map<string, string>();
+  #iconKey: Promise<CryptoKey> | null = null;
+  #iconsVersion = 0;
   #deps: ClientDeps;
   #vaultKey: Uint8Array;
   #authKey: Uint8Array;
@@ -412,7 +432,47 @@ export class VaultSession {
   }
 
   async #loadEntries(items: CachedItem[]) {
-    for (const it of items) this.entries.set(it.id, await decryptEntry(this.#vaultKey, it));
+    for (const it of items) this.#put(await decryptEntry(this.#vaultKey, it));
+    await this.#rebuildIcons();
+  }
+
+  #put(e: VaultEntry | IconEntry) {
+    if ("raw" in e) {
+      this.entries.delete(e.id);
+      this.#icons.set(e.id, e);
+    } else {
+      this.#icons.delete(e.id);
+      this.entries.set(e.id, e);
+    }
+  }
+
+  // アイコンの id（ホストから決まる。docs/crypto-spec.md「サイトのアイコン」）。保管庫鍵はこのオブジェクトの外に出さない
+  async iconId(host: string): Promise<string> {
+    // ロックしたあとは 0 で埋めた鍵しか無い（そこから作った id は、ほかの端末の id と合わない）
+    if (this.#vaultKey.every((b) => b === 0)) throw new Error("ロックされています");
+    this.#iconKey ??= iconIdKey(this.#vaultKey);
+    return iconId(await this.#iconKey, host);
+  }
+
+  // 使えるアイコンの表を作り直す。形が違う・ゴミ箱の中・id がホストから作った id と合わないものは使わない
+  async #rebuildIcons() {
+    const byHost = new Map<string, string>();
+    for (const e of this.#icons.values()) {
+      const icon = e.deletedAt === null ? usableIcon(e.raw) : null;
+      if (icon && (await this.iconId(icon.host)) === e.id) byHost.set(icon.host, icon.dataUri);
+    }
+    this.#iconByHost = byHost;
+    this.#iconsVersion++;
+  }
+
+  // アイコンの表を作り直すたびに増える（画面が描き直しの要否を見る）
+  get iconsVersion(): number {
+    return this.#iconsVersion;
+  }
+
+  // ホスト（loginIconHost で作ったもの）のアイコンの data: URI。無ければ null
+  iconFor(host: string | null): string | null {
+    return host === null ? null : (this.#iconByHost.get(host) ?? null);
   }
 
   // cursor は同期の位置（GET /api/items の revision）。書き込みの応答では進めない
@@ -420,17 +480,22 @@ export class VaultSession {
   async #apply(cursor: number | null, wire: WireItem[], full = false) {
     const upserts: CachedItem[] = [];
     const removals: string[] = [];
-    if (full) this.entries.clear();
+    if (full) {
+      this.entries.clear();
+      this.#icons.clear();
+    }
     for (const w of wire) {
       if (w.purgedAt !== null || w.data === null) {
         removals.push(w.id);
         this.entries.delete(w.id);
+        this.#icons.delete(w.id);
         continue;
       }
       const it: CachedItem = { id: w.id, revision: w.revision, deletedAt: w.deletedAt, data: w.data };
       upserts.push(it);
-      this.entries.set(it.id, await decryptEntry(this.#vaultKey, it));
+      this.#put(await decryptEntry(this.#vaultKey, it));
     }
+    if (full || wire.length > 0) await this.#rebuildIcons();
     if (cursor !== null) this.revision = full ? cursor : Math.max(this.revision, cursor);
     await this.#deps.cache.apply(this.revision, upserts, removals, full);
     this.#emit();
@@ -496,7 +561,7 @@ export class VaultSession {
   }
 
   // 1回のリクエストの中は原子的。上限（500件・1MB）を超える取り込みは分けて送る
-  async create(items: VaultItem[], onProgress?: (done: number) => void): Promise<void> {
+  async create(items: (VaultItem | IconItem)[], onProgress?: (done: number) => void): Promise<void> {
     const encrypted = await Promise.all(
       items.map(async (it) => ({ id: it.id, data: await encryptItem(this.#vaultKey, it) })),
     );
@@ -520,7 +585,7 @@ export class VaultSession {
     }
   }
 
-  async update(item: VaultItem, baseRevision: number): Promise<void> {
+  async update(item: VaultItem | IconItem, baseRevision: number): Promise<void> {
     const data = await encryptItem(this.#vaultKey, item);
     const res = await this.#call<{ item: WireItem }>(`/api/items/${item.id}`, {
       method: "PUT",
@@ -596,7 +661,7 @@ export class VaultSession {
       revision: this.revision,
       kdf: this.#account.kdf,
       wrappedVaultKey: this.#account.wrappedVaultKey,
-      items: [...this.entries.values()]
+      items: [...this.entries.values(), ...this.#icons.values()]
         .sort((a, b) => a.revision - b.revision)
         .map((e) => ({ id: e.id, revision: e.revision, deletedAt: e.deletedAt, data: e.data })),
     });
@@ -606,6 +671,9 @@ export class VaultSession {
     this.#vaultKey.fill(0);
     this.#authKey.fill(0);
     this.entries.clear();
+    this.#icons.clear();
+    this.#iconByHost.clear();
+    this.#iconKey = null;
     const token = this.#token;
     this.#token = null;
     if (token) this.#deps.api("/api/logout", { method: "POST", token }).catch(() => {});

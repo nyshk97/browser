@@ -39,6 +39,7 @@ import {
   derivePassphraseKey,
   generateVaultKey,
   newCardItem,
+  newIconItem,
   newKdfParams,
   newLoginItem,
   newNoteItem,
@@ -418,7 +419,12 @@ try {
     code: '123'
   })
   const N = newNoteItem({ name: 'Note', notes: `${MARK}-notebody` })
-  await other.create([A, B, M, U, C, N, X3, X5, X1])
+  // サイトのアイコン（kypr の type: "icon"。Web・iOS 向けに Nemo が書くもの）。一覧・件数・候補に出てはいけない
+  // （出ると下の「9 件」の検査が 10 件になる）
+  const ICON_PNG =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+  const I = newIconItem(await other.iconId('site-a.example'), 'site-a.example', ICON_PNG)
+  await other.create([A, B, M, U, C, N, X3, X5, X1, I])
 
   /* ================= 1 回目の起動 ================= */
   const userData = makeDir('data')
@@ -1893,7 +1899,8 @@ try {
   const liveBefore = (await json('window.nemo.kyprStatus()')).itemCount
   // Nemo で作ったアイテムの手前まで戻す（それより後に作った・変えた行は、サーバーから無くなる）
   mock.rollback(mock.state.items.get(created.id).revision - 1)
-  const liveOnServer = [...mock.state.items.values()].filter((it) => it.data !== null).length
+  // サイトのアイコンの行（I）はサーバーにあるが一覧の件数には入らないので、数えない
+  const liveOnServer = [...mock.state.items.values()].filter((it) => it.data !== null && it.id !== I.id).length
   const rolled = await json('window.nemo.kyprSync()')
   const afterRollback = (await json('window.nemo.kyprStatus()')).itemCount
   check(
@@ -2079,7 +2086,8 @@ try {
   status = await json('window.nemo.kyprStatus()')
   check(
     '再起動するとロックされている（キャッシュはある）',
-    status.state === 'locked' && status.itemCount === afterRollback,
+    // ロック中の件数はキャッシュの行数（復号していないので種類が分からない）。サイトのアイコンの行（I）の 1 件を含む
+    status.state === 'locked' && status.itemCount === afterRollback + 1,
     JSON.stringify({ state: status.state, n: status.itemCount })
   )
   const touchFail = await json('window.nemo.kyprUnlockTouchId()')
@@ -2632,7 +2640,8 @@ try {
     : 0
   check(
     '（前提）userData に kypr のキャッシュがあり、暗号文が入っている',
-    cacheItems === afterRollback,
+    // キャッシュにはサイトのアイコンの行（I）も入る
+    cacheItems === afterRollback + 1,
     `items=${cacheItems}`
   )
   const scan = findMarkers(userData)

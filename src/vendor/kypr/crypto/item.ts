@@ -184,6 +184,8 @@ export type DecryptedItem =
   | { kind: "card"; item: CardItem }
   | { kind: "identity"; item: IdentityItem }
   | { kind: "totp"; item: TotpItem }
+  // サイトのアイコン（icon.ts）。schema や中身を問わずこの種類にし、一覧には出さない（使えるかは usableIcon で見る）
+  | { kind: "icon"; raw: Record<string, unknown> & { id: string } }
   | { kind: "unknown"; raw: Record<string, unknown> & { id: string } };
 
 const ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
@@ -508,5 +510,6 @@ export async function decryptItem(vaultKey: Uint8Array, id: string, envelope: un
     if (!isTotpItem(parsed)) throw new KyprCryptoError("malformed", "ワンタイムコードの項目が不正");
     return { kind: "totp", item: normalizeTotpItem(parsed) };
   }
+  if (parsed.type === "icon") return { kind: "icon", raw: parsed as Record<string, unknown> & { id: string } };
   return { kind: "unknown", raw: parsed as Record<string, unknown> & { id: string } };
 }

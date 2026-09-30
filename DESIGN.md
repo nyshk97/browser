@@ -649,7 +649,7 @@ Chromium は隠れたページで `requestAnimationFrame` を止める。Meet �
 保管庫のホストから favicon の URL を推測して取りに行かない（どのサイトを使っているかが外へ出る）。
 表示のときは、開いたことのあるサイトが申告した URL へ通信が出る（UI のセッションで読むのでページ側のキャッシュは効かない）。
 **サイトのアイコン**は保管庫に入った PNG の data: URI で、別の Mac の Nemo が書いたものも使える。
-Nemo は解除中の同期の後に、履歴にある favicon を 64px までの PNG に描き直して保管庫に書き、Web 版・iOS 版もそれを出す
+Nemo は解除中の同期の後に、履歴にある favicon を 64px までの PNG に描き直して保管庫に書き、Web 版・iOS 版もそれを出す（**1.10.6 で書く処理を止めている**。1.10.5 で解除の直後に main が落ちたため）
 （`src/main/kypr/site-icons.ts`。書くのは開いたことのあるサイトだけ。kypr の `docs/crypto-spec.md`「サイトのアイコン」）。
 
 ## 書かないもの

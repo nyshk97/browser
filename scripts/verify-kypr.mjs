@@ -638,39 +638,8 @@ try {
     JSON.stringify(synced)
   )
 
-  // サイトのアイコン: 同期の後、開いたサイト（127.0.0.1。favicon は SVG）の favicon を PNG に描き直して保管庫に書く
-  let written = null
-  for (let i = 0; i < 40 && !written; i++) {
-    await other.sync()
-    written = other.iconFor('127.0.0.1')
-    if (!written) await new Promise((r) => setTimeout(r, 250))
-  }
-  const png = written ? Buffer.from(written.slice(written.indexOf(',') + 1), 'base64') : Buffer.alloc(0)
-  const pngSize = png.length >= 24 ? [png.readUInt32BE(16), png.readUInt32BE(20)] : null
-  const iconRowId = await other.iconId('127.0.0.1')
-  const iconRevision = mock.state.items.get(iconRowId)?.revision ?? null
-  check(
-    'サイトのアイコン: 開いたサイトの favicon（SVG）を 64px までの PNG にして保管庫に書く。一覧の件数は変わらない',
-    written?.startsWith('data:image/png;base64,') === true &&
-      pngSize !== null &&
-      pngSize[0] === pngSize[1] &&
-      pngSize[0] > 0 &&
-      pngSize[0] <= 64 &&
-      png.length <= 8 * 1024 &&
-      (await json('window.nemo.kyprStatus()')).itemCount === 10,
-    JSON.stringify({ written: written?.slice(0, 30) ?? null, pngSize, bytes: png.length })
-  )
-  // 一度も開いていないサイト（kyprmark-url.example）のアイコンは作らない
-  await json('window.nemo.kyprSync()')
-  await new Promise((r) => setTimeout(r, 1500))
-  await other.sync()
-  check(
-    'サイトのアイコン: 2 回目の同期では書き直さない。開いていないサイトのアイコンは作らない',
-    iconRevision !== null &&
-      mock.state.items.get(iconRowId)?.revision === iconRevision &&
-      other.iconFor('kyprmark-url.example') === null,
-    JSON.stringify({ iconRevision, now: mock.state.items.get(iconRowId)?.revision ?? null })
-  )
+  // サイトのアイコンを書く処理（site-icons.ts の writeKyprSiteIcons）は、1.10.5 の常用版で解除の直後に main が落ちたので
+  // 呼び出しを止めている。その検査（書いた PNG の形・2 回目で書かない・開いていないサイトは作らない）も、戻すときに戻す
   await page.ev(
     "document.getElementById('username').value = ''; document.getElementById('password').value = ''"
   )

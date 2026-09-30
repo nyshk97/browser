@@ -73,7 +73,7 @@ import { getFaviconsForHosts } from '../store/history.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { FileCacheStore, kyprDir } from './cache-store.js'
-import { vaultIconFor, writeKyprSiteIcons } from './site-icons.js'
+import { vaultIconFor } from './site-icons.js'
 import { deriveInWorker, derivePassphraseInWorker } from './kdf.js'
 import { forgetDeviceKeys, hasDeviceKeys, loadDeviceKeys, saveDeviceKeys } from './device-keys.js'
 import { deviceTokenStore } from './device-token.js'
@@ -227,8 +227,8 @@ function attach(next: VaultSession): void {
   touchKypr()
   leakForVerify()
   notify()
-  // Web・iOS 向けのサイトのアイコン（履歴の favicon）を裏で書く
-  writeKyprSiteIcons(next)
+  // Web・iOS 向けのサイトのアイコン（履歴の favicon）を書く処理は、1.10.5 の常用版で解除の直後に main が落ちたので止めている
+  // （原因を調べるまで。kypr の plan のログ）
 }
 
 function unlockFailure(error: unknown): KyprUnlockResult {
@@ -358,7 +358,6 @@ export async function syncKypr(): Promise<KyprActionResult> {
     else await current.sync()
     lastSyncAt = Date.now()
     notify()
-    writeKyprSiteIcons(current)
     return { ok: true }
   } catch (error) {
     return actionFailure(error, 'sync')

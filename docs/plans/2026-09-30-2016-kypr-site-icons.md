@@ -25,7 +25,7 @@ Nemo は v1.10.2 から、kypr のログインのアイコンに履歴の favico
 ### Phase 4b: 書く [AI🤖]
 - [x] kypr の `VaultSession` に、ホストから行の情報（id・revision・updatedAt・使えるか）を返すメソッドを足して export し直す（`baseRevision` と 30 日の判定に要る）
 - [x] favicon を PNG に描き直す処理
-- [x] 解除中の同期の後にアイコンを作る・書き直す（上の決めごと）
+- [ ] ~~解除中の同期の後にアイコンを作る・書き直す（上の決めごと）~~ 1.10.6 で止めた（ログ）。原因を調べて戻す
 - [x] 表示: 履歴に無いホストは保管庫のアイコンを使う
 - [x] `scripts/verify-kypr.mjs` に、書いたアイコンの形・2 回目で書かないこと・一覧に出ないことを足す
 
@@ -38,6 +38,11 @@ Nemo は v1.10.2 から、kypr のログインのアイコンに履歴の favico
 - 何を書くか（無い・30 日・中身が同じなら書かない）・20 件まで・409 / 410 の送り直しは kypr の `VaultSession.saveIcons` に置いた（kypr `e498bd1`。偽のサーバーでテストできるため）。410 の id は `kypr/icon-gone.json`、描けなかった favicon は起動中だけ覚える
 - 自走検証: 開いたサイト（127.0.0.1。favicon は SVG の data:）のアイコンが 64×64 の PNG（283 バイト）で書かれ、2 回目の同期で書き直さず、開いていないサイトのアイコンは作らない。書いたアイコンの行でキャッシュ・サーバーの行数が増えるので、件数の検査は「アイコンを entries に入れない別の端末で数える」「止めた時点のキャッシュの行数と比べる」に直した。`verify:only kypr` 155 件 PASS・`pnpm test` 569 件 PASS
 - 自走検証で見ていないもの: 履歴に無いホストで保管庫のアイコンを出す表示（`vaultIconFor`）。実機で確かめる
+
+- **1.10.5 の常用版で、Touch ID で解除した約 100ms 後に main が SIGSEGV で落ちた**（2026-09-30 21:13。クラッシュレポートのスタックは記号が取れず読めない）。書く処理のログ（`kypr.icons_written` / `kypr.icon_write_failed`）は出ていない。履歴の写し（2105 ページ・https の favicon 1022）と偽のサーバーにそのホストのログイン 60 件で、使い捨ての dev 版でも再現した（解除の直後に SIGSEGV・アイコン 0 件）。自走検証（favicon は data: の SVG 1 件）では出ていなかった
+- 単独では落ちない: `session.fetch`（`AbortSignal` あり・なし）・隠れた `WebContentsView`（作る→about:blank→executeJavaScript→close）・main での HMAC 300 回
+- 1.10.6 で `writeKyprSiteIcons` の呼び出しを止めた（`site-icons.ts` は残す）。同じ再現で解除して 30 秒落ちないことを確認。自走検証の「書く」2 件は外した（153 件 PASS）
+- 罠: 使い捨ての Electron が落ちると「Electron が予期しない理由で終了しました」のダイアログが出て、閉じるまで次の Electron が `whenReady` の前で止まる（起動しない）
 
 ### 方針変更
 - 4b の最初のステップ「行の情報を返すメソッド」は、`iconNeedsWrite(host)` と `saveIcons` にした（呼び出し側に revision を渡さず、判定ごと kypr に置く）

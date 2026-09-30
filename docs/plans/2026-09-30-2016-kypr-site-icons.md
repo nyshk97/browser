@@ -26,7 +26,7 @@ Nemo は v1.10.2 から、kypr のログインのアイコンに履歴の favico
 - [x] kypr の `VaultSession` に、ホストから行の情報（id・revision・updatedAt・使えるか）を返すメソッドを足して export し直す（`baseRevision` と 30 日の判定に要る）
 - [x] favicon を PNG に描き直す処理
 - [x] 解除中の同期の後にアイコンを作る・書き直す（上の決めごと。1.10.6 で止め、原因を直して戻した。ログ）
-- [x] 表示: 履歴に無いホストは保管庫のアイコンを使う
+- [x] 表示: 履歴に無いホストは保管庫のアイコンを使う（自走検証では見ていない。ログ）
 - [x] `scripts/verify-kypr.mjs` に、書いたアイコンの形・2 回目で書かないこと・一覧に出ないことを足す
 
 ## ログ
@@ -34,7 +34,7 @@ Nemo は v1.10.2 から、kypr のログインのアイコンに履歴の favico
 - 2026-09-30: export-nemo（kypr `346f1e8`）→ typecheck 通過・`kypr-vendor.test.mjs` 5 件 PASS。`verify:only kypr` は、別の Claude Code のセッションが検証用の Nemo（`scripts/dev.mjs --built`）を起動中だったので、終わるのを待ってから回した
 - `verify:only kypr`: アイコンの行を入れると 3 件 FAIL（巻き戻しの件数・ロック中の件数・キャッシュの行数）。どれもサーバー・キャッシュの**行数**と一覧の件数を比べる検査で、アイコンの行はサーバーとキャッシュにあるが一覧に出ない（仕様どおり）ため 1 ずれた。検査のほうを直した（ロック中の `itemCount` はキャッシュの行数で、画面には解除中の件数しか出さないので製品は変えない）→ 153 件 PASS。解除後の件数は 9 のまま（隠れていなければ 10）。`pnpm test` 569 件 PASS・lint 通過
 
-- 4b（2026-09-30）: Electron の `nativeImage` は PNG と JPEG しか読めない（ICO・SVG・GIF は空になる。使い捨ての Electron で確かめた）。そこで favicon は保存しない専用のセッションの隠れた `WebContentsView` で `<img>` → canvas に描いて PNG にする（`src/main/kypr/site-icons.ts`）。https の favicon は常用のページのセッションで取る（HTTP キャッシュが効く）
+- 4b（2026-09-30）: Electron の `nativeImage` は PNG と JPEG しか読めない（ICO・SVG・GIF は空になる。使い捨ての Electron で確かめた）。そこで favicon は保存しない専用のセッションの隠れた `WebContentsView` で `<img>` → canvas に描いて PNG にする（`src/main/kypr/site-icons.ts`）。https の favicon は常用のページのセッションで取る（HTTP キャッシュが効く）（→ 1.10.5 でこれが原因で落ちたので、専用のセッションで取るように変えた。下のログ）
 - 何を書くか（無い・30 日・中身が同じなら書かない）・20 件まで・409 / 410 の送り直しは kypr の `VaultSession.saveIcons` に置いた（kypr `e498bd1`。偽のサーバーでテストできるため）。410 の id は `kypr/icon-gone.json`、描けなかった favicon は起動中だけ覚える
 - 自走検証: 開いたサイト（127.0.0.1。favicon は SVG の data:）のアイコンが 64×64 の PNG（283 バイト）で書かれ、2 回目の同期で書き直さず、開いていないサイトのアイコンは作らない。書いたアイコンの行でキャッシュ・サーバーの行数が増えるので、件数の検査は「アイコンを entries に入れない別の端末で数える」「止めた時点のキャッシュの行数と比べる」に直した。`verify:only kypr` 155 件 PASS・`pnpm test` 569 件 PASS
 - 自走検証で見ていないもの: 履歴に無いホストで保管庫のアイコンを出す表示（`vaultIconFor`）。実機で確かめる

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * HTTP Basic 認証の自動入力の自走検証。
+ * HTTP Basic 認証の自動入力と、証明書エラーの確認の自走検証。
  *
  * 前提（`verify-all.mjs` が用意する）:
  * - Nemo が `NEMO_REMOTE_DEBUGGING_PORT` 付き・使い捨ての `NEMO_USER_DATA_DIR` で起動している
@@ -12,13 +12,17 @@
  * クロスオリジンの検査に**2 つ目のテストサーバを自分で立てる**（別ポート＝別オリジン）。
  * `localhost` と `127.0.0.1` で分ける手は使えない（macOS の `localhost` は ::1 を先に引く）。
  *
+ * 証明書の検査には**自己署名の HTTPS サーバをこのプロセスの中で立てる**（鍵は実行時に `openssl` で作って捨てる）。
+ *
  * 使い方:
  *   node scripts/verify-http-auth.mjs                 … 本体
  *   node scripts/verify-http-auth.mjs --restart-write … 再起動前の仕込み（暗号文を壊す / 理由を立てる）
  *   node scripts/verify-http-auth.mjs --restart-read  … 再起動後の確認
  */
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import https from 'node:https'
+import os from 'node:os'
 import path from 'node:path'
 import { connect, connectTo, connectUi, listTargets, sleep } from './lib/cdp.mjs'
 import {
@@ -241,10 +245,19 @@ async function drainDialogs() {
     const kind = await dialogKind()
     if (kind === '') return true
     if (kind === 'prompt-notice') await closeNotice()
+    else if (kind === 'prompt-certificate') await answerCertificate(false)
     else await cancelAuth()
     await sleep(250)
   }
   return (await dialogKind()) === ''
+}
+
+/** 証明書の確認に答える（`false` =「戻る」/ `true` =「このまま続行」）。 */
+async function answerCertificate(proceed) {
+  const label = proceed ? 'このまま続行' : '戻る'
+  await overlay.ev(
+    `(() => { const b = [...document.querySelectorAll('[data-testid="prompt-certificate"] .dialog-actions button')].find(x => x.textContent === ${JSON.stringify(label)}); if (!b) return 'missing'; b.click(); return 'ok' })()`
+  )
 }
 
 async function closeNotice() {
@@ -288,8 +301,82 @@ async function startOtherServer() {
   return base
 }
 
+/* ------------------------------------------------------------------ *
+ * 自己署名の HTTPS サーバ（証明書エラーの検査用）
+ * ------------------------------------------------------------------ */
+
+let HTTPS_BASE = ''
+let httpsServer = null
+let certDir = ''
+
+const PIXEL = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64'
+)
+
+/**
+ * `openssl` で自己署名の鍵と証明書を一時ディレクトリに作り、HTTPS サーバを立てる。
+ * **`openssl` が無ければ投げる**（黙って飛ばすと「検査 0 件で PASS」になる）。
+ *
+ * すべての応答に `Connection: close` を付ける。接続が使い回されると 2 回目以降の
+ * リクエストで証明書の検査が起きず、「サブリソースでは来ない」に見えてしまう。
+ */
+async function startHttpsServer() {
+  certDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nemo-verify-cert-'))
+  const key = path.join(certDir, 'key.pem')
+  const cert = path.join(certDir, 'cert.pem')
+  const made = spawnSync(
+    'openssl',
+    [
+      'req',
+      '-x509',
+      '-newkey',
+      'rsa:2048',
+      '-nodes',
+      '-keyout',
+      key,
+      '-out',
+      cert,
+      '-days',
+      '1',
+      '-subj',
+      '/CN=nemo-verify'
+    ],
+    { encoding: 'utf8' }
+  )
+  if (made.status !== 0) {
+    throw new Error(`openssl で自己署名の証明書を作れない: ${made.error?.message ?? made.stderr}`)
+  }
+  httpsServer = https.createServer({ key: fs.readFileSync(key), cert: fs.readFileSync(cert) }, (req, res) => {
+    const { pathname } = new URL(req.url ?? '/', 'https://127.0.0.1')
+    if (pathname === '/pixel.png') {
+      res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store', Connection: 'close' })
+      res.end(PIXEL)
+      return
+    }
+    // ページ本体。同じホストの画像を 1 枚持つ（続行したあとのサブリソースの検査に使う）
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      Connection: 'close'
+    })
+    res.end(`<!doctype html><title>cert</title><img id="px" src="/pixel.png?t=${Date.now()}">`)
+  })
+  const port = await getFreePort()
+  await new Promise((resolve, reject) => {
+    httpsServer.once('error', reject)
+    httpsServer.listen(port, '127.0.0.1', resolve)
+  })
+  return `https://127.0.0.1:${port}`
+}
+
 async function cleanup() {
   await stopChildren(spawned.filter(isChildAlive))
+  if (httpsServer) {
+    httpsServer.closeAllConnections()
+    await new Promise((resolve) => httpsServer.close(() => resolve()))
+  }
+  if (certDir) fs.rmSync(certDir, { recursive: true, force: true })
 }
 
 /* ------------------------------------------------------------------ *
@@ -359,6 +446,7 @@ if (mode === '--restart-read') {
 OTHER = await startOtherServer()
 
 try {
+  HTTPS_BASE = await startHttpsServer()
   await runAll()
 } finally {
   await cleanup()
@@ -398,7 +486,10 @@ async function runAll() {
     checkCacheClearFailure,
     checkWriteFailure,
     checkSettingsUi,
-    checkUnavailableBackend
+    checkUnavailableBackend,
+    checkCertificateSubresource,
+    checkCertificateMainFrame,
+    checkCertificateProceedRemembered
   ]
   for (const step of steps) {
     await drainDialogs()
@@ -1333,6 +1424,140 @@ async function checkUnavailableBackend() {
     restored.encryptionAvailable === true,
     JSON.stringify(restored.encryptionAvailable)
   )
+}
+
+/* ------------------------------------------------------------------ *
+ * 証明書エラーの確認
+ * ------------------------------------------------------------------ */
+
+// 下の検査は**ファイル上部のトップレベル `await runAll()` から呼ばれる**ので、
+// 道具は `const` でなく関数宣言にする（`const` だと TDZ で ReferenceError になる）
+
+/** 自己署名サーバに対する `certificate.error` の行。 */
+function certErrorLines() {
+  return readLogLines(USER_DATA).filter(
+    (line) => line.includes('"event":"certificate.error"') && line.includes(HTTPS_BASE)
+  )
+}
+
+function certDecisionLines() {
+  return readLogLines(USER_DATA).filter((line) => line.includes('"event":"certificate.decision"'))
+}
+
+function certDialogCount() {
+  return readLogLines(USER_DATA).filter(
+    (line) => line.includes('"event":"prompt.opened"') && line.includes('"certificate"')
+  ).length
+}
+
+/** ページに `<img>` を差し込み、読み込めたか（`load:<幅>`）/ 失敗したか（`error`）を返す式。 */
+function probeImage(src, timeoutMs = 6000) {
+  return `new Promise((resolve) => {
+  const img = document.createElement('img')
+  img.onload = () => resolve('load:' + img.naturalWidth)
+  img.onerror = () => resolve('error')
+  img.src = ${JSON.stringify(src)}
+  document.body.appendChild(img)
+  setTimeout(() => resolve('timeout'), ${timeoutMs})
+})`
+}
+
+/** ページ（http）に開いたタブを 1 つ作り、CDP で繋ぐ。 */
+async function openHttpPage(realm) {
+  const key = await openTab(authPage([], { realm }))
+  const page = await connectTo(CDP, `realm=${realm}`)
+  await until(async () => (await page.ev(`document.readyState === 'complete' ? 'ok' : ''`)) === 'ok')
+  return { key, page }
+}
+
+/* ---- ㉒ サブリソースの証明書エラーでは確認を出さない ---- */
+async function checkCertificateSubresource() {
+  const errorsBefore = certErrorLines().length
+  const dialogsBefore = certDialogCount()
+  const { key, page } = await openHttpPage('cert-a')
+  const result = await page.ev(probeImage(`${HTTPS_BASE}/pixel.png?a=${Date.now()}`))
+  const quiet = await stayQuiet(1500)
+  const errors = certErrorLines().slice(errorsBefore)
+  // **エラーが実際に起きたこと**を先に示す（0 件なら空振りで PASS している）
+  check('証明書: サブリソースで証明書エラーが実際に起きている', errors.length >= 1, `${errors.length} 件`)
+  check(
+    '証明書: サブリソースのエラーはログに isMainFrame: false で残る',
+    errors.length >= 1 && errors.every((line) => line.includes('"isMainFrame":false')),
+    errors.join(' | ')
+  )
+  check(
+    '証明書: サブリソースのエラーでは確認を出さない',
+    quiet && certDialogCount() === dialogsBefore,
+    `ダイアログ "${await dialogKind()}" / prompt.opened ${certDialogCount() - dialogsBefore} 件`
+  )
+  check('証明書: そのサブリソースは拒否される（画像が読み込めない）', result === 'error', result)
+  page.close()
+  await closeTab(key)
+}
+
+/* ---- ㉓ ページそのものの証明書エラーでは確認を出す ---- */
+async function checkCertificateMainFrame() {
+  const decisionsBefore = certDecisionLines().length
+  const key = await openTab(`${HTTPS_BASE}/page?b=${Date.now()}`)
+  const shown = await waitDialog('prompt-certificate')
+  check('証明書: ページそのもののエラーでは確認が出る', shown === true, await dialogKind())
+  await answerCertificate(false)
+  const gone = await until(async () => (await dialogKind()) === '', { timeoutMs: 4000 })
+  const decisions = certDecisionLines().slice(decisionsBefore)
+  check(
+    '証明書:「戻る」で閉じ、拒否として記録される',
+    gone === true && decisions.length === 1 && decisions[0].includes('"proceed":false'),
+    decisions.join(' | ')
+  )
+  await closeTab(key)
+}
+
+/* ---- ㉔ 続行したタブでは、同じ証明書のサブリソースを聞かずに通す ---- */
+async function checkCertificateProceedRemembered() {
+  const dialogsBefore = certDialogCount()
+  const rememberedBefore = certDecisionLines().filter((line) => line.includes('"remembered":true')).length
+  const tag = `c=${Date.now()}`
+  const key = await openTab(`${HTTPS_BASE}/page?${tag}`)
+  const shown = await waitDialog('prompt-certificate')
+  check('証明書: 続行の検査でページの確認が出る', shown === true, await dialogKind())
+  await answerCertificate(true)
+  const page = await connectTo(CDP, tag)
+  const width = await until(
+    async () =>
+      page.ev(
+        `(() => { const img = document.getElementById('px'); return img && img.complete ? String(img.naturalWidth) : '' })()`
+      ),
+    { timeoutMs: 8000 }
+  )
+  // 並列・張り直しの接続を再現する: 同じホストの画像をもう 1 枚読む（`Connection: close` なので新しい接続になる）
+  const second = await page.ev(probeImage(`${HTTPS_BASE}/pixel.png?c2=${Date.now()}`))
+  const quiet = await stayQuiet(1000)
+  const remembered =
+    certDecisionLines().filter((line) => line.includes('"remembered":true')).length - rememberedBefore
+  check('証明書: 続行したページの同じホストの画像が読み込める', width === '1', `width=${width}`)
+  check('証明書: あとから差し込んだ同じホストの画像も読み込める', second === 'load:1', second)
+  check(
+    '証明書: 続行したあとサブリソースで確認が出ない（確認はページの 1 回だけ）',
+    quiet && certDialogCount() - dialogsBefore === 1,
+    `ダイアログ "${await dialogKind()}" / prompt.opened ${certDialogCount() - dialogsBefore} 件`
+  )
+  // **記憶の経路に到達したこと**（接続の再利用で素通りしていないこと）
+  check('証明書: サブリソースは続行の記憶で通っている', remembered >= 1, `remembered ${remembered} 件`)
+  page.close()
+
+  // 記憶はタブに閉じている: 別のタブでは同じ証明書の画像も拒否される
+  const other = await openHttpPage('cert-c')
+  const errorsBefore = certErrorLines().length
+  const elsewhere = await other.page.ev(probeImage(`${HTTPS_BASE}/pixel.png?c3=${Date.now()}`))
+  const otherQuiet = await stayQuiet(1000)
+  check(
+    '証明書: 続行の記憶は別のタブに効かない（拒否され、確認も出ない）',
+    elsewhere === 'error' && otherQuiet && certErrorLines().length > errorsBefore,
+    `${elsewhere} / ダイアログ "${await dialogKind()}" / certificate.error ${certErrorLines().length - errorsBefore} 件`
+  )
+  other.page.close()
+  await closeTab(other.key)
+  await closeTab(key)
 }
 
 /* ---- 最後に main の未捕捉例外を見る ---- */

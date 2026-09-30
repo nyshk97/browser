@@ -33,7 +33,7 @@ export const KNOWN_TARGETS = [
   'split', // 分割ビュー（2 ペイン）
   'call', // 会議の小窓（Meet の通話コントロール）
   'live-folder', // Live Folder（GitHub の PR）
-  'http-auth', // HTTP Basic 認証の自動入力
+  'http-auth', // HTTP Basic 認証の自動入力・証明書エラーの確認
   'vim-scroll', // ページの gg / G（フル既定からは外れている。OPT_IN_ONLY を見る）
   'restart', // 再起動をまたぐ永続性（spike / phase1 / pins / split / call / live-folder の write → read）
   'shared-tabs', // 野良タブのウィンドウ横断共有（自分で起動する）

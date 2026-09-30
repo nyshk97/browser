@@ -690,16 +690,50 @@ export async function maybeOpenExternal(
  * ------------------------------------------------------------------ */
 
 /**
+ * メインフレームで続行した証明書（WebContents ごと）。
+ * キーは `host|fingerprint|errorCode`。WebContents が破棄されれば一緒に消える。
+ */
+const proceededCertificates = new WeakMap<WebContents, Set<string>>()
+
+function certificateKey(url: string, fingerprint: string, error: string): string | null {
+  try {
+    return `${new URL(url).host}|${fingerprint}|${error}`
+  } catch {
+    return null
+  }
+}
+
+/**
  * 証明書エラー。
  * **既定は拒否**（`event.preventDefault()` を呼ばなければ Electron が拒否する）。
- * ユーザーが明示的に続行を選んだときだけ通す。記憶はしない（毎回聞く）。
+ *
+ * **確認を出すのはメインフレームのナビゲーションだけ。** 画像・スクリプトなどのサブリソースと iframe は
+ * Chrome と同じく聞かずに拒否する。確認を出しても利用者には判断の材料が無い
+ * （実際に出ていたのはメールの開封ピクセル（SendGrid / SparkPost）や広告計測の証明書エラーで、
+ * アドレスバーのサイト自体は正常だった）うえ、無意味な確認は「とりあえず続行」の癖を付ける。
+ *
+ * メインフレームで続行を選んだときだけ、そのタブ（WebContents）に限って同じホスト・同じ証明書・同じエラーの
+ * サブリソースを通す。Electron は続行を覚えないので、これが無いと続行したページの画像や CSS が
+ * 全部拒否される（接続を張り直すたびに `certificate-error` がまた来る）。
+ * メインフレームの確認そのものは記憶しない（毎回聞く）。
  */
 export function installCertificateHandler(resolveWindowId: (contents: WebContents) => number | null): void {
-  app.on('certificate-error', (event, contents, url, error, certificate, callback) => {
+  app.on('certificate-error', (event, contents, url, error, certificate, callback, isMainFrame) => {
+    log('certificate.error', { target: redactUrl(url), code: error, isMainFrame })
+    const key = certificateKey(url, certificate.fingerprint, error)
+    if (!isMainFrame) {
+      if (key !== null && proceededCertificates.get(contents)?.has(key)) {
+        event.preventDefault()
+        log('certificate.decision', { proceed: true, remembered: true })
+        callback(true)
+      } else {
+        callback(false)
+      }
+      return
+    }
     const windowId = resolveWindowId(contents)
-    log('certificate.error', { target: redactUrl(url), code: error })
-    // エージェント窓（Claude Code が操作する窓）は**聞かずに拒否する**（Claude は確認に答えられず、
-    // 背面の窓に確認が残る）。先へ進むかはユーザーが通常の窓で決める
+    // エージェントのウィンドウ（Claude Code が操作するウィンドウ）は**聞かずに拒否する**（Claude は確認に答えられず、
+    // 背面のウィンドウに確認が残る）。先へ進むかはユーザーが通常のウィンドウで決める
     if (windowId === null || isAgentContents(contents)) {
       callback(false)
       return
@@ -716,6 +750,12 @@ export function installCertificateHandler(resolveWindowId: (contents: WebContent
     }).then((answer) => {
       const proceed = answer?.kind === 'certificate' && answer.proceed
       log('certificate.decision', { proceed })
+      // **callback より前に覚える**（続行した直後に届くサブリソースを取りこぼさない）
+      if (proceed && key !== null && !contents.isDestroyed()) {
+        const known = proceededCertificates.get(contents) ?? new Set<string>()
+        known.add(key)
+        proceededCertificates.set(contents, known)
+      }
       callback(proceed)
     })
   })

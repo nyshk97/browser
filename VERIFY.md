@@ -573,6 +573,11 @@ document.querySelector('[data-testid]')?.getAttribute('data-testid')  // prompt-
 
 権限要求は**アクティブなタブから**でないと Chromium 側で保留され、ダイアログまで届かない。
 
+**証明書の確認は `mise run verify:only http-auth` の「証明書:」の検査が見る**（スイートの中で自己署名の HTTPS サーバを立てる）。
+確認を出すのはメインフレームのナビゲーションだけで、サブリソース・iframe は聞かずに拒否する。続行したタブでは同じ証明書の
+サブリソースだけ通す（ログの `certificate.decision` に `remembered: true`）。手で試すなら、http のページに
+`https://self-signed.badssl.com/` の画像を差し込んでもダイアログが出ず、アドレスバーから開くと出ることを見る。
+
 ### React が持っている入力欄に値を入れる
 
 `el.value = x` では React の state が変わらない（送信すると空のまま飛ぶ）。

@@ -6,7 +6,6 @@ import type { VaultSession } from '../../vendor/kypr/client/index.ts'
 import { ICON_WRITE_LIMIT } from '../../vendor/kypr/client/session.ts'
 import { isIconDataUri } from '../../vendor/kypr/crypto/icon.ts'
 import { log, logError } from '../log.js'
-import { PAGE_PARTITION } from '../paths.js'
 import { getFaviconsForHosts } from '../store/history.js'
 import { kyprDir } from './cache-store.js'
 
@@ -53,12 +52,17 @@ function saveGone(ids: Set<string>): void {
 /** 描けなかった favicon（起動しているあいだだけ覚えて、同期のたびに描き直さない）。 */
 const failed = new Set<string>()
 
-/** favicon を、`<img>` にそのまま渡せる data: URL にする。https は常用のページのセッションで取る（HTTP キャッシュが効く）。 */
+/**
+ * favicon を、`<img>` にそのまま渡せる data: URL にする（別のオリジンの画像を canvas に描くと toDataURL が拒まれるので、
+ * 中身を取ってから渡す）。
+ * **常用のページのセッション（`persist:nemo`）で取らない**: 1.10.5 でそうしたら、最初の取得で main が SIGSEGV で落ちた
+ * （拡張の入ったセッションで、タブを持たない要求を出すと落ちる。2026-09-30）。描くための専用のセッション（保存しない・拡張も cookie も無い）で取る
+ */
 async function faviconSource(url: string): Promise<string | null> {
   if (url.startsWith('data:image/')) return url.length <= FETCH_MAX_BYTES * 2 ? url : null
-  if (!url.startsWith('https:')) return null
+  if (URL.parse(url)?.protocol !== 'https:') return null
   const res = await electronSession
-    .fromPartition(PAGE_PARTITION)
+    .fromPartition(RENDER_PARTITION)
     .fetch(url, { signal: AbortSignal.timeout(RENDER_TIMEOUT_MS) })
   if (!res.ok) return null
   const body = Buffer.from(await res.arrayBuffer())

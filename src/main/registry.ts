@@ -1110,8 +1110,19 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
     if (input.type !== 'keyDown' || input.key !== 'Escape') return
     // ⌘Esc / ⌃Esc / ⌥Esc は macOS のシステム操作（強制終了・入力ソース等）なので素通しする
     if (input.meta || input.control || input.alt) return
+    // 日本語入力の変換中の Esc は変換の取り消し。閉じる処理に吸わない
+    if (input.isComposing) return
     const current = win()
-    if (current.isDestroyed || current.overlay !== null) return
+    if (current.isDestroyed) return
+    // 検索バーが出ていれば、フォーカスがページにあっても Esc で検索を終える
+    // （検索欄の Esc しか無いと、ページを押した後はクリックでしか閉じられない）。Peek より先に閉じる。
+    // ページ自身の Esc（モーダルを閉じる等）は 1 回目を検索バーに取られるが、バーは見えているので許容する
+    if (current.overlay === 'find') {
+      event.preventDefault()
+      current.setOverlay(null)
+      return
+    }
+    if (current.overlay !== null) return
     if (current.kind === 'mini') {
       event.preventDefault()
       removeTab(current, tab.key)
@@ -2169,6 +2180,16 @@ export class NemoWindow {
     if (this.overlay === kind) return
     // ツールバーの kypr のアイコンの押し下げで閉じた直後の click（`kyprDismissedToChromeAt` を見よ）
     if (kind === 'kypr' && Date.now() - this.kyprDismissedToChromeAt < KYPR_REOPEN_GUARD_MS) return
+    // 検索バーが閉じる・別のオーバーレイに置き換わるときは検索を終える（ハイライトと n/N を残さない）。
+    // 閉じ方（検索欄の Esc / ×・ページ側の Esc・⌘F の押し直し・⌘T 等への置き換え）をここ 1 か所に寄せる。
+    // 検索しているのは前面（Peek が出ていれば Peek）。前面が入れ替わったときの前の前面は FindBar が止める
+    if (this.overlay === 'find') {
+      const foreground = this.getForegroundTab()
+      if (foreground) {
+        foreground.find = null
+        foreground.webContents?.stopFindInPage('clearSelection')
+      }
+    }
     this.overlay = kind
     this.layout()
     // kypr の候補は**ページのフォーカスを奪わない**（欄に打ち続けられるように。押したときだけ候補の View に移る）

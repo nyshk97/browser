@@ -188,6 +188,11 @@ export function runCommandForWindow(win: NemoWindow, command: string): void {
     // 検索系はオーバーレイを開いてから UI に渡す
     if (command === 'find' || command === 'find-next' || command === 'find-previous') {
       if (!win.getActiveTab()) return
+      // ⌘F は開閉を切り替える（ライブラリ・設定と同じ）。⌘G / ⌘⇧G は閉じない
+      if (command === 'find' && win.overlay === 'find') {
+        win.setOverlay(null)
+        return
+      }
       win.setOverlay('find')
     }
     // ⌘T は新規タブ / ⌘L は現在のタブ。どちらで開いたかを kind で持たせる

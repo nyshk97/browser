@@ -993,6 +993,81 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
   check('ページ内検索を終了できる', (await state()).find === null)
 }
 
+// ページ内検索の閉じ方（ページ側の Esc・⌘F の押し直し）と前回の検索語
+{
+  const key = (await state()).activeTabKey
+  const cmd = (name) => ui.ev(`window.nemo.runCommandForVerify(${JSON.stringify(name)})`)
+  const kindExpr = "window.nemo.getOverlayState().then(s => s.kind ?? '')"
+  const overlayKind = () => ui.ev(kindExpr)
+  const matches = `window.nemo.getWindowState().then(s => s.find && s.find.totalMatches > 0 ? s.find.totalMatches : 0)`
+  // 閉じなかったら待ち切って下の check で FAIL させる（例外で検証全体を止めない）
+  const waitClosed = () =>
+    waitFor(ui, `${kindExpr}.then(k => k === '' ? 'closed' : '')`, { timeoutMs: 3000 }).catch(() => '')
+
+  // 検索欄から打って検索 → ページの Esc（main の before-input-event。CDP のキーでは届かない）で閉じる
+  await cmd('find')
+  await waitFor(overlay, "document.querySelector('.findbar input') ? 'ok' : ''")
+  await overlay.ev(`(() => {
+    const input = document.querySelector('.findbar input')
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    setter.call(input, 'Nemo')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    return 'ok'
+  })()`)
+  const before = await waitFor(ui, matches).catch(() => 0)
+  await ui.ev(`window.nemo.pressKeyForVerify(${JSON.stringify(key)}, 'Escape')`)
+  await waitClosed()
+  {
+    const kind = await overlayKind()
+    const find = (await state()).find
+    check(
+      'ページ側の Esc で検索バーが閉じ、検索も終わる',
+      before > 0 && kind === '' && find === null,
+      `閉じる前 matches=${before} / 後 kind=[${kind}] find=${JSON.stringify(find)}`
+    )
+  }
+
+  // 開き直すと前回の語が全選択で入っている。入れただけでは検索しない
+  await cmd('find')
+  await waitFor(overlay, "document.querySelector('.findbar input') ? 'ok' : ''")
+  {
+    const input = JSON.parse(
+      await overlay.ev(`(() => {
+        const el = document.querySelector('.findbar input')
+        return JSON.stringify({ value: el.value, start: el.selectionStart, end: el.selectionEnd, count: document.querySelector('.findbar .count').textContent })
+      })()`)
+    )
+    const find = (await state()).find
+    check(
+      '開き直すと前回の検索語が全選択で入り、まだ検索しない',
+      input.value === 'Nemo' && input.start === 0 && input.end === 4 && input.count === '' && find === null,
+      `${JSON.stringify(input)} find=${JSON.stringify(find)}`
+    )
+  }
+
+  // 入れただけの語で ⌘G → 新規の検索として始まる（stopFind の後の findNext: true で止まらない）。⌘G では閉じない
+  await cmd('find-next')
+  const again = await waitFor(ui, matches).catch(() => 0)
+  check(
+    '前回の語のまま ⌘G で検索が始まり、検索バーは開いたまま',
+    again > 0 && (await overlayKind()) === 'find',
+    `matches=${again}`
+  )
+
+  // ⌘F の押し直しで閉じる
+  await cmd('find')
+  await waitClosed()
+  {
+    const kind = await overlayKind()
+    const find = (await state()).find
+    check(
+      '⌘F の押し直しで検索バーが閉じ、検索も終わる',
+      again > 0 && kind === '' && find === null,
+      `閉じる前 matches=${again} / 後 kind=[${kind}] find=${JSON.stringify(find)}`
+    )
+  }
+}
+
 // zoom
 {
   const key = (await state()).activeTabKey

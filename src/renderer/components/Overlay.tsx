@@ -375,8 +375,22 @@ function EnterIcon(): React.JSX.Element {
  * ページ内検索（⌘F）
  * ------------------------------------------------------------------ */
 
+/**
+ * 前回の検索語。開き直したときに全選択で入れておく（Chrome と同じ）。⌘F は開閉の切り替えなので、
+ * 別の語で検索し直すのは ⌘F ⌘F になる。そのとき打ち直さずに上書きできるようにする。
+ * overlay の View はウィンドウごとなので、ウィンドウごとに覚える
+ */
+let lastFindQuery = ''
+
 function FindBar({ onClose, state }: { onClose: () => void; state: WindowState | null }): React.JSX.Element {
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(lastFindQuery)
+  /**
+   * 開いてから検索を投げたか。前回の語を入れただけでは検索しない（開き直しでページが最初の一致へ飛ばないように）。
+   * まだ投げていないうちの Enter・⌘G は、打ち始めと同じ新規の検索の形（`findNext` を付けない）で投げる。
+   * 閉じたときに main が検索を終えているので、続きの検索として投げる相手が無い
+   * （新規と続きの渡し方は `nemo:find`（ipc.ts）のコメントを見よ）
+   */
+  const [searched, setSearched] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   // 検索対象は前面（Peek が出ていれば Peek）。n/N も main が前面の find を送ってくる
   const activeKey = foregroundTab(state)?.key ?? null
@@ -411,32 +425,26 @@ function FindBar({ onClose, state }: { onClose: () => void; state: WindowState |
     (text: string, options: { forward?: boolean; findNext?: boolean } = {}) => {
       if (!activeKey) return
       if (!text) {
+        setSearched(false)
         void window.nemo.stopFind(activeKey)
         return
       }
-      void window.nemo.find(activeKey, text, options)
+      setSearched(true)
+      void window.nemo.find(activeKey, text, searched ? options : { forward: options.forward })
     },
-    [activeKey]
+    [activeKey, searched]
   )
 
+  // ⌘F の押し直しは main が閉じる（ここには届かない）。開いたときの focus は上の useEffect が持つ
   useCommand(
     useCallback(
       (command) => {
-        if (command === 'find') {
-          inputRef.current?.focus()
-          inputRef.current?.select()
-        }
         if (command === 'find-next') search(query, { findNext: true, forward: true })
         if (command === 'find-previous') search(query, { findNext: true, forward: false })
       },
       [query, search]
     )
   )
-
-  const close = (): void => {
-    if (activeKey) void window.nemo.stopFind(activeKey)
-    onClose()
-  }
 
   return (
     <div className="findbar">
@@ -447,6 +455,7 @@ function FindBar({ onClose, state }: { onClose: () => void; state: WindowState |
         placeholder="ページ内を検索"
         onChange={(event) => {
           setQuery(event.target.value)
+          lastFindQuery = event.target.value
           search(event.target.value)
         }}
         onKeyDown={(event) => {
@@ -454,12 +463,16 @@ function FindBar({ onClose, state }: { onClose: () => void; state: WindowState |
             event.preventDefault()
             search(query, { findNext: true, forward: !event.shiftKey })
           } else if (event.key === 'Escape') {
-            close()
+            onClose()
           }
         }}
       />
       <span className="count">
-        {find && find.totalMatches > 0 ? `${find.activeMatch}/${find.totalMatches}` : query ? '0/0' : ''}
+        {find && find.totalMatches > 0
+          ? `${find.activeMatch}/${find.totalMatches}`
+          : query && searched
+            ? '0/0'
+            : ''}
       </span>
       <button
         type="button"
@@ -471,7 +484,7 @@ function FindBar({ onClose, state }: { onClose: () => void; state: WindowState |
       <button type="button" className="icon" onClick={() => search(query, { findNext: true, forward: true })}>
         ›
       </button>
-      <button type="button" className="icon" onClick={close}>
+      <button type="button" className="icon" onClick={onClose}>
         ×
       </button>
     </div>

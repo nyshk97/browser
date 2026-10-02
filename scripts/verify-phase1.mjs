@@ -1733,6 +1733,9 @@ if (process.env.NEMO_VERIFY_UNLOAD_CHOICE !== 'leave' || !process.env.NEMO_USER_
   const sleeper = await ui.ev(
     `window.nemo.createTab('${PAGES}/index.html?probe=sleep', { background: true })`
   )
+  const originalSleep = JSON.parse(
+    await ui.ev('window.nemo.getSettings().then((s) => JSON.stringify(s))')
+  ).tabSleepMinutes
   await ui.ev('window.nemo.updateSettings({ tabSleepMinutes: 0.05 }).then(() => "ok")')
   const asleep = await waitFor(
     ui,
@@ -1740,7 +1743,7 @@ if (process.env.NEMO_VERIFY_UNLOAD_CHOICE !== 'leave' || !process.env.NEMO_USER_
     { timeoutMs: 20000 }
   )
   check('非アクティブタブが sleep する', asleep === 'slept')
-  await ui.ev('window.nemo.updateSettings({ tabSleepMinutes: 30 }).then(() => "ok")')
+  await ui.ev(`window.nemo.updateSettings({ tabSleepMinutes: ${originalSleep} }).then(() => "ok")`)
   await ui.ev(`window.nemo.closeTab(${JSON.stringify(sleeper)}).then(() => 'ok')`)
 }
 

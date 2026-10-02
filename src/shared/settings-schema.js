@@ -24,7 +24,7 @@ export const SETTINGS_VERSION = 1
 
 /** @type {import('./types.js').NemoSettings} */
 export const DEFAULT_SETTINGS = {
-  tabSleepMinutes: 30,
+  tabSleepMinutes: 120,
   tabArchiveHours: 24,
   sidebarVisible: true,
   searchTemplate: 'https://www.google.com/search?q={q}',

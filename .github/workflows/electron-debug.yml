@@ -1,0 +1,59 @@
+name: Electron 42 以降の回帰の調査（一時）
+
+# 調査が終わったら消す。41 と新しい版で、拡張 smoke と kypr のスイートだけを回し、FAIL の行を全文で出す。
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/electron-debug.yml'
+      - 'scripts/verify-ext-smoke.mjs'
+      - 'scripts/verify-kypr.mjs'
+
+concurrency:
+  group: electron-debug-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Electron ${{ matrix.version }}
+    runs-on: macos-15
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['41.10.6', '42.11.10', '44.5.1']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - run: pnpm install --frozen-lockfile
+      - if: matrix.version != '41.10.6'
+        run: pnpm add -D electron@${{ matrix.version }}
+      - run: echo "electron $(node -p "require('electron/package.json').version")"
+      - name: 拡張互換 smoke test
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          set -o pipefail
+          node scripts/verify-ext-smoke.mjs 2>&1 | tee "$RUNNER_TEMP/smoke.log"
+      - name: kypr
+        continue-on-error: true
+        timeout-minutes: 20
+        run: |
+          set -o pipefail
+          node scripts/verify-all.mjs --only kypr 2>&1 | tee "$RUNNER_TEMP/kypr.log"
+      - name: FAIL の行
+        if: always()
+        run: |
+          echo "===== electron ${{ matrix.version }}"
+          grep -h -E '^\s*FAIL\s' "$RUNNER_TEMP/smoke.log" "$RUNNER_TEMP/kypr.log" || echo "(FAIL なし)"
+          echo "===== 件数"
+          grep -h -c -E '^\s*(PASS|FAIL)\s' "$RUNNER_TEMP/smoke.log" "$RUNNER_TEMP/kypr.log" || true

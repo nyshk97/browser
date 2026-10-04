@@ -839,7 +839,20 @@ try {
         panelTarget =
           (await listTargets(cdp)).find((t) => t.url.includes(`${expected.id}/panel.html`)) ?? null
       }
-      check('devtools_page が足したパネルが DevTools に出る', Boolean(panelTarget), panelTarget?.url ?? '')
+      // 落ちたときの切り分け: devtools_page 自体が読まれたか（target があるか）・DevTools にパネルのタブが出たか
+      const panelDiag = panelTarget
+        ? panelTarget.url
+        : JSON.stringify({
+            targets: (await listTargets(cdp))
+              .filter((t) => t.url.startsWith('devtools://') || t.url.startsWith('chrome-extension://'))
+              .map((t) => `${t.type} ${t.url.slice(0, 90)}`),
+            tab: await devtools
+              .ev(
+                `(() => { const seen = []; const walk = (root) => { for (const el of root.querySelectorAll('*')) { if (el.shadowRoot) walk(el.shadowRoot); const t = (el.getAttribute('aria-label') || '') + '|' + (el.childElementCount === 0 ? el.textContent : ''); if (t.includes('Nemo CI')) seen.push(el.tagName + ':' + t.slice(0, 40)) } }; walk(document); return JSON.stringify(seen.slice(0, 5)) })()`
+              )
+              .catch((error) => `error: ${error.message}`)
+          })
+      check('devtools_page が足したパネルが DevTools に出る', Boolean(panelTarget), panelDiag)
       if (panelTarget) {
         const panel = await connect(panelTarget.webSocketDebuggerUrl)
         const apis = await waitFor(panel, `document.getElementById('panel-apis')?.textContent ?? ''`)

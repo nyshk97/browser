@@ -1946,7 +1946,7 @@ try {
   check(
     'ロック中は「kypr のロックを解除」だけを出す',
     lockedInline?.locked === true && lockedInline.rows.length === 0,
-    JSON.stringify(lockedInline)
+    `${JSON.stringify(lockedInline)} overlay=${await overlayKind()} active=${await page.ev('document.activeElement && document.activeElement.id')} scrollY=${await page.ev('scrollY')}`
   )
   await ui.ev('window.nemo.kyprInlineDismiss()')
   await json('window.nemo.kyprUnlockTouchId()')
@@ -2174,7 +2174,8 @@ try {
   check('未処理の例外が出ていない', crashes1.length === 0, crashes1.join(' / '))
   await stopApp(app.child)
   // ロック中の件数はキャッシュの行数（サイトのアイコンの行も含む）なので、止めた時点の行数と比べる
-  const cacheRowsAtStop = JSON.parse(fs.readFileSync(path.join(userData, 'kypr', 'cache.json'), 'utf8')).items.length
+  const cacheRowsAtStop = JSON.parse(fs.readFileSync(path.join(userData, 'kypr', 'cache.json'), 'utf8')).items
+    .length
 
   /* ================= 2 回目の起動（Touch ID が通らない・使わないとロック） ================= */
   app = await bootApp(userData, origin, { NEMO_KYPR_TEST_TOUCHID: 'fail', NEMO_KYPR_TEST_IDLE_MS: '2500' })
@@ -2193,7 +2194,9 @@ try {
     JSON.stringify(touchFail)
   )
   // ⌘⇧L: Touch ID が通らなければポップアップ（マスターパスワード）を開く
-  const failUnlocksBefore = readLogLines(userData).filter((line) => line.includes('kypr.shortcut_unlock')).length
+  const failUnlocksBefore = readLogLines(userData).filter((line) =>
+    line.includes('kypr.shortcut_unlock')
+  ).length
   await ui.ev("window.nemo.runCommandForVerify('kypr-fill')")
   await waitFor(ui, "window.nemo.getOverlayState().then((s) => s.kind === 'kypr' ? 'ok' : '')", {
     timeoutMs: 8000
@@ -2775,6 +2778,15 @@ try {
     const r = await rectOf(session, selector)
     await clickPoint(session, r.x + 8, r.y + r.h / 2)
   }
+  /**
+   * iframe の中に押下が届いたかを数える（診断用）。Chromium は透明な iframe や出たばかりの iframe への
+   * 入力を捨てることがあり、そのときは Nemo の判定より前でクリックが消える。FAIL の詳細で切り分ける
+   */
+  const armPointerCount = (inner) =>
+    inner.ev(
+      "(window.__nemoDown = 0, window.__nemoDownArmed || (window.__nemoDownArmed = true, addEventListener('pointerdown', () => { window.__nemoDown += 1 }, true)), 'ok')"
+    )
+  const pointerCount = (inner) => inner.ev('window.__nemoDown ?? -1')
   /** iframe の中の欄をクリックする（トップの座標 = iframe の位置 + 中の欄の位置）。 */
   const clickInFrame = async (top, frameSelector, inner, innerSelector) => {
     const f = await rectOf(top, frameSelector)
@@ -2903,16 +2915,19 @@ try {
   const splitE = await connectTo(app.cdp, `localhost:${port}/card-inner.html?f=exp`, { type: 'iframe' })
   const splitC = await connectTo(app.cdp, `localhost:${port}/card-inner.html?f=cvc`, { type: 'iframe' })
   for (const f of [splitN, splitE, splitC]) await waitFor(f, "document.readyState === 'complete' ? 'ok' : ''")
+  await armPointerCount(splitE)
   await clickInFrame(splitTop, '#fe', splitE, '#exp')
   await waitOverlay('kypr-inline', 8000)
   const splitShown = (await cardOverlay()) === 'kypr-inline'
+  const splitDown = await pointerCount(splitE)
+  const splitFocus = await splitE.ev('document.activeElement && document.activeElement.id')
   // Esc（main の input-event）で閉じる
   await ui.ev(`window.nemo.pressKeyForVerify(${JSON.stringify(cardTab)}, 'Escape')`)
   await waitOverlay(null)
   check(
     'カード: 分割型の期限の iframe でも候補が出て、Esc で閉じる',
     splitShown && (await cardOverlay()) === null,
-    `shown=${splitShown} now=${await cardOverlay()}`
+    `shown=${splitShown} now=${await cardOverlay()} down=${splitDown} innerFocus=${splitFocus}`
   )
   await clickInFrame(splitTop, '#fc', splitC, '#cvc')
   await waitOverlay('kypr-inline', 8000)
@@ -2941,16 +2956,26 @@ try {
     hiddenFrame,
     "document.readyState === 'complete' && document.getElementById('number') ? 'ok' : ''"
   )
+  await armPointerCount(hiddenFrame)
   await clickInFrame(hiddenTop, '#f', hiddenFrame, '#number')
   await sleep(1500)
   const hiddenActive = await hiddenTop.ev('document.activeElement && document.activeElement.id')
+  const hiddenDown = await pointerCount(hiddenFrame)
+  const hiddenInnerFocus = await hiddenFrame.ev('document.activeElement && document.activeElement.id')
   const hiddenOverlay = await cardOverlay()
   const hiddenFill = await json(`window.nemo.kyprFill(${JSON.stringify(K.id)})`)
   const hiddenNumber = await hiddenFrame.ev("document.getElementById('number').value")
   check(
     'カード: 透明な iframe の中の欄には候補を出さず、入れない',
     hiddenActive === 'f' && hiddenOverlay !== 'kypr-inline' && hiddenFill.ok === false && hiddenNumber === '',
-    JSON.stringify({ hiddenActive, hiddenOverlay, hiddenFill, filled: hiddenNumber !== '' })
+    JSON.stringify({
+      hiddenActive,
+      hiddenOverlay,
+      hiddenFill,
+      filled: hiddenNumber !== '',
+      hiddenDown,
+      hiddenInnerFocus
+    })
   )
 
   /* ---- 6-6. カードが 2 件なら ⌘⇧L はポップアップ ---- */

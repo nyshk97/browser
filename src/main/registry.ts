@@ -360,6 +360,7 @@ function agentWindowBounds(): { x: number; y: number; width: number; height: num
  */
 export function presentAgentWindow(win: NemoWindow): void {
   if (win.isDestroyed || win.baseWindow.isDestroyed()) return
+  installAgentKeyablePolicy()
   /*
    * **全画面の Nemo 窓で作業中なら、出すのを保留する**（Phase 1 の実測）。
    * そのとき出すと、エージェント窓は全画面の Space の中に**全画面の窓より手前で**出た（blur しても手前のまま）。
@@ -376,12 +377,18 @@ export function presentAgentWindow(win: NemoWindow): void {
       return
     }
   }
+  const otherKey = previous && previous !== win.baseWindow && !previous.isDestroyed() ? previous : null
+  // 別の窓（小窓や会議の小窓など、key になっても Nemo を前面にしない窓も）が key なら、出す瞬間に key を奪わせない
+  if (otherKey && win.baseWindow.isFocusable()) win.baseWindow.setFocusable(false)
   win.baseWindow.showInactive()
   win.baseWindow.blur()
-  if (previous && previous !== win.baseWindow && !previous.isDestroyed() && win.baseWindow.isFocused()) {
-    previous.focus()
+  if (otherKey && win.baseWindow.isFocused()) {
+    otherKey.focus()
     log('agent.window_key_restored', { windowId: win.id })
   }
+  // 出す瞬間だけ塞いだ分を、今の key に合わせて戻す。作った時点の focusable:false や一時的に塞いだまま残すと、
+  // ターミナル等から最初にクリックしたとき常用窓の Space へ飛ばされる
+  syncAgentWindowsKeyable('present')
   log('agent.window_presented', { windowId: win.id })
 }
 
@@ -390,27 +397,76 @@ const AGENT_PRESENT_AFTER_RESIGN_MS = 1500
 
 /** 保留中のエージェント窓（Nemo が前面でなくなったら出す）。 */
 const deferredAgentWindows = new Set<NemoWindow>()
-let resignListenerInstalled = false
 
 function deferAgentPresentation(win: NemoWindow): void {
   deferredAgentWindows.add(win)
   log('agent.window_deferred', { windowId: win.id })
-  if (resignListenerInstalled) return
-  resignListenerInstalled = true
-  // macOS: アプリが前面でなくなった（ターミナル等へ移った）。
-  // **Space の切り替えが終わってから出す**。直後に出すと、切り替え中の全画面の Space の側に置かれて
-  // 移った先のデスクトップに出なかった（実測）。待つ間にまた前面へ戻ってきたら、次の機会まで保留を続ける
-  app.on('did-resign-active', () => {
-    setTimeout(() => {
-      if (BaseWindow.getFocusedWindow()) return
-      const pending = [...deferredAgentWindows]
-      deferredAgentWindows.clear()
-      for (const target of pending) {
-        if (!target.isDestroyed && !target.baseWindow.isDestroyed() && !target.baseWindow.isVisible()) {
-          presentAgentWindow(target)
-        }
+}
+
+/**
+ * 保留中の窓を出す（`did-resign-active` から呼ぶ）。
+ * **Space の切り替えが終わってから出す**。直後に出すと、切り替え中の全画面の Space の側に置かれて
+ * 移った先のデスクトップに出なかった（実測）。待つ間にまた前面へ戻ってきたら、次の機会まで保留を続ける
+ */
+function presentDeferredAfterResign(): void {
+  if (deferredAgentWindows.size === 0) return
+  setTimeout(() => {
+    if (BaseWindow.getFocusedWindow()) return
+    const pending = [...deferredAgentWindows]
+    deferredAgentWindows.clear()
+    for (const target of pending) {
+      if (!target.isDestroyed && !target.baseWindow.isDestroyed() && !target.baseWindow.isVisible()) {
+        presentAgentWindow(target)
       }
-    }, AGENT_PRESENT_AFTER_RESIGN_MS)
+    }
+  }, AGENT_PRESENT_AFTER_RESIGN_MS)
+}
+
+/**
+ * エージェント窓を key になれる状態にする / しない。
+ *
+ * **key になれないのは「Nemo の通常窓が key の間」だけ**。全画面の常用窓で作業中に
+ * エージェント窓を `showInactive` すると key を横取りされた（Phase 1）ので、その間は塞ぐ。
+ * 逆に**他アプリが前面の間は key になれる状態に戻しておく**。塞いだままだと、ターミナルから
+ * エージェント窓をクリックしたとき Nemo の前面化で常用窓が key になり、macOS がその全画面の
+ * Space へ切り替えてしまう（2026-10-04 に実測。クリック後に focusable にしても 0.4 秒後に常用窓へ戻った）。
+ */
+function setAgentWindowsKeyable(keyable: boolean, reason: string): void {
+  const changed: number[] = []
+  for (const win of windowsById.values()) {
+    if (win.isDestroyed || !win.isAgent || win.baseWindow.isDestroyed()) continue
+    if (win.baseWindow.isFocusable() === keyable) continue
+    win.baseWindow.setFocusable(keyable)
+    changed.push(win.id)
+  }
+  if (changed.length > 0) log('agent.window_keyable', { keyable, reason, windowIds: changed })
+}
+
+/**
+ * 今 key の窓に合わせて `setAgentWindowsKeyable` する（行き先が分からない契機はここで決める）。
+ * 通常窓の focus（塞ぐ）と `did-resign-active`（戻す）は行き先が決まっているので直接呼ぶ。条件を変えるときは 3 か所とも見る。
+ * 小窓・会議の小窓（nonactivating panel）は Nemo を前面にせず key になるので、塞ぐ対象に入れない。
+ * 入れると、そこから他アプリへ移っても `did-resign-active` が来ず、塞いだまま残る
+ */
+function syncAgentWindowsKeyable(reason: string): void {
+  const focused = BaseWindow.getFocusedWindow()
+  const normalIsKey =
+    focused !== null &&
+    [...windowsById.values()].some(
+      (win) => !win.isDestroyed && win.kind === 'normal' && win.baseWindow === focused
+    )
+  setAgentWindowsKeyable(!normalIsKey, reason)
+}
+
+let agentWindowPolicyInstalled = false
+
+/** Nemo が前面でなくなったときの処理（key になれる状態へ戻す → 保留中の窓を出す予約）。最初にエージェント窓を出すときに付ける。 */
+function installAgentKeyablePolicy(): void {
+  if (agentWindowPolicyInstalled) return
+  agentWindowPolicyInstalled = true
+  app.on('did-resign-active', () => {
+    setAgentWindowsKeyable(true, 'app_resign_active')
+    presentDeferredAfterResign()
   })
 }
 
@@ -1584,9 +1640,10 @@ export class NemoWindow {
             show: false,
             // **全画面にしない**（ページの requestFullscreen で Space が切り替わり前面を奪われた。実測）
             fullscreenable: false,
-            // **既定は key になれない**。全画面の常用窓が key のときに showInactive すると
+            // **作った時点では key になれない**。全画面の常用窓が key のときに showInactive すると
             // key がこの窓へ移り、ユーザーの打鍵が見えない窓に入った（実測）。
-            // ユーザーが実クリックしたときだけ focusable にする（`agent/window-focus.ts`）
+            // 以後の切り替えは `setAgentWindowsKeyable`（他アプリが前面になったら戻す）と
+            // 実クリック（`agent/connection.ts` の `makeWindowFocusable`）
             focusable: false,
             title: `Claude — ${agentLabel ?? 'Claude'}`,
             backgroundColor: '#16161a',
@@ -1647,12 +1704,16 @@ export class NemoWindow {
     // 通常ウィンドウの MRU を記録する（小窓の昇格先を決めるのに使う）。
     // **小窓は記録しない**。記録すると小窓から小窓へ昇格しようとする。
     this.baseWindow.on('focus', () => {
+      // 通常窓で作業している間は、エージェント窓に key を取らせない（小窓は塞がない。`syncAgentWindowsKeyable`）
+      if (this.kind === 'normal') setAgentWindowsKeyable(false, 'nemo_window_focus')
       rememberNormalWindowFocus(this)
       // 「会議タブが見えているか」は**フォーカスにも依る**（他アプリへ移ったら出す）。
       // ここを拾わないと、アプリを行き来しても小窓が出入りしない。
       notifyCall()
     })
     this.baseWindow.on('blur', () => {
+      // 通常窓から小窓（Nemo は前面のまま）や他アプリへ移ったら、行き先に合わせて戻す
+      if (this.kind === 'normal') setTimeout(() => syncAgentWindowsKeyable('nemo_window_blur'), 0)
       notifyCall()
       // ⌘ の keyUp はもう届かない（⌘⇥ で別アプリへ行った等）→ 番号バッジは必ず消す
       shortcutHintHide(this, 'blur')

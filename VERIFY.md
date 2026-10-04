@@ -1493,6 +1493,13 @@ Live Folder OFF）と `--use-mock-keychain` で起動し、`Contents/Resources/n
 - 画面 1 枚 / 2 枚それぞれで窓の出る場所（内蔵のデスクトップ）。Meet で Studio Display を共有中に Claude の窓が映らない
 - 実サイトで引き継ぎを通す（Claude が操作 → ログインで止まる → 窓をクリックしてログイン・2FA → ターミナルで「続けて」→ Claude が再開）
 - Claude の窓をクリックすると操作できる（focusable が切り替わる）・ターミナルへ戻ると Claude が続けられる
+- **Nemo が前面でないとき（ターミナル等が前面）に Claude の窓をクリックしても、常用の全画面窓の Space へ飛ばされない**
+  （`setAgentWindowsKeyable`・`src/main/registry.ts`）。2026-10-04 に実装で確かめた手順: 使い捨ての Nemo の通常窓を全画面にして
+  tabs_context → 別のアプリ（別プロセスの Electron の窓）を前面にし、デスクトップに出た Claude の窓を CGEvent で 1 回クリック →
+  3 秒後に Claude の窓が CGWindowList の onscreen のまま（修正前は全画面の Space へ切り替わって offscreen）。続けて通常窓の
+  ツールバーに `focusForVerify('toolbar')` で戻ると `agent.window_keyable false nemo_window_focus` が出る。
+  **合成クリックの前に、クリック点に他のウィンドウが（手前・奥を問わず）かかっていないことを `.optionOnScreenOnly` の一覧で確かめる**
+  （`.optionAll` は手前からの順ではない。これで判定して常用 Nemo の Claude の窓をクリックした事故あり）
 - Claude Code を 2 セッション同時に使い、窓が別々に出てそれぞれ終了時に閉じる
 - 右クリックの「Claude のウィンドウで開く」と小窓の「Claude」ボタン
 - **kypr を実物で**: Claude に実サイトのログインを頼む → 引き継ぎで Claude のウィンドウのツールバーの kypr（か欄の下の候補）から入れる →

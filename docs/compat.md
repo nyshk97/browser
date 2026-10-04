@@ -7,7 +7,7 @@ Nemo は Electron と `electron-chrome-extensions` の組み合わせが壊れ�
 
 | 項目 | バージョン | 備考 |
 |---|---|---|
-| Electron | **41.10.6** | Chromium 146.0.7680.216 / Node 22.22.1 |
+| Electron | **44.5.1** | Chromium 152.0.7977.130 / Node 24.21.0。41.10.6 から上げた（2026-10-04、41 のサポート切れ）。拡張の DevTools パネルが出ない既知の不具合あり（下記） |
 | `electron-chrome-extensions` | **4.9.0** | GPL-3.0 + Patron License のデュアル |
 | `electron-chrome-web-store` | **0.13.0** | MIT。Nemo では Web Store 経路を使わず、CRX の公開鍵取得のロジックだけ参考にしている |
 | `electron-vite` | 5.0.0 | vite 7.3.6 |
@@ -15,9 +15,11 @@ Nemo は Electron と `electron-chrome-extensions` の組み合わせが壊れ�
 | `better-sqlite3` | **13.0.3** | prebuild が Node-API なので **Electron 向けの rebuild が不要**（下記） |
 | `electron-builder` | 26.15.3 | fuses の書き換えも任せる |
 | Keepa 拡張 | **5.64** | Chrome Web Store の CRX（`chrome-web-store` ソース）。Amazon 商品ページで価格推移グラフの iframe（`keepa.com/keepaBox.html`）が描画されるところまで確認（2026-08-29） |
-| GraphQL Network Inspector 拡張 | **2.26.1** | Chrome Web Store の CRX。DevTools の「GraphQL Network」パネルに HTTP 経由の GraphQL（Query / Mutation）が並ぶところまで確認（2026-08-29）。**WebSocket（Subscriptions）タブは常に空**（`chrome.debugger` が Nemo のスタブなので） |
+| GraphQL Network Inspector 拡張 | **2.26.1** | Chrome Web Store の CRX。**Electron 44 ではパネルが出ない**（下記「Electron 42 以降、拡張の DevTools パネルが出ない」・#2）。41 では DevTools の「GraphQL Network」パネルに HTTP 経由の GraphQL（Query / Mutation）が並ぶところまで確認していた（2026-08-29。WebSocket（Subscriptions）タブは常に空。`chrome.debugger` が Nemo のスタブなので） |
 
 検証日: 2026-08-23（拡張の ON/OFF・`chrome.debugger` / `webRequest` の補完は 2026-08-29〜30）/ 検証機: macOS 15（Darwin 25.5.0, arm64）
+
+Electron 44.5.1 は 2026-10-04 に CI（macOS 15）の拡張 smoke・自走検証で確認。**実機での kypr の確認（Touch ID の解除・自動入力・コピー）はリリース前に行う**。
 
 ## Electron の追従
 
@@ -48,7 +50,25 @@ major を上げるときは、**通る中でいちばん新しい major の最�
 `samuelmaddock/electron-browser-shell#184` に、Electron 42 以降で
 `electron-chrome-extensions` のアイコン・popup が壊れるという未解決の報告がある。
 Phase 0 では **41 系の最新（41.10.6）を採用**し、42 以降には上げていなかった。
-今は週 1 の試しの結果（拡張 smoke が `<browser-action-list>` のアイコンと popup を見ている）で判断する。
+44.5.1 で試した結果、アイコン・popup は拡張 smoke で通った（2026-10-04）。
+今は週 1 の試しの結果で判断する。
+
+## Electron 42 以降、拡張の DevTools パネルが出ない（#2）
+
+拡張の `devtools_page`（`devtools.html`）は読み込まれるが、その frame に **`chrome.devtools` が入らない**
+（`undefined`）。`chrome.devtools.panels.create` が TypeError で落ちて、パネルが作られない。
+42.11.10 / 44.5.1 で起き、41.10.6 では起きない。`src/main/devtools-shim.ts` を外しても同じなので、Nemo 側の原因ではない
+（2026-10-04、CI の macOS で実測）。影響を受けるのは今の拡張では GraphQL Network Inspector だけ。
+
+拡張 smoke はこの症状（devtools.html はあるが `chrome.devtools` が無い）のときだけ `KNOWN` として数え、FAIL にしない。
+違う壊れ方は FAIL のまま。直ればパネルが出て、元の検査が PASS に戻る。
+
+## CDP のクリックが Chromium に捨てられる（42 以降）
+
+Electron 42 以降の Chromium は、**描画前のページや出たばかり・透明な cross-origin の iframe への入力を黙って捨てる**
+（paint holding・クリックジャッキング対策）。CI では遷移の直後に `Input.dispatchMouseEvent` で撃つクリックが消え、
+kypr の検査が Nemo の判定より前で落ちていた（押下 0 件を実測）。ユーザーは描画されたページしか押せないので実害は無い。
+検査は押下が届いたのを確かめて撃ち直す（`verify-kypr.mjs` の `clickUntilDelivered`）。
 
 ## 検証済みの動作（Electron 41.10.6 + ece 4.9.0。当時は Bitwarden 2026.8.0 で確認。Bitwarden は 2026-09-28 に外した）
 

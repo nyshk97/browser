@@ -3,7 +3,10 @@
  * Electron の追従（workflow `.github/workflows/electron-track.yml` から使う）。
  *
  *   node scripts/electron-track.mjs plan
- *     サポート中で今より新しい major の最新版を JSON で出す（matrix 用）
+ *     サポート中で今より新しい major の最新版と、基準にする今の版を JSON で出す（matrix 用）
+ *   node scripts/electron-track.mjs result --major <n> --version <v> --baseline <bool> --smoke <outcome> --verify <outcome> \
+ *     --smoke-log <file> --verify-log <file> --out <file>
+ *     1 つの版を試した結果（落ちた検査の名前つき）を JSON にする
  *   node scripts/electron-track.mjs report --results <dir> [--previous <file>] [--out <dir>]
  *     試した結果（<dir>/*.json）から issue の本文とコメントを作る
  *
@@ -11,9 +14,10 @@
  * EOL は endoflife.date から取る（electronjs.org の公開スケジュールを集約したもの）。
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   assess,
+  failuresFromLog,
   notifyComment,
   parseCycles,
   previousStateKey,
@@ -74,7 +78,28 @@ if (command === 'plan') {
   if (comment) writeFileSync(join(out, 'comment.md'), comment)
   console.log(body)
   if (comment) console.log(`\n[comment] ${comment}`)
+} else if (command === 'result') {
+  // 1 つの版を試した結果を JSON にする（try ジョブの最後に呼ぶ）
+  const log = (name) => {
+    const file = option(name)
+    return file && existsSync(file) ? readFileSync(file, 'utf8') : ''
+  }
+  const result = {
+    major: Number(option('--major')),
+    version: option('--version'),
+    baseline: option('--baseline') === 'true',
+    smoke: option('--smoke') || 'skipped',
+    verify: option('--verify') || 'skipped',
+    smokeFailures: failuresFromLog(log('--smoke-log')),
+    verifyFailures: failuresFromLog(log('--verify-log'))
+  }
+  const out = option('--out')
+  mkdirSync(dirname(out), { recursive: true })
+  writeFileSync(out, `${JSON.stringify(result)}\n`)
+  console.log(JSON.stringify(result, null, 2))
 } else {
-  console.error('使い方: electron-track.mjs plan | report --results <dir> [--previous <file>] [--out <dir>]')
+  console.error(
+    '使い方: electron-track.mjs plan | result ... | report --results <dir> [--previous <file>] [--out <dir>]'
+  )
   process.exit(2)
 }

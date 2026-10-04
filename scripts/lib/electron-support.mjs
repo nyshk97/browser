@@ -60,27 +60,74 @@ export function majorOf(version) {
 
 /**
  * 試す対象: 今より新しい、サポート中の major の最新版。
- * 今の major 自体は CI（ci.yml / verify.yml）が毎回見ているので試さない。
+ * 比べる基準として**今の版も同じ条件で回す**（`baseline: true`）。CI の環境だけで落ちる検査を
+ * Electron の版のせいと取り違えないため。新しい major が無ければ何も回さない。
  */
 export function trialTargets(cycles, currentVersion, today) {
   const current = majorOf(currentVersion)
-  return supportedCycles(cycles, today)
+  const newer = supportedCycles(cycles, today)
     .filter((c) => c.major > current)
-    .map((c) => ({ major: c.major, version: c.latest }))
+    .map((c) => ({ major: c.major, version: c.latest, baseline: false }))
+  if (newer.length === 0) return []
+  return [{ major: current, version: currentVersion, baseline: true }, ...newer]
 }
 
-const passed = (r) => r.smoke === 'success' && r.verify === 'success'
+/** 検証のログから落ちた検査の名前を拾う（各スイートは `FAIL  <検査名>` の行を出す） */
+export function failuresFromLog(text, limit = 10) {
+  const found = []
+  for (const line of String(text ?? '').split('\n')) {
+    const match = /^\s*FAIL\s+(.+?)\s*$/.exec(line)
+    if (!match) continue
+    const name = match[1].length > 150 ? `${match[1].slice(0, 150)}…` : match[1]
+    if (!found.includes(name)) found.push(name)
+    if (found.length >= limit) break
+  }
+  return found
+}
+
+const SUITES = [
+  ['smoke', 'smokeFailures'],
+  ['verify', 'verifyFailures']
+]
+
+/** 今の版では落ちない検査（= その版で初めて落ちる検査） */
+export function regressions(result, baseline) {
+  const out = []
+  for (const [, key] of SUITES) {
+    const base = baseline?.[key] ?? []
+    for (const name of result[key] ?? []) if (!base.includes(name)) out.push(name)
+  }
+  return out
+}
+
+/**
+ * 通ったか。どちらのスイートも成功しているか、落ちた検査がすべて今の版でも落ちるもの（CI の環境のせい）なら通った扱い。
+ * 打ち切り（timeout）のように落ちた検査の名前が取れないものは通らない扱いにする。
+ */
+export function passed(result, baseline) {
+  return SUITES.every(([suite, key]) => {
+    if (result[suite] === 'success') return true
+    const names = result[key] ?? []
+    if (!baseline || result[suite] !== 'failure' || names.length === 0) return false
+    if (baseline[suite] !== 'failure') return false
+    return names.every((name) => (baseline[key] ?? []).includes(name))
+  })
+}
 
 /**
  * 判定。
- * @param {{ currentVersion: string, cycles: ReturnType<typeof parseCycles>, results: { major: number, version: string, smoke: string, verify: string }[], today: string }} input
+ * @param {{ currentVersion: string, cycles: ReturnType<typeof parseCycles>, results: { major: number, version: string, baseline?: boolean, smoke: string, verify: string, smokeFailures?: string[], verifyFailures?: string[] }[], today: string }} input
  */
 export function assess({ currentVersion, cycles, results, today }) {
   const major = majorOf(currentVersion)
   const cycle = cycles.find((c) => c.major === major)
   const eol = cycle?.eol ?? null
   const daysLeft = eol ? daysBetween(today, eol) : null
-  const best = results.filter(passed).sort((a, b) => b.major - a.major)[0] ?? null
+  const baseline = results.find((r) => r.baseline) ?? null
+  const best =
+    results
+      .filter((r) => !r.baseline && r.major > major && passed(r, baseline))
+      .sort((a, b) => b.major - a.major)[0] ?? null
 
   let state
   if (daysLeft === null) state = 'unknown'
@@ -90,7 +137,7 @@ export function assess({ currentVersion, cycles, results, today }) {
 
   // 上げる時期なのに通る major が無い = 回避策を作るか据え置くかを人が決める
   const blocked = (state === 'eol' || state === 'eol-soon') && !best
-  return { major, eol, daysLeft, state, best, blocked }
+  return { major, eol, daysLeft, state, best, blocked, baseline }
 }
 
 /** 前回から知らせるべき変化があったか。状態と「通る中で最新の版」の組で見る */
@@ -102,6 +149,9 @@ export function stateKey(assessment) {
 export function previousStateKey(body) {
   return STATE_RE.exec(String(body ?? ''))?.[1] ?? null
 }
+
+const passedOrBase = (r, a) =>
+  r.baseline ? r.smoke === 'success' && r.verify === 'success' : passed(r, a.baseline)
 
 const mark = (outcome) =>
   outcome === 'success' ? '✅' : outcome === 'failure' ? '❌' : outcome === 'skipped' ? '—' : '❔'
@@ -123,16 +173,48 @@ export function renderBody({ currentVersion, cycles, results, today, runUrl }) {
   lines.push(`- 使っている版: **${currentVersion}**（EOL ${eolText}）`)
   lines.push(`- 通る中でいちばん新しい版: ${a.best ? `**${a.best.version}**` : 'なし'}`)
   lines.push(`- 判定: ${summaryLine(a)}`)
+  if (a.baseline && !(a.baseline.smoke === 'success' && a.baseline.verify === 'success')) {
+    lines.push(
+      '- 注意: **今の版でも CI で落ちる検査がある**（下の一覧）。Electron の版とは別に、検証か CI の側を直す'
+    )
+  }
   lines.push('')
   lines.push('## 試した結果')
   lines.push('')
   if (results.length === 0) {
     lines.push('今より新しいサポート中の major が無いので、試していない。')
   } else {
-    lines.push('| major | 版 | 拡張 smoke | 自走検証 |')
-    lines.push('|---|---|---|---|')
+    lines.push('| major | 版 | 拡張 smoke | 自走検証 | 判定 |')
+    lines.push('|---|---|---|---|---|')
     for (const r of [...results].sort((x, y) => y.major - x.major)) {
-      lines.push(`| ${r.major} | ${r.version} | ${mark(r.smoke)} | ${mark(r.verify)} |`)
+      const verdict = r.baseline ? '今の版（基準）' : passed(r, a.baseline) ? '通る' : '通らない'
+      lines.push(`| ${r.major} | ${r.version} | ${mark(r.smoke)} | ${mark(r.verify)} | ${verdict} |`)
+    }
+    const failing = [...results]
+      .sort((x, y) => y.major - x.major)
+      .filter(
+        (r) => (r.smokeFailures?.length ?? 0) + (r.verifyFailures?.length ?? 0) > 0 || !passedOrBase(r, a)
+      )
+    if (failing.length > 0) {
+      lines.push('')
+      lines.push('### 落ちた検査')
+      lines.push('')
+      for (const r of failing) {
+        const names = [...(r.smokeFailures ?? []), ...(r.verifyFailures ?? [])]
+        const fresh = r.baseline ? [] : regressions(r, a.baseline)
+        lines.push(`- **${r.version}**${r.baseline ? '（今の版）' : ''}`)
+        if (names.length === 0) {
+          lines.push('  - 検査名が取れない（打ち切り・起動失敗など。実行ログを見る）')
+        }
+        for (const name of names) {
+          const tag = r.baseline
+            ? ''
+            : fresh.includes(name)
+              ? '（この版で初めて落ちる）'
+              : '（今の版でも落ちる）'
+          lines.push(`  - ${name}${tag}`)
+        }
+      }
     }
   }
   lines.push('')

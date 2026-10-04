@@ -876,7 +876,9 @@ async function main() {
         )) {
           await side.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
         }
-        await side.ev(`(window.nemo.runCommandForVerify('close-window'), 'ok')`)
+        await side.ev(
+          `(setTimeout(() => { void window.nemo.runCommandForVerify('close-window') }, 50), 'ok')`
+        )
         side.close()
       }
       for (let i = 0; i < 30; i += 1) {

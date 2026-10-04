@@ -4,6 +4,9 @@ import {
   WARN_DAYS,
   assess,
   daysBetween,
+  failuresFromLog,
+  passed,
+  regressions,
   notifyComment,
   parseCycles,
   previousStateKey,
@@ -60,12 +63,14 @@ test('サポート中はリリース済みで EOL 前のものだけ（EOL 当�
   assert.equal(daysBetween('2026-10-04', '2026-10-20'), 16)
 })
 
-test('試すのは今より新しいサポート中の major の最新版', () => {
+test('試すのは今より新しいサポート中の major の最新版と、基準にする今の版', () => {
   assert.deepEqual(trialTargets(cycles, '41.10.6', '2026-10-04'), [
-    { major: 42, version: '42.4.1' },
-    { major: 43, version: '43.3.0' },
-    { major: 44, version: '44.1.2' }
+    { major: 41, version: '41.10.6', baseline: true },
+    { major: 42, version: '42.4.1', baseline: false },
+    { major: 43, version: '43.3.0', baseline: false },
+    { major: 44, version: '44.1.2', baseline: false }
   ])
+  // 新しい major が無ければ基準も回さない
   assert.deepEqual(trialTargets(cycles, '44.0.0', '2026-10-04'), [])
   // ^ 付きは pin の前提が崩れているので止める
   assert.throws(() => trialTargets(cycles, '^41.10.6', '2026-10-04'))
@@ -137,4 +142,75 @@ test('本文に判定・結果の表・サポート中の一覧が出る', () =>
   assert.match(body, /\| 42 \| 2026-05-05 \| 2026-10-20 \| 42\.4\.1 \|/)
   assert.doesNotMatch(body, /\| 41 \| 2026-03-10/)
   assert.match(body, /\[実行ログ\]\(https:\/\/github\.com\/o\/r\/actions\/runs\/1\)/)
+})
+
+test('ログから落ちた検査の名前を拾う（重複は 1 つ・長すぎる名前は切る）', () => {
+  const log = [
+    'PASS DevTools が開く',
+    'FAIL  devtools_page が足したパネルが DevTools に出る',
+    '[nemo] {"event":"FAIL ではないログ"}',
+    '  FAIL  並びは MRU 順（先頭が今のタブ） — cards=a,b',
+    'FAIL  devtools_page が足したパネルが DevTools に出る',
+    `FAIL  ${'あ'.repeat(200)}`,
+    'verify:ext: 2 件 FAIL'
+  ].join('\n')
+  const found = failuresFromLog(log)
+  assert.deepEqual(found.slice(0, 2), [
+    'devtools_page が足したパネルが DevTools に出る',
+    '並びは MRU 順（先頭が今のタブ） — cards=a,b'
+  ])
+  assert.equal(found.length, 3)
+  assert.equal(found[2].length, 151)
+  assert.deepEqual(failuresFromLog(''), [])
+})
+
+const run = (major, version, extra = {}) => ({
+  major,
+  version,
+  baseline: false,
+  smoke: 'success',
+  verify: 'success',
+  smokeFailures: [],
+  verifyFailures: [],
+  ...extra
+})
+
+test('今の版でも落ちる検査だけなら通った扱い / 初めて落ちる検査や打ち切りは通らない', () => {
+  const base = run(41, '41.10.6', { baseline: true, verify: 'failure', verifyFailures: ['CI でだけ落ちる'] })
+  // 同じ検査だけが落ちる → 環境のせいなので通る
+  const same = run(43, '43.3.0', { verify: 'failure', verifyFailures: ['CI でだけ落ちる'] })
+  assert.equal(passed(same, base), true)
+  assert.deepEqual(regressions(same, base), [])
+  // 新しく落ちる検査がある → 通らない
+  const fresh = run(44, '44.1.2', { smoke: 'failure', smokeFailures: ['devtools パネル'] })
+  assert.equal(passed(fresh, base), false)
+  assert.deepEqual(regressions(fresh, base), ['devtools パネル'])
+  // 打ち切りで名前が取れない → 通らない
+  assert.equal(passed(run(42, '42.4.1', { verify: 'failure' }), base), false)
+  // 基準が無ければ成功だけが通る
+  assert.equal(passed(same, null), false)
+
+  const a = assess({ currentVersion: '41.10.6', cycles, results: [base, same, fresh], today: '2026-10-04' })
+  assert.equal(a.best.version, '43.3.0')
+  // 基準そのものは上げる先に選ばない
+  assert.equal(
+    assess({
+      currentVersion: '41.10.6',
+      cycles,
+      results: [run(41, '41.10.6', { baseline: true })],
+      today: '2026-10-04'
+    }).best,
+    null
+  )
+
+  const { body } = renderBody({
+    currentVersion: '41.10.6',
+    cycles,
+    results: [base, same, fresh],
+    today: '2026-10-04'
+  })
+  assert.match(body, /今の版でも CI で落ちる検査がある/)
+  assert.match(body, /\| 41 \| 41\.10\.6 \| ✅ \| ❌ \| 今の版（基準） \|/)
+  assert.match(body, /devtools パネル（この版で初めて落ちる）/)
+  assert.match(body, /CI でだけ落ちる（今の版でも落ちる）/)
 })

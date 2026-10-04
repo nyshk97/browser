@@ -68,7 +68,7 @@ function collectFrameIds(
  * 祖先で切り取ったりすると、中の欄は見えないまま入ってしまう（透明な iframe を重ねる手口）。
  * 収集スクリプトの `isVisible` と同じ基準（`autofill-collect-source.js`）。見えなければ null。
  */
-const OWNER_REGION = `function () {
+export const OWNER_REGION = `function () {
   const el = this
   if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true, contentVisibilityAuto: true })) return null
   if (el.closest('[aria-hidden="true"], [inert]')) return null

@@ -74,6 +74,10 @@ export function unlockFailureText(reason: KyprUnlockFailure, retryAfter?: number
 const AGENT_SCRIPT_TEXT =
   'このページでは Claude がスクリプトを実行したため入力できません。新しいタブで開き直してから入力してください。'
 
+/** Claude のウィンドウの iframe の中のカードの欄（伏せ字が効かないので入れない）。 */
+const AGENT_IFRAME_TEXT =
+  'Claude のウィンドウでは、埋め込まれた決済フォームにはカードを入力できません。普段のウィンドウで入力してください。'
+
 export function actionFailureText(result: KyprActionResult): string | null {
   if (result.ok) return null
   switch (result.reason) {
@@ -98,6 +102,10 @@ export function actionFailureText(result: KyprActionResult): string | null {
       return AGENT_SCRIPT_TEXT
     case 'agent-page':
       return 'このページの状態を確かめられないため入力しませんでした。少し待ってからもう一度試してください。'
+    case 'agent-iframe':
+      return AGENT_IFRAME_TEXT
+    case 'insecure':
+      return '安全な接続（https）でないページには、カードを入力しません。'
     default:
       return 'うまくいきませんでした。'
   }
@@ -1022,15 +1030,29 @@ function KyprList({
               <span className="kypr-row-text">
                 <span className="kypr-hero-host">{data.page.host}</span>
                 <span className="kypr-row-sub">
-                  {heroCount > 0 ? `一致 ${heroCount} 件 · ↵ で 1 件目を入力` : '一致 0 件'}
+                  {data.pageKind === 'card'
+                    ? heroCount > 0
+                      ? `カード ${heroCount} 件 · ↵ で 1 件目を入力`
+                      : 'カード 0 件'
+                    : heroCount > 0
+                      ? `一致 ${heroCount} 件 · ↵ で 1 件目を入力`
+                      : '一致 0 件'}
                 </span>
               </span>
             </div>
             {heroCount === 0 ? (
               <div className="kypr-hero-none">
-                <span>このサイトのログインはまだありません。</span>
+                <span>
+                  {data.pageKind === 'card'
+                    ? 'クレジットカードはまだありません。'
+                    : 'このサイトのログインはまだありません。'}
+                </span>
                 {readOnly ? null : (
-                  <button type="button" className="kypr-btn" onClick={() => onNew('login')}>
+                  <button
+                    type="button"
+                    className="kypr-btn"
+                    onClick={() => onNew(data.pageKind === 'card' ? 'card' : 'login')}
+                  >
                     <KyprIcon name="plus" size={14} />
                     保存
                   </button>
@@ -2276,6 +2298,16 @@ export function KyprInline(): React.JSX.Element | null {
 
   if (!state) return null
   const guarded = (): boolean => isGuarded(state.shownAt)
+
+  if (state.notice === 'agent-iframe') {
+    return (
+      <div className="kypr-inline">
+        <p className="kypr-inline-note" id="kypr-inline-notice">
+          {AGENT_IFRAME_TEXT}
+        </p>
+      </div>
+    )
+  }
 
   if (state.locked) {
     return (

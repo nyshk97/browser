@@ -47,7 +47,7 @@ import { connect, connectTo, connectUi, listTargets, waitFor } from './lib/cdp.m
 import { createKyprVault, profileToKypr } from './lib/kypr-fixture.mjs'
 import { AGENT_TOOLS } from '../src/shared/agent-tools.js'
 import { normalizeProfile } from '../src/shared/autofill-schema.js'
-import { newIdentityItem, newLoginItem, newTotpItem } from '../src/vendor/kypr/crypto/index.ts'
+import { newCardItem, newIdentityItem, newLoginItem, newTotpItem } from '../src/vendor/kypr/crypto/index.ts'
 
 const require = createRequire(import.meta.url)
 const electronPath = require('electron')
@@ -65,6 +65,9 @@ const SECRET = 'Nemo-Secret-7731'
 /* kypr（模擬サーバーの保管庫。本物には触らない） */
 const KYPR_MASTER = 'agent-verify-master-1'
 const KYPR_PW = 'Kypr-Agent-Pw-5821'
+/** kypr のカード（CVC は 3 桁: 値の一致の伏せ字は 4 文字以上しか覚えないので、欄そのもので伏せないと漏れる）。 */
+const CARD_NUMBER = '4242424242424242'
+const CARD_CVC = '737'
 const KYPR_USER = 'agent-user@example.com'
 const PASSPORT = 'TK7654321'
 const PROFILE = normalizeProfile({ family_name: '山田', given_name: '太郎', passport_number: PASSPORT })
@@ -101,6 +104,11 @@ const KYPR_LOGIN = `<!doctype html><html><head><meta charset="utf-8"><title>kypr
 const IDENTITY = `<!doctype html><html><head><meta charset="utf-8"><title>identity</title></head><body>
 <form style="padding:20px"><label>氏名 <input id="name" autocomplete="name"></label><br>
 <label>旅券番号 <input id="passport" name="passport"></label></form></body></html>`
+/** カードの決済フォーム（autocomplete が無く、name の手がかりだけ。CVC は type=tel）。 */
+const KYPR_CARD = `<!doctype html><html><head><meta charset="utf-8"><title>card</title></head><body>
+<form><label>Card number <input id="number" name="card_number"></label>
+<label>Security code <input id="cvc" name="security_code" type="tel"></label>
+<label>Holder <input id="holder" name="card_name"></label></form></body></html>`
 const frameOf = (src) =>
   `<!doctype html><html><head><meta charset="utf-8"><title>frame</title></head><body><iframe src="${src}" width="700" height="320"></iframe></body></html>`
 
@@ -149,6 +157,12 @@ const server = http.createServer((req, res) => {
   } else if (url.pathname === '/kypr-frame') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
     res.end(frameOf('/kypr-login?in-frame=1'))
+  } else if (url.pathname === '/kypr-card') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    res.end(KYPR_CARD)
+  } else if (url.pathname === '/kypr-card-frame') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    res.end(frameOf('/kypr-card?in-frame=1'))
   } else if (url.pathname === '/identity') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
     res.end(IDENTITY)
@@ -267,7 +281,15 @@ try {
     uris: [{ uri: origin }]
   })
   const IDENT = newIdentityItem({ name: '自分', ...profileToKypr(PROFILE) })
-  await kypr.other.create([LOGIN, TOTP, IDENT])
+  const CARD = newCardItem({
+    name: 'Agent Card',
+    cardholderName: 'AGENT HOLDER',
+    number: CARD_NUMBER,
+    expMonth: '4',
+    expYear: '2030',
+    code: CARD_CVC
+  })
+  await kypr.other.create([LOGIN, TOTP, IDENT, CARD])
 
   const userData = makeDir('nav-data-')
   const socketDir = makeDir('nav-')
@@ -1065,6 +1087,45 @@ try {
     idFrame?.ok === true && idFrame.withheld === 1 && framePassport === '' && frameName.includes('山田'),
     JSON.stringify({ ok: idFrame?.ok, reason: idFrame?.reason, withheld: idFrame?.withheld, name: frameName })
   )
+  // --- カード（plan 2026-10-04-1606-kypr-card-autofill）: メインフレームの欄は欄そのもので伏せて入れる ---
+  ;({ session: kp } = await openForKypr('/kypr-card'))
+  await kp.ev("document.getElementById('number').focus(), 'ok'")
+  const cardPanel = await aj('window.nemo.kyprPanel()')
+  const cardFill = await aj(`window.nemo.kyprFill(${JSON.stringify(CARD.id)})`)
+  const cardNumber = await readValue(kp, "document.getElementById('number').value")
+  const cardCvc = await readValue(kp, "document.getElementById('cvc').value")
+  const cardTree = await bridge.call('read_page', { tabId })
+  const cardShot = await bridge.call('computer', { tabId, action: 'screenshot' })
+  check(
+    'kypr カード: Claude のウィンドウでもメインフレームの欄には入り、番号と 3 桁の CVC は read_page に出ない（autocomplete の無い欄）',
+    cardPanel.pageKind === 'card' &&
+      cardFill.ok === true &&
+      cardNumber === CARD_NUMBER &&
+      cardCvc === CARD_CVC &&
+      !cardTree.text.includes(CARD_NUMBER) &&
+      !cardTree.text.includes(`"${CARD_CVC}"`) &&
+      !cardTree.text.includes(`=${CARD_CVC}`) &&
+      (cardTree.text.match(/\[redacted\]/g) ?? []).length >= 2 &&
+      Boolean(cardShot.image),
+    `${JSON.stringify({ pageKind: cardPanel.pageKind, cardFill })} / ${cardTree.text
+      .split('\n')
+      .filter((line) => /Card number|Security code/.test(line))
+      .join(' / ')}`
+  )
+  ;({ session: kp } = await openForKypr('/kypr-card-frame'))
+  await waitFor(kp, "document.querySelector('iframe')?.contentDocument?.getElementById('number') ? 'ok' : ''")
+  await kp.ev("document.querySelector('iframe').contentDocument.getElementById('number').focus(), 'ok'")
+  const cardFrameFill = await aj(`window.nemo.kyprFill(${JSON.stringify(CARD.id)})`)
+  const cardFrameNumber = await readValue(
+    kp,
+    "document.querySelector('iframe').contentDocument.getElementById('number').value"
+  )
+  check(
+    'kypr カード: Claude のウィンドウでは iframe の中のカードの欄に入れない（agent-iframe）',
+    cardFrameFill.ok === false && cardFrameFill.reason === 'agent-iframe' && cardFrameNumber === '',
+    JSON.stringify({ cardFrameFill, filled: cardFrameNumber !== '' })
+  )
+
   // iframe に CDP で入った後も agent の debugger は付いたまま（先に agent が付け、相乗りした側は detach しない）
   const shotAfterFrame = await bridge.call('computer', { tabId, action: 'screenshot' })
   const detached = detachedLines().slice(detachedBefore)

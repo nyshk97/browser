@@ -10,10 +10,12 @@ import {
   kyprLoginForFill,
   kyprParseOtpauth,
   kyprTotpForFill,
+  kyprCardSummaries,
   kyprTotpMatches,
   touchKypr
 } from './index.js'
 import { readQrFromImage } from './qr.js'
+import { fillKyprCard, kyprCardTarget } from './card-fill.js'
 
 /**
  * kypr のログインをページに入れる（⌘⇧L・ポップアップ・入力欄の下の候補）。
@@ -274,11 +276,18 @@ export async function kyprTotpFromPageQr(wc: WebContents | null): Promise<KyprTo
   }
 }
 
-/** ⌘⇧L: 入れる先のフレームに合うログインが 1 件ならそのまま入れる。それ以外は null（ポップアップを開く）。 */
+/**
+ * ⌘⇧L: 入れる先のフレームに合うログインが 1 件ならそのまま入れる。それ以外は null（ポップアップを開く）。
+ * **カードの欄にいるならログインより先に**カードを見る: カードが 1 件ならそのまま入れ、それ以外はポップアップ。
+ */
 export async function quickFillKypr(
   wc: WebContents,
   matchesFor: (url: string) => { id: string }[]
 ): Promise<KyprActionResult | null> {
+  if (await kyprCardTarget(wc)) {
+    const cards = kyprCardSummaries()
+    return cards.length === 1 && cards[0] ? fillKyprCard(wc, cards[0].id) : null
+  }
   const url = await kyprTargetUrl(wc)
   if (!url) return null
   const matches = matchesFor(url)

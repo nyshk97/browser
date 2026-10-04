@@ -545,7 +545,12 @@ export interface KyprPanelData {
   status: KyprStatus
   /** 入れる先のフレームの URL（http / https のページでなければ null）。 */
   page: { url: string; host: string; faviconUrl: string | null } | null
-  /** このページに合うログイン。 */
+  /**
+   * 「このページ」の段に出すもの。`login` は合うログイン、`card` は入れる先がカードの欄のときのカード全部
+   * （カードの欄にいるときはログインと混ぜない）。
+   */
+  pageKind: 'login' | 'card'
+  /** このページに合うログイン（`pageKind` が `card` ならカード）。 */
   matches: KyprSummary[]
   /** このページに合うワンタイムコード（URL を足したものだけ）。 */
   totpMatches: KyprSummary[]
@@ -669,6 +674,10 @@ export type KyprActionResult =
         | 'agent-script'
         /** Claude のウィンドウ: ページの状態を確かめられないので入れない。 */
         | 'agent-page'
+        /** Claude のウィンドウ: iframe の中のカードの欄（伏せ字が効かない）には入れない。 */
+        | 'agent-iframe'
+        /** 安全なコンテキスト（https・loopback の http）でないページ・フレームにはカードを入れない。 */
+        | 'insecure'
         | 'failed'
     }
 
@@ -715,6 +724,10 @@ export interface KyprTotpCheck {
 /** 入力欄の下の候補。 */
 export interface KyprInlineState {
   locked: boolean
+  /** ログイン欄の候補か、決済フォームのカードの欄の候補か。 */
+  kind: 'login' | 'card'
+  /** 候補の代わりに出す案内（Claude のウィンドウの iframe の中のカードの欄は入れられない）。 */
+  notice: 'agent-iframe' | null
   rows: KyprSummary[]
   /** 出した時刻（出た直後のクリックを無視するため）。 */
   shownAt: number

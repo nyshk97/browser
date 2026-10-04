@@ -1,6 +1,7 @@
 /// <reference lib="dom" />
 import { contextBridge, ipcRenderer } from 'electron'
 import { KYPR_PRODUCTION_SERVER } from '../shared/kypr-config.js'
+import { cardFieldKind, cardFormComplete } from '../shared/kypr-card-field.js'
 import { installKyprPasskey } from '../shared/kypr-passkey-shim.js'
 import { installKyprWebAuthn } from '../shared/kypr-webauthn-shim.js'
 
@@ -69,8 +70,18 @@ const CHANNEL = 'nemo:kypr-field'
 const GESTURE_MS = 1000
 const USER_TYPES = new Set(['text', 'email', 'tel'])
 
-function loginFieldKind(el: EventTarget | null): 'username' | 'password' | null {
-  if (!(el instanceof HTMLInputElement)) return null
+/**
+ * 欄の種類。**カードの欄を先に見る**（CVC が `type=password` の決済フォームで、ログインの候補を出さない）。
+ * カードは安全なコンテキスト（https・loopback の http）のときだけ（plan `2026-10-04-1606-kypr-card-autofill.md`）。
+ */
+function fieldKind(el: EventTarget | null): 'username' | 'password' | 'card' | null {
+  if (!(el instanceof HTMLInputElement) && !(el instanceof HTMLSelectElement)) return null
+  // 番号の欄と期限か CVC の欄がそろったフォームの欄だけをカードの欄にする（そろっていなければログインの判定に回す）
+  if (cardFieldKind(el) && cardFormComplete(el)) return window.isSecureContext ? 'card' : null
+  return el instanceof HTMLInputElement ? loginFieldKind(el) : null
+}
+
+function loginFieldKind(el: HTMLInputElement): 'username' | 'password' | null {
   const type = (el.getAttribute('type') || 'text').toLowerCase()
   if (type === 'password') return 'password'
   if (!USER_TYPES.has(type)) return null
@@ -81,7 +92,10 @@ function loginFieldKind(el: EventTarget | null): 'username' | 'password' | null 
   // パスワード欄と同じフォームにある、パスワード欄より前の欄もユーザー名とみなす
   const form = el.form
   if (form) {
-    const password = form.querySelector('input[type="password" i]')
+    // CVC が type=password のカードの欄は数えない（決済フォームのメール欄をユーザー名にしない）
+    const password = Array.from(form.querySelectorAll('input[type="password" i]')).find(
+      (p) => !(cardFieldKind(p) && cardFormComplete(p))
+    )
     if (password && el.compareDocumentPosition(password) & Node.DOCUMENT_POSITION_FOLLOWING) return 'username'
   }
   return null
@@ -89,19 +103,27 @@ function loginFieldKind(el: EventTarget | null): 'username' | 'password' | null 
 
 if (window.top === window && /^https?:$/.test(location.protocol)) {
   let gesture: { target: EventTarget | null; tab: boolean; at: number } = { target: null, tab: false, at: 0 }
-  let current: HTMLInputElement | null = null
+  let current: HTMLInputElement | HTMLSelectElement | null = null
+  // フォーカスが iframe に移った（カードの候補を iframe の下に出しているかもしれない）。
+  // 候補を出すかは main が `input-event` から決めるので、ここではスクロール等で閉じるよう知らせるためだけに覚える
+  let inFrame = false
 
   const send = (message: Record<string, unknown>): void => ipcRenderer.send(CHANNEL, message)
   const hide = (): void => {
-    if (!current) return
+    if (!current && !inFrame) return
     current = null
+    inFrame = false
     send({ type: 'hide' })
   }
 
   window.addEventListener(
     'pointerdown',
     (event) => {
-      if (event.isTrusted) gesture = { target: event.target, tab: false, at: performance.now() }
+      if (!event.isTrusted) return
+      gesture = { target: event.target, tab: false, at: performance.now() }
+      // main に「このクリックはメインフレームの文書に届いた」と知らせる（iframe の中のクリックとの見分けに使う。
+      // main の before-mouse-event は iframe の中のクリックでも飛ぶが、座標が iframe の中の座標で来るので見分けられない）
+      send({ type: 'pointer' })
     },
     true
   )
@@ -118,8 +140,9 @@ if (window.top === window && /^https?:$/.test(location.protocol)) {
     'focusin',
     (event) => {
       const el = event.target
-      const kind = loginFieldKind(el)
-      if (!kind || !(el instanceof HTMLInputElement)) return
+      inFrame = false
+      const kind = fieldKind(el)
+      if (!kind || !(el instanceof HTMLInputElement || el instanceof HTMLSelectElement)) return
       const fresh = performance.now() - gesture.at < GESTURE_MS
       const target = gesture.target
       const byPointer =
@@ -152,6 +175,7 @@ if (window.top === window && /^https?:$/.test(location.protocol)) {
   // タブの切り替え・ウィンドウの切り替えで、ページ自体がフォーカスを失ったとき
   window.addEventListener('blur', () => {
     if (current) send({ type: 'blur' })
+    if (document.activeElement instanceof HTMLIFrameElement) inFrame = true
   })
   window.addEventListener('scroll', hide, { capture: true, passive: true })
   window.addEventListener('resize', hide, { passive: true })

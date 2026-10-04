@@ -576,6 +576,25 @@ export function kyprLoginForFill(
   return { username, password, uris }
 }
 
+/** 決済フォームの候補に出すカード（ゴミ箱の中は出さない。カードはサイトに紐づかないので照合しない）。名前の順。 */
+export function kyprCardSummaries(): KyprSummary[] {
+  if (!session) return []
+  return [...session.entries.values()]
+    .filter((e) => e.deletedAt === null && e.state.kind === 'card')
+    .map(summaryOf)
+    .sort(byName)
+}
+
+/** 決済フォームに入れるカード（ゴミ箱の中・カード以外は null）。番号は数字だけにする。平文は main の中だけで使う。 */
+export function kyprCardForFill(
+  id: string
+): { number: string; expMonth: string; expYear: string; code: string; cardholderName: string } | null {
+  const entry = session?.entries.get(id)
+  if (!entry || entry.deletedAt !== null || entry.state.kind !== 'card') return null
+  const { number, expMonth, expYear, code, cardholderName } = entry.state.item
+  return { number: digitsOf(number), expMonth, expYear, code, cardholderName }
+}
+
 /** 自動入力に一切出さない項目（kypr の `noAutofill`。免許の暗証番号とマイナンバーカードの全部）。 */
 const NO_AUTOFILL_KEYS = new Set<string>(IDENTITY_FIELDS.filter((f) => f.noAutofill).map((f) => f.key))
 

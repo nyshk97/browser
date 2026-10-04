@@ -20,15 +20,22 @@
  * ソースを文字列で持つのは `autofill-collect-source.js` と同じ理由（ビルドの変換を通さない）。
  * **テンプレート文字列と `${` を中に書かない**（`String.raw` の外に漏れる）。
  */
+import { cardFieldKind } from './kypr-card-field.js'
+
 export const AGENT_WORLD_ID = 1733
 
-export const AGENT_PAGE_SOURCE = String.raw`
+export const AGENT_PAGE_SOURCE =
+  String.raw`
 (() => {
   const g = globalThis
   if (g.__nemoAgent) return
   const MAX_NODES = 4000
   const INVISIBLE = /[\u2800\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF0-\uFFF8]/g
   const SENSITIVE_AUTOCOMPLETE = /(current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp)/i
+  // カードの番号・CVC の欄は autocomplete が無くても伏せる（kypr のカードの自動入力と同じ判定。kypr-card-field.js）
+  const cardFieldKind = (` +
+  String(cardFieldKind) +
+  String.raw`)
 
   let agentActive = false
   let tainted = false
@@ -59,7 +66,9 @@ export const AGENT_PAGE_SOURCE = String.raw`
     if (el.type === 'password') return true
     if (everPassword.has(el)) return true
     const ac = el.getAttribute('autocomplete') || ''
-    return SENSITIVE_AUTOCOMPLETE.test(ac)
+    if (SENSITIVE_AUTOCOMPLETE.test(ac)) return true
+    const card = cardFieldKind(el)
+    return card === 'number' || card === 'csc'
   }
 
   const markPasswords = (root) => {

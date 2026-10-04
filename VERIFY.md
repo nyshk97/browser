@@ -162,7 +162,7 @@ mise run verify:only split
 | **Live Folder（GitHub の PR）**・取得のバックオフ・トークン | `mise run verify:only live-folder restart` + 下の「Live Folder（GitHub の PR）」 |
 | **拡張アイコンの popup の位置**（ツールバーの View オフセット） | `mise run verify:ext` |
 | 拡張まわり・Electron のバージョン | `mise run verify:ext`（+ 実機で実物の拡張）。拡張の端末ごと ON/OFF・DevTools パネルへの `chrome.*` 補完（`chrome.debugger` / `webRequest` の tabId）もここ |
-| **kypr（パスワードマネージャー）**・解除 / Touch ID / ロック・同期・照合・入力（ポップアップ / ⌘⇧L / 欄の下の候補）・作成 / 編集 / ゴミ箱・コピー | `mise run verify:only kypr`（模擬サーバーと差し替えで 6 回起動する。155 件。2026-09-30）+ 下の「kypr」 |
+| **kypr（パスワードマネージャー）**・解除 / Touch ID / ロック・同期・照合・入力（ポップアップ / ⌘⇧L / 欄の下の候補）・作成 / 編集 / ゴミ箱・コピー | `mise run verify:only kypr`（模擬サーバーと差し替えで7回起動する。カードの自動入力を含む。2026-10-04）+ 下の「kypr」 |
 | パッケージング・ネイティブ依存・fuses | `mise run package` → `mise run verify:packaged` |
 | 履歴 / アーカイブ・シークレット・設定画面 | `mise run verify`（`verify-phase2.mjs` が含まれる） |
 | **履歴 DB のスキーマ**（列追加・インデックス） | `mise run verify:db-migration` |
@@ -1384,6 +1384,18 @@ iPhone で作ったもので Nemo からサインインできる。
 コピー元（kypr の `packages/`）を直したら、kypr で `mise run export-nemo` を実行してコピーし直し、
 `node --test scripts/kypr-vendor.test.mjs`（テストベクタ）→ `mise run verify:only kypr` を回す。
 
+**カードの自動入力**（plan `docs/plans/2026-10-04-1606-kypr-card-autofill.md`）は6回目の起動で見る（使い捨てのuserData・
+模擬サーバーのテストページ）: メインフレームのフォーム（autocompleteの無い欄・月と年の`select`・CVCが`type=password`）で
+CVCの欄を押すとログインでなくカードの候補が出て、選ぶと4項目が入りメール欄には入らない・カードの欄にいるときのポップアップの
+「このページ」はカード・⌘⇧Lは1件なら入れて2件ならポップアップ・`localhost`の別オリジンのiframe（`#`付きのURL。1つのiframeに
+3つの欄の型と、欄ごとに兄弟のiframeが分かれている型）を押すと候補が出て、選ぶとiframeの中とメインフレームの名義の欄に入る・
+ページが`iframe.focus()`を呼んだだけでは出ない・Escで閉じる・透明なiframeには出さず入れない・`kypr.fill_card`のログに値が無い。
+**iframeの中のクリックはmainの`input-event`に届かない**（OOPIF。2026-10-04に実測）ので、起点は`before-mouse-event`と、
+preloadが知らせるメインフレームのtrustedな`pointerdown`（届かなかったクリック = iframeの中）。テストのクリックはCDPの
+`Input.dispatchMouseEvent`でよい（`before-mouse-event`は飛ぶ）。Claudeのウィンドウ（autocompleteの無い3桁のCVCを
+欄そのもので伏せる・iframeには入れない）は`verify:only agent`が見る。判定と手順の組み立ては`scripts/kypr-card.test.mjs`。
+https以外のページで入れない検査は、模擬サーバーがloopback（安全なコンテキスト扱い）なので自動では撃てない（人が見る）。
+
 **サイトのアイコン（`src/main/kypr/site-icons.ts`）を触ったら、実際の履歴でも書かせる**: `pnpm build && node scripts/repro-kypr-site-icons.mjs`。
 常用版の履歴の写しと偽の kypr サーバー（履歴で https の favicon を持つホストのログイン 60 件）で使い捨ての dev 版を解除し、
 落ちないこと・アイコンが書かれること・全部 64px 以下の正方形の PNG であることを見る（2026-09-30: 20 件・16〜64px で PASS）。
@@ -1413,6 +1425,9 @@ iPhone で作ったもので Nemo からサインインできる。
   URL を足したサイトでパスワードを入れたあと、次の画面の 2FA の欄に ⌘V でコードが入る・6 桁の欄が 1 桁ずつ分かれている
   サイトでは入らずコピーに回る（`fillCode` は 1 つの欄にしか入れない）
 - カードの番号・期限・セキュリティコードをコピーして決済フォームに貼れる。30 秒でクリップボードから消える
+- カードの自動入力: Stripeのテスト用の決済フォーム（Card Element・分割型）と日本のECの決済画面で、カードの欄を押すと
+  候補が欄（iframeならiframe）の下に出て、選ぶと番号・期限・CVCが入る（送信はしない）。月と年が別の`select`のフォームで
+  期限が正しく選ばれる・候補が画面からはみ出さない（画面が1枚のときと2枚のときの両方）・httpのページ（loopback以外）では出ない
 - マスターパスワードで解除したとき、診断ログに `kypr.kdf_worker_fallback` が出ていない（出ていれば鍵の導出が main で回っている）
 - Web 版（`https://kypr.tools97.com`）: マスターパスワードで解除 → Touch ID を有効にする（Touch ID が 1 回だけ出る）→
   ロックして Touch ID で解除できる・Touch ID を閉じるとマスターパスワードに回る・無効にして有効にし直しても解除できる

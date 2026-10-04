@@ -4359,6 +4359,13 @@ body[data-view='call'] {
   background: var(--nemo-hover);
 }
 
+.kypr-inline-note {
+  margin: 0;
+  padding: 8px 10px;
+  line-height: 1.6;
+  color: var(--nemo-ink-dim);
+}
+
 /* ワンタイムコード */
 .kypr-mode {
   margin: 8px 4px 0;

@@ -253,9 +253,17 @@ export const OWNERS = new Map([
   ['scripts/kypr-config.test.mjs', ['kypr']],
   ['scripts/kypr-vendor.test.mjs', ['kypr']],
   ['src/shared/kypr-config.js', ['kypr']],
-  ['src/shared/kypr-page-source.js', ['kypr']],
+  // カードの欄の判定・入れる手順も持つ。Claude のウィンドウのカードの欄（`verify-agent.mjs`）も見る
+  ['src/shared/kypr-page-source.js', ['kypr', 'agent']],
+  // カードの欄の判定（preload・kypr-page-source・agent-page-source の 3 か所が使う）と、入れる手順の組み立て
+  ['src/shared/kypr-card-field.js', ['kypr', 'agent']],
+  ['src/shared/kypr-card-fill.js', ['kypr']],
+  ['scripts/kypr-card.test.mjs', ['kypr', 'agent']],
+  // カードを決済フォームに入れる（メインフレーム・iframe の組。Claude のウィンドウでの断り方も）
+  ['src/main/kypr/card-fill.ts', ['kypr', 'agent']],
+  ['src/main/kypr/card-frames.ts', ['kypr', 'agent']],
   // テストページ（127.0.0.1）を開くたびに kypr の認証器を入れるか main に同期で聞くので、ページを開く基本の検査（phase1）も回す
-  ['src/preload/kypr-page.ts', ['kypr', 'phase1']],
+  ['src/preload/kypr-page.ts', ['kypr', 'phase1', 'agent']],
   // 自動入力が個人情報を読む（`kyprIdentityForFill`）・ロック中は Touch ID で解除する
   ['src/main/kypr/index.ts', ['kypr', 'autofill']],
   // フォーム自動入力に使う個人情報の決め方（kypr のポップアップの「フォーム自動入力に使う」と自動入力の両方）

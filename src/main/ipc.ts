@@ -115,8 +115,11 @@ import {
   touchKypr,
   unlockKyprWithTouchId,
   kyprVaultIcon,
-  withKyprFavicons
+  withKyprFavicons,
+  kyprCardForFill,
+  kyprCardSummaries
 } from './kypr/index.js'
+import { fillKyprCard, kyprActiveFrame, kyprCardTarget } from './kypr/card-fill.js'
 import {
   fillKyprLogin,
   fillKyprTotp,
@@ -125,7 +128,13 @@ import {
   kyprTotpDraftFrom,
   kyprTotpFromPageQr
 } from './kypr/fill.js'
-import { hideKyprInline, kyprInlineState, kyprInlineTarget } from './kypr/inline.js'
+import {
+  hideKyprInline,
+  kyprFrameKey,
+  kyprInlineState,
+  kyprInlineTarget,
+  noteKyprInlinePick
+} from './kypr/inline.js'
 
 import { MAX_JEV_KEY } from '../shared/autofill-schema.js'
 import type { ImportEntry } from '../shared/http-auth-rules.js'
@@ -1358,7 +1367,10 @@ export function registerIpcHandlers(): void {
     syncKyprIfStale()
     const status = kyprStatus()
     const wc = foregroundContents(win)
-    const url = status.state === 'unlocked' && wc ? await kyprTargetUrl(wc) : wc ? wc.getURL() : null
+    // カードの欄にいるときは「このページ」の段にカードを出す（ログインと混ぜない。入れる先の判定は ⌘⇧L・候補と同じ）
+    const cardTarget = status.state === 'unlocked' && wc ? await kyprCardTarget(wc) : null
+    const url =
+      status.state === 'unlocked' && wc && !cardTarget ? await kyprTargetUrl(wc) : wc ? wc.getURL() : null
     const host = url && /^https?:/.test(url) ? new URL(url).hostname : null
     // 見出しの favicon はタブのもの（UI の CSP で出せる https / data: のとき）。無い・入れる先が別ホストの
     // iframe なら、そのホストを履歴から引く
@@ -1377,11 +1389,15 @@ export function registerIpcHandlers(): void {
     return {
       status,
       page,
+      pageKind: cardTarget ? 'card' : 'login',
       matches:
         page && status.state === 'unlocked'
-          ? kyprMatches(page.url).map((row) => ({ ...row, faviconUrl: favicons.get(row.id) ?? null }))
+          ? (cardTarget ? kyprCardSummaries() : kyprMatches(page.url)).map((row) => ({
+              ...row,
+              faviconUrl: favicons.get(row.id) ?? null
+            }))
           : [],
-      totpMatches: page && status.state === 'unlocked' ? kyprTotpMatches(page.url) : [],
+      totpMatches: page && status.state === 'unlocked' && !cardTarget ? kyprTotpMatches(page.url) : [],
       items,
       autofillIdentityId: kyprAutofillIdentityId(getSettings().kyprAutofillIdentityId),
       agentRefusal: wc ? await agentFillRefusal(wc) : null
@@ -1445,7 +1461,8 @@ export function registerIpcHandlers(): void {
     const win = requireWindow(event)
     const wc = foregroundContents(win)
     if (!wc) return { ok: false, reason: 'no-target' }
-    const result = await fillKyprLogin(wc, idOf(id))
+    const itemId = idOf(id)
+    const result = kyprCardForFill(itemId) ? await fillKyprCard(wc, itemId) : await fillKyprLogin(wc, itemId)
     // 入れたらポップアップを閉じてページへ戻す
     if (result.ok && win.overlay === 'kypr') win.setOverlay(null)
     return result
@@ -1540,10 +1557,20 @@ export function registerIpcHandlers(): void {
     const target = kyprInlineTarget(win)
     const tab = target ? win.findTab(target.tabKey) : null
     const wc = tab?.webContents
+    noteKyprInlinePick(win)
     hideKyprInline(win)
     // 候補を出したときと同じタブ・同じページのときだけ入れる（遷移していたら入れない）
     if (!target || !wc || wc.isDestroyed() || wc.getURL() !== target.url)
       return { ok: false, reason: 'no-target' }
+    // カードの候補はカードだけ、ログインの候補はログインだけを入れる（入れる先は入れる直前に調べ直す）
+    if (target.mode !== 'login') {
+      if (!kyprCardForFill(idOf(id))) return { ok: false, reason: 'not-found' }
+      if (target.mode === 'card') return fillKyprCard(wc, idOf(id), 'main')
+      // iframe の候補: フォーカスのある iframe が、候補を出したときと同じときだけ入れる
+      const active = await kyprActiveFrame(wc)
+      if (!active || kyprFrameKey(active) !== target.frame) return { ok: false, reason: 'no-target' }
+      return fillKyprCard(wc, idOf(id), 'frames')
+    }
     return fillKyprLogin(wc, idOf(id), { mainOnly: true })
   })
   ipcMain.handle('nemo:kypr-inline-dismiss', (event): void => {

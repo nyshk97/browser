@@ -250,6 +250,60 @@ const pages = {
   '/qr-other.html':
     '<!doctype html><meta charset="utf-8"><title>ほかの QR</title>' +
     '<img width="300" height="300" src="data:image/png;base64,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">',
+  // ---- カード（plan 2026-10-04-1606-kypr-card-autofill） ----
+  // メインフレームの決済フォーム: autocomplete の無い欄・月と年の select・CVC は type=password
+  '/card.html':
+    '<!doctype html><meta charset="utf-8"><title>決済</title><form style="font-size:16px">' +
+    '<p>メール <input id="email" type="email" name="email" autocomplete="email" style="width:240px;height:28px"></p>' +
+    '<p>カード番号 <input id="number" name="card_number" inputmode="numeric" style="width:240px;height:28px"></p>' +
+    '<p>有効期限 <select id="month" name="exp_month"><option value="">--</option>' +
+    Array.from(
+      { length: 12 },
+      (_, i) => `<option value="${String(i + 1).padStart(2, '0')}">${i + 1}月</option>`
+    ).join('') +
+    '</select> <select id="year" name="exp_year"><option value="">--</option>' +
+    Array.from({ length: 10 }, (_, i) => `<option value="${2026 + i}">${2026 + i}年</option>`).join('') +
+    '</select></p>' +
+    '<p>セキュリティコード <input id="cvc" type="password" name="security_code" style="width:80px;height:28px"></p>' +
+    '<p>カード名義 <input id="holder" name="card_name" style="width:240px;height:28px"></p>' +
+    '</form>',
+  // 決済代行の iframe の中身（Stripe を真似る。?f= で欄を 1 つだけにした分割型）
+  '/card-inner.html': (req) => {
+    const f = new URL(req.url, 'http://x').searchParams.get('f') ?? 'all'
+    const box = 'style="width:110px;height:28px;font-size:16px"'
+    const parts = {
+      number: `<input id="number" name="cardnumber" autocomplete="cc-number" placeholder="1234 1234 1234 1234" ${box}>`,
+      exp: `<input id="exp" name="exp-date" autocomplete="cc-exp" placeholder="MM / YY" ${box}>`,
+      cvc: `<input id="cvc" name="cvc" autocomplete="cc-csc" placeholder="CVC" ${box}>`
+    }
+    return (
+      '<!doctype html><meta charset="utf-8"><title>カードの欄</title><body style="margin:4px">' +
+      (f === 'all' ? parts.number + parts.exp + parts.cvc : (parts[f] ?? '')) +
+      '</body>'
+    )
+  },
+  // 1 つの iframe に 3 つの欄（Card Element 型）。名義はサイトのページ（メインフレーム）。#… に設定を載せる（Stripe と同じ）
+  '/card-single.html': (_req, server) =>
+    '<!doctype html><meta charset="utf-8"><title>埋め込みの決済</title>' +
+    '<p>名義 <input id="holder" autocomplete="cc-name" style="width:240px;height:28px"></p>' +
+    '<p><button id="trap" type="button" onclick="document.getElementById(\'f\').focus()">次へ</button></p>' +
+    `<iframe id="f" src="http://localhost:${server.address().port}/card-inner.html?f=all#__shared_params__[version]=v3" width="420" height="44"></iframe>` +
+    '<p style="height:400px">下の余白</p>',
+  // 欄ごとに iframe が分かれている型（Stripe の分割型）
+  '/card-split.html': (_req, server) => {
+    const src = (f) =>
+      `http://localhost:${server.address().port}/card-inner.html?f=${f}#__shared_params__[version]=v3`
+    return (
+      '<!doctype html><meta charset="utf-8"><title>分割型</title>' +
+      `<p><iframe id="fn" src="${src('number')}" width="140" height="44"></iframe></p>` +
+      `<p><iframe id="fe" src="${src('exp')}" width="140" height="44"></iframe></p>` +
+      `<p><iframe id="fc" src="${src('cvc')}" width="140" height="44"></iframe></p>`
+    )
+  },
+  // 透明な iframe のカードの欄（重ねて押させる手口）
+  '/card-hidden.html': (_req, server) =>
+    '<!doctype html><meta charset="utf-8"><title>透明</title>' +
+    `<iframe id="f" src="http://localhost:${server.address().port}/card-inner.html?f=all" width="420" height="44" style="opacity:0"></iframe>`,
   '/hidden.html':
     '<!doctype html><meta charset="utf-8"><title>罠</title><form>' +
     '<input id="username" name="username" style="display:none">' +
@@ -2660,6 +2714,303 @@ try {
   )
   const crashesPk2 = findUncaughtExceptions(dataPk)
   check('5 回目: 未処理の例外が出ていない', crashesPk2.length === 0, crashesPk2.join(' / '))
+  await stopApp(app.child)
+
+  /* ================= 6 回目の起動（カードを決済フォームに入れる） ================= */
+  // plan `docs/plans/2026-10-04-1606-kypr-card-autofill.md`。それまでの節で保管庫のカードは無くなっているので、
+  // ここで 1 件作る（「別の端末」から）
+  const K = newCardItem({
+    name: 'Visa',
+    cardholderName: 'X',
+    number: '4111111111111111',
+    expMonth: '3',
+    expYear: '2029',
+    code: '123'
+  })
+  // 1 回目の起動から使っている「別の端末」はセッションが切れているので開き直す
+  const cardOther = await VaultSession.unlock(
+    { api: createApi(origin), cache: new MemoryCacheStore(), derive: deriveKeys },
+    PASSWORD
+  )
+  await cardOther.create([K])
+  // それまでの節で残ったカードがあればゴミ箱へ（「1 件なら ⌘⇧L でそのまま入る」を見るため）
+  for (const [id, entry] of cardOther.entries)
+    if (id !== K.id && entry.deletedAt === null && entry.state.kind === 'card') await cardOther.trash(id)
+  const dataCard = makeDir('card')
+  app = await bootApp(dataCard, origin)
+  ui = await connectUi(app.cdp)
+  const signCard = await json(`window.nemo.kyprSignIn(${JSON.stringify(PASSWORD)}, false)`)
+  const cardsAtStart = (await json('window.nemo.kyprPanel()')).items.filter(
+    (i) => i.kind === 'card' && !i.deleted
+  )
+  check(
+    '6 回目: サインインでき、保管庫のカードは 1 件',
+    signCard.ok === true && cardsAtStart.length === 1 && cardsAtStart[0].id === K.id,
+    JSON.stringify({ signCard, cards: cardsAtStart.map((c) => c.name) })
+  )
+  const cardOverlay = async () => (await json('window.nemo.getOverlayState()')).kind
+  const cardInline = () => json('window.nemo.kyprInlineState()')
+  const waitOverlay = (kind, timeoutMs = 5000) =>
+    waitFor(ui, `window.nemo.getOverlayState().then((s) => s.kind === ${JSON.stringify(kind)} ? 'ok' : '')`, {
+      timeoutMs
+    }).catch(() => '')
+  const cardTab = await ui.ev(
+    `window.nemo.createTab(${JSON.stringify(`${origin}/card.html`)}).then((k) => k)`
+  )
+  let cardPage = await connectTo(app.cdp, '/card.html', { type: 'page' })
+  await waitFor(cardPage, "document.readyState === 'complete' && document.getElementById('cvc') ? 'ok' : ''")
+  const cardOverlayUi = await connectTo(app.cdp, 'view=overlay', { exclude: 'private=1' })
+  /** 実際のクリック（CDP の Input.dispatchMouseEvent。trusted になり、main の input-event も飛ぶ）。座標はトップの CSS px。 */
+  const clickPoint = async (session, x, y) => {
+    for (const type of ['mousePressed', 'mouseReleased'])
+      await session.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 })
+  }
+  const rectOf = async (session, selector) =>
+    JSON.parse(
+      await session.ev(
+        `(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return JSON.stringify({ x: r.left, y: r.top, w: r.width, h: r.height }) })()`
+      )
+    )
+  const clickIn = async (session, selector) => {
+    const r = await rectOf(session, selector)
+    await clickPoint(session, r.x + 8, r.y + r.h / 2)
+  }
+  /** iframe の中の欄をクリックする（トップの座標 = iframe の位置 + 中の欄の位置）。 */
+  const clickInFrame = async (top, frameSelector, inner, innerSelector) => {
+    const f = await rectOf(top, frameSelector)
+    const r = await rectOf(inner, innerSelector)
+    await clickPoint(top, f.x + r.x + 8, f.y + r.y + r.h / 2)
+  }
+  const pickInline = async (id) => {
+    const sel = `.kypr-inline-row[data-kypr-id="${id}"]`
+    await waitFor(cardOverlayUi, `document.querySelector(${JSON.stringify(sel)}) ? 'ok' : ''`, {
+      timeoutMs: 5000
+    }).catch(() => '')
+    // 出た直後の押下は無視されるので待つ
+    await sleep(700)
+    await cardOverlayUi.ev(`document.querySelector(${JSON.stringify(sel)})?.click()`)
+  }
+  const readFields = (session, ids) =>
+    session
+      .ev(
+        `JSON.stringify(Object.fromEntries(${JSON.stringify(ids)}.map((id) => [id, document.getElementById(id)?.value ?? null])))`
+      )
+      .then(JSON.parse)
+
+  /* ---- 6-1. メインフレームのフォーム（CVC が type=password） ---- */
+  await clickIn(cardPage, '#cvc')
+  await waitOverlay('kypr-inline')
+  let cardState = await cardInline()
+  check(
+    'カード: type=password の CVC の欄をクリックすると、ログインではなくカードの候補が出る',
+    (await cardOverlay()) === 'kypr-inline' &&
+      cardState?.kind === 'card' &&
+      cardState.rows.length === 1 &&
+      cardState.rows[0].id === K.id &&
+      !cardState.rows.some((r) => r.kind === 'login'),
+    JSON.stringify({ kind: cardState?.kind, rows: cardState?.rows?.map((r) => `${r.kind}:${r.name}`) })
+  )
+  await pickInline(K.id)
+  await waitFor(cardPage, "document.getElementById('number').value ? 'ok' : ''", { timeoutMs: 5000 }).catch(
+    () => ''
+  )
+  let got = await readFields(cardPage, ['email', 'number', 'month', 'year', 'cvc', 'holder'])
+  check(
+    'カード: 選ぶと番号・期限（月と年の select）・CVC・名義が入り、メール欄には何も入らない',
+    got.number === '4111111111111111' &&
+      got.month === '03' &&
+      got.year === '2029' &&
+      got.cvc === '123' &&
+      got.holder === 'X' &&
+      got.email === '' &&
+      (await cardOverlay()) === null,
+    JSON.stringify({ ...got, number: got.number?.length, cvc: got.cvc?.length })
+  )
+
+  /* ---- 6-2. ⌘⇧L とポップアップ（カードが 1 件） ---- */
+  await cardPage.ev("for (const id of ['number', 'cvc', 'holder']) document.getElementById(id).value = ''")
+  await clickIn(cardPage, '#number')
+  await sleep(300)
+  await ui.ev('window.nemo.kyprInlineDismiss()')
+  const cardPanel = await json('window.nemo.kyprPanel()')
+  check(
+    'カード: カードの欄にいるとき、ポップアップの「このページ」はカード（ログインと混ぜない）',
+    cardPanel.pageKind === 'card' &&
+      cardPanel.matches.length === 1 &&
+      cardPanel.matches[0].id === K.id &&
+      cardPanel.totpMatches.length === 0,
+    JSON.stringify({
+      pageKind: cardPanel.pageKind,
+      matches: cardPanel.matches.map((m) => `${m.kind}:${m.name}`)
+    })
+  )
+  await ui.ev("window.nemo.runCommandForVerify('kypr-fill')")
+  await waitFor(cardPage, "document.getElementById('number').value ? 'ok' : ''", { timeoutMs: 8000 }).catch(
+    () => ''
+  )
+  got = await readFields(cardPage, ['number', 'cvc'])
+  check(
+    'カード: ⌘⇧L はカードの欄でカードが 1 件ならそのまま入れる',
+    got.number === '4111111111111111' && got.cvc === '123' && (await cardOverlay()) !== 'kypr',
+    JSON.stringify({ number: got.number?.length, overlay: await cardOverlay() })
+  )
+
+  /* ---- 6-3. 1 つの iframe に 3 つの欄（Card Element 型・# 付きの URL）。名義はメインフレーム ---- */
+  await ui.ev(
+    `window.nemo.navigate(${JSON.stringify(cardTab)}, ${JSON.stringify(`${origin}/card-single.html`)})`
+  )
+  const singleTop = await connectTo(app.cdp, '/card-single.html', { type: 'page' })
+  const single = await connectTo(app.cdp, `localhost:${port}/card-inner.html?f=all`, { type: 'iframe' })
+  await waitFor(single, "document.readyState === 'complete' && document.getElementById('cvc') ? 'ok' : ''")
+  // ページが iframe.focus() を呼んだだけ（押したのはボタン）では出さない
+  await clickIn(singleTop, '#trap')
+  await sleep(1200)
+  const trapFocused = await singleTop.ev('document.activeElement && document.activeElement.id')
+  check(
+    'カード: ページが iframe.focus() を呼んだだけでは候補を出さない（押したのは iframe の外）',
+    trapFocused === 'f' && (await cardOverlay()) !== 'kypr-inline',
+    `active=${trapFocused} overlay=${await cardOverlay()}`
+  )
+  await clickInFrame(singleTop, '#f', single, '#number')
+  await waitOverlay('kypr-inline', 8000)
+  cardState = await cardInline()
+  check(
+    'カード: iframe の中の欄をクリックすると、iframe の下にカードの候補が出る',
+    (await cardOverlay()) === 'kypr-inline' && cardState?.kind === 'card' && cardState.rows[0]?.id === K.id,
+    JSON.stringify({
+      overlay: await cardOverlay(),
+      state: cardState && { kind: cardState.kind, rows: cardState.rows.length }
+    })
+  )
+  await pickInline(K.id)
+  await waitFor(single, "document.getElementById('number').value ? 'ok' : ''", { timeoutMs: 8000 }).catch(
+    () => ''
+  )
+  got = await readFields(single, ['number', 'exp', 'cvc'])
+  const singleHolder = await singleTop.ev("document.getElementById('holder').value")
+  check(
+    'カード: 選ぶと iframe の中に番号・期限（MM / YY）・CVC が、メインフレームの名義の欄に名義が入る',
+    got.number === '4111111111111111' && got.exp === '03 / 29' && got.cvc === '123' && singleHolder === 'X',
+    JSON.stringify({ number: got.number?.length, exp: got.exp, cvc: got.cvc?.length, holder: singleHolder })
+  )
+
+  /* ---- 6-4. 欄ごとに iframe が分かれている型（期限の iframe から） ---- */
+  await ui.ev(
+    `window.nemo.navigate(${JSON.stringify(cardTab)}, ${JSON.stringify(`${origin}/card-split.html`)})`
+  )
+  const splitTop = await connectTo(app.cdp, '/card-split.html', { type: 'page' })
+  const splitN = await connectTo(app.cdp, `localhost:${port}/card-inner.html?f=number`, { type: 'iframe' })
+  const splitE = await connectTo(app.cdp, `localhost:${port}/card-inner.html?f=exp`, { type: 'iframe' })
+  const splitC = await connectTo(app.cdp, `localhost:${port}/card-inner.html?f=cvc`, { type: 'iframe' })
+  for (const f of [splitN, splitE, splitC]) await waitFor(f, "document.readyState === 'complete' ? 'ok' : ''")
+  await clickInFrame(splitTop, '#fe', splitE, '#exp')
+  await waitOverlay('kypr-inline', 8000)
+  const splitShown = (await cardOverlay()) === 'kypr-inline'
+  // Esc（main の input-event）で閉じる
+  await ui.ev(`window.nemo.pressKeyForVerify(${JSON.stringify(cardTab)}, 'Escape')`)
+  await waitOverlay(null)
+  check(
+    'カード: 分割型の期限の iframe でも候補が出て、Esc で閉じる',
+    splitShown && (await cardOverlay()) === null,
+    `shown=${splitShown} now=${await cardOverlay()}`
+  )
+  await clickInFrame(splitTop, '#fc', splitC, '#cvc')
+  await waitOverlay('kypr-inline', 8000)
+  await pickInline(K.id)
+  await waitFor(splitN, "document.getElementById('number').value ? 'ok' : ''", { timeoutMs: 8000 }).catch(
+    () => ''
+  )
+  const split = {
+    number: await splitN.ev("document.getElementById('number').value"),
+    exp: await splitE.ev("document.getElementById('exp').value"),
+    cvc: await splitC.ev("document.getElementById('cvc').value")
+  }
+  check(
+    'カード: 分割型は、同じオリジンの兄弟の iframe（番号・期限・CVC）に 1 つずつ入る',
+    split.number === '4111111111111111' && split.exp === '03 / 29' && split.cvc === '123',
+    JSON.stringify({ number: split.number?.length, exp: split.exp, cvc: split.cvc?.length })
+  )
+
+  /* ---- 6-5. 透明な iframe ---- */
+  await ui.ev(
+    `window.nemo.navigate(${JSON.stringify(cardTab)}, ${JSON.stringify(`${origin}/card-hidden.html`)})`
+  )
+  const hiddenTop = await connectTo(app.cdp, '/card-hidden.html', { type: 'page' })
+  const hiddenFrame = await connectTo(app.cdp, `localhost:${port}/card-inner.html?f=all`, { type: 'iframe' })
+  await waitFor(
+    hiddenFrame,
+    "document.readyState === 'complete' && document.getElementById('number') ? 'ok' : ''"
+  )
+  await clickInFrame(hiddenTop, '#f', hiddenFrame, '#number')
+  await sleep(1500)
+  const hiddenActive = await hiddenTop.ev('document.activeElement && document.activeElement.id')
+  const hiddenOverlay = await cardOverlay()
+  const hiddenFill = await json(`window.nemo.kyprFill(${JSON.stringify(K.id)})`)
+  const hiddenNumber = await hiddenFrame.ev("document.getElementById('number').value")
+  check(
+    'カード: 透明な iframe の中の欄には候補を出さず、入れない',
+    hiddenActive === 'f' && hiddenOverlay !== 'kypr-inline' && hiddenFill.ok === false && hiddenNumber === '',
+    JSON.stringify({ hiddenActive, hiddenOverlay, hiddenFill, filled: hiddenNumber !== '' })
+  )
+
+  /* ---- 6-6. カードが 2 件なら ⌘⇧L はポップアップ ---- */
+  const D = newCardItem({
+    name: 'Amex',
+    cardholderName: 'TARO YAMADA',
+    number: '378282246310005',
+    expMonth: '12',
+    expYear: '2031',
+    code: '1234'
+  })
+  await cardOther.create([D])
+  await json('window.nemo.kyprSync()')
+  await ui.ev(
+    `window.nemo.navigate(${JSON.stringify(cardTab)}, ${JSON.stringify(`${origin}/card.html?two=1`)})`
+  )
+  cardPage = await connectTo(app.cdp, '/card.html?two=1', { type: 'page' })
+  await waitFor(cardPage, "document.readyState === 'complete' && document.getElementById('cvc') ? 'ok' : ''")
+  await clickIn(cardPage, '#number')
+  await waitOverlay('kypr-inline')
+  const twoRows = (await cardInline())?.rows?.map((r) => r.id) ?? []
+  await ui.ev('window.nemo.kyprInlineDismiss()')
+  await ui.ev("window.nemo.runCommandForVerify('kypr-fill')")
+  await waitOverlay('kypr', 8000)
+  got = await readFields(cardPage, ['number'])
+  check(
+    'カード: 2 件なら候補に 2 件出て、⌘⇧L はポップアップを開き、勝手に入れない',
+    twoRows.length === 2 && twoRows.includes(D.id) && (await cardOverlay()) === 'kypr' && got.number === '',
+    JSON.stringify({ twoRows: twoRows.length, overlay: await cardOverlay(), number: got.number })
+  )
+  const popupFill = await json(`window.nemo.kyprFill(${JSON.stringify(D.id)})`)
+  got = await readFields(cardPage, ['number', 'month', 'year', 'cvc', 'holder'])
+  check(
+    'カード: ポップアップから選んだカードが入る（Amex・4 桁の CVC）',
+    popupFill.ok === true &&
+      got.number === '378282246310005' &&
+      got.month === '12' &&
+      got.year === '2031' &&
+      got.cvc === '1234' &&
+      got.holder === 'TARO YAMADA',
+    JSON.stringify({ popupFill, number: got.number?.length, month: got.month, year: got.year })
+  )
+
+  /* ---- 6-7. ログに番号・CVC が出ない ---- */
+  const cardLog = readLogLines(dataCard)
+  const fillLines = cardLog.filter((line) => line.includes('kypr.fill_card'))
+  const cardLogText = cardLog.join('\n')
+  check(
+    'カード: 入れた記録（kypr.fill_card）は残り、番号はログのどこにも出ない',
+    fillLines.length >= 4 &&
+      fillLines.some((line) => line.includes('"inSubFrame":true')) &&
+      !cardLogText.includes('4111111111111111') &&
+      !cardLogText.includes('378282246310005') &&
+      !cardLogText.includes('4111') &&
+      // 欄の種類の名前（kinds の "number"）はよいが、値を持つキーは無い
+      fillLines.every((line) => !/"(number|code|value|cardholderName)":/.test(line)),
+    `fill_card=${fillLines.length}`
+  )
+  const crashesCard = findUncaughtExceptions(dataCard)
+  check('6 回目: 未処理の例外が出ていない', crashesCard.length === 0, crashesCard.join(' / '))
   await stopApp(app.child)
 
   /* ---- 平文が残っていないこと ---- */

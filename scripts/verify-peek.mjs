@@ -1024,13 +1024,16 @@ console.log('\n--- Peek のフォーカスと Esc')
     await parent.page.ev("JSON.stringify(document.querySelector('a[target=_blank]').getBoundingClientRect())")
   )
   const at = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
-  for (const type of ['mousePressed', 'mouseReleased']) {
-    await parent.page.send('Input.dispatchMouseEvent', { type, ...at, button: 'left', clickCount: 1 })
+  // Chromium（Electron 42 以降）は描画前のページへの入力を黙って捨てるので、開いた直後の 1 回撃ちは消えることがある
+  // （CI で Peek が開かずに落ちた）。開いていなければ撃ち直す。撃つ前に毎回見るので 2 枚は開かない
+  const peekOpened = `window.nemo.getWindowState().then((s) => s.tabs.some((t) => t.peekParentKey === ${JSON.stringify(parent.key)}) ? 'ok' : '')`
+  for (let attempt = 0; attempt < 6 && (await ui.ev(peekOpened)) !== 'ok'; attempt += 1) {
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await parent.page.send('Input.dispatchMouseEvent', { type, ...at, button: 'left', clickCount: 1 })
+    }
+    await waitFor(ui, peekOpened, { timeoutMs: 2000 }).catch(() => '')
   }
-  await waitFor(
-    ui,
-    `window.nemo.getWindowState().then((s) => s.tabs.some((t) => t.peekParentKey === ${JSON.stringify(parent.key)}) ? 'ok' : '')`
-  )
+  await waitFor(ui, peekOpened)
   await sleep(1200)
   const peek = peekOf(await state(), parent.key)
   const parentWc = (await state()).tabs.find((t) => t.key === parent.key)?.webContentsId

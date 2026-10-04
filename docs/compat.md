@@ -68,7 +68,7 @@ Phase 0 では **41 系の最新（41.10.6）を採用**し、42 以降には上
 Electron 42 以降の Chromium は、**描画前のページや出たばかり・透明な cross-origin の iframe への入力を黙って捨てる**
 （paint holding・クリックジャッキング対策）。CI では遷移の直後に `Input.dispatchMouseEvent` で撃つクリックが消え、
 kypr の検査が Nemo の判定より前で落ちていた（押下 0 件を実測）。ユーザーは描画されたページしか押せないので実害は無い。
-検査は押下が届いたのを確かめて撃ち直す（`verify-kypr.mjs` の `clickUntilDelivered`）。
+検査は押下が届いたのを確かめて撃ち直す（`verify-kypr.mjs` の `clickUntilDelivered`、`verify-peek.mjs` のリンクのクリックは Peek が開くまで撃ち直す）。CDP のクリックを足すときは 1 回撃ちにしない。
 
 ## 検証済みの動作（Electron 41.10.6 + ece 4.9.0。当時は Bitwarden 2026.8.0 で確認。Bitwarden は 2026-09-28 に外した）
 

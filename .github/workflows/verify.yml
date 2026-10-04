@@ -30,4 +30,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: 自走検証（テスト拡張 + ブラウザ本体）
-        run: node scripts/verify-all.mjs
+        run: |
+          set -o pipefail
+          node scripts/verify-all.mjs 2>&1 | tee "$RUNNER_TEMP/verify.log"
+      - name: 落ちた検査（ログが長く、FAIL の行が先頭側に埋もれるので末尾にまとめる）
+        if: failure()
+        run: grep -E '^\s*(FAIL|KNOWN)\s' "$RUNNER_TEMP/verify.log" || echo "(FAIL の行なし。打ち切り・起動失敗などを上のログで見る)"

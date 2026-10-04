@@ -1020,8 +1020,12 @@ console.log('\n--- Peek のフォーカスと Esc')
   const parent = await openParent('focus')
   // リンクのクリック（実クリックに近い CDP のマウス）で開く。evUser の window.open と同じ受け皿だが、
   // 実機で踏んだ経路に寄せる
+  // **先に画面の中へ入れる**。リンクはページの下の方（y=666）にあり、CI のウィンドウでは見えている範囲の外だった。
+  // その座標を撃つと <html> に当たり、リンクが押されない（押下は届くが Peek もタブもできない、で落ちた）
   const rect = JSON.parse(
-    await parent.page.ev("JSON.stringify(document.querySelector('a[target=_blank]').getBoundingClientRect())")
+    await parent.page.ev(
+      "(() => { const a = document.querySelector('a[target=_blank]'); a.scrollIntoView({ block: 'center' }); return JSON.stringify(a.getBoundingClientRect()) })()"
+    )
   )
   const at = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
   // Chromium（Electron 42 以降）は描画前のページへの入力を黙って捨てるので、開いた直後の 1 回撃ちは消えることがある

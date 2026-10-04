@@ -1,0 +1,143 @@
+name: Electron の追従
+
+# 今より新しいサポート中の Electron major を、使い捨ての checkout で試す（何もマージしない）。
+# 結果と今の major の EOL を issue「Electron の追従」に書く。EOL が近い・切れた・通る版が変わった
+# ときだけコメントで知らせる。方針と手順は docs/compat.md「Electron の追従」。
+#
+# 同じ major の中の patch は Renovate が月 1 で PR にする（renovate.json）。ここは major だけを見る。
+
+on:
+  schedule:
+    # 月曜 9:17（JST）
+    - cron: '17 0 * * 1'
+  workflow_dispatch:
+  push:
+    # この仕組み自体を直したときに回して確かめる（issue には書かない）
+    paths:
+      - '.github/workflows/electron-track.yml'
+      - 'scripts/electron-track.mjs'
+      - 'scripts/lib/electron-support.mjs'
+
+concurrency:
+  group: electron-track-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: 試す版を決める
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.plan.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - id: plan
+        run: |
+          targets=$(node scripts/electron-track.mjs plan)
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+          echo "試す版: $targets"
+
+  try:
+    name: Electron ${{ matrix.target.version }} を試す
+    needs: plan
+    if: needs.plan.outputs.targets != '[]'
+    runs-on: macos-15
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: 検証の一時ディレクトリ（ログ入り）を拾える場所に置く
+        # macOS の os.tmpdir() は /tmp ではない
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - run: pnpm install --frozen-lockfile
+      - name: Electron を差し替える（この checkout の中だけ）
+        run: pnpm add -D electron@${{ matrix.target.version }}
+      - name: 拡張互換 smoke test
+        id: smoke
+        continue-on-error: true
+        run: node scripts/verify-ext-smoke.mjs
+      - name: 自走検証（verify-all）
+        id: verify
+        continue-on-error: true
+        run: node scripts/verify-all.mjs
+      - name: 結果を書く
+        if: always()
+        run: |
+          mkdir -p result
+          printf '{"major":%s,"version":"%s","smoke":"%s","verify":"%s"}\n' \
+            '${{ matrix.target.major }}' '${{ matrix.target.version }}' \
+            '${{ steps.smoke.outcome || 'skipped' }}' '${{ steps.verify.outcome || 'skipped' }}' \
+            > result/electron-${{ matrix.target.major }}.json
+          cat result/electron-${{ matrix.target.major }}.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: result-${{ matrix.target.major }}
+          path: result/
+      - name: 失敗したらログを残す
+        if: steps.smoke.outcome == 'failure' || steps.verify.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.target.major }}
+          path: |
+            ${{ runner.temp }}/nemo-extsmoke-*/logs/**
+            ${{ runner.temp }}/nemo-verify-*/logs/**
+          if-no-files-found: ignore
+
+  report:
+    name: issue に書く
+    needs: [plan, try]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TITLE: Electron の追従
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: result-*
+          path: results
+          merge-multiple: true
+      - name: 前回の本文を取る
+        id: issue
+        run: |
+          number=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number,title \
+            --jq "map(select(.title == env.TITLE)) | .[0].number // empty")
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          if [ -n "$number" ]; then gh issue view "$number" --json body --jq .body > previous.md; fi
+      - name: 本文を作る
+        run: |
+          node scripts/electron-track.mjs report --results results --previous previous.md --out out
+          cat out/body.md >> "$GITHUB_STEP_SUMMARY"
+      - name: issue を書き換える
+        # 仕組みを直したときの push では書かない（結果は Summary で見る）
+        if: github.event_name != 'push'
+        run: |
+          number='${{ steps.issue.outputs.number }}'
+          if [ -z "$number" ]; then
+            url=$(gh issue create --title "$TITLE" --body-file out/body.md)
+            number=${url##*/}
+          else
+            gh issue edit "$number" --body-file out/body.md
+          fi
+          if [ -f out/comment.md ]; then gh issue comment "$number" --body-file out/comment.md; fi

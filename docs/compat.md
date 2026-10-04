@@ -19,17 +19,36 @@ Nemo は Electron と `electron-chrome-extensions` の組み合わせが壊れ�
 
 検証日: 2026-08-23（拡張の ON/OFF・`chrome.debugger` / `webRequest` の補完は 2026-08-29〜30）/ 検証機: macOS 15（Darwin 25.5.0, arm64）
 
-## Electron 42 以降を避けている理由
+## Electron の追従
+
+**最新は追わない。サポート中（新しい方から 3 つの major）に居続ける**のを条件にする。
+Electron の major は約 8 週ごとに出て、N の EOL は N+3 が出た日（年末年始は間が延びる）。
+日数は決め打ちせず、公開されている EOL 日で判断する。
+
+| 何を | いつ | 誰が |
+|---|---|---|
+| 同じ major の中の更新（patch / minor。Chromium のセキュリティ修正） | 月 1 回 | Renovate が PR を立てる（`renovate.json`）。CI と自走検証が緑ならマージ |
+| 新しい major を試す | 週 1 回 | workflow `Electron の追従`（`electron-track.yml`）が使い捨ての checkout で `verify-ext-smoke` と `verify-all` を回し、issue「Electron の追従」に通る版と EOL を書く |
+| major を上げる | 今の major の EOL まで 45 日を切ったら（目安 3〜4 か月ごと） | 人。issue にコメントで知らせが来る |
+
+major を上げるときは、**通る中でいちばん新しい major の最新版**にする（いちばん古いサポート中の版にすると、
+上げた時点で残りが 8 週しかない）。手順:
+
+1. issue「Electron の追従」で通る中でいちばん新しい版を見て、`package.json` の `electron` をその版にする PR を出す
+2. CI 必須の拡張互換 smoke test と workflow `自走検証（Electron・依存の更新）` が緑なのを見る
+3. 実機で kypr を確認する（Touch ID の解除・自動入力・コピー。VERIFY.md「kypr」）
+4. 通ったら上の last-known-good の表を更新してマージし、`mise run release` する
+
+**通る major が無いまま EOL が近いとき**は issue に「通る major が無い」と出る。
+回避策を作る（Nemo 側で避ける・`electron-chrome-extensions` を直す）か、承知のうえで据え置くかを決める。
+据え置くと Chromium のセキュリティ修正が来なくなるので、ブラウザとしては長く続けない。
+
+### 過去に 42 以降を避けていた理由
 
 `samuelmaddock/electron-browser-shell#184` に、Electron 42 以降で
 `electron-chrome-extensions` のアイコン・popup が壊れるという未解決の報告がある。
-Phase 0 では **41 系の最新（41.10.6）を採用**し、42 以降には上げていない。
-
-Electron を上げる PR では次を必ず通す（Phase 1-10 / Phase 2-6）:
-
-1. CI 必須の拡張互換 smoke test（資格情報なし・決定的）
-2. workflow `自走検証（Electron・依存の更新）`（verify-all）と、実機での kypr の確認（Touch ID の解除・自動入力・コピー）
-3. 通ったらこの表を更新する。**落ちたら Electron は据え置く**
+Phase 0 では **41 系の最新（41.10.6）を採用**し、42 以降には上げていなかった。
+今は週 1 の試しの結果（拡張 smoke が `<browser-action-list>` のアイコンと popup を見ている）で判断する。
 
 ## 検証済みの動作（Electron 41.10.6 + ece 4.9.0。当時は Bitwarden 2026.8.0 で確認。Bitwarden は 2026-09-28 に外した）
 

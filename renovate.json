@@ -1,114 +1,49 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", ":dependencyDashboard"],
+  "extends": ["config:recommended"],
   "timezone": "Asia/Tokyo",
-  "schedule": ["* 0-6 * * 1"],
-  "prConcurrentLimit": 3,
   "labels": ["dependencies"],
 
   "description": [
-    "Nemo の依存更新方針（計画 2-6）。",
+    "Nemo の依存更新方針（docs/compat.md「Electron の追従」）。",
     "",
-    "1. **自動マージしない**。Electron / Chromium の更新は拡張互換を壊しうるし、",
-    "   壊れ方が『拡張が黙って動かない』なので CI の緑だけでは判断できない。",
-    "2. **バージョンは exact に固定する**（rangeStrategy: pin）。",
-    "   `^` で緩めると lockfile を作り直したときに黙って上がる。",
-    "3. Electron の PR は単独で立てる。落ちたら**据え置ける**ようにしておく",
-    "   （まとめPRだと Electron だけ戻せない）。",
-    "4. 通った組み合わせは `docs/compat.md` の last-known-good を更新してからマージする。",
-    "",
-    "必須チェック（GitHub の branch protection 側で required にする）:",
-    "  - CI / lint / typecheck / unit test",
-    "  - CI / extension smoke (macOS)   ← 資格情報なしで決定的に回る拡張互換の smoke",
-    "  - CI / package (macOS)",
-    "本体の自走検証（verify-all）は workflow `自走検証（Electron・依存の更新）` で行う。",
-    "これは `package.json` / `pnpm-lock.yaml` / `extensions.lock.json` を触る PR で自動的に回る。"
+    "1. **Renovate が出すのは Electron の同じ major の中の更新（patch / minor）だけ**。月 1 回の PR にする。",
+    "   Chromium のセキュリティ修正を受けるのが目的。ほかの依存の細かい更新は出さない。",
+    "2. **Electron の major は Renovate では上げない**。workflow `Electron の追従`（electron-track.yml）が",
+    "   週 1 で新しい major を試し、issue「Electron の追従」に通る版と EOL を書く。上げるのは人が決める。",
+    "3. **自動マージしない**。壊れ方が『拡張が黙って動かない』なので、CI と自走検証の結果を見てからマージする。",
+    "4. **バージョンは exact に固定する**（rangeStrategy: pin）。`^` で緩めると lockfile を作り直したときに黙って上がる。"
   ],
 
   "rangeStrategy": "pin",
   "automerge": false,
-  "dependencyDashboardTitle": "依存更新のダッシュボード",
+  "dependencyDashboard": false,
+  "lockFileMaintenance": { "enabled": false },
 
   "packageRules": [
     {
-      "description": "Electron は単独 PR。落ちたら据え置けるようにまとめない",
+      "description": "既定ではどの依存も更新を出さない（GitHub Actions も含む）",
+      "matchPackageNames": ["*"],
+      "enabled": false
+    },
+    {
+      "description": "Electron の同じ major の中だけ、月 1 回。セキュリティ修正を待たせすぎないよう待ち日数は短め",
       "matchPackageNames": ["electron"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "enabled": true,
       "groupName": null,
-      "labels": ["dependencies", "electron", "要・拡張互換の確認"],
-      "minimumReleaseAge": "7 days",
-      "prPriority": 10,
+      "schedule": ["* 0-6 1 * *"],
+      "minimumReleaseAge": "3 days",
+      "labels": ["dependencies", "electron"],
       "prBodyNotes": [
-        "### マージ前に必ずやること",
+        "### マージ前に見ること",
         "",
-        "- [ ] CI の `extension smoke (macOS)` が緑（資格情報なしの拡張互換）",
+        "- [ ] CI（`extension smoke (macOS)` / `package (macOS)`）が緑",
         "- [ ] workflow `自走検証（Electron・依存の更新）` が緑",
-        "- [ ] 実機で kypr の確認（Touch ID での解除・⌘⇧L での入力・コピー。VERIFY.md「kypr」）",
-        "- [ ] `docs/compat.md` の last-known-good をこの組み合わせに更新",
         "",
-        "**落ちたら据え置く。** この PR を閉じれば pin は元のままなので、",
-        "次の Electron が出るまで今の組み合わせで動き続ける。"
+        "同じ major の中の更新なので、kypr の実機確認と `docs/compat.md` の更新は要らない（major を上げるときにやる）。",
+        "落ちたらこの PR を閉じれば今の版のまま動き続ける。"
       ]
-    },
-    {
-      "description": "拡張ロードの実装。Electron と同じ扱いにする",
-      "matchPackageNames": ["electron-chrome-extensions"],
-      "groupName": null,
-      "labels": ["dependencies", "拡張", "要・拡張互換の確認"],
-      "minimumReleaseAge": "7 days",
-      "prPriority": 10
-    },
-    {
-      "description": "ネイティブモジュールは ABI の影響があるので単独で見る",
-      "matchPackageNames": ["better-sqlite3"],
-      "groupName": null,
-      "minimumReleaseAge": "7 days"
-    },
-    {
-      "description": "配布まわり（署名・公証・自動更新）は壊れると気づきにくいので単独で見る",
-      "matchPackageNames": ["electron-builder", "electron-updater", "@electron/fuses", "@electron/asar"],
-      "groupName": "配布まわり",
-      "minimumReleaseAge": "7 days"
-    },
-    {
-      "description": "lint / format / 型は 1 本にまとめる（落ちても影響範囲が閉じている）",
-      "matchPackageNames": [
-        "eslint",
-        "@eslint/js",
-        "typescript-eslint",
-        "eslint-config-prettier",
-        "eslint-plugin-react-hooks",
-        "prettier",
-        "typescript",
-        "globals"
-      ],
-      "groupName": "lint / typecheck",
-      "minimumReleaseAge": "3 days"
-    },
-    {
-      "description": "React とビルドツールもまとめる",
-      "matchPackageNames": [
-        "react",
-        "react-dom",
-        "@types/react",
-        "@types/react-dom",
-        "vite",
-        "electron-vite",
-        "@vitejs/plugin-react"
-      ],
-      "groupName": "UI / ビルド",
-      "minimumReleaseAge": "3 days"
-    },
-    {
-      "description": "GitHub Actions はまとめて上げる",
-      "matchManagers": ["github-actions"],
-      "groupName": "GitHub Actions",
-      "minimumReleaseAge": "3 days"
     }
-  ],
-
-  "lockFileMaintenance": {
-    "enabled": true,
-    "schedule": ["* 0-6 1 * *"],
-    "description": "lockfile の作り直しは lint プラグインまで上げてしまうことがある。単独 PR にして CI を通す"
-  }
+  ]
 }

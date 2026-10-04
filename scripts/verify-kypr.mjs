@@ -96,6 +96,28 @@ function check(name, ok, detail = '') {
 /* ---------------- テストページ ---------------- */
 
 /** テストページの favicon（UI の CSP で出せる data:。http の favicon は出ないので使わない）。 */
+/**
+ * CDP のクリックを、押下が `receiver`（押す先の frame の session）に届くまで撃ち直す。座標は `top` の CSS px。
+ *
+ * Chromium（Electron 42 以降）は、描画前のページや出たばかりの cross-origin の iframe への入力を**黙って捨てる**
+ * （paint holding・クリックジャッキング対策）。CI では遷移の直後に撃つクリックが消え、Nemo の判定より前で
+ * 検査が落ちていた（42 / 44 で押下 0 件を実測）。ユーザーは描画されたページしか押せないので、検査の側で待つ。
+ * 届いた回の番号（1 始まり）を返す。最後まで届かなければ 0
+ */
+async function clickUntilDelivered(top, receiver, x, y, { tries = 8 } = {}) {
+  await receiver.ev(
+    "(window.__nemoDown = 0, window.__nemoDownArmed || (window.__nemoDownArmed = true, addEventListener('pointerdown', () => { window.__nemoDown += 1 }, true)), 'ok')"
+  )
+  for (let i = 0; i < tries; i += 1) {
+    for (const type of ['mousePressed', 'mouseReleased'])
+      await top.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 })
+    await sleep(150)
+    if ((await receiver.ev('window.__nemoDown ?? 0')) > 0) return i + 1
+    await sleep(350)
+  }
+  return 0
+}
+
 const LOGIN_FAVICON =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23e34'/%3E%3C/svg%3E"
 const LOGIN_PAGE =
@@ -1860,27 +1882,14 @@ try {
     String(await overlayKind())
   )
   await page.ev('document.activeElement && document.activeElement.blur()')
-  // 実際のクリック（trusted な pointerdown）で出る
+  // 実際のクリック（trusted な pointerdown）で出る。届くまで撃ち直す（clickUntilDelivered）
   const clickAt = async (id) => {
     const r = JSON.parse(
       await page.ev(
         `(() => { const r = document.getElementById(${JSON.stringify(id)}).getBoundingClientRect(); return JSON.stringify({ x: r.left + 10, y: r.top + r.height / 2 }) })()`
       )
     )
-    await page.send('Input.dispatchMouseEvent', {
-      type: 'mousePressed',
-      x: r.x,
-      y: r.y,
-      button: 'left',
-      clickCount: 1
-    })
-    await page.send('Input.dispatchMouseEvent', {
-      type: 'mouseReleased',
-      x: r.x,
-      y: r.y,
-      button: 'left',
-      clickCount: 1
-    })
+    return clickUntilDelivered(page, page, r.x, r.y)
   }
   await clickAt('username')
   await waitFor(ui, "window.nemo.getOverlayState().then((s) => s.kind === 'kypr-inline' ? 'ok' : '')", {
@@ -1938,6 +1947,8 @@ try {
   // ロック中は「解除」の 1 行
   await ui.ev('window.nemo.kyprLock()')
   await page.ev('window.scrollTo(0, 0); document.activeElement && document.activeElement.blur()')
+  // scroll イベント（候補を閉じる知らせ）はフレームの後で届く。クリックより後に届くと出した候補を閉じてしまう
+  await sleep(400)
   await clickAt('username')
   await waitFor(ui, "window.nemo.getOverlayState().then((s) => s.kind === 'kypr-inline' ? 'ok' : '')", {
     timeoutMs: 5000
@@ -2763,11 +2774,6 @@ try {
   let cardPage = await connectTo(app.cdp, '/card.html', { type: 'page' })
   await waitFor(cardPage, "document.readyState === 'complete' && document.getElementById('cvc') ? 'ok' : ''")
   const cardOverlayUi = await connectTo(app.cdp, 'view=overlay', { exclude: 'private=1' })
-  /** 実際のクリック（CDP の Input.dispatchMouseEvent。trusted になり、main の input-event も飛ぶ）。座標はトップの CSS px。 */
-  const clickPoint = async (session, x, y) => {
-    for (const type of ['mousePressed', 'mouseReleased'])
-      await session.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 })
-  }
   const rectOf = async (session, selector) =>
     JSON.parse(
       await session.ev(
@@ -2776,22 +2782,13 @@ try {
     )
   const clickIn = async (session, selector) => {
     const r = await rectOf(session, selector)
-    await clickPoint(session, r.x + 8, r.y + r.h / 2)
+    return clickUntilDelivered(session, session, r.x + 8, r.y + r.h / 2)
   }
-  /**
-   * iframe の中に押下が届いたかを数える（診断用）。Chromium は透明な iframe や出たばかりの iframe への
-   * 入力を捨てることがあり、そのときは Nemo の判定より前でクリックが消える。FAIL の詳細で切り分ける
-   */
-  const armPointerCount = (inner) =>
-    inner.ev(
-      "(window.__nemoDown = 0, window.__nemoDownArmed || (window.__nemoDownArmed = true, addEventListener('pointerdown', () => { window.__nemoDown += 1 }, true)), 'ok')"
-    )
-  const pointerCount = (inner) => inner.ev('window.__nemoDown ?? -1')
   /** iframe の中の欄をクリックする（トップの座標 = iframe の位置 + 中の欄の位置）。 */
   const clickInFrame = async (top, frameSelector, inner, innerSelector) => {
     const f = await rectOf(top, frameSelector)
     const r = await rectOf(inner, innerSelector)
-    await clickPoint(top, f.x + r.x + 8, f.y + r.y + r.h / 2)
+    return clickUntilDelivered(top, inner, f.x + r.x + 8, f.y + r.y + r.h / 2)
   }
   const pickInline = async (id) => {
     const sel = `.kypr-inline-row[data-kypr-id="${id}"]`
@@ -2915,11 +2912,9 @@ try {
   const splitE = await connectTo(app.cdp, `localhost:${port}/card-inner.html?f=exp`, { type: 'iframe' })
   const splitC = await connectTo(app.cdp, `localhost:${port}/card-inner.html?f=cvc`, { type: 'iframe' })
   for (const f of [splitN, splitE, splitC]) await waitFor(f, "document.readyState === 'complete' ? 'ok' : ''")
-  await armPointerCount(splitE)
-  await clickInFrame(splitTop, '#fe', splitE, '#exp')
+  const splitDown = await clickInFrame(splitTop, '#fe', splitE, '#exp')
   await waitOverlay('kypr-inline', 8000)
   const splitShown = (await cardOverlay()) === 'kypr-inline'
-  const splitDown = await pointerCount(splitE)
   const splitFocus = await splitE.ev('document.activeElement && document.activeElement.id')
   // Esc（main の input-event）で閉じる
   await ui.ev(`window.nemo.pressKeyForVerify(${JSON.stringify(cardTab)}, 'Escape')`)
@@ -2956,11 +2951,12 @@ try {
     hiddenFrame,
     "document.readyState === 'complete' && document.getElementById('number') ? 'ok' : ''"
   )
-  await armPointerCount(hiddenFrame)
-  await clickInFrame(hiddenTop, '#f', hiddenFrame, '#number')
+  // Chromium（42 以降）は透明な cross-origin の iframe への入力をそもそも届けないことがある（クリックジャッキング対策）。
+  // 届かなかったら、欄にフォーカスがある状態をスクリプトで作って ⌘⇧L（kyprFill）の側の判定を見る
+  const hiddenDown = await clickInFrame(hiddenTop, '#f', hiddenFrame, '#number')
+  if (!hiddenDown) await hiddenFrame.ev("document.getElementById('number').focus()")
   await sleep(1500)
   const hiddenActive = await hiddenTop.ev('document.activeElement && document.activeElement.id')
-  const hiddenDown = await pointerCount(hiddenFrame)
   const hiddenInnerFocus = await hiddenFrame.ev('document.activeElement && document.activeElement.id')
   const hiddenOverlay = await cardOverlay()
   const hiddenFill = await json(`window.nemo.kyprFill(${JSON.stringify(K.id)})`)

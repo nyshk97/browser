@@ -840,9 +840,29 @@ try {
           (await listTargets(cdp)).find((t) => t.url.includes(`${expected.id}/panel.html`)) ?? null
       }
       // 落ちたときの切り分け: devtools_page 自体が読まれたか（target があるか）・DevTools にパネルのタブが出たか
+      // devtools_page の中で panels.create を呼び直し、callback が来るか・lastError が出るかを見る
+      const probePanels = async () => {
+        const page = (await listTargets(cdp)).find((t) => t.url.includes(`${expected.id}/devtools.html`))
+        if (!page) return 'devtools.html の target が無い'
+        const session = await connect(page.webSocketDebuggerUrl)
+        try {
+          return await session.ev(
+            `new Promise((resolve) => {
+              const info = { devtools: typeof chrome.devtools, panels: typeof chrome.devtools?.panels, inspectedTabId: chrome.devtools?.inspectedWindow?.tabId ?? null }
+              try {
+                chrome.devtools.panels.create('Nemo probe', '', 'panel.html', (panel) => resolve(JSON.stringify({ ...info, callback: true, panel: typeof panel, lastError: chrome.runtime.lastError?.message ?? null })))
+              } catch (error) { resolve(JSON.stringify({ ...info, threw: String(error) })) }
+              setTimeout(() => resolve(JSON.stringify({ ...info, callback: false })), 3000)
+            })`
+          )
+        } finally {
+          session.close()
+        }
+      }
       const panelDiag = panelTarget
         ? panelTarget.url
         : JSON.stringify({
+            probe: await probePanels().catch((error) => `error: ${error.message}`),
             targets: (await listTargets(cdp))
               .filter((t) => t.url.startsWith('devtools://') || t.url.startsWith('chrome-extension://'))
               .map((t) => `${t.type} ${t.url.slice(0, 90)}`),

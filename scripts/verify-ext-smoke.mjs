@@ -44,6 +44,15 @@ function check(name, ok, detail = '') {
   if (!ok) failures += 1
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
 }
+let knownIssues = 0
+/**
+ * 既知の不具合（issue あり・直るまで承知のうえで使う）。FAIL に数えないが、**症状が issue の通りのときだけ**ここに来る
+ * ようにする（違う壊れ方は FAIL のまま）。直れば元の check が PASS するので、そのとき呼び出しごと消す
+ */
+function knownIssue(name, issue, detail = '') {
+  knownIssues += 1
+  console.log(`KNOWN ${name} — ${issue}${detail ? ` / ${detail}` : ''}`)
+}
 
 /** @type {import('node:child_process').ChildProcess[]} */
 const spawned = []
@@ -839,7 +848,56 @@ try {
         panelTarget =
           (await listTargets(cdp)).find((t) => t.url.includes(`${expected.id}/panel.html`)) ?? null
       }
-      check('devtools_page が足したパネルが DevTools に出る', Boolean(panelTarget), panelTarget?.url ?? '')
+      // 落ちたときの切り分け: devtools_page 自体が読まれたか（target があるか）・DevTools にパネルのタブが出たか
+      // devtools_page の中で panels.create を呼び直し、callback が来るか・lastError が出るかを見る
+      const probePanels = async () => {
+        const page = (await listTargets(cdp)).find((t) => t.url.includes(`${expected.id}/devtools.html`))
+        if (!page) return 'devtools.html の target が無い'
+        const session = await connect(page.webSocketDebuggerUrl)
+        try {
+          return await session.ev(
+            `new Promise((resolve) => {
+              const info = { devtools: typeof chrome.devtools, panels: typeof chrome.devtools?.panels, inspectedTabId: chrome.devtools?.inspectedWindow?.tabId ?? null }
+              try {
+                chrome.devtools.panels.create('Nemo probe', '', 'panel.html', (panel) => resolve(JSON.stringify({ ...info, callback: true, panel: typeof panel, lastError: chrome.runtime.lastError?.message ?? null })))
+              } catch (error) { resolve(JSON.stringify({ ...info, threw: String(error) })) }
+              setTimeout(() => resolve(JSON.stringify({ ...info, callback: false })), 3000)
+            })`
+          )
+        } finally {
+          session.close()
+        }
+      }
+      const probe = panelTarget ? null : await probePanels().catch((error) => `error: ${error.message}`)
+      const panelDiag = panelTarget
+        ? panelTarget.url
+        : JSON.stringify({
+            probe,
+            targets: (await listTargets(cdp))
+              .filter((t) => t.url.startsWith('devtools://') || t.url.startsWith('chrome-extension://'))
+              .map((t) => `${t.type} ${t.url.slice(0, 90)}`),
+            tab: await devtools
+              .ev(
+                `(() => { const seen = []; const walk = (root) => { for (const el of root.querySelectorAll('*')) { if (el.shadowRoot) walk(el.shadowRoot); const t = (el.getAttribute('aria-label') || '') + '|' + (el.childElementCount === 0 ? el.textContent : ''); if (t.includes('Nemo CI')) seen.push(el.tagName + ':' + t.slice(0, 40)) } }; walk(document); return JSON.stringify(seen.slice(0, 5)) })()`
+              )
+              .catch((error) => `error: ${error.message}`)
+          })
+      // Electron 42 以降は devtools_page に chrome.devtools が入らず、パネルが作られない（#2。Nemo の shim とは無関係）。
+      // その症状のときだけ既知の不具合として扱う。devtools.html が無い・chrome.devtools はあるのに出ない、は FAIL
+      const devtoolsApiMissing =
+        !panelTarget &&
+        typeof probe === 'string' &&
+        probe.startsWith('{') &&
+        JSON.parse(probe).devtools === 'undefined'
+      if (devtoolsApiMissing) {
+        knownIssue(
+          'devtools_page が足したパネルが DevTools に出る',
+          'Electron 42 以降は devtools_page に chrome.devtools が入らない（https://github.com/nyshk97/browser/issues/2）',
+          panelDiag
+        )
+      } else {
+        check('devtools_page が足したパネルが DevTools に出る', Boolean(panelTarget), panelDiag)
+      }
       if (panelTarget) {
         const panel = await connect(panelTarget.webSocketDebuggerUrl)
         const apis = await waitFor(panel, `document.getElementById('panel-apis')?.textContent ?? ''`)
@@ -1104,5 +1162,6 @@ try {
   }
 }
 
+if (knownIssues > 0) console.log(`\nverify:ext: 既知の不具合 ${knownIssues} 件（KNOWN の行）`)
 console.log(failures === 0 ? '\nverify:ext: すべて PASS' : `\nverify:ext: ${failures} 件 FAIL`)
 process.exit(failures === 0 ? 0 : 1)

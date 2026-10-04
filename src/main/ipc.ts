@@ -885,7 +885,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('nemo:copy-url', (event, key: unknown) => {
     const { tab } = requireTab(event, key)
-    clipboard.writeText(tab.url)
+    void clipboard.writeText(tab.url)
     // copy-url の対象 key は renderer が選ぶ（main のコマンド分岐では決まらない）。
     // 自走検証は「前面 = Peek 優先」の判定にこのログを読む
     log('copy_url.requested', { key: tab.key, peek: tab.peekOf !== null })
@@ -1381,7 +1381,11 @@ export function registerIpcHandlers(): void {
         : null
     const page =
       url && host
-        ? { url, host, faviconUrl: tabFavicon ?? getFaviconsForHosts([host]).get(host) ?? kyprVaultIcon(host) }
+        ? {
+            url,
+            host,
+            faviconUrl: tabFavicon ?? getFaviconsForHosts([host]).get(host) ?? kyprVaultIcon(host)
+          }
         : null
     const items = withKyprFavicons(kyprSummaries())
     // このページに合うものは一覧の部分集合なので、favicon は一覧の分を使い回す（履歴を 2 回引かない）

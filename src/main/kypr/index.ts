@@ -335,7 +335,7 @@ export function lockKypr(reason: string): void {
   const current = session
   session = null
   current.lock()
-  clearOurClipboard()
+  void clearOurClipboard()
   log('kypr.lock', { reason })
   notify()
 }
@@ -775,8 +775,11 @@ const memoryClipboard = { text: '' }
 const clip =
   process.env['NEMO_KYPR_TEST_CLIPBOARD'] === 'memory' && !app.isPackaged
     ? {
-        readText: () => memoryClipboard.text,
-        writeText: (value: string) => void (memoryClipboard.text = value),
+        readText: () => Promise.resolve(memoryClipboard.text),
+        writeText: (value: string) => {
+          memoryClipboard.text = value
+          return Promise.resolve()
+        },
         clear: () => void (memoryClipboard.text = '')
       }
     : {
@@ -797,12 +800,29 @@ function clipboardClearMs(): number {
   return KYPR_CLIPBOARD_CLEAR_MS
 }
 
-/** 自分が書いたものがまだ残っていれば消す（他のアプリでコピーし直したものは消さない）。 */
-function clearOurClipboard(): void {
+/**
+ * 書き込みの世代。消す判定（readText）は非同期なので、その間にコピーし直した値を消さないよう、
+ * 判定が返ったときに世代が進んでいたら何もしない
+ */
+let clipboardGeneration = 0
+
+/**
+ * 自分が書いたものがまだ残っていれば消す（他のアプリでコピーし直したものは消さない）。
+ * **Electron 44 から `clipboard.readText()` は Promise**。同期で比べると常に食い違い、30 秒たっても消えなかった
+ */
+function clearOurClipboard(): Promise<void> {
   if (clipboardTimer) clearTimeout(clipboardTimer)
   clipboardTimer = null
-  if (clipboardValue !== null && clip.readText() === clipboardValue) clip.clear()
+  const value = clipboardValue
   clipboardValue = null
+  if (value === null) return Promise.resolve()
+  const generation = clipboardGeneration
+  return clip.readText().then(
+    (text) => {
+      if (generation === clipboardGeneration && text === value) clip.clear()
+    },
+    (error: unknown) => logError('kypr.clipboard_clear_failed', error)
+  )
 }
 
 const COPYABLE: Record<string, readonly string[]> = {
@@ -856,12 +876,15 @@ export function copyKyprNoteField(id: string, ref: KyprNoteFieldRef): boolean {
 
 /** クリップボードに置き、30 秒で消す（自分の書いたものがまだ残っているときだけ）。 */
 function writeOurClipboard(value: string): void {
-  clearOurClipboard()
+  // 前の値を消す判定は要らない（書き込みで置き換わる）。走っている判定は世代を進めて捨てる
+  if (clipboardTimer) clearTimeout(clipboardTimer)
+  clipboardTimer = null
+  clipboardGeneration += 1
   // `org.nspasteboard.ConcealedType` は付けない: Electron の clipboard はテキストと独自の型を 1 回の書き込みで
   // 置けない（writeBuffer は書き込みのたびに中身を置き換える）。plan の決定どおり、付けられないので諦める
-  clip.writeText(value)
+  void clip.writeText(value).catch((error: unknown) => logError('kypr.clipboard_write_failed', error))
   clipboardValue = value
-  clipboardTimer = setTimeout(clearOurClipboard, clipboardClearMs())
+  clipboardTimer = setTimeout(() => void clearOurClipboard(), clipboardClearMs())
   touchKypr()
 }
 
@@ -879,8 +902,20 @@ export async function copyKyprTotp(
   return true
 }
 
-app.on('will-quit', () => {
-  clearOurClipboard()
+/** 終了前にクリップボードを片付け終えたか（片付けのために 1 度だけ終了を止める）。 */
+let quitClipboardDone = false
+app.on('will-quit', (event) => {
+  // クリップボードの判定は非同期なので、自分の値が残っていそうなら 1 度だけ終了を止めて片付けてから終わる
+  // （待つのは最大 1 秒。返らなくても終了する）
+  if (!quitClipboardDone && clipboardValue !== null) {
+    event.preventDefault()
+    quitClipboardDone = true
+    void Promise.race([clearOurClipboard(), new Promise((r) => setTimeout(r, 1000))]).finally(() =>
+      app.quit()
+    )
+    return
+  }
+  void clearOurClipboard()
   if (session) {
     const current = session
     session = null

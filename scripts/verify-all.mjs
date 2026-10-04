@@ -324,6 +324,12 @@ const httpAuth = (args) => runVerify('scripts/verify-http-auth.mjs', args)
 const vimScroll = (args) => runVerify('scripts/verify-vim-scroll.mjs', args)
 
 let exitCode = 0
+/** 0 以外で終わったスイート。FAIL の行を出さずに落ちる（例外・起動失敗）ものもあるので、最後に名前と終了コードを出す */
+const failedSuites = []
+function noteFailure(name, code) {
+  failedSuites.push(`${name}=${code}`)
+  return code
+}
 try {
   assertNemoNotRunning('verify')
   console.log(`（CDP ${cdp} / テストページ ${pages} / userData ${userDataDir}）`)
@@ -360,61 +366,61 @@ try {
   if (want('spike')) {
     console.log('\n=== 自走検証（Phase 0: 拡張）')
     const spikeCode = await spike([])
-    if (spikeCode !== 0) exitCode = spikeCode
+    if (spikeCode !== 0) exitCode = noteFailure('spike', spikeCode)
   }
 
   if (want('phase1')) {
     console.log('\n=== 自走検証（Phase 1: ブラウザ本体）')
     const phase1Code = await phase1([])
-    if (phase1Code !== 0) exitCode = phase1Code
+    if (phase1Code !== 0) exitCode = noteFailure('phase1', phase1Code)
   }
 
   if (want('phase2')) {
     console.log('\n=== 自走検証（Phase 2: ライブラリ・アーカイブ・シークレット）')
     const phase2Code = await phase2([])
-    if (phase2Code !== 0) exitCode = phase2Code
+    if (phase2Code !== 0) exitCode = noteFailure('phase2', phase2Code)
   }
 
   if (want('pins')) {
     console.log('\n=== 自走検証（ピン留め / Favorites）')
     const pinsCode = await pins([])
-    if (pinsCode !== 0) exitCode = pinsCode
+    if (pinsCode !== 0) exitCode = noteFailure('pins', pinsCode)
   }
 
   if (want('switcher')) {
     console.log('\n=== 自走検証（タブスイッチャー ⌃M）')
     const switcherCode = await switcher([])
-    if (switcherCode !== 0) exitCode = switcherCode
+    if (switcherCode !== 0) exitCode = noteFailure('switcher', switcherCode)
   }
 
   if (want('peek')) {
     console.log('\n=== 自走検証（Peek と小窓）')
     const peekCode = await peek([])
-    if (peekCode !== 0) exitCode = peekCode
+    if (peekCode !== 0) exitCode = noteFailure('peek', peekCode)
   }
 
   if (want('split')) {
     console.log('\n=== 自走検証（分割ビュー）')
     const splitCode = await split([])
-    if (splitCode !== 0) exitCode = splitCode
+    if (splitCode !== 0) exitCode = noteFailure('split', splitCode)
   }
 
   if (want('call')) {
     console.log('\n=== 自走検証（会議の小窓）')
     const callCode = await call([])
-    if (callCode !== 0) exitCode = callCode
+    if (callCode !== 0) exitCode = noteFailure('call', callCode)
   }
 
   if (want('live-folder')) {
     console.log('\n=== 自走検証（Live Folder: GitHub の PR）')
     const liveFolderCode = await liveFolder([])
-    if (liveFolderCode !== 0) exitCode = liveFolderCode
+    if (liveFolderCode !== 0) exitCode = noteFailure('liveFolder', liveFolderCode)
   }
 
   if (want('http-auth')) {
     console.log('\n=== 自走検証（HTTP Basic 認証の自動入力）')
     const httpAuthCode = await httpAuth([])
-    if (httpAuthCode !== 0) exitCode = httpAuthCode
+    if (httpAuthCode !== 0) exitCode = noteFailure('httpAuth', httpAuthCode)
   }
 
   /*
@@ -425,7 +431,7 @@ try {
   if (want('vim-scroll')) {
     console.log('\n=== 自走検証（ページの gg / G）')
     const vimScrollCode = await vimScroll([])
-    if (vimScrollCode !== 0) exitCode = vimScrollCode
+    if (vimScrollCode !== 0) exitCode = noteFailure('vimScroll', vimScrollCode)
   }
 
   if (want('restart')) {
@@ -442,70 +448,70 @@ try {
     // ピン / Favorites の遅延ロードも再起動をまたぐので、同じ再起動に相乗りする
     if (want('pins')) {
       const lazyWriteCode = await pins(['--lazy-write'])
-      if (lazyWriteCode !== 0) exitCode = lazyWriteCode
+      if (lazyWriteCode !== 0) exitCode = noteFailure('lazyWrite', lazyWriteCode)
     }
     // **分割はアプリが動いているうちに作る**（セッションに書かせる）。
     // 止めてから仕込む会議 / Live Folder の plant とは違うので、`stopAll()` より前に置く。
     if (want('split')) {
       const splitWriteCode = await split(['--restart-write'])
-      if (splitWriteCode !== 0) exitCode = splitWriteCode
+      if (splitWriteCode !== 0) exitCode = noteFailure('splitWrite', splitWriteCode)
     }
     // 資格情報は**アプリが動いているうちに**作る（暗号文はプロセス内の backend で作られる）
     if (want('http-auth')) {
       const authWriteCode = await httpAuth(['--restart-write'])
-      if (authWriteCode !== 0) exitCode = authWriteCode
+      if (authWriteCode !== 0) exitCode = noteFailure('authWrite', authWriteCode)
     }
     await stopAll()
 
     // 暗号文を壊すのは**アプリを止めてから**（起動中に書くと終了時の close が上書きする）
     if (want('http-auth')) {
       const plantCode = await httpAuth(['--restart-plant'])
-      if (plantCode !== 0) exitCode = plantCode
+      if (plantCode !== 0) exitCode = noteFailure('plant', plantCode)
     }
 
     // 会議の小窓の位置は**アプリを止めてから**仕込む。
     // 起動中に書くと、終了時の `closeCallWindowStore()` が上書きしてしまう。
     if (want('call')) {
       const plantCode = await call(['--position-plant'])
-      if (plantCode !== 0) exitCode = plantCode
+      if (plantCode !== 0) exitCode = noteFailure('plant', plantCode)
     }
     // 壊れたキャッシュも**アプリを止めてから**仕込む（終了時の close が上書きする）
     if (want('live-folder')) {
       const plantCode = await liveFolder(['--restart-write'])
-      if (plantCode !== 0) exitCode = plantCode
+      if (plantCode !== 0) exitCode = noteFailure('plant', plantCode)
     }
 
     await startPagesServer()
     await startApp()
     if (want('spike')) {
       const storageCode = await spike(['--storage-read'])
-      if (storageCode !== 0) exitCode = storageCode
+      if (storageCode !== 0) exitCode = noteFailure('storage', storageCode)
     }
     if (want('phase1')) {
       const sessionCode = await phase1(['--session-read'])
-      if (sessionCode !== 0) exitCode = sessionCode
+      if (sessionCode !== 0) exitCode = noteFailure('session', sessionCode)
     }
     if (want('pins')) {
       const lazyReadCode = await pins(['--lazy-read'])
-      if (lazyReadCode !== 0) exitCode = lazyReadCode
+      if (lazyReadCode !== 0) exitCode = noteFailure('lazyRead', lazyReadCode)
     }
     if (want('live-folder')) {
       const liveReadCode = await liveFolder(['--restart-read'])
-      if (liveReadCode !== 0) exitCode = liveReadCode
+      if (liveReadCode !== 0) exitCode = noteFailure('liveRead', liveReadCode)
     }
     if (want('split')) {
       const splitReadCode = await split(['--restart-read'])
-      if (splitReadCode !== 0) exitCode = splitReadCode
+      if (splitReadCode !== 0) exitCode = noteFailure('splitRead', splitReadCode)
     }
     if (want('http-auth')) {
       const authReadCode = await httpAuth(['--restart-read'])
-      if (authReadCode !== 0) exitCode = authReadCode
+      if (authReadCode !== 0) exitCode = noteFailure('authRead', authReadCode)
     }
     // **タブを作る検証はいちばん最後に置く**。会議の小窓を出すには会議タブが要るが、
     // その1枚が「復元直後のタブは sleep 状態」の検査に混ざって落とす（実際に踏んだ）。
     if (want('call')) {
       const positionCode = await call(['--position-read'])
-      if (positionCode !== 0) exitCode = positionCode
+      if (positionCode !== 0) exitCode = noteFailure('position', positionCode)
     }
   }
 
@@ -515,7 +521,7 @@ try {
     await stopAll()
     console.log('\n=== 野良タブのウィンドウ横断共有')
     const sharedTabsCode = await runToCompletion(process.execPath, ['scripts/verify-shared-tabs.mjs'])
-    if (sharedTabsCode !== 0) exitCode = sharedTabsCode
+    if (sharedTabsCode !== 0) exitCode = noteFailure('sharedTabs', sharedTabsCode)
   }
 
   if (want('local-file')) {
@@ -525,7 +531,7 @@ try {
     await stopAll()
     console.log('\n=== ローカルファイル（file://）')
     const localFileCode = await runToCompletion(process.execPath, ['scripts/verify-local-file.mjs'])
-    if (localFileCode !== 0) exitCode = localFileCode
+    if (localFileCode !== 0) exitCode = noteFailure('localFile', localFileCode)
   }
 
   if (want('migration')) {
@@ -534,7 +540,7 @@ try {
     await stopAll()
     console.log('\n=== 旧版セッションからの移行')
     const migrationCode = await runToCompletion(process.execPath, ['scripts/verify-session-migration.mjs'])
-    if (migrationCode !== 0) exitCode = migrationCode
+    if (migrationCode !== 0) exitCode = noteFailure('migration', migrationCode)
   }
 
   if (want('db')) {
@@ -543,7 +549,7 @@ try {
     await stopAll()
     console.log('\n=== 旧スキーマの履歴 DB からの移行')
     const dbMigrationCode = await runToCompletion(process.execPath, ['scripts/verify-db-migration.mjs'])
-    if (dbMigrationCode !== 0) exitCode = dbMigrationCode
+    if (dbMigrationCode !== 0) exitCode = noteFailure('dbMigration', dbMigrationCode)
   }
 
   if (want('slots')) {
@@ -552,7 +558,7 @@ try {
     await stopAll()
     console.log('\n=== ブックマークのセーブスロット')
     const slotsCode = await runToCompletion(process.execPath, ['scripts/verify-slots.mjs'])
-    if (slotsCode !== 0) exitCode = slotsCode
+    if (slotsCode !== 0) exitCode = noteFailure('slots', slotsCode)
   }
 
   if (want('session-cookies')) {
@@ -560,7 +566,7 @@ try {
     await stopAll()
     console.log('\n=== セッション cookie（ログイン）の再起動をまたぐ引き継ぎ')
     const sessionCookiesCode = await runToCompletion(process.execPath, ['scripts/verify-session-cookies.mjs'])
-    if (sessionCookiesCode !== 0) exitCode = sessionCookiesCode
+    if (sessionCookiesCode !== 0) exitCode = noteFailure('sessionCookies', sessionCookiesCode)
   }
 
   if (want('metrics')) {
@@ -568,7 +574,7 @@ try {
     await stopAll()
     console.log('\n=== メモリ・CPU の定期記録と UI 例外')
     const metricsCode = await runToCompletion(process.execPath, ['scripts/verify-metrics.mjs'])
-    if (metricsCode !== 0) exitCode = metricsCode
+    if (metricsCode !== 0) exitCode = noteFailure('metrics', metricsCode)
   }
 
   if (want('auth-vault')) {
@@ -577,7 +583,7 @@ try {
     await stopAll()
     console.log('\n=== Basic 認証の保管庫')
     const vaultCode = await runToCompletion(process.execPath, ['scripts/verify-auth-vault.mjs'])
-    if (vaultCode !== 0) exitCode = vaultCode
+    if (vaultCode !== 0) exitCode = noteFailure('vault', vaultCode)
   }
 
   if (want('autofill')) {
@@ -586,7 +592,7 @@ try {
     await stopAll()
     console.log('\n=== フォーム自動入力')
     const autofillCode = await runToCompletion(process.execPath, ['scripts/verify-autofill.mjs'])
-    if (autofillCode !== 0) exitCode = autofillCode
+    if (autofillCode !== 0) exitCode = noteFailure('autofill', autofillCode)
   }
 
   if (want('kypr')) {
@@ -595,7 +601,7 @@ try {
     await stopAll()
     console.log('\n=== kypr（パスワードマネージャー）')
     const kyprCode = await runToCompletion(process.execPath, ['scripts/verify-kypr.mjs'])
-    if (kyprCode !== 0) exitCode = kyprCode
+    if (kyprCode !== 0) exitCode = noteFailure('kypr', kyprCode)
   }
 
   if (want('agent')) {
@@ -603,7 +609,7 @@ try {
     await stopAll()
     console.log('\n=== Claude in Nemo（ブリッジ経由の MCP・エージェント窓）')
     const agentCode = await runToCompletion(process.execPath, ['scripts/verify-agent.mjs'])
-    if (agentCode !== 0) exitCode = agentCode
+    if (agentCode !== 0) exitCode = noteFailure('agent', agentCode)
   }
 } catch (error) {
   console.error(`\n[verify] ${error instanceof Error ? error.message : String(error)}`)
@@ -640,6 +646,7 @@ try {
   }
 }
 
+if (failedSuites.length > 0) console.error(`\n[verify] 0 以外で終わったスイート: ${failedSuites.join(' ')}`)
 const scope = only.size > 0 ? `（${scopeFlag} ${[...only].join(' ')} だけ）` : ''
 console.log(exitCode === 0 ? `\n=== 自走検証: すべて PASS${scope}` : `\n=== 自走検証: FAIL あり${scope}`)
 process.exit(exitCode)

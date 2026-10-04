@@ -5,6 +5,12 @@
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+/** CDP の 1 回の呼び出しの期限。返事の来ない evaluate で黙って止まらないようにする */
+const SEND_TIMEOUT_MS = 180_000
+
+/** 応答が来ないまま打ち切ったときの応答。CDP のエラー応答と同じ形に `lost` の印を付ける */
+const lost = (message) => ({ error: { message, lost: true } })
+
 export async function listTargets(cdp) {
   return await (await fetch(`${cdp}/json/list`)).json()
 }
@@ -27,10 +33,28 @@ export async function connect(wsUrl) {
       events.push(msg)
     }
   })
+  // target ごと消えた（自分のウィンドウを閉じた等）ときに、応答待ちを永久に残さない。
+  // 以前は返事の来ない evaluate でスイートが黙って止まり、CI の 60 分の打ち切りまで何も出なかった。
+  // `send` は従来どおり reject しない（投げっぱなしで race している呼び出し元があるため）。
+  // 印付きの error で解決し、`ev` だけがそれを例外にする
+  ws.addEventListener('close', () => {
+    for (const settle of pending.values()) settle(lost('CDP の接続が切れた（target が消えた）'))
+    pending.clear()
+  })
   const send = (method, params = {}) =>
     new Promise((resolve) => {
       const i = ++id
-      pending.set(i, resolve)
+      // 接続は残ったまま返事だけ来ないときの保険。検査の 1 回の評価がこれより長くかかることはない
+      const timer = setTimeout(() => {
+        if (!pending.delete(i)) return
+        const what = typeof params.expression === 'string' ? `: ${params.expression.slice(0, 120)}` : ''
+        resolve(lost(`CDP の ${method} が ${SEND_TIMEOUT_MS / 1000} 秒返らない${what}`))
+      }, SEND_TIMEOUT_MS)
+      timer.unref?.()
+      pending.set(i, (msg) => {
+        clearTimeout(timer)
+        resolve(msg)
+      })
       ws.send(JSON.stringify({ id: i, method, params }))
     })
   return {
@@ -44,6 +68,7 @@ export async function connect(wsUrl) {
         awaitPromise: true,
         returnByValue: true
       })
+      if (r.error?.lost) throw new Error(r.error.message)
       const details = r.result?.exceptionDetails
       if (details) {
         throw new Error(details.exception?.description ?? details.text ?? 'eval failed')
@@ -77,6 +102,7 @@ export async function evIsolated(session, expression) {
     returnByValue: true,
     contextId
   })
+  if (r.error?.lost) throw new Error(r.error.message)
   const details = r.result?.exceptionDetails
   if (details) {
     throw new Error(details.exception?.description ?? details.text ?? 'eval failed')

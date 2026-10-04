@@ -7,7 +7,7 @@ Nemo は Electron と `electron-chrome-extensions` の組み合わせが壊れ�
 
 | 項目 | バージョン | 備考 |
 |---|---|---|
-| Electron | **41.10.6** | Chromium 146.0.7680.216 / Node 22.22.1 |
+| Electron | **44.5.1** | Chromium 152.0.7977.130 / Node 24.21.0。41.10.6 から上げた（2026-10-04、41 のサポート切れ）。拡張の DevTools パネルが出ない既知の不具合あり（下記） |
 | `electron-chrome-extensions` | **4.9.0** | GPL-3.0 + Patron License のデュアル |
 | `electron-chrome-web-store` | **0.13.0** | MIT。Nemo では Web Store 経路を使わず、CRX の公開鍵取得のロジックだけ参考にしている |
 | `electron-vite` | 5.0.0 | vite 7.3.6 |
@@ -15,21 +15,60 @@ Nemo は Electron と `electron-chrome-extensions` の組み合わせが壊れ�
 | `better-sqlite3` | **13.0.3** | prebuild が Node-API なので **Electron 向けの rebuild が不要**（下記） |
 | `electron-builder` | 26.15.3 | fuses の書き換えも任せる |
 | Keepa 拡張 | **5.64** | Chrome Web Store の CRX（`chrome-web-store` ソース）。Amazon 商品ページで価格推移グラフの iframe（`keepa.com/keepaBox.html`）が描画されるところまで確認（2026-08-29） |
-| GraphQL Network Inspector 拡張 | **2.26.1** | Chrome Web Store の CRX。DevTools の「GraphQL Network」パネルに HTTP 経由の GraphQL（Query / Mutation）が並ぶところまで確認（2026-08-29）。**WebSocket（Subscriptions）タブは常に空**（`chrome.debugger` が Nemo のスタブなので） |
+| GraphQL Network Inspector 拡張 | **2.26.1** | Chrome Web Store の CRX。**Electron 44 ではパネルが出ない**（下記「Electron 42 以降、拡張の DevTools パネルが出ない」・#2）。41 では DevTools の「GraphQL Network」パネルに HTTP 経由の GraphQL（Query / Mutation）が並ぶところまで確認していた（2026-08-29。WebSocket（Subscriptions）タブは常に空。`chrome.debugger` が Nemo のスタブなので） |
 
 検証日: 2026-08-23（拡張の ON/OFF・`chrome.debugger` / `webRequest` の補完は 2026-08-29〜30）/ 検証機: macOS 15（Darwin 25.5.0, arm64）
 
-## Electron 42 以降を避けている理由
+Electron 44.5.1 は 2026-10-04 に CI（macOS 15）の拡張 smoke・自走検証で確認。**実機での kypr の確認（Touch ID の解除・自動入力・コピー）はリリース前に行う**。
+
+## Electron の追従
+
+**最新は追わない。サポート中（新しい方から 3 つの major）に居続ける**のを条件にする。
+Electron の major は約 8 週ごとに出て、N の EOL は N+3 が出た日（年末年始は間が延びる）。
+日数は決め打ちせず、公開されている EOL 日で判断する。
+
+| 何を | いつ | 誰が |
+|---|---|---|
+| 同じ major の中の更新（patch / minor。Chromium のセキュリティ修正） | 月 1 回 | Renovate が PR を立てる（`renovate.json`）。CI と自走検証が緑ならマージ |
+| 新しい major を試す | 週 1 回 | workflow `Electron の追従`（`electron-track.yml`）が使い捨ての checkout で `verify-ext-smoke` と `verify-all` を回し、issue「Electron の追従」に通る版と EOL を書く |
+| major を上げる | 今の major の EOL まで 45 日を切ったら（目安 3〜4 か月ごと） | 人。issue にコメントで知らせが来る |
+
+major を上げるときは、**通る中でいちばん新しい major の最新版**にする（いちばん古いサポート中の版にすると、
+上げた時点で残りが 8 週しかない）。手順:
+
+1. issue「Electron の追従」で通る中でいちばん新しい版を見て、`package.json` の `electron` をその版にする PR を出す
+2. CI 必須の拡張互換 smoke test と workflow `自走検証（Electron・依存の更新）` が緑なのを見る
+3. 実機で kypr を確認する（Touch ID の解除・自動入力・コピー。VERIFY.md「kypr」）
+4. 通ったら上の last-known-good の表を更新してマージし、`mise run release` する
+
+**通る major が無いまま EOL が近いとき**は issue に「通る major が無い」と出る。
+回避策を作る（Nemo 側で避ける・`electron-chrome-extensions` を直す）か、承知のうえで据え置くかを決める。
+据え置くと Chromium のセキュリティ修正が来なくなるので、ブラウザとしては長く続けない。
+
+### 過去に 42 以降を避けていた理由
 
 `samuelmaddock/electron-browser-shell#184` に、Electron 42 以降で
 `electron-chrome-extensions` のアイコン・popup が壊れるという未解決の報告がある。
-Phase 0 では **41 系の最新（41.10.6）を採用**し、42 以降には上げていない。
+Phase 0 では **41 系の最新（41.10.6）を採用**し、42 以降には上げていなかった。
+44.5.1 で試した結果、アイコン・popup は拡張 smoke で通った（2026-10-04）。
+今は週 1 の試しの結果で判断する。
 
-Electron を上げる PR では次を必ず通す（Phase 1-10 / Phase 2-6）:
+## Electron 42 以降、拡張の DevTools パネルが出ない（#2）
 
-1. CI 必須の拡張互換 smoke test（資格情報なし・決定的）
-2. workflow `自走検証（Electron・依存の更新）`（verify-all）と、実機での kypr の確認（Touch ID の解除・自動入力・コピー）
-3. 通ったらこの表を更新する。**落ちたら Electron は据え置く**
+拡張の `devtools_page`（`devtools.html`）は読み込まれるが、その frame に **`chrome.devtools` が入らない**
+（`undefined`）。`chrome.devtools.panels.create` が TypeError で落ちて、パネルが作られない。
+42.11.10 / 44.5.1 で起き、41.10.6 では起きない。`src/main/devtools-shim.ts` を外しても同じなので、Nemo 側の原因ではない
+（2026-10-04、CI の macOS で実測）。影響を受けるのは今の拡張では GraphQL Network Inspector だけ。
+
+拡張 smoke はこの症状（devtools.html はあるが `chrome.devtools` が無い）のときだけ `KNOWN` として数え、FAIL にしない。
+違う壊れ方は FAIL のまま。直ればパネルが出て、元の検査が PASS に戻る。
+
+## CDP のクリックが Chromium に捨てられる（42 以降）
+
+Electron 42 以降の Chromium は、**描画前のページや出たばかり・透明な cross-origin の iframe への入力を黙って捨てる**
+（paint holding・クリックジャッキング対策）。CI では遷移の直後に `Input.dispatchMouseEvent` で撃つクリックが消え、
+kypr の検査が Nemo の判定より前で落ちていた（押下 0 件を実測）。ユーザーは描画されたページしか押せないので実害は無い。
+検査は押下が届いたのを確かめて撃ち直す（`verify-kypr.mjs` の `clickUntilDelivered`、`verify-peek.mjs` のリンクのクリックは Peek が開くまで撃ち直す）。CDP のクリックを足すときは 1 回撃ちにしない。
 
 ## 検証済みの動作（Electron 41.10.6 + ece 4.9.0。当時は Bitwarden 2026.8.0 で確認。Bitwarden は 2026-09-28 に外した）
 

@@ -30,4 +30,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: 自走検証（テスト拡張 + ブラウザ本体）
-        run: node scripts/verify-all.mjs
+        run: |
+          set -o pipefail
+          node scripts/verify-all.mjs 2>&1 | tee "$RUNNER_TEMP/verify.log"
+      - name: 落ちた検査（ログが長く、FAIL の行が先頭側に埋もれるので末尾にまとめる）
+        if: failure()
+        run: |
+          grep -E '^\s*(FAIL|KNOWN)\s|^\[verify\]' "$RUNNER_TEMP/verify.log" || echo "(FAIL の行なし)"
+          # FAIL を出す前に例外で止まったスイート（終了コードだけが 0 以外）の手がかり
+          echo "----- 例外（Error: の行と直後のスタック）"
+          grep -E -A4 '^(Uncaught |node:internal|\S*Error: |Error: )' "$RUNNER_TEMP/verify.log" | grep -v '^\[nemo\]' | head -60 || true

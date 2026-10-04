@@ -58,6 +58,8 @@ const overlay = await connectUi(CDP, 'overlay')
  * 検査で作った別のウィンドウを閉じる。**先にタブを閉じる**（一時タブは全ウィンドウで共有の定義なので、
  * タブを残したままだと後続のスイート（ピン留めの ↑↓）の一時タブの並びに紛れ込む）。
  * close-window は自分の renderer ごと消えるので応答を待たない（シークレットウィンドウの後片付けと同じ）。
+ * `(invoke(...), 'ok')` と同じ tick で撃つ形でも、evaluate の応答より先に renderer が消えて止まることがある
+ * （CI の Electron 42〜44 で 60 分止まった）。setTimeout で evaluate を返してから撃つ。
  */
 async function closeExtraWindow(windowId) {
   // **接続先は URL で部分一致させない**（`window=1` が `window=18` にも当たる）。window の値が一致するものに直接つなぐ
@@ -75,7 +77,7 @@ async function closeExtraWindow(windowId) {
     .ev('window.nemo.getWindowState().then(s => JSON.stringify(s.tabs.map(t => t.key)))')
     .then(JSON.parse)
   for (const key of keys) await side.ev(`window.nemo.closeTab(${JSON.stringify(key)}).then(() => 'ok')`)
-  await side.ev(`(window.nemo.runCommandForVerify('close-window'), 'ok')`)
+  await side.ev(`(setTimeout(() => { void window.nemo.runCommandForVerify('close-window') }, 50), 'ok')`)
   side.close()
   const deadline = Date.now() + 10000
   let left = true
@@ -1215,7 +1217,9 @@ async function submitCommandBar(kind, text, { shift = false } = {}) {
     // private 側の target を掴んで不安定になる（http-auth の前例と同じ扱い）。
     // invoke の**応答は待たない**: close-window で自分の renderer ごと破棄されるので
     // 応答が返らず、awaitPromise で待つとここでハングする（実際に 20 分止まった）。
-    await privateUi.ev(`(window.nemo.runCommandForVerify('close-window'), 'ok')`)
+    await privateUi.ev(
+      `(setTimeout(() => { void window.nemo.runCommandForVerify('close-window') }, 50), 'ok')`
+    )
     privateUi.close()
     const gone = Date.now() + 10000
     let left = true

@@ -777,6 +777,12 @@ export function installAuthHandler(
   findTab: (contents: WebContents) => { isPrivate: boolean; isAgent: boolean } | null
 ): void {
   app.on('login', (event, contents, details, authInfo, callback) => {
+    // Electron 44 から contents が null のことがある（タブに属さない要求: service worker 等）。
+    // 出す先のウィンドウが決まらないので、既定（認証のキャンセル）に任せる
+    if (!contents) {
+      log('auth.requested', { isProxy: authInfo.isProxy, noContents: true })
+      return
+    }
     const windowId = resolveWindowId(contents)
     log('auth.requested', { isProxy: authInfo.isProxy })
     if (windowId === null) return

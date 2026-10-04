@@ -1020,17 +1020,52 @@ console.log('\n--- Peek のフォーカスと Esc')
   const parent = await openParent('focus')
   // リンクのクリック（実クリックに近い CDP のマウス）で開く。evUser の window.open と同じ受け皿だが、
   // 実機で踏んだ経路に寄せる
+  // **先に画面の中へ入れる**。リンクはページの下の方（y=666）にあり、CI のウィンドウでは見えている範囲の外だった。
+  // その座標を撃つと <html> に当たり、リンクが押されない（押下は届くが Peek もタブもできない、で落ちた）
   const rect = JSON.parse(
-    await parent.page.ev("JSON.stringify(document.querySelector('a[target=_blank]').getBoundingClientRect())")
+    await parent.page.ev(
+      "(() => { const a = document.querySelector('a[target=_blank]'); a.scrollIntoView({ block: 'center' }); return JSON.stringify(a.getBoundingClientRect()) })()"
+    )
   )
   const at = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
-  for (const type of ['mousePressed', 'mouseReleased']) {
-    await parent.page.send('Input.dispatchMouseEvent', { type, ...at, button: 'left', clickCount: 1 })
-  }
-  await waitFor(
-    ui,
-    `window.nemo.getWindowState().then((s) => s.tabs.some((t) => t.peekParentKey === ${JSON.stringify(parent.key)}) ? 'ok' : '')`
+  // Chromium（Electron 42 以降）は描画前のページへの入力を黙って捨てるので、開いた直後の 1 回撃ちは消えることがある
+  // （CI で Peek が開かずに落ちた）。開いていなければ撃ち直す。撃つ前に毎回見るので 2 枚は開かない
+  const peekOpened = `window.nemo.getWindowState().then((s) => s.tabs.some((t) => t.peekParentKey === ${JSON.stringify(parent.key)}) ? 'ok' : '')`
+  // 開かなかったときの切り分け用に、ページに押下が届いた回数を数える
+  await parent.page.ev(
+    "(window.__nemoDown = 0, window.__nemoClick = [], addEventListener('pointerdown', (e) => { window.__nemoDown += 1; window.__nemoDownAt = (e.target && e.target.outerHTML || String(e.target)).slice(0, 80) }, true), addEventListener('click', (e) => { window.__nemoClick.push((e.target && e.target.tagName) + ':' + e.defaultPrevented) }, true), 'ok')"
   )
+  for (let attempt = 0; attempt < 6 && (await ui.ev(peekOpened)) !== 'ok'; attempt += 1) {
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await parent.page.send('Input.dispatchMouseEvent', { type, ...at, button: 'left', clickCount: 1 })
+    }
+    await waitFor(ui, peekOpened, { timeoutMs: 2000 }).catch(() => '')
+  }
+  if ((await ui.ev(peekOpened)) !== 'ok') {
+    const s = await state()
+    check(
+      'リンクのクリックで Peek が開く',
+      false,
+      JSON.stringify({
+        down: await parent.page.ev('window.__nemoDown ?? -1').catch((error) => `error: ${error.message}`),
+        downAt: await parent.page.ev('window.__nemoDownAt ?? null').catch(() => null),
+        clicks: await parent.page.ev('JSON.stringify(window.__nemoClick ?? [])').catch(() => null),
+        link: JSON.stringify(rect),
+        // ユーザー操作扱いのスクリプトでリンクを押したら開くか（入力の経路とリンクの処理を切り分ける）
+        byScript: await evUser(parent.page, "document.querySelector('a[target=_blank]').click(), 'ok'")
+          .then(() => sleep(1500))
+          .then(() => ui.ev(peekOpened))
+          .catch((error) => `error: ${error.message}`),
+        visibility: await parent.page.ev('document.visibilityState').catch(() => null),
+        active: s.activeTabKey === parent.key ? 'parent' : s.activeTabKey,
+        tabs: s.tabs.map(
+          (t) =>
+            `${t.url.slice(0, 60)} peekOf=${t.peekParentKey ? 'parent?' + (t.peekParentKey === parent.key) : '-'}`
+        )
+      })
+    )
+  }
+  await waitFor(ui, peekOpened)
   await sleep(1200)
   const peek = peekOf(await state(), parent.key)
   const parentWc = (await state()).tabs.find((t) => t.key === parent.key)?.webContentsId

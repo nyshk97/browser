@@ -36,6 +36,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+          # pnpm を入れないジョブ。packageManager から pnpm のキャッシュを探しに行って落ちるのを止める
+          package-manager-cache: false
       - id: plan
         run: |
           targets=$(node scripts/electron-track.mjs plan)
@@ -113,6 +115,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+          # pnpm を入れないジョブ。packageManager から pnpm のキャッシュを探しに行って落ちるのを止める
+          package-manager-cache: false
       - uses: actions/download-artifact@v4
         with:
           pattern: result-*

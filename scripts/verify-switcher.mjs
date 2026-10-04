@@ -177,12 +177,23 @@ check(
  * ------------------------------------------------------------------ */
 
 {
-  await call('window.nemo.switchTab()')
-  check('もう一度押すと1つ先へ進む', (await strip()).index === 2, String((await strip()).index))
-  await call('window.nemo.switchTab()')
-  check('末尾まで行ったら先頭へ戻る', (await strip()).index === 0, String((await strip()).index))
-  await call('window.nemo.switchTab()')
-  check('先頭からさらに進める', (await strip()).index === 1, String((await strip()).index))
+  // 帯（overlay）への反映は IPC の後で非同期に届く。直後に読むと 1 つ前の位置が返る（CI で 1 つずつ遅れて落ちた）。
+  // 期待する位置になるまで少し待ってから読む（来なければそのまま読んで FAIL にする）
+  const indexAfterPress = async (expected) => {
+    await call('window.nemo.switchTab()')
+    await waitFor(
+      overlay,
+      `[...document.querySelectorAll('.switch-card')].findIndex((el) => el.classList.contains('on')) === ${expected} ? 'ok' : ''`,
+      { timeoutMs: 3000 }
+    ).catch(() => '')
+    return (await strip()).index
+  }
+  const second = await indexAfterPress(2)
+  check('もう一度押すと1つ先へ進む', second === 2, String(second))
+  const wrapped = await indexAfterPress(0)
+  check('末尾まで行ったら先頭へ戻る', wrapped === 0, String(wrapped))
+  const again = await indexAfterPress(1)
+  check('先頭からさらに進める', again === 1, String(again))
 }
 
 /* ------------------------------------------------------------------ *

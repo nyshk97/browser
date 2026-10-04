@@ -100,8 +100,9 @@ export function isWindowKey(win: NemoWindow): boolean {
 }
 
 /**
- * ユーザーが窓を実クリックした。**このときだけ key になれるようにする**
- * （既定は focusable:false。全画面の常用窓から key を横取りしないため。実クリックで切り替わることは実測）。
+ * ユーザーが窓を実クリックした。key になれない状態（Nemo の通常窓が key の間。`setAgentWindowsKeyable`）なら
+ * なれるようにして key にする（実クリックで切り替わることは実測）。他アプリが前面のときは既になれる状態なので、
+ * クリックだけで OS が key にする。
  */
 export function makeWindowFocusable(win: NemoWindow): void {
   if (win.isDestroyed || win.baseWindow.isDestroyed()) return
@@ -317,10 +318,8 @@ export class AgentConnection {
         if (input.type === 'mouseDown') makeWindowFocusable(win)
       })
     }
-    // key でなくなったら（ターミナル等へ戻った）また key になれない状態へ戻す
-    win.baseWindow.on('blur', () => {
-      if (!win.baseWindow.isDestroyed() && win.baseWindow.isFocusable()) win.baseWindow.setFocusable(false)
-    })
+    // key になれない状態へ戻すのは「Nemo の通常窓が key になったとき」だけ（`setAgentWindowsKeyable`）。
+    // blur のたびに戻すと、ターミナルからこの窓をクリックしたときに常用窓の Space へ飛ばされた（2026-10-04）
   }
 
   tokenFor(tab: NemoTab): string {

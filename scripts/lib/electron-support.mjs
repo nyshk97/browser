@@ -85,6 +85,14 @@ export function failuresFromLog(text, limit = 10) {
   return found
 }
 
+/**
+ * 検査の名前だけを取り出す。各スイートは `FAIL  <名前> — <詳細>` の形で出し、詳細にはポート番号や
+ * 実測値が入って run ごとに変わるので、今の版と比べるときは名前だけで見る
+ */
+export const checkName = (failure) => failure.split(' — ')[0].trim()
+
+const sameCheck = (list, failure) => list.some((other) => checkName(other) === checkName(failure))
+
 const SUITES = [
   ['smoke', 'smokeFailures'],
   ['verify', 'verifyFailures']
@@ -95,7 +103,7 @@ export function regressions(result, baseline) {
   const out = []
   for (const [, key] of SUITES) {
     const base = baseline?.[key] ?? []
-    for (const name of result[key] ?? []) if (!base.includes(name)) out.push(name)
+    for (const name of result[key] ?? []) if (!sameCheck(base, name)) out.push(name)
   }
   return out
 }
@@ -110,7 +118,7 @@ export function passed(result, baseline) {
     const names = result[key] ?? []
     if (!baseline || result[suite] !== 'failure' || names.length === 0) return false
     if (baseline[suite] !== 'failure') return false
-    return names.every((name) => (baseline[key] ?? []).includes(name))
+    return names.every((name) => sameCheck(baseline[key] ?? [], name))
   })
 }
 

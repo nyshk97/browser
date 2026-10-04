@@ -187,6 +187,15 @@ test('今の版でも落ちる検査だけなら通った扱い / 初めて落�
   assert.deepEqual(regressions(fresh, base), ['devtools パネル'])
   // 打ち切りで名前が取れない → 通らない
   assert.equal(passed(run(42, '42.4.1', { verify: 'failure' }), base), false)
+  // 詳細（` — ` の後ろ）が run ごとに違っても同じ検査として比べる
+  const base2 = run(41, '41.10.6', {
+    baseline: true,
+    verify: 'failure',
+    verifyFailures: ['並びは MRU 順 — port=49235']
+  })
+  const other = run(42, '42.4.1', { verify: 'failure', verifyFailures: ['並びは MRU 順 — port=50111'] })
+  assert.equal(passed(other, base2), true)
+  assert.deepEqual(regressions(other, base2), [])
   // 基準が無ければ成功だけが通る
   assert.equal(passed(same, null), false)
 

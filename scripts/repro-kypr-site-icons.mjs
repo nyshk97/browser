@@ -37,10 +37,14 @@ const limit = Number(process.argv[3] ?? 60)
 const PASSWORD = 'repro-site-icons'
 const electronPath = createRequire(import.meta.url)('electron')
 
-if (!fs.existsSync(path.join(projectRoot, 'out/main/index.js'))) throw new Error('out/ が無い。先に pnpm build する')
+if (!fs.existsSync(path.join(projectRoot, 'out/main/index.js')))
+  throw new Error('out/ が無い。先に pnpm build する')
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'nemo-repro-icons-'))
 execFileSync('sqlite3', [historyDb, `.backup '${path.join(userData, 'history.db')}'`])
-fs.writeFileSync(path.join(userData, 'settings.json'), JSON.stringify({ version: 1, data: { liveFolderEnabled: false } }))
+fs.writeFileSync(
+  path.join(userData, 'settings.json'),
+  JSON.stringify({ version: 1, data: { liveFolderEnabled: false } })
+)
 const urls = execFileSync('sqlite3', [
   path.join(userData, 'history.db'),
   "SELECT url FROM pages WHERE favicon_url LIKE 'https:%' ORDER BY last_visited_at DESC LIMIT 5000"
@@ -107,7 +111,9 @@ try {
     return [png.readUInt32BE(16), png.readUInt32BE(20)]
   })
   const ok = exit === null && icons.length > 0 && shapes.every(([w, h]) => w === h && w > 0 && w <= 64)
-  console.log(JSON.stringify({ hosts: hosts.length, signIn: JSON.parse(signIn), exit, icons: icons.length, shapes }))
+  console.log(
+    JSON.stringify({ hosts: hosts.length, signIn: JSON.parse(signIn), exit, icons: icons.length, shapes })
+  )
   console.log(ok ? 'PASS' : 'FAIL')
   process.exitCode = ok ? 0 : 1
 } finally {

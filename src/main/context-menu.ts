@@ -110,7 +110,7 @@ export function buildContextMenuTemplate(
   // `<a href>` の上（画像リンクなら画像の項目より前に出す。Chrome と同じ並び）
   if (params.linkURL) {
     const href = params.linkURL
-    template.push({ label: 'リンクのアドレスをコピー', click: () => clipboard.writeText(href) })
+    template.push({ label: 'リンクのアドレスをコピー', click: () => void clipboard.writeText(href) })
     const openInAgent = actions.openInAgent
     if (openInAgent && /^https?:\/\//.test(href)) {
       template.push({ label: 'Claude のウィンドウで開く', click: () => openInAgent(href) })
@@ -129,7 +129,7 @@ export function buildContextMenuTemplate(
         }
       },
       { label: '画像をコピー', click: () => wc.copyImageAt(params.x, params.y) },
-      { label: '画像アドレスをコピー', click: () => clipboard.writeText(src) },
+      { label: '画像アドレスをコピー', click: () => void clipboard.writeText(src) },
       { type: 'separator' }
     )
   }

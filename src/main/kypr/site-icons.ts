@@ -158,7 +158,12 @@ async function write(session: VaultSession): Promise<void> {
   if (targets.length === 0) return
 
   const view = new WebContentsView({
-    webPreferences: { partition: RENDER_PARTITION, sandbox: true, contextIsolation: true, nodeIntegration: false }
+    webPreferences: {
+      partition: RENDER_PARTITION,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false
+    }
   })
   const icons: { host: string; dataUri: string }[] = []
   try {

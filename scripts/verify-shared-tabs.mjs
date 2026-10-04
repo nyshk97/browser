@@ -989,10 +989,13 @@ try {
       strayOf(sA1).length === 0,
       json(strayOf(sA1).map((t) => t.url))
     )
+    // B で数えるのは共有の定義の実体だけ。createWindow() は UI の準備ができた時点でタブが 0 枚なら空のタブを
+    // 1 枚入れるので、遅い環境（CI）では B 自身のローカル行（about:blank）が残る。それは Clear の対象外
+    const sharedInB = sB1.tabs.filter((t) => t.ephemeralId !== null)
     check(
       'B の実体も閉じる（定義ごと全ウィンドウから消える）',
-      strayOf(sB1).length === 0,
-      json(strayOf(sB1).map((t) => t.url))
+      sharedInB.length === 0 && !sB1.tabs.some((t) => t.key === instC.key),
+      json({ shared: sharedInB.map((t) => t.url), local: strayOf(sB1).map((t) => t.url) })
     )
     check('閉じた後の A は空状態（アクティブ無し）', sA1.activeTabKey === null, json(sA1.activeTabKey))
     const buttonAfter = await waitFor(

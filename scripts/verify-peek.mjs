@@ -1029,7 +1029,7 @@ console.log('\n--- Peek のフォーカスと Esc')
   const peekOpened = `window.nemo.getWindowState().then((s) => s.tabs.some((t) => t.peekParentKey === ${JSON.stringify(parent.key)}) ? 'ok' : '')`
   // 開かなかったときの切り分け用に、ページに押下が届いた回数を数える
   await parent.page.ev(
-    "(window.__nemoDown = 0, addEventListener('pointerdown', () => { window.__nemoDown += 1 }, true), 'ok')"
+    "(window.__nemoDown = 0, window.__nemoClick = [], addEventListener('pointerdown', (e) => { window.__nemoDown += 1; window.__nemoDownAt = (e.target && e.target.outerHTML || String(e.target)).slice(0, 80) }, true), addEventListener('click', (e) => { window.__nemoClick.push((e.target && e.target.tagName) + ':' + e.defaultPrevented) }, true), 'ok')"
   )
   for (let attempt = 0; attempt < 6 && (await ui.ev(peekOpened)) !== 'ok'; attempt += 1) {
     for (const type of ['mousePressed', 'mouseReleased']) {
@@ -1044,6 +1044,14 @@ console.log('\n--- Peek のフォーカスと Esc')
       false,
       JSON.stringify({
         down: await parent.page.ev('window.__nemoDown ?? -1').catch((error) => `error: ${error.message}`),
+        downAt: await parent.page.ev('window.__nemoDownAt ?? null').catch(() => null),
+        clicks: await parent.page.ev('JSON.stringify(window.__nemoClick ?? [])').catch(() => null),
+        link: JSON.stringify(rect),
+        // ユーザー操作扱いのスクリプトでリンクを押したら開くか（入力の経路とリンクの処理を切り分ける）
+        byScript: await evUser(parent.page, "document.querySelector('a[target=_blank]').click(), 'ok'")
+          .then(() => sleep(1500))
+          .then(() => ui.ev(peekOpened))
+          .catch((error) => `error: ${error.message}`),
         visibility: await parent.page.ev('document.visibilityState').catch(() => null),
         active: s.activeTabKey === parent.key ? 'parent' : s.activeTabKey,
         tabs: s.tabs.map(

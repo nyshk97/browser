@@ -19,7 +19,7 @@ Nemo は Electron と `electron-chrome-extensions` の組み合わせが壊れ�
 
 検証日: 2026-08-23（拡張の ON/OFF・`chrome.debugger` / `webRequest` の補完は 2026-08-29〜30）/ 検証機: macOS 15（Darwin 25.5.0, arm64）
 
-Electron 44.5.1 は 2026-10-04 に CI（macOS 15）の拡張 smoke・自走検証で確認。**実機での kypr の確認（Touch ID の解除・自動入力・コピー）はリリース前に行う**。
+Electron 44.5.1 は 2026-10-04 に CI（macOS 15）の拡張 smoke・自走検証で確認。実機での kypr の確認（Touch ID の解除・自動入力・コピー）は 2026-10-05 に v1.10.12 の常用版で問題なし。
 
 ## Electron の追従
 

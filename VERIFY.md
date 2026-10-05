@@ -887,10 +887,25 @@ mise run verify:ext-idle   # service worker の idle 停止をまたぐ確認ま
 service worker の起動 / content script（トップ + iframe）/ content script → SW のメッセージ /
 `chrome.tabs.create`（`active: false` を含む）/ `chrome.windows.create` / `remove` /
 popup が開いて `chrome.*` が使える / オプションページを Nemo から開ける /
+DevTools に `devtools_page` のパネルが出て、その frame で `chrome.devtools` と `chrome.debugger` の補完が生きている /
 再起動と idle 停止をまたいだ `chrome.storage.local`。
 
 テスト拡張の実体は `test-extension/`。公開鍵は `test-extension.key.json` にコミットしてあり、
 `scripts/make-test-extension.mjs` が manifest に注入して**拡張 ID を固定**する。
+
+### 実物の拡張の DevTools パネル（GraphQL Network Inspector）
+
+smoke はテスト拡張でしか見ないので、DevTools まわり（`src/main/devtools-shim.ts`・Electron の更新）を触ったら
+実物でも見る。使い捨ての userData（上の「使い捨ての userData」。Live Folder を止める `settings.json` を置く）で
+`node scripts/dev.mjs --built` を起動し、CDP（9333）で:
+
+1. `connectUi(cdp)` → `window.nemo.createTab(<URL>)` → `window.nemo.toggleDevTools(key)`
+2. `devtools://` の target に繋いで ⌘]（`Input.dispatchKeyEvent` の `]`・`modifiers: 4`）を送り、
+   `chrome-extension://ndlbedplllcgconngcnfmkadhokfaaln/index.html` の iframe target が出るまで回す
+3. その target で `typeof chrome.devtools === 'object'` と、`document.body.innerText` に
+   `No requests have been detected` 等のパネルの UI が出ているのを見る
+4. inspected のページから GraphQL の POST（`{ operationName, query }` を返す模擬サーバーでよい）を撃ち、
+   パネルに operation 名・ステータス・サイズが並ぶのを見る（`(pending)` のままなら `chrome.devtools.network` が届いていない）
 
 ## Phase 0 受け入れテスト（人間の操作が要る分）
 

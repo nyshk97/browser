@@ -7,7 +7,7 @@ Nemo は Electron と `electron-chrome-extensions` の組み合わせが壊れ�
 
 | 項目 | バージョン | 備考 |
 |---|---|---|
-| Electron | **44.5.1** | Chromium 152.0.7977.130 / Node 24.21.0。41.10.6 から上げた（2026-10-04、41 のサポート切れ）。拡張の DevTools パネルが出ない既知の不具合あり（下記） |
+| Electron | **44.5.1** | Chromium 152.0.7977.130 / Node 24.21.0。41.10.6 から上げた（2026-10-04、41 のサポート切れ）。拡張の DevTools パネルは Nemo 側の回避策で出している（下記・#2） |
 | `electron-chrome-extensions` | **4.9.0** | GPL-3.0 + Patron License のデュアル |
 | `electron-chrome-web-store` | **0.13.0** | MIT。Nemo では Web Store 経路を使わず、CRX の公開鍵取得のロジックだけ参考にしている |
 | `electron-vite` | 5.0.0 | vite 7.3.6 |
@@ -15,7 +15,7 @@ Nemo は Electron と `electron-chrome-extensions` の組み合わせが壊れ�
 | `better-sqlite3` | **13.0.3** | prebuild が Node-API なので **Electron 向けの rebuild が不要**（下記） |
 | `electron-builder` | 26.15.3 | fuses の書き換えも任せる |
 | Keepa 拡張 | **5.64** | Chrome Web Store の CRX（`chrome-web-store` ソース）。Amazon 商品ページで価格推移グラフの iframe（`keepa.com/keepaBox.html`）が描画されるところまで確認（2026-08-29） |
-| GraphQL Network Inspector 拡張 | **2.26.1** | Chrome Web Store の CRX。**Electron 44 ではパネルが出ない**（下記「Electron 42 以降、拡張の DevTools パネルが出ない」・#2）。41 では DevTools の「GraphQL Network」パネルに HTTP 経由の GraphQL（Query / Mutation）が並ぶところまで確認していた（2026-08-29。WebSocket（Subscriptions）タブは常に空。`chrome.debugger` が Nemo のスタブなので） |
+| GraphQL Network Inspector 拡張 | **2.26.1** | Chrome Web Store の CRX。DevTools の「GraphQL Network」パネルに HTTP 経由の GraphQL（Query / Mutation）がステータス・サイズ付きで並ぶところまで確認（41 は 2026-08-29、44 は 2026-10-05。44 は Nemo 側の回避策が要る。下記「Electron 42 以降、拡張の DevTools パネルが出ない」・#2）。WebSocket（Subscriptions）タブは常に空（`chrome.debugger` が Nemo のスタブなので） |
 
 検証日: 2026-08-23（拡張の ON/OFF・`chrome.debugger` / `webRequest` の補完は 2026-08-29〜30）/ 検証機: macOS 15（Darwin 25.5.0, arm64）
 
@@ -57,11 +57,27 @@ Phase 0 では **41 系の最新（41.10.6）を採用**し、42 以降には上
 
 拡張の `devtools_page`（`devtools.html`）は読み込まれるが、その frame に **`chrome.devtools` が入らない**
 （`undefined`）。`chrome.devtools.panels.create` が TypeError で落ちて、パネルが作られない。
-42.11.10 / 44.5.1 で起き、41.10.6 では起きない。`src/main/devtools-shim.ts` を外しても同じなので、Nemo 側の原因ではない
-（2026-10-04、CI の macOS で実測）。影響を受けるのは今の拡張では GraphQL Network Inspector だけ。
+42.11.10 / 44.5.1 で起き、41.10.6 では起きない（2026-10-04、CI の macOS で実測）。
 
-拡張 smoke はこの症状（devtools.html はあるが `chrome.devtools` が無い）のときだけ `KNOWN` として数え、FAIL にしない。
-違う壊れ方は FAIL のまま。直ればパネルが出て、元の検査が PASS に戻る。
+**原因**（2026-10-05 に 44.5.1 で実測）: DevTools の中の拡張 frame の document が、**`electron-chrome-extensions` の
+preload が最後に `Object.freeze(chrome)` した状態で始まる**（document の開始時点で `Object.isFrozen(chrome) === true`）。
+DevTools の画面が渡す `chrome.devtools` のスクリプト（Electron が `DidFinishNavigation` で frame に実行する）は
+strict mode なので、凍った `chrome` に `devtools` を足すところで TypeError になる。Nemo の `chrome.debugger` の空実装も
+同じ理由で入っていなかった。Electron の注入のコード（`InspectableWebContents`）も DevTools の画面が渡すスクリプトも
+41 と 42 で変わっていない（Electron のソースと `resources.pak` を展開して確認）。41 ではこの frame に preload が
+届いていなかった（2026-08-29 の実測）ので凍っておらず、表に出なかった。
+
+**回避策**（`src/main/devtools-shim.ts` + `src/shared/devtools-extension-api.js`）:
+
+1. DevTools の画面で `InspectorFrontendHost.setInjectedScriptForOrigin` を横取りし、拡張ごとのスクリプトを控える
+   （元の呼び出しはそのまま通す）。DevTools の画面が拡張を登録するのは `devtools-opened` より後なので間に合う
+   （間に合わないと `devtools.ext_api_hooked` の `late` が 1 以上になる）
+2. 拡張 frame の新しい document に `Page.addScriptToEvaluateOnNewDocument` で、凍った `chrome` を同じ中身の
+   凍っていない複製に差し替え → `chrome.debugger` 等の補完 → 控えたスクリプトで `chrome.devtools` → freeze し直す、を入れる
+
+拡張 smoke の「devtools_page が足したパネルが DevTools に出る」とパネルの中の検査が見ている。
+ece の preload が freeze しなくなる・Electron の注入が凍る前に走るようになれば回避策は要らなくなるが、
+DevTools のスクリプトは `chrome.devtools` が既にあれば何もしないので、残したままでも二重にはならない。
 
 ## CDP のクリックが Chromium に捨てられる（42 以降）
 
@@ -96,7 +112,7 @@ kypr の検査が Nemo の判定より前で落ちていた（押下 0 件を実
 |---|---|
 | `chrome.declarativeNetRequest` | **manifest で `declarativeNetRequest*` の permission を宣言していない拡張からは名前空間ごと見えない**（Phase 0 の自作テスト拡張で「存在しない」と記録したのはこれ）。宣言していれば Chromium が生やし、Keepa（`declarativeNetRequestWithHostAccess`）は `getSessionRules` / `updateSessionRules` を呼んで動いている。`offscreen` / `alarms` / `cookies` / `contextMenus` も同様に permission 宣言があれば使えた（Keepa 5.64 で実測） |
 | `chrome.sidePanel` | 名前空間はあるが `setOptions` が無い |
-| `chrome.debugger` | Electron は生やさない（service worker でも拡張ページでも `undefined`）。**Nemo が拡張ページ（`chrome-extension://`）にだけ空実装を生やしている**（`src/shared/chrome-debugger-stub.js`。`onEvent` / `onDetach` の `addListener` は呼べるが発火しない、`attach` / `detach` / `sendCommand` は callback を呼んで成功扱い、`getTargets` は `[]`）。GraphQL Network Inspector が起動時に `chrome.debugger.onEvent.addListener` を呼んで真っ白になるのを避けるためで、**`chrome.debugger` に依存する機能（WebSocket の捕捉など）は動かない**。Electron が実装したら shim は自動的に退く（既にあれば触らない）。配り方は 2 経路: 通常の拡張ページは preload（`src/preload/extension-shim.ts`）、**DevTools の中の拡張 frame（devtools_page / パネル）には preload が届かない**ので `src/main/devtools-shim.ts` が DevTools の webContents に CDP で付いて `Page.addScriptToEvaluateOnNewDocument` で入れる（`Page.enable` が無いとプロセスまたぎで消える） |
+| `chrome.debugger` | Electron は生やさない（service worker でも拡張ページでも `undefined`）。**Nemo が拡張ページ（`chrome-extension://`）にだけ空実装を生やしている**（`src/shared/chrome-debugger-stub.js`。`onEvent` / `onDetach` の `addListener` は呼べるが発火しない、`attach` / `detach` / `sendCommand` は callback を呼んで成功扱い、`getTargets` は `[]`）。GraphQL Network Inspector が起動時に `chrome.debugger.onEvent.addListener` を呼んで真っ白になるのを避けるためで、**`chrome.debugger` に依存する機能（WebSocket の捕捉など）は動かない**。Electron が実装したら shim は自動的に退く（既にあれば触らない）。配り方は 2 経路: 通常の拡張ページは preload（`src/preload/extension-shim.ts`）、**DevTools の中の拡張 frame（devtools_page / パネル）には Nemo の preload が効かない**ので `src/main/devtools-shim.ts` が DevTools の webContents に CDP で付いて `Page.addScriptToEvaluateOnNewDocument` で入れる（`Page.enable` が無いとプロセスまたぎで消える。42 以降は凍った `chrome` を差し替えてから入れる。上の #2） |
 | `chrome.webRequest` の `tabId` | イベント自体は来るが **`details.tabId` が常に `-1`**（Electron が webContents を拡張の tabId に対応付けない）。`{ tabId }` で filter した listener は一度も発火しない → Nemo のスタブが `addListener` の filter から `tabId` を外している（全タブぶんが来る。GraphQL Network Inspector は `devtools.network.onRequestFinished` と突き合わせるので inspected tab 以外は一覧に出ない） |
 | `chrome.commands` | `getAll()` は返るが **shortcut がすべて空文字**。`electron-chrome-extensions` の `CommandsAPI` は manifest を一覧にするだけで、**アクセラレータを登録せず `onCommand` も dispatch しない**（`globalShortcut` / `commands.onCommand` の呼び出しがソースに1つも無い）。`onCommand.addListener` は呼べてしまうが**永久に発火しない** → 拡張のキーボードショートカット（Bitwarden の ⌘⇧L 自動入力・⌘⇧Y popup など）は動かない |
 

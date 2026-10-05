@@ -33,7 +33,6 @@ Nemo の変更履歴。**GitHub Release の本文とアプリ内の更新通知�
 ### 変更
 
 - **Electron を 44 に上げた**（Chromium 152）。41 のサポートが切れ、Chromium のセキュリティ修正が届かなくなっていたため
-- **拡張の DevTools パネルが出なくなった**。Electron 44 の不具合で、GraphQL Network Inspector の「GraphQL Network」パネルが DevTools に出ない（[#2](https://github.com/nyshk97/browser/issues/2)）。GraphQL の通信は DevTools 標準の Network タブで見る
 
 ## [1.10.11] - 2026-10-04
 

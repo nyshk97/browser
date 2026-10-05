@@ -14,7 +14,7 @@
  * 配る経路は 2 つ（どちらもこの 1 つの関数を使う。中身を二重に持たない）:
  * - 通常の拡張ページ（popup / options 等のトップフレーム）: `src/preload/extension-shim.ts`
  * - DevTools の中の拡張 frame（devtools_page / パネル）: `src/main/devtools-shim.ts`
- *   （preload はサブフレームに配られないので、CDP で新規ドキュメントに注入する）
+ *   （Nemo の preload はこの frame で効かないので、CDP で新規ドキュメントに注入する。`src/shared/devtools-extension-api.js`）
  *
  * **この関数はそのまま文字列化してページに送る**ので、外側の変数・import を参照しない。
  */

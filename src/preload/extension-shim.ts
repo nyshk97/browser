@@ -24,7 +24,8 @@ import { installWebAuthnShim } from '../shared/webauthn-shim.js'
  * - `electron-chrome-extensions` の preload は最後に `Object.freeze(chrome)` するので、
  *   この preload は**それより先に登録**されている必要がある（`index.ts` の登録順を参照）
  * - **サブフレームには配られない**（Electron の preload はトップフレームだけ）。DevTools の中の
- *   拡張 frame は `src/main/devtools-shim.ts` が CDP で補う
+ *   拡張 frame は `src/main/devtools-shim.ts` が CDP で補う（Electron 44 ではこの frame に ece の preload が届いて
+ *   `chrome` を凍らせているのを実測。#2。CDP 側で凍っていない複製に差し替えてから入れる）
  * - Node / IPC には一切触らない。特権 API は載せない
  */
 

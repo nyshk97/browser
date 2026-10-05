@@ -1194,7 +1194,7 @@ function attachTabEvents(tab: NemoTab, wc: WebContents, view: WebContentsView): 
   attachVimScroll(tab, wc)
   // ⌘ の長押し（Favorites の番号バッジ）。ページ側にフォーカスがあるときの Meta はここでしか拾えない
   attachShortcutHint(win, wc)
-  // DevTools の中の拡張パネルに `chrome.debugger` の空実装を配る（preload はサブフレームに届かない）
+  // DevTools の中の拡張 frame に `chrome.debugger` の空実装と `chrome.devtools` を配る（Nemo の preload はこの frame で効かない）
   wc.on('devtools-opened', () => attachDevToolsExtensionShim(wc))
   // ページ本体の右クリック（画像の保存・検証だけ。Electron は標準では何も出さない）。
   // **エージェント窓では、窓が key のときの入力欄の「フォーム自動入力」だけ**（context-menu.ts が絞る。

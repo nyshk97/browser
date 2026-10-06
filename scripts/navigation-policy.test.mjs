@@ -97,7 +97,20 @@ test('サブフレームは chrome-extension: をホストを問わず許可す�
   assert.equal(isNavigableUrl(dynamic, { subframe: true }), false)
 })
 
-test('サブフレームでも chrome-extension: 以外の許可外 scheme は拒否する', () => {
+test('サブフレームは blob: を許可する（Mailtrap のプレビュー等）', () => {
+  const url = 'blob:https://heroku.mailtrap.io/0b7c6bfb-c70e-456f-983f-46249db7a010'
+  assert.equal(isNavigableUrl(url, { subframe: true, extensionIds: LOADED }), true)
+  // 拡張の有無に左右されない
+  assert.equal(isNavigableUrl(url, { subframe: true }), true)
+
+  // トップレベル遷移では今までどおり拒否する
+  assert.equal(isNavigableUrl(url), false)
+  assert.equal(isNavigableUrl(url, { subframe: false, extensionIds: LOADED }), false)
+  assert.equal(isNavigableUrl(url, { allowExtensionPages: true, extensionIds: LOADED }), false)
+  assert.equal(isNavigableUrl(url, { allowFile: true, fromFile: true }), false)
+})
+
+test('サブフレームでも chrome-extension: / blob: 以外の許可外 scheme は拒否する', () => {
   // 「iframe なら通す」が他の scheme に波及していないこと
   for (const url of [
     'file:///etc/passwd',

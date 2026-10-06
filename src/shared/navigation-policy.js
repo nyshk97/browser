@@ -21,7 +21,7 @@ export const DENIED_SCHEMES = Object.freeze([
   'file:', // 既定は拒否。人間の入力・OS（open-file）・argv 起点だけ `allowFile` で通す（file: ページからの file→file は `fromFile`）
   'chrome:',
   'devtools:',
-  'blob:',
+  'blob:', // トップレベルだけ拒否。サブフレームは通す（`isNavigableUrl`）
   'filesystem:',
   'view-source:'
 ])
@@ -40,7 +40,7 @@ export const UI_SCHEME_URL_PREFIX = 'nemo://ui/'
  *   コマンドバーや Web ページからのナビゲーションでは絶対に true にしない。
  * @property {boolean} [subframe]
  *   ページ内のサブフレーム（iframe）へのナビゲーションである。
- *   このときだけ `chrome-extension:` を**ホストを問わず**許可する（下記参照）。
+ *   このときだけ `chrome-extension:` を**ホストを問わず**許可し、`blob:` も許可する（下記参照）。
  *   トップレベル遷移では絶対に true にしない。
  * @property {ReadonlySet<string>} [extensionIds] ロード済み拡張の ID。
  * @property {boolean} [allowFile]
@@ -85,6 +85,14 @@ export function isNavigableUrl(url, policy = {}) {
   }
 
   if (PAGE_SCHEMES.has(parsed.protocol)) return true
+
+  /*
+   * サブフレームの `blob:` は通す（Mailtrap のメールプレビューが `blob:https://…` の iframe）。
+   * blob: URL は作ったページの origin を引き継ぎ、どの blob を読めるかは Chromium が
+   * origin で強制する（別 origin の blob の中身には届かない）。Chrome も通している。
+   * トップレベルは今までどおり拒否する（`DENIED_SCHEMES`）。
+   */
+  if (parsed.protocol === 'blob:') return policy.subframe === true
 
   if (parsed.protocol === 'file:') {
     // サブフレームは通さない（2026-08-25 の決定「file: はサブフレームでも拒否」を維持）

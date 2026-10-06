@@ -17,7 +17,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { extensionIdFromPublicKey } from './lib/crx.mjs'
-import { projectRoot } from './lib/harness.mjs'
+import { projectRoot, readLogLines } from './lib/harness.mjs'
 
 const CDP = process.env.NEMO_CDP ?? 'http://127.0.0.1:9333'
 const PAGES = process.env.NEMO_TEST_PAGES ?? 'http://127.0.0.1:8787'
@@ -241,6 +241,58 @@ for (const bad of ['javascript:alert(1)', 'data:text/html,<h1>x</h1>', 'nemo://u
 await sleep(500)
 state = await ui.ev('window.nemo.getWindowState()')
 check('拒否後も元の URL のまま', state.tabs[0].url.includes('login.html'), state.tabs[0].url)
+
+// 3b. blob: はサブフレームでだけ通す（Mailtrap のメールプレビューが blob: の iframe）
+await ui.ev(`window.nemo.navigate(${tabKey}, '${PAGES}/blob-iframe.html')`)
+await sleep(2500)
+{
+  const t = (await targets()).find((x) => x.url.includes('blob-iframe.html'))
+  const page = await connect(t.webSocketDebuggerUrl)
+  let frame = null
+  for (let i = 0; i < 20; i += 1) {
+    frame = await page.ev(`(() => {
+      const f = document.getElementById('preview')
+      return { url: f.contentWindow.location.href, text: f.contentDocument?.body?.innerText ?? '' }
+    })()`)
+    if (frame.text.includes('blob-iframe-rendered')) break
+    await sleep(250)
+  }
+  check(
+    'blob: の iframe が描画される',
+    frame.url.startsWith('blob:') && frame.text.includes('blob-iframe-rendered'),
+    `url=${frame.url.slice(0, 32)} text=${JSON.stringify(frame.text.slice(0, 40))}`
+  )
+
+  // トップレベルの blob: は今までどおり拒否する。コマンドバー経路（`normalizeNavigationInput`）は
+  // `isNavigableUrl` に届かないので、ページ自身にトップを移させて main の guard を通す
+  const blobUrl = await page.ev('document.body.dataset.blobUrl')
+  const isTopBlobBlock = (line) => {
+    const d = JSON.parse(line)
+    return d.event === 'navigation.blocked' && d.target === 'blob:' && d.isMainFrame === true
+  }
+  const userDataDir = process.env.NEMO_USER_DATA_DIR
+  const blockedBefore = readLogLines(userDataDir).filter(isTopBlobBlock).length
+  await page.ev(`(location.href = ${JSON.stringify(blobUrl)}, 'ok')`)
+  await sleep(1500)
+  state = await ui.ev('window.nemo.getWindowState()')
+  const blockedAfter = readLogLines(userDataDir).filter(isTopBlobBlock).length
+  check(
+    'ページからトップレベルの blob: へは移れない',
+    state.tabs[0].url.includes('blob-iframe.html') && blockedAfter > blockedBefore,
+    `url=${state.tabs[0].url.slice(0, 48)} blocked(isMainFrame)=${blockedBefore}->${blockedAfter}`
+  )
+
+  let rejected = false
+  try {
+    await ui.ev(`window.nemo.navigate(${tabKey}, ${JSON.stringify(blobUrl)})`)
+  } catch (error) {
+    rejected = /navigation rejected/.test(String(error))
+  }
+  check('コマンドバーから blob: を拒否', rejected, blobUrl.slice(0, 32))
+}
+// 4 以降は login.html を前提にしているので戻す
+await ui.ev(`window.nemo.navigate(${tabKey}, '${PAGES}/login.html?site=a')`)
+await sleep(2500)
 
 // 4. ページ側の隔離
 {

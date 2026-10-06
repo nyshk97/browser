@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>blob: の iframe — テスト</title>
+    <style>
+      body { font: 15px/1.6 -apple-system, sans-serif; margin: 40px; }
+      iframe { border: 1px solid #ccc; height: 200px; width: 420px; }
+    </style>
+  </head>
+  <body>
+    <h1>blob: の iframe</h1>
+    <p>Mailtrap のメールプレビューと同じ形（本文を Blob にして iframe の src に渡す）。</p>
+    <iframe id="preview"></iframe>
+    <script>
+      const html = '<!doctype html><meta charset="utf-8"><p id="marker">blob-iframe-rendered</p>'
+      const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
+      document.getElementById('preview').src = url
+      document.body.dataset.blobUrl = url
+    </script>
+  </body>
+</html>

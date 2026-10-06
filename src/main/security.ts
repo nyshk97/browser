@@ -581,7 +581,7 @@ export function applyWebContentsSecurityDefaults(
    * どの段でどのフレームを止めたかを残して、検証から見えるようにする。
    */
   const guard = (phase: string, url: string, preventDefault: () => void, isMainFrame?: boolean): void => {
-    // エージェント窓は `subframe` を立てない（= `chrome-extension:` のサブフレームも拒否する）
+    // エージェント窓は `subframe` を立てない（= `chrome-extension:` / `blob:` のサブフレームも拒否する）
     const policy: NavigationPolicy = { ...policyForCurrentPage(), subframe: !agent && isMainFrame === false }
     if (isNavigableUrl(url, policy)) return
     preventDefault()

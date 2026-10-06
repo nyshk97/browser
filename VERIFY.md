@@ -178,7 +178,7 @@ mise run verify:only split
 - **ユニットテスト**: 許可 scheme の判定・コマンドバー入力の正規化・ログの URL 伏せ字 /
   拡張 lock の更新・ロールバック・改ざん検知・パス封じ込め /
   検証ハーネス自身（マーカー掃除の暴発防止・子プロセスの停止）
-- registry の初期状態 / ナビゲーション / scheme allowlist（`javascript:` `data:` `nemo:` の拒否。`file:` は人間の入力からは通るので `local-file` が見る）
+- registry の初期状態 / ナビゲーション / scheme allowlist（`javascript:` `data:` `nemo:` の拒否・ページからトップレベルの `blob:` へ移れない・`blob:` の iframe は描画される。`file:` は人間の入力からは通るので `local-file` が見る）
 - ページ側に `require` / `process` / `window.nemo` が漏れていないこと
 - 拡張の content script がトップフレームと iframe に入ること
 - **ブラウザ UI には content script が入らないこと**（セッション分離が効いていること）

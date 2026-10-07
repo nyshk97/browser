@@ -143,7 +143,9 @@ const AGENT_BLOCKED_COMMANDS = new Set([
   'reopen-tab',
   'show-library',
   'promote-peek',
-  'switch-tab'
+  'switch-tab',
+  // 印刷パネルは Claude から閉じられず、窓を destroy しても残る（ページの `window.print()` を塞いでいるのと同じ理由）
+  'print'
 ])
 
 function sendToUi(win: NemoWindow, command: string): void {
@@ -274,6 +276,17 @@ export function runCommandForWindow(win: NemoWindow, command: string): void {
       if (foreground?.webContents?.navigationHistory.canGoForward())
         foreground.webContents.navigationHistory.goForward()
       return
+    case 'print': {
+      // ページの `window.print()` ではなく Chrome の ⌘P と同じくブラウザ側から刷る
+      // （`window.print` を上書きしているページでも効く）。スリープ中は webContents が無いので何もしない
+      const wc = foreground?.webContents
+      if (!wc || wc.isDestroyed()) return
+      wc.print({}, (success, reason) => {
+        // パネルのキャンセルも success: false（reason は 'Print job canceled'）で来るので、それは残さない
+        if (!success && !/cancel/i.test(reason)) log('print.failed', { reason })
+      })
+      return
+    }
     case 'copy-url':
       // 対象の key を選ぶのは renderer（Sidebar）。ここは存在チェックだけ
       if (foreground) sendToUi(win, 'copy-url')

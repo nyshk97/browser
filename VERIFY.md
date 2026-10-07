@@ -591,6 +591,19 @@ document.querySelector('[data-testid]')?.getAttribute('data-testid')  // prompt-
 サブリソースだけ通す（ログの `certificate.decision` に `remembered: true`）。手で試すなら、http のページに
 `https://self-signed.badssl.com/` の画像を差し込んでもダイアログが出ず、アドレスバーから開くと出ることを見る。
 
+### 印刷（⌘P）を試す
+
+印刷パネルは**ダイアログと違ってネイティブ**（macOS の NSPrintPanel。プレビューは無い）。⌘P はメニューのアクセラレータなので
+キーでは撃てない。`NEMO_VERIFY_DIAGNOSTICS=1` を付けて使い捨ての userData で起動し、UI View から
+`window.nemo.runCommandForVerify('print')` で撃つ。
+
+- 出たかは CGWindowList で**検証用インスタンスの PID** が持つ「プリント」ウィンドウ（`kCGWindowIsOnscreen`）を見る:
+  `osascript -l JavaScript -e 'ObjC.import("CoreGraphics"); JSON.stringify(ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(0, 0))).filter(w => w.kCGWindowName === "プリント"))'`
+- **パネルが出ている間はページの renderer が止まる**ので、そのページへの `Runtime.evaluate` は返ってこない（CDP のスクリプトは待たせっぱなしにして、閉じてから結果を読む）
+- 閉じるのは AXPress: `tell application "System Events" to tell (first process whose unix id is <pid>) to click button "キャンセル" of splitter group 1 of window "プリント"`
+  （ボタンは `splitter group 1` の下。`window` 直下を指すと -1728）。合成キーの Esc は他のアプリに入りうるので使わない
+- ページ側で `window.print` を上書きしておき、パネルが出ても上書きが呼ばれていないこと（ブラウザ側から刷っている）を見る
+
 ### React が持っている入力欄に値を入れる
 
 `el.value = x` では React の state が変わらない（送信すると空のまま飛ぶ）。

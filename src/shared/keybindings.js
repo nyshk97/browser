@@ -33,6 +33,7 @@ export const COMMANDS = [
   { id: 'close-tab', label: 'タブを閉じる', accelerator: 'CmdOrCtrl+W', menu: 'file', needsTab: true },
   { id: 'close-window', label: 'ウィンドウを閉じる', accelerator: 'CmdOrCtrl+Shift+W', menu: 'file' },
   { id: 'reopen-tab', label: '閉じたタブを開き直す', accelerator: 'CmdOrCtrl+Shift+T', menu: 'file' },
+  { id: 'print', label: '印刷…', accelerator: 'CmdOrCtrl+P', menu: 'file', needsTab: true },
 
   // Edit
   { id: 'find', label: 'ページ内を検索', accelerator: 'CmdOrCtrl+F', menu: 'edit', needsTab: true },

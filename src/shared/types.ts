@@ -1574,6 +1574,8 @@ export interface NemoUiApi {
   kyprGeneratePassword(length: number, sets: string[]): Promise<string>
   kyprInlineState(): Promise<KyprInlineState | null>
   kyprInlinePick(id: string): Promise<KyprActionResult>
+  /** 候補の「kypr のロックを解除」（Touch ID）。通ったら同じ欄の下に候補を出し直す。 */
+  kyprInlineUnlock(): Promise<KyprUnlockResult>
   kyprInlineDismiss(): Promise<void>
   /** 候補の中身が変わった（出し直した）ときに呼ばれる。 */
   onKyprInline(callback: () => void): () => void

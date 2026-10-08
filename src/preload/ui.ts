@@ -236,6 +236,7 @@ const api: NemoUiApi = {
     ipcRenderer.invoke('nemo:kypr-generate', length, sets) as Promise<string>,
   kyprInlineState: () => ipcRenderer.invoke('nemo:kypr-inline-state') as Promise<KyprInlineState | null>,
   kyprInlinePick: (id) => ipcRenderer.invoke('nemo:kypr-inline-pick', id) as Promise<KyprActionResult>,
+  kyprInlineUnlock: () => ipcRenderer.invoke('nemo:kypr-inline-unlock') as Promise<KyprUnlockResult>,
   kyprInlineDismiss: () => ipcRenderer.invoke('nemo:kypr-inline-dismiss') as Promise<void>,
   onKyprInline: (callback) => {
     const listener = (): void => callback()

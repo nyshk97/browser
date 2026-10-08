@@ -3,7 +3,15 @@ import type { KyprInlineState, KyprSummary } from '../../shared/types.js'
 import { log } from '../log.js'
 import { findTabByWebContents, type NemoTab, type NemoWindow } from '../registry.js'
 import { agentFillRefusal, agentUserAtWindow, isAgentContents } from '../agent/contents.js'
-import { kyprCardSummaries, kyprMatches, kyprState, syncKyprIfStale, withKyprFavicons } from './index.js'
+import type { KyprUnlockResult } from '../../shared/types.js'
+import {
+  kyprCardSummaries,
+  kyprMatches,
+  kyprState,
+  syncKyprIfStale,
+  unlockKyprWithTouchId,
+  withKyprFavicons
+} from './index.js'
 import { kyprActiveFrame, kyprFrameGroupHasCard } from './card-fill.js'
 
 /**
@@ -32,10 +40,18 @@ interface Shown {
   mode: Mode
   /** `card-frame` のとき、出した iframe（document・何番目の iframe・src）。 */
   frame: string | null
+  /** 欄（`card-frame` は iframe）の位置。解除の後に同じ場所へ出し直すのに使う。 */
+  field: FieldRect
   state: KyprInlineState
 }
 
 let shown: Shown | null = null
+/**
+ * 候補の「ロックを解除」から Touch ID を出している間。**この間は blur で閉じない**: ダイアログが key を取ると
+ * ページも候補の View もフォーカスを失い、閉じるとページへ `webContents.focus()` が走って Nemo が前面を取り返し、
+ * ダイアログが指を受けなくなる（クリックし直すまで解除できなかった。2026-10-08）
+ */
+let unlocking = false
 /**
  * タブごとの欄の知らせの通し番号（focus / blur / hide のたびに進める）。Claude のウィンドウでは候補を出す前に
  * 非同期の判定を待つので、その間に欄から外れていたら（番号が進んでいたら）出さない
@@ -109,7 +125,40 @@ export function hideKyprInline(win?: NemoWindow): void {
   if (frameWatch) clearInterval(frameWatch)
   frameWatch = null
   target.kyprAnchor = null
-  if (!target.isDestroyed && target.overlay === 'kypr-inline') target.setOverlay(null)
+  // ページへフォーカスを戻すのは窓が key のときだけ（`webContents.focus()` は Nemo を前面に戻すので、
+  // Touch ID のダイアログや他のアプリからフォーカスを奪う）
+  if (!target.isDestroyed && target.overlay === 'kypr-inline')
+    target.setOverlay(null, { refocus: target.baseWindow.isFocused() })
+}
+
+/**
+ * 候補の「kypr のロックを解除」（Touch ID）。通ったら**同じ欄の下に候補を出し直す**
+ * （閉じるだけだと、フォーカスが欄に残ったままなので欄を押し直しても focus が来ず、候補が出ない）。
+ * 通らなければ候補はそのまま（呼び出し側がポップアップへ回す）
+ */
+export async function unlockFromKyprInline(win: NemoWindow): Promise<KyprUnlockResult> {
+  if (unlocking) return { ok: false, reason: 'touch-id-failed' }
+  unlocking = true
+  let result: KyprUnlockResult
+  try {
+    result = await unlockKyprWithTouchId()
+  } finally {
+    unlocking = false
+  }
+  if (result.ok) refreshKyprInline(win)
+  return result
+}
+
+/** 出している候補を、いまの kypr の状態で出し直す（同じタブ・同じページのときだけ。違えば閉じる）。 */
+function refreshKyprInline(win: NemoWindow): void {
+  if (!shown || shown.win !== win || win.isDestroyed) return
+  const tab = win.findTab(shown.tabKey)
+  const wc = tab?.webContents
+  if (!tab || !wc || wc.isDestroyed() || wc.getURL() !== shown.url || win.getForegroundTab() !== tab) {
+    hideKyprInline(win)
+    return
+  }
+  show(win, tab, wc, shown.field, shown.mode, shown.frame)
 }
 
 function onField(event: IpcMainEvent, message: unknown): void {
@@ -139,6 +188,7 @@ function onField(event: IpcMainEvent, message: unknown): void {
     blurTimer = setTimeout(() => {
       blurTimer = null
       if (!shown || shown.tabKey !== tab.key) return
+      if (unlocking) return
       if (!win.isDestroyed && win.overlayWebContents.isFocused()) return
       hideKyprInline(win)
     }, 200)
@@ -236,6 +286,7 @@ function show(
     url,
     mode,
     frame,
+    field: { x, y, height },
     state: {
       locked: state !== 'unlocked',
       kind: mode === 'login' ? 'login' : 'card',

@@ -1959,8 +1959,60 @@ try {
     lockedInline?.locked === true && lockedInline.rows.length === 0,
     `${JSON.stringify(lockedInline)} overlay=${await overlayKind()} active=${await page.ev('document.activeElement && document.activeElement.id')} scrollY=${await page.ev('scrollY')}`
   )
+  // 「解除」を押す → Touch ID が通ったら、閉じずに同じ欄の下へ候補を出し直す。
+  // Touch ID のダイアログが key を取るとページの欄から blur が来る（ここでは focusout を撃って作る）。
+  // その blur で閉じると、閉じるときの webContents.focus() が Nemo を前面に戻してダイアログが指を受けなくなる
+  await waitFor(overlayUi, "document.querySelector('.kypr-inline-row') ? 'ok' : ''", { timeoutMs: 5000 }).catch(
+    () => ''
+  )
+  await sleep(600) // 出た直後の押下は無視されるので待つ
+  const unlockOverlays = []
+  await overlayUi.ev("document.querySelector('.kypr-inline-row')?.click()")
+  await page.ev("document.getElementById('username').dispatchEvent(new FocusEvent('focusout', { bubbles: true }))")
+  for (let i = 0; i < 6; i += 1) {
+    await sleep(100)
+    unlockOverlays.push(await overlayKind())
+  }
+  await waitFor(ui, "window.nemo.kyprStatus().then((s) => s.state === 'unlocked' ? 'ok' : '')", {
+    timeoutMs: 5000
+  }).catch(() => '')
+  await waitFor(ui, 'window.nemo.kyprInlineState().then((s) => s && !s.locked ? "ok" : "")', {
+    timeoutMs: 5000
+  }).catch(() => '')
+  const afterUnlock = await json('window.nemo.kyprInlineState()')
+  check(
+    '候補の「解除」で Touch ID を待つ間、欄の blur が来ても候補を閉じない',
+    unlockOverlays.length === 6 && unlockOverlays.every((kind) => kind === 'kypr-inline'),
+    JSON.stringify(unlockOverlays)
+  )
+  check(
+    '候補の「解除」で通ったら、同じ欄の下に合うログインを出し直す（押し直さなくてよい）',
+    (await overlayKind()) === 'kypr-inline' &&
+      afterUnlock?.locked === false &&
+      afterUnlock.rows.some((r) => r.id === A.id) &&
+      (await page.ev('document.activeElement && document.activeElement.id')) === 'username',
+    JSON.stringify({ kind: await overlayKind(), state: afterUnlock, active: await page.ev('document.activeElement?.id') })
+  )
+  // フォーカスが残っている欄を押し直しても出る（Esc で閉じた後。focusin は来ない）
+  await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+  await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+  await waitFor(ui, "window.nemo.getOverlayState().then((s) => s.kind === null ? 'ok' : '')", {
+    timeoutMs: 5000
+  }).catch(() => '')
+  const closedByEsc = (await overlayKind()) === null
+  const activeBeforeReclick = await page.ev('document.activeElement && document.activeElement.id')
+  await clickAt('username')
+  await waitFor(ui, "window.nemo.getOverlayState().then((s) => s.kind === 'kypr-inline' ? 'ok' : '')", {
+    timeoutMs: 5000
+  }).catch(() => '')
+  check(
+    'フォーカスのある欄を押し直すと候補を出す（Esc で閉じた後）',
+    closedByEsc && activeBeforeReclick === 'username' && (await overlayKind()) === 'kypr-inline',
+    JSON.stringify({ closedByEsc, activeBeforeReclick, kind: await overlayKind() })
+  )
   await ui.ev('window.nemo.kyprInlineDismiss()')
-  await json('window.nemo.kyprUnlockTouchId()')
+  // 落ちたときに後ろの節（解除中が前提）を巻き込まない
+  if ((await json('window.nemo.kyprStatus()')).state !== 'unlocked') await json('window.nemo.kyprUnlockTouchId()')
 
   /* ---- 16. シークレットウィンドウ ---- */
   await ui.ev('window.nemo.createPrivateWindow()')

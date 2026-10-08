@@ -116,6 +116,19 @@ if (window.top === window && /^https?:$/.test(location.protocol)) {
     send({ type: 'hide' })
   }
 
+  /** 欄の位置と種類を main に知らせる（候補を出す）。 */
+  const report = (el: HTMLInputElement | HTMLSelectElement, kind: string): void => {
+    if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return
+    const rect = el.getBoundingClientRect()
+    if (rect.width < 4 || rect.height < 4) return
+    current = el
+    send({
+      type: 'focus',
+      kind,
+      rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
+    })
+  }
+
   window.addEventListener(
     'pointerdown',
     (event) => {
@@ -124,6 +137,12 @@ if (window.top === window && /^https?:$/.test(location.protocol)) {
       // main に「このクリックはメインフレームの文書に届いた」と知らせる（iframe の中のクリックとの見分けに使う。
       // main の before-mouse-event は iframe の中のクリックでも飛ぶが、座標が iframe の中の座標で来るので見分けられない）
       send({ type: 'pointer' })
+      // **フォーカスのある欄を押し直したときも出す**（focusin が来ないので、Esc で閉じた後・解除の後に押し直しても
+      // 出なかった）。文書にフォーカスが無いときは、押すとフォーカスが戻って focusin が来るのでそちらに任せる
+      const el = document.activeElement
+      if (!document.hasFocus() || event.target !== el) return
+      const kind = fieldKind(el)
+      if (kind && (el instanceof HTMLInputElement || el instanceof HTMLSelectElement)) report(el, kind)
     },
     true
   )
@@ -153,15 +172,7 @@ if (window.top === window && /^https?:$/.test(location.protocol)) {
           (target instanceof HTMLLabelElement && target.control === el) ||
           (target instanceof Element && target.closest('label')?.control === el))
       if (!event.isTrusted || !(byPointer || (fresh && gesture.tab))) return
-      if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return
-      const rect = el.getBoundingClientRect()
-      if (rect.width < 4 || rect.height < 4) return
-      current = el
-      send({
-        type: 'focus',
-        kind,
-        rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
-      })
+      report(el, kind)
     },
     true
   )

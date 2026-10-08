@@ -130,6 +130,7 @@ import {
 } from './kypr/fill.js'
 import {
   hideKyprInline,
+  unlockFromKyprInline,
   kyprFrameKey,
   kyprInlineState,
   kyprInlineTarget,
@@ -1576,6 +1577,10 @@ export function registerIpcHandlers(): void {
       return fillKyprCard(wc, idOf(id), 'frames')
     }
     return fillKyprLogin(wc, idOf(id), { mainOnly: true })
+  })
+  ipcMain.handle('nemo:kypr-inline-unlock', (event): Promise<KyprUnlockResult> => {
+    const win = requireWindow(event)
+    return unlockFromKyprInline(win)
   })
   ipcMain.handle('nemo:kypr-inline-dismiss', (event): void => {
     const win = requireWindow(event)

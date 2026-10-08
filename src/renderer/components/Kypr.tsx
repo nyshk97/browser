@@ -2320,13 +2320,11 @@ export function KyprInline(): React.JSX.Element | null {
           onClick={() => {
             if (guarded() || busy) return
             setBusy(true)
+            // 通ったら main が同じ欄の下に候補を出し直す（`nemo:kypr-inline` が来て load し直す）
             void window.nemo
-              .kyprUnlockTouchId()
+              .kyprInlineUnlock()
               .then((result) => {
-                if (result.ok) {
-                  // 解除できたら候補を出し直すため、いったん閉じる（欄をもう一度押すと出る）
-                  void window.nemo.kyprInlineDismiss()
-                } else {
+                if (!result.ok) {
                   // Touch ID が使えない・通らないときは、ポップアップでマスターパスワードを入れてもらう
                   void window.nemo.setOverlay('kypr')
                 }

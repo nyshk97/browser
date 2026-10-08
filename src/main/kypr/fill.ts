@@ -6,7 +6,9 @@ import { log, logError } from '../log.js'
 import { agentFillRefusal, isAgentContents, rememberAgentSecrets } from '../agent/contents.js'
 import { subFrameRunner, type PageRunner } from '../autofill/frame-runner.js'
 import {
+  addKyprTotpUri,
   copyKyprTotp,
+  kyprCanWrite,
   kyprLoginForFill,
   kyprParseOtpauth,
   kyprTotpForFill,
@@ -184,21 +186,31 @@ export async function fillKyprLogin(
  * ワンタイムコードを入れる（ポップアップから）。入れる先は**フォーカスのあるフレーム**（メインか直下の iframe）の
  * 「フォーカス中の入力欄 → 見えている `autocomplete=one-time-code` の欄」。
  * **そのフレームの URL にワンタイムコードの URL が合うときだけ入れる**（ログインと同じ。別オリジンの iframe に
- * 別のサイトのコードを入れない）。合わない・欄が無いときはコピーする（`copied: true`）。
+ * 別のサイトのコードを入れない）。欄が無いときはコピーする（`copied: true`）。
+ *
+ * URL が合わないとき（URL の無いコードを含む）は、普段のウィンドウで保管庫に書けるなら**入れずにコピーもせず**
+ * `addUrl`（そのフレームのオリジン）を返す。ポップアップが「<host> を URL に足して入力」を出し、押されたら
+ * `addUrlFor` にそのオリジンを付けて呼び直す。**入れる直前のフレームのオリジンが `addUrlFor` と一致するときだけ**足す
+ * （確かめたページと別のページに紐づけない）。Claude のウィンドウ・読み取り専用では足さずにコピーする（今までどおり）
  */
-export async function fillKyprTotp(wc: WebContents, itemId: string): Promise<KyprActionResult> {
+export async function fillKyprTotp(
+  wc: WebContents,
+  itemId: string,
+  options: { addUrlFor?: string | null } = {}
+): Promise<KyprActionResult> {
   // エージェント窓: Claude が JS を実行した document には入れない（コピーにも回さない。コピーはポップアップのボタンで）
   const refused = await agentFillRefusal(wc)
   if (refused) {
     log('kypr.fill_totp', { ok: false, reason: refused })
     return { ok: false, reason: refused }
   }
-  const totp = await kyprTotpForFill(itemId)
+  let totp = await kyprTotpForFill(itemId)
   if (!totp) return { ok: false, reason: 'not-found' }
+  let urlAdded = false
   const fallback = async (reason: string): Promise<KyprActionResult> => {
-    log('kypr.fill_totp', { ok: false, reason })
+    log('kypr.fill_totp', { ok: false, reason, urlAdded })
     return (await copyKyprTotp(itemId, 'fallback'))
-      ? { ok: true, id: itemId, copied: true }
+      ? { ok: true, id: itemId, copied: true, ...(urlAdded ? { urlAdded } : {}) }
       : { ok: false, reason: 'failed' }
   }
   if (wc.isDestroyed()) return fallback('destroyed')
@@ -212,8 +224,38 @@ export async function fillKyprTotp(wc: WebContents, itemId: string): Promise<Kyp
   if (!runner) return fallback('no-runner')
   try {
     // **入れる直前に、入れる先のフレームの URL で照合し直す**
-    if (frame.isDestroyed() || !loginMatchesPage({ uris: totp.uris }, frame.url))
-      return await fallback('url-mismatch')
+    if (frame.isDestroyed()) return await fallback('destroyed')
+    if (!loginMatchesPage({ uris: totp.uris }, frame.url)) {
+      const page = parsePage(frame.url)
+      // URL を足せるのは、普段のウィンドウで保管庫に書けて、フレームが http(s) のときだけ
+      if (!page || isAgentContents(wc) || !kyprCanWrite()) return await fallback('url-mismatch')
+      const origin = new URL(page.url).origin
+      // 同じオリジンがもう入っていて合わない（照合の方式が違う）なら、足しても同じなのでコピーに回す
+      if (totp.uris.some((u) => u.uri === origin)) return await fallback('url-mismatch')
+      if (options.addUrlFor !== origin) {
+        // 帯を出す（足すかどうかはユーザーが決める）。帯に出したのと別のページなら出し直す
+        log('kypr.fill_totp', {
+          ok: false,
+          reason: 'url-mismatch',
+          addUrl: true,
+          stale: Boolean(options.addUrlFor),
+          inSubFrame: frame !== main
+        })
+        // 今付いている URL も渡す（別のサイト用のコードなら、帯がそのホストを見せて「コピーだけ」を主にする）
+        const existing = totp.uris.map((u) => u.uri).filter((uri) => uri !== '')
+        return { ok: false, reason: 'url-mismatch', addUrl: { origin, host: page.host, existing } }
+      }
+      // 足せなければ（競合・オフライン等）入れずにコピーに回す（ユーザーは何も編集していないので保存の失敗の文言は出さない）
+      const saved = await addKyprTotpUri(itemId, origin)
+      if (!saved.ok) return await fallback(`add-url-${saved.reason}`)
+      urlAdded = true
+      // 足した後の URL で照合し直す（コードも取り直す）
+      const next = await kyprTotpForFill(itemId)
+      if (!next) return { ok: false, reason: 'not-found' }
+      totp = next
+      if (frame.isDestroyed() || !loginMatchesPage({ uris: totp.uris }, frame.url))
+        return await fallback('url-mismatch')
+    }
     // エージェント窓: 流し込む直前にコードを伏せる値として覚えさせる（入口の後に Claude が JS を実行していたら断る。
     // 覚えさせられなければ入れない）
     const refusedNow = await rememberAgentSecrets(wc, [totp.code])
@@ -226,8 +268,8 @@ export async function fillKyprTotp(wc: WebContents, itemId: string): Promise<Kyp
         `${KYPR_PAGE_SOURCE};globalThis.__nemoKypr.fillCode(${JSON.stringify(totp.code)})`
       )) === true
     if (!ok) return await fallback('no-target')
-    log('kypr.fill_totp', { ok: true, inSubFrame: frame !== main })
-    return { ok: true, id: itemId }
+    log('kypr.fill_totp', { ok: true, inSubFrame: frame !== main, urlAdded })
+    return urlAdded ? { ok: true, id: itemId, urlAdded } : { ok: true, id: itemId }
   } catch (error) {
     logError('kypr.fill_totp_failed', error, {})
     return fallback('failed')

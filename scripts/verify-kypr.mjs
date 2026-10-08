@@ -1347,6 +1347,8 @@ try {
   {
     const T1 = newTotpItem({ name: 'Otp Site', account: 'me', secret: TOTP_SECRET, uris: [{ uri: origin }] })
     const T2 = newTotpItem({ name: 'No Url', account: 'x', secret: 'JBSWY3DPEHPK3PXP' })
+    // 他の端末（Web・iOS）が足したキー。Nemo で URL を足しても消さないこと
+    T2.kyprFuture = 'keep'
     await other.create([T1, T2])
     await json('window.nemo.kyprSync()')
 
@@ -1384,15 +1386,34 @@ try {
       JSON.stringify({ filledOtp, otpValue })
     )
     await otpPage.ev("document.getElementById('otp').value = ''")
-    const copiedOtp = await json(`window.nemo.kyprFillTotp(${JSON.stringify(T2.id)})`)
-    const clipOtp = await json('window.nemo.kyprClipboardForVerify()')
+    // URL の無いコード: 入れず・コピーもせず、「このページを URL に足せる」と返す（ポップアップが帯を出す）
+    const clipBeforeOffer = await json('window.nemo.kyprClipboardForVerify()')
+    const offered = await json(`window.nemo.kyprFillTotp(${JSON.stringify(T2.id)})`)
+    const clipAfterOffer = await json('window.nemo.kyprClipboardForVerify()')
     check(
-      'TOTP: URL が合わなければ入れずにコピーする',
-      copiedOtp.ok === true &&
-        copiedOtp.copied === true &&
+      'TOTP: URL が合わなければ入れず・コピーもせず、入れる先のオリジンを URL に足せると返す',
+      offered.ok === false &&
+        offered.reason === 'url-mismatch' &&
+        offered.addUrl?.origin === origin &&
+        offered.addUrl?.host === new URL(origin).hostname &&
+        offered.addUrl?.existing.length === 0 &&
         (await otpPage.ev("document.getElementById('otp').value")) === '' &&
-        nodeTotpNow('JBSWY3DPEHPK3PXP').includes(clipOtp),
-      JSON.stringify({ copiedOtp, clip: clipOtp })
+        clipAfterOffer === clipBeforeOffer,
+      JSON.stringify({ offered, clipChanged: clipAfterOffer !== clipBeforeOffer })
+    )
+    // 帯に出したのと別のオリジン（ページが移った）なら足さずに出し直す
+    const stale = await json(`window.nemo.kyprFillTotp(${JSON.stringify(T2.id)}, 'https://other.example')`)
+    await other.sync()
+    const staleRemote = other.entries.get(T2.id)?.state
+    check(
+      'TOTP: 帯に出したのと別のオリジンでは URL を足さない（今のオリジンで出し直す）',
+      stale.ok === false &&
+        stale.reason === 'url-mismatch' &&
+        stale.addUrl?.origin === origin &&
+        staleRemote?.kind === 'totp' &&
+        staleRemote.item.uris.length === 0 &&
+        (await otpPage.ev("document.getElementById('otp').value")) === '',
+      JSON.stringify({ stale, uris: staleRemote?.item.uris })
     )
 
     // ログインを入れたとき、このページに合う TOTP が 1 件ならコードをコピーする
@@ -1413,6 +1434,128 @@ try {
         nodeTotpNow(TOTP_SECRET).includes(clipAfterLogin),
       JSON.stringify({ loginFilled, clip: clipAfterLogin })
     )
+
+    // ポップアップ: URL の無いコードを押す → 帯 →「コピーだけ」→ もう一度押す → 帯 →「URL に足して入力」
+    const T3 = newTotpItem({
+      name: 'Other Site',
+      account: 'y',
+      secret: 'GEZDGNBVGY3TQOJQ',
+      uris: [{ uri: 'https://other-site.example' }]
+    })
+    await other.create([T3])
+    await json('window.nemo.kyprSync()')
+    {
+      await ui.ev(
+        `window.nemo.navigate(${JSON.stringify(tabKey)}, ${JSON.stringify(`${origin}/otp.html?add=1`)})`
+      )
+      const addPage = await connectTo(app.cdp, '/otp.html?add=1', { type: 'page' })
+      await waitFor(
+        addPage,
+        "document.readyState === 'complete' && document.getElementById('otp') ? 'ok' : ''"
+      )
+      await ui.ev("window.nemo.setOverlay('kypr')")
+      const popup = await connectTo(app.cdp, 'view=overlay', { exclude: 'private=1' })
+      await waitFor(popup, "document.querySelector('[data-kypr-mode=\"codes\"]') ? 'ok' : ''", {
+        timeoutMs: 8000
+      }).catch(() => '')
+      await popup.ev(`document.querySelector('[data-kypr-mode="codes"]')?.click()`)
+      const codeButton = `document.querySelector('.kypr-scroll > [data-kypr-id="${T2.id}"] .kypr-totp-code')`
+      const offerSel = `document.querySelector('[data-kypr-offer="${T2.id}"]')`
+      await waitFor(popup, `${codeButton} ? 'ok' : ''`, { timeoutMs: 5000 }).catch(() => '')
+      await popup.ev(`${codeButton}?.click()`)
+      await waitFor(popup, `${offerSel} ? 'ok' : ''`, { timeoutMs: 5000 }).catch(() => '')
+      const offerView = JSON.parse(
+        await popup.ev(`JSON.stringify({
+          text: ${offerSel}?.innerText ?? '',
+          add: ${offerSel}?.querySelector('[data-kypr-offer-action="add"]')?.textContent ?? null
+        })`)
+      )
+      const host = new URL(origin).hostname
+      check(
+        'TOTP: ポップアップで URL の無いコードを押すと「<ホスト> を URL に足して入力」と「コピーだけ」の帯が出る',
+        offerView.text.includes(host) &&
+          offerView.add === `${host} を URL に足して入力` &&
+          offerView.text.includes('コピーだけ') &&
+          (await addPage.ev("document.getElementById('otp').value")) === '',
+        JSON.stringify(offerView)
+      )
+      await popup.ev(`${offerSel}?.querySelector('[data-kypr-offer-action="copy"]')?.click()`)
+      await waitFor(popup, `${offerSel} ? '' : 'ok'`, { timeoutMs: 3000 }).catch(() => '')
+      const clipCopyOnly = await json('window.nemo.kyprClipboardForVerify()')
+      await other.sync()
+      check(
+        'TOTP: 帯の「コピーだけ」はコードをコピーし、URL は足さない',
+        nodeTotpNow('JBSWY3DPEHPK3PXP').includes(clipCopyOnly) &&
+          (await popup.ev(`${offerSel} ? 'shown' : 'gone'`)) === 'gone' &&
+          other.entries.get(T2.id)?.state.item.uris.length === 0,
+        JSON.stringify({ clip: clipCopyOnly ? '(コード)' : clipCopyOnly })
+      )
+      // 別のサイト用の URL が付いたコード: 帯にそのホストを見せ、「コピーだけ」を主にする（フィッシングのページで紐づけない）
+      const otherSel = `document.querySelector('[data-kypr-offer="${T3.id}"]')`
+      const otherCode = `document.querySelector('.kypr-scroll > [data-kypr-id="${T3.id}"] .kypr-totp-code')`
+      await waitFor(popup, `${otherCode} ? 'ok' : ''`, { timeoutMs: 5000 }).catch(() => '')
+      await popup.ev(`${otherCode}?.click()`)
+      await waitFor(popup, `${otherSel} ? 'ok' : ''`, { timeoutMs: 5000 }).catch(() => '')
+      const otherOffer = JSON.parse(
+        await popup.ev(`JSON.stringify({
+          text: ${otherSel}?.querySelector('.kypr-offer-text')?.textContent ?? '',
+          primary: ${otherSel}?.querySelector('.kypr-primary')?.dataset.kyprOfferAction ?? null,
+          add: ${otherSel}?.querySelector('[data-kypr-offer-action="add"]')?.textContent ?? null
+        })`)
+      )
+      check(
+        'TOTP: 別のサイト用の URL が付いたコードは、帯にそのホストを見せて「コピーだけ」を主ボタンにする',
+        otherOffer.text === `このコードは other-site.example 用です。${host} にも足しますか？` &&
+          otherOffer.primary === 'copy' &&
+          otherOffer.add === `${host} にも足して入力`,
+        JSON.stringify(otherOffer)
+      )
+      await popup.ev(`${otherSel}?.querySelector('button[title="閉じる"]')?.click()`)
+      await popup.ev(`${codeButton}?.click()`)
+      await waitFor(popup, `${offerSel} ? 'ok' : ''`, { timeoutMs: 5000 }).catch(() => '')
+      await popup.ev(`${offerSel}?.querySelector('[data-kypr-offer-action="add"]')?.click()`)
+      await waitFor(addPage, "document.getElementById('otp').value ? 'ok' : ''", { timeoutMs: 5000 }).catch(
+        () => ''
+      )
+      const addedValue = await addPage.ev("document.getElementById('otp').value")
+      await other.sync()
+      const addedRemote = other.entries.get(T2.id)?.state
+      check(
+        'TOTP: 帯の「URL に足して入力」で、ページのオリジンを URL に足して（match は null・知らないキーは残す）コードを入れる',
+        nodeTotpNow('JBSWY3DPEHPK3PXP').includes(addedValue) &&
+          addedRemote?.kind === 'totp' &&
+          addedRemote.item.uris.length === 1 &&
+          addedRemote.item.uris[0].uri === origin &&
+          addedRemote.item.uris[0].match === null &&
+          addedRemote.item.kyprFuture === 'keep' &&
+          addedRemote.item.secret === 'JBSWY3DPEHPK3PXP',
+        JSON.stringify({ addedValue, uris: addedRemote?.item.uris, future: addedRemote?.item.kyprFuture })
+      )
+      popup.close()
+      await ui.ev('window.nemo.setOverlay(null)')
+
+      // 足したあとは、ログインを入れた直後にこのコードが自動でコピーされる（合うのを 1 件にするため T1 を一時的にゴミ箱へ）
+      await json(`window.nemo.kyprTrash(${JSON.stringify(T1.id)})`)
+      await ui.ev(
+        `window.nemo.navigate(${JSON.stringify(tabKey)}, ${JSON.stringify(`${origin}/login.html?totp=2`)})`
+      )
+      const addLogin = await connectTo(app.cdp, '/login.html?totp=2', { type: 'page' })
+      await waitFor(
+        addLogin,
+        "document.readyState === 'complete' && document.getElementById('password') ? 'ok' : ''"
+      )
+      const loginAfterAdd = await json(`window.nemo.kyprFill(${JSON.stringify(A.id)})`)
+      const clipAfterAdd = await json('window.nemo.kyprClipboardForVerify()')
+      const restoredT1 = await json(`window.nemo.kyprRestore(${JSON.stringify(T1.id)})`)
+      check(
+        'TOTP: URL を足したコードは、次からログインを入れた直後に自動でコピーされる',
+        loginAfterAdd.ok === true &&
+          loginAfterAdd.totpCopied === true &&
+          nodeTotpNow('JBSWY3DPEHPK3PXP').includes(clipAfterAdd) &&
+          restoredT1.ok === true,
+        JSON.stringify({ loginAfterAdd, clip: clipAfterAdd ? '(コード)' : clipAfterAdd, restoredT1 })
+      )
+    }
 
     // ページの QR を読む（表示中の範囲を撮る）
     const readQrOn = async (pathName) => {
@@ -1592,7 +1735,7 @@ try {
     await ui.ev('window.nemo.setOverlay(null)')
 
     let cleaned = true
-    for (const id of [T1.id, T2.id, savedQr.id].filter(Boolean)) {
+    for (const id of [T1.id, T2.id, T3.id, savedQr.id].filter(Boolean)) {
       await json(`window.nemo.kyprTrash(${JSON.stringify(id)})`)
       cleaned = (await json(`window.nemo.kyprPurge(${JSON.stringify(id)})`)).ok === true && cleaned
     }

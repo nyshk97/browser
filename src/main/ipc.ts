@@ -1480,18 +1480,24 @@ export function registerIpcHandlers(): void {
       return kyprTotpCodes(ids.filter((id): id is string => typeof id === 'string'))
     }
   )
-  ipcMain.handle('nemo:kypr-fill-totp', async (event, id: unknown): Promise<KyprActionResult> => {
-    const win = requireWindow(event)
-    const wc = foregroundContents(win)
-    if (!wc)
-      return (await copyKyprTotp(idOf(id), 'fallback'))
-        ? { ok: true, copied: true }
-        : { ok: false, reason: 'no-target' }
-    const result = await fillKyprTotp(wc, idOf(id))
-    // 入れたらポップアップを閉じてページへ戻す（コピーに回ったときは、知らせを見せるため閉じない）
-    if (result.ok && !result.copied && win.overlay === 'kypr') win.setOverlay(null)
-    return result
-  })
+  ipcMain.handle(
+    'nemo:kypr-fill-totp',
+    async (event, id: unknown, addUrlFor: unknown): Promise<KyprActionResult> => {
+      const win = requireWindow(event)
+      const wc = foregroundContents(win)
+      if (!wc)
+        return (await copyKyprTotp(idOf(id), 'fallback'))
+          ? { ok: true, copied: true }
+          : { ok: false, reason: 'no-target' }
+      const result = await fillKyprTotp(wc, idOf(id), {
+        // 確認の帯に出したオリジン（main が入れる直前のフレームのオリジンと突き合わせる）
+        addUrlFor: typeof addUrlFor === 'string' && addUrlFor.length <= 2_000 ? addUrlFor : null
+      })
+      // 入れたらポップアップを閉じてページへ戻す（コピーに回ったときは、知らせを見せるため閉じない）
+      if (result.ok && !result.copied && win.overlay === 'kypr') win.setOverlay(null)
+      return result
+    }
+  )
   ipcMain.handle('nemo:kypr-copy-totp', async (event, id: unknown): Promise<boolean> => {
     requireWindow(event)
     return copyKyprTotp(idOf(id))

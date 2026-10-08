@@ -220,7 +220,8 @@ const api: NemoUiApi = {
   kyprFill: (id) => ipcRenderer.invoke('nemo:kypr-fill', id) as Promise<KyprActionResult>,
   kyprTotpCodes: (ids) =>
     ipcRenderer.invoke('nemo:kypr-totp-codes', ids) as Promise<Record<string, KyprTotpCode>>,
-  kyprFillTotp: (id) => ipcRenderer.invoke('nemo:kypr-fill-totp', id) as Promise<KyprActionResult>,
+  kyprFillTotp: (id, addUrlFor) =>
+    ipcRenderer.invoke('nemo:kypr-fill-totp', id, addUrlFor) as Promise<KyprActionResult>,
   kyprCopyTotp: (id) => ipcRenderer.invoke('nemo:kypr-copy-totp', id) as Promise<boolean>,
   kyprTotpFromPageQr: () => ipcRenderer.invoke('nemo:kypr-totp-from-page-qr') as Promise<KyprTotpQrResult>,
   kyprTotpDraft: () => ipcRenderer.invoke('nemo:kypr-totp-draft') as Promise<KyprTotpDraft>,

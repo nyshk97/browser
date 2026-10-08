@@ -643,18 +643,39 @@ export function KyprPanel({ onClose }: { onClose: () => void }): React.JSX.Eleme
     },
     [showToast]
   )
-  // 入れられない（URL が合わない・欄が無い）ときは main がコピーに回す
+  // URL が合わないコード: 「<ホスト> を URL に足して入力」と「コピーだけ」の帯（main が足せると返したときだけ）
+  const [offer, setOffer] = useState<{ id: string; origin: string; host: string; existing: string[] } | null>(
+    null
+  )
+  // 欄が無いとき（足せないとき・Claude のウィンドウで URL が合わないときも）は main がコピーに回す。
+  // `addUrlFor` は帯に出したオリジン（main が入れる直前のフレームと突き合わせてから足す）
   const fillTotp = useCallback(
-    (id: string) => {
+    (id: string, addUrlFor?: string) => {
       setMessage(null)
-      void window.nemo.kyprFillTotp(id).then((result) => {
+      setOffer(null)
+      void window.nemo.kyprFillTotp(id, addUrlFor).then((result) => {
+        if (result.ok && result.urlAdded) reload()
         if (result.ok && result.copied)
-          showToast('このページには入れられないので、コードをコピーしました（30 秒で消えます）')
+          showToast(
+            result.urlAdded
+              ? 'URL を足しました。入力欄が見つからないので、コードをコピーしました（30 秒で消えます）'
+              : 'このページには入れられないので、コードをコピーしました（30 秒で消えます）'
+          )
+        else if (!result.ok && result.reason === 'url-mismatch' && result.addUrl)
+          setOffer({ id, ...result.addUrl })
         else setMessage(actionFailureText(result))
       })
     },
-    [showToast]
+    [showToast, reload]
   )
+  // 画面を移った・ロックしたら帯を消す（帯のコードと見ている画面がずれないように。描画中に前の状態と比べる）
+  const [offerView, setOfferView] = useState(view)
+  const [offerState, setOfferState] = useState(data?.status.state)
+  if (offerView !== view || offerState !== data?.status.state) {
+    setOfferView(view)
+    setOfferState(data?.status.state)
+    setOffer(null)
+  }
   const readQr = useCallback(() => {
     setMessage(null)
     void window.nemo.kyprTotpFromPageQr().then((result) => {
@@ -737,12 +758,98 @@ export function KyprPanel({ onClose }: { onClose: () => void }): React.JSX.Eleme
           }}
         />
       )}
+      {offer && status?.state === 'unlocked' ? (
+        <KyprAddUrlOffer
+          offer={offer}
+          onAdd={() => fillTotp(offer.id, offer.origin)}
+          onCopy={() => {
+            setOffer(null)
+            copyTotp(offer.id)
+          }}
+          onClose={() => setOffer(null)}
+        />
+      ) : null}
       {toast ? (
         <div key={toast.n} className="kypr-toast" role="status">
           <KyprIcon name="check" size={14} />
           {toast.text}
         </div>
       ) : null}
+    </div>
+  )
+}
+
+/**
+ * URL が合わないワンタイムコードを押したときの確認の帯。
+ * URL の無いコードは「<ホスト> を URL に足して入力」を主に、**別のサイト用の URL が付いたコードは**そのホストを見せて
+ * 「コピーだけ」を主にする（フィッシングのページで押して紐づけないように。見覚えのないドメインに気づけるように）
+ */
+function KyprAddUrlOffer({
+  offer,
+  onAdd,
+  onCopy,
+  onClose
+}: {
+  offer: { id: string; host: string; existing: string[] }
+  onAdd: () => void
+  onCopy: () => void
+  onClose: () => void
+}): React.JSX.Element {
+  const hosts = [...new Set(offer.existing.map(hostOfUri).filter((h): h is string => h !== null))]
+  const shown = hosts.slice(0, 2).join('、') + (hosts.length > 2 ? ` ほか ${hosts.length - 2} 件` : '')
+  const add = (
+    <button
+      type="button"
+      className={hosts.length > 0 ? 'kypr-btn' : 'kypr-primary'}
+      data-kypr-offer-action="add"
+      onClick={onAdd}
+    >
+      <span className="kypr-offer-label">
+        {offer.host} {hosts.length > 0 ? 'にも足して入力' : 'を URL に足して入力'}
+      </span>
+    </button>
+  )
+  const copy = (
+    <button
+      type="button"
+      className={hosts.length > 0 ? 'kypr-primary' : 'kypr-btn'}
+      data-kypr-offer-action="copy"
+      onClick={onCopy}
+    >
+      コピーだけ
+    </button>
+  )
+  return (
+    <div className="kypr-offer" role="region" aria-label="URL を足す" data-kypr-offer={offer.id}>
+      <div className="kypr-offer-head">
+        <span className="kypr-offer-text">
+          {hosts.length > 0 ? (
+            <>
+              このコードは <b>{shown}</b> 用です。<b>{offer.host}</b> にも足しますか？
+            </>
+          ) : (
+            <>
+              このコードは <b>{offer.host}</b> に紐づいていません。
+            </>
+          )}
+        </span>
+        <button type="button" className="icon" title="閉じる" onClick={onClose}>
+          <KyprIcon name="close" size={14} />
+        </button>
+      </div>
+      <div className="kypr-offer-actions">
+        {hosts.length > 0 ? (
+          <>
+            {copy}
+            {add}
+          </>
+        ) : (
+          <>
+            {add}
+            {copy}
+          </>
+        )}
+      </div>
     </div>
   )
 }

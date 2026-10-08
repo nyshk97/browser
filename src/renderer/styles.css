@@ -4028,6 +4028,62 @@ body[data-view='call'] {
   color: var(--nemo-ok);
 }
 
+/* URL が合わないワンタイムコードを押したときの確認の帯（トーストと同じ位置。押すまで残る） */
+.kypr-offer {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 44px;
+  z-index: 11;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--kypr-menu);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  font-size: 12px;
+  animation: kypr-offer-in 0.18s ease-out;
+}
+
+.kypr-offer-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.kypr-offer-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.kypr-offer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 長いホスト名でも帯からはみ出さない（ボタンを縮め、ラベルを省略表示する） */
+.kypr-offer-actions > button {
+  min-width: 0;
+}
+
+.kypr-offer-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes kypr-offer-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
 @keyframes kypr-toast-in {
   from {
     opacity: 0;

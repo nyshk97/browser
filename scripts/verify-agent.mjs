@@ -280,6 +280,8 @@ try {
     secret: 'JBSWY3DPEHPK3PXP',
     uris: [{ uri: origin }]
   })
+  // URL の無いコード（Claude のウィンドウでは URL を足す帯を出さず、今どおりコピーする）
+  const TOTP_NO_URL = newTotpItem({ name: 'Agent No Url', account: 'me', secret: 'GEZDGNBVGY3TQOJQ' })
   const IDENT = newIdentityItem({ name: '自分', ...profileToKypr(PROFILE) })
   const CARD = newCardItem({
     name: 'Agent Card',
@@ -289,7 +291,7 @@ try {
     expYear: '2030',
     code: CARD_CVC
   })
-  await kypr.other.create([LOGIN, TOTP, IDENT, CARD])
+  await kypr.other.create([LOGIN, TOTP, TOTP_NO_URL, IDENT, CARD])
 
   const userData = makeDir('nav-data-')
   const socketDir = makeDir('nav-')
@@ -872,6 +874,30 @@ try {
       /^\d{6}$/.test(codeInPage) &&
       !codeTree.text.includes(codeInPage),
     `${JSON.stringify(totpFill)} / ${codeTree.text.split('\n').find((line) => line.includes('Code')) ?? ''}`
+  )
+
+  // URL の無いコード: Claude のウィンドウでは URL を足さない（帯も出さない）。今どおりコピーに回す
+  await kp.ev("document.getElementById('otp').value = '', document.getElementById('otp').focus(), 'ok'")
+  const noUrlTotp = await aj(`window.nemo.kyprFillTotp(${JSON.stringify(TOTP_NO_URL.id)})`)
+  const noUrlForced = await aj(
+    `window.nemo.kyprFillTotp(${JSON.stringify(TOTP_NO_URL.id)}, ${JSON.stringify(origin)})`
+  )
+  const noUrlClip = await aj('window.nemo.kyprClipboardForVerify()')
+  await kypr.other.sync()
+  const noUrlRemote = kypr.other.entries.get(TOTP_NO_URL.id)?.state
+  check(
+    'kypr: Claude のウィンドウでは URL の合わないコードの URL を足さず、入れずにコピーする',
+    noUrlTotp.ok === true &&
+      noUrlTotp.copied === true &&
+      !('addUrl' in noUrlTotp) &&
+      noUrlForced.ok === true &&
+      noUrlForced.copied === true &&
+      !noUrlForced.urlAdded &&
+      /^\d{6}$/.test(noUrlClip ?? '') &&
+      (await readValue(kp, "document.getElementById('otp').value")) === '' &&
+      noUrlRemote?.kind === 'totp' &&
+      noUrlRemote.item.uris.length === 0,
+    JSON.stringify({ noUrlTotp, noUrlForced, uris: noUrlRemote?.item.uris })
   )
 
   // --- javascript_tool を実行したページには入れない ---

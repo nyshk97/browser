@@ -656,6 +656,8 @@ export type KyprActionResult =
       copied?: boolean
       /** ログインを入れたとき、このページに合うワンタイムコードが 1 件だったのでコードをコピーした。 */
       totpCopied?: boolean
+      /** ワンタイムコードの URL にページのオリジンを足した（ポップアップの「URL に足して入力」）。 */
+      urlAdded?: boolean
     }
   | {
       ok: false
@@ -679,6 +681,12 @@ export type KyprActionResult =
         /** 安全なコンテキスト（https・loopback の http）でないページ・フレームにはカードを入れない。 */
         | 'insecure'
         | 'failed'
+      /**
+       * `url-mismatch` のワンタイムコード: 入れる先のフレームのオリジンを URL に足せる（コピーはしていない）。
+       * ポップアップが「<host> を URL に足して入力」を出し、押されたら `origin` を `kyprFillTotp` に返す。
+       * `existing` はそのコードに今付いている URL（別のサイト用のコードなら帯にそのホストを見せ、「コピーだけ」を主にする）
+       */
+      addUrl?: { origin: string; host: string; existing: string[] }
     }
 
 /** 新規作成の下書き（今のページから）。 */
@@ -1550,8 +1558,12 @@ export interface NemoUiApi {
   kyprFill(id: string): Promise<KyprActionResult>
   /** 表示中のワンタイムコードの今のコード（id ごと）。ポップアップが 1 秒ごとに聞く。 */
   kyprTotpCodes(ids: string[]): Promise<Record<string, KyprTotpCode>>
-  /** ワンタイムコードを入れる先の欄に入れる。URL が合わない・欄が無いときはコピーする（`copied: true`）。 */
-  kyprFillTotp(id: string): Promise<KyprActionResult>
+  /**
+   * ワンタイムコードを入れる先の欄に入れる。欄が無いときはコピーする（`copied: true`）。
+   * URL が合わないときは、足せるなら `url-mismatch` + `addUrl` を返し（コピーしない）、足せなければコピーする。
+   * `addUrlFor`: 確認の帯に出したオリジン。入れる先のフレームのオリジンと一致すれば URL に足してから入れる
+   */
+  kyprFillTotp(id: string, addUrlFor?: string): Promise<KyprActionResult>
   kyprCopyTotp(id: string): Promise<boolean>
   /** 前面のタブに表示中の範囲から QR を読んで、登録の下書きを作る。 */
   kyprTotpFromPageQr(): Promise<KyprTotpQrResult>

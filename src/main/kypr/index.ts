@@ -1045,6 +1045,36 @@ export async function saveKyprItem(input: KyprItemInput): Promise<KyprActionResu
   }
 }
 
+/** 保管庫に書けるか（解除済みで、読み取り専用でない）。 */
+export function kyprCanWrite(): boolean {
+  return session !== null && !session.readOnly
+}
+
+/**
+ * ワンタイムコードの URL にページのオリジンを足す（ポップアップの「<ホスト> を URL に足して入力」）。
+ * `match` は null（登録可能なドメイン単位）。保存は編集と同じ `saveKyprItem` を通す（既存の平文に重ねるので知らないキーは残る）
+ */
+export async function addKyprTotpUri(id: string, origin: string): Promise<KyprActionResult> {
+  const item = totpEntry(id)
+  if (!item) return { ok: false, reason: 'not-found' }
+  const result = await saveKyprItem({
+    id,
+    type: 'totp',
+    fields: {
+      name: item.name,
+      account: item.account,
+      secret: item.secret,
+      algorithm: item.algorithm,
+      digits: item.digits,
+      period: item.period,
+      notes: item.notes,
+      uris: [...item.uris, { uri: origin, match: null }]
+    }
+  })
+  log('kypr.totp_add_url', { ok: result.ok })
+  return result
+}
+
 export async function kyprItemAction(
   id: string,
   action: 'trash' | 'restore' | 'purge'

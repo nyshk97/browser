@@ -120,6 +120,9 @@ UI View（React）の `keydown` には CDP のキーで届くので、そちら�
 
 `mise run release` が機械的に切り出す唯一の源。書き方はファイル冒頭の「書き方」節に従う。
 
+**ブランチに CHANGELOG の行を書いたまま main へ rebase・merge したら、`git diff origin/main -- docs/CHANGELOG.md` で行が [Unreleased] にあるかを見る。**
+間にリリースが挟まると、行がリリース済みの `[x.y.z]` の節へコンフリクト無しで入る（2026-10-08 に [1.10.13] へ入った実例）。
+
 ## 定義（Favorite / ピン留め / 一時タブ共有定義）にフィールドを足すとき
 
 **正規化は `src/shared/settings-schema.js` の `normalizePins`（`normalizeFavorite` / `normalizePinnedList`）に足す。**

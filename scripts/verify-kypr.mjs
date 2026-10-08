@@ -1962,13 +1962,15 @@ try {
   // 「解除」を押す → Touch ID が通ったら、閉じずに同じ欄の下へ候補を出し直す。
   // Touch ID のダイアログが key を取るとページの欄から blur が来る（ここでは focusout を撃って作る）。
   // その blur で閉じると、閉じるときの webContents.focus() が Nemo を前面に戻してダイアログが指を受けなくなる
-  await waitFor(overlayUi, "document.querySelector('.kypr-inline-row') ? 'ok' : ''", { timeoutMs: 5000 }).catch(
-    () => ''
-  )
+  await waitFor(overlayUi, "document.querySelector('.kypr-inline-row') ? 'ok' : ''", {
+    timeoutMs: 5000
+  }).catch(() => '')
   await sleep(600) // 出た直後の押下は無視されるので待つ
   const unlockOverlays = []
   await overlayUi.ev("document.querySelector('.kypr-inline-row')?.click()")
-  await page.ev("document.getElementById('username').dispatchEvent(new FocusEvent('focusout', { bubbles: true }))")
+  await page.ev(
+    "document.getElementById('username').dispatchEvent(new FocusEvent('focusout', { bubbles: true }))"
+  )
   for (let i = 0; i < 6; i += 1) {
     await sleep(100)
     unlockOverlays.push(await overlayKind())
@@ -1991,11 +1993,25 @@ try {
       afterUnlock?.locked === false &&
       afterUnlock.rows.some((r) => r.id === A.id) &&
       (await page.ev('document.activeElement && document.activeElement.id')) === 'username',
-    JSON.stringify({ kind: await overlayKind(), state: afterUnlock, active: await page.ev('document.activeElement?.id') })
+    JSON.stringify({
+      kind: await overlayKind(),
+      state: afterUnlock,
+      active: await page.ev('document.activeElement?.id')
+    })
   )
   // フォーカスが残っている欄を押し直しても出る（Esc で閉じた後。focusin は来ない）
-  await page.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
-  await page.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+  await page.send('Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: 'Escape',
+    code: 'Escape',
+    windowsVirtualKeyCode: 27
+  })
+  await page.send('Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: 'Escape',
+    code: 'Escape',
+    windowsVirtualKeyCode: 27
+  })
   await waitFor(ui, "window.nemo.getOverlayState().then((s) => s.kind === null ? 'ok' : '')", {
     timeoutMs: 5000
   }).catch(() => '')
@@ -2012,7 +2028,8 @@ try {
   )
   await ui.ev('window.nemo.kyprInlineDismiss()')
   // 落ちたときに後ろの節（解除中が前提）を巻き込まない
-  if ((await json('window.nemo.kyprStatus()')).state !== 'unlocked') await json('window.nemo.kyprUnlockTouchId()')
+  if ((await json('window.nemo.kyprStatus()')).state !== 'unlocked')
+    await json('window.nemo.kyprUnlockTouchId()')
 
   /* ---- 16. シークレットウィンドウ ---- */
   await ui.ev('window.nemo.createPrivateWindow()')

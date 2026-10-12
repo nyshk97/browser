@@ -985,6 +985,31 @@ const settle = () => sleep(250)
   })()`)
   await settle()
 
+  // 削除も右クリックだけ（中身ごと消えるので、ホバーで出る×は置かない）
+  {
+    const rows = await ui.ev(
+      `JSON.stringify({ folder: document.querySelectorAll('.row.folder').length, x: document.querySelectorAll('.row.folder .x').length })`
+    )
+    const { folder, x } = JSON.parse(rows)
+    check('フォルダ行には×ボタンが無い', folder === 1 && x === 0, rows)
+  }
+  await ui.ev(`(() => {
+    const row = document.querySelector('.row.folder')
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 80 }))
+    return 'ok'
+  })()`)
+  await settle()
+  await ui.ev(`(() => {
+    const item = [...document.querySelectorAll('.row-menu button')].find((b) => b.textContent === 'フォルダを削除')
+    item.click()
+    return 'ok'
+  })()`)
+  await settle()
+  {
+    const folders = flatten((await shared()).pinned).filter((n) => n.kind === 'folder')
+    check('フォルダは右クリックの「フォルダを削除」で消せる', folders.length === 0, `${folders.length} 個`)
+  }
+
   await resetDefinitions()
   await closeEphemeralTabs()
   await settle()

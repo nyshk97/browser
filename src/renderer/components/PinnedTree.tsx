@@ -191,17 +191,7 @@ export function PinnedTree({
                 onSubmit={rename(node.id)}
                 onCancel={() => setEditingId(null)}
               />
-              <button
-                type="button"
-                className="x"
-                title="フォルダを削除"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  void window.nemo.unpin(node.id)
-                }}
-              >
-                ×
-              </button>
+              {/* ×ボタンは置かない。中身ごと消えるので、ホバー中の押し間違いで失わないよう削除は右クリックだけ */}
             </div>
             {node.collapsed ? null : (
               <div className="children">{render(node.children, node.id, depth + 1)}</div>

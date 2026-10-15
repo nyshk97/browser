@@ -21,9 +21,9 @@ import { afterSessionSave } from './lib/timings.mjs'
 const CDP = process.env.NEMO_CDP ?? 'http://127.0.0.1:9333'
 const PAGES = process.env.NEMO_TEST_PAGES ?? 'http://127.0.0.1:8787'
 
-/** 単クリックの遅延（`InlineRename.tsx` の CLICK_DELAY_MS）。Favorites の「遅延しない」判定の閾値にも使う。 */
+/** かつての単クリックの遅延（ピン行・Favorites の「遅延しない」判定の閾値）。 */
 const CLICK_DELAY_MS = 250
-/** 単クリックの遅延より確実に長く待つ。 */
+/** 遅れて出てくる入力欄・タブ生成を見逃さないよう、遅延より確実に長く待つ。 */
 const CLICK_DELAY_WAIT_MS = 600
 
 let failures = 0
@@ -839,20 +839,99 @@ const settle = () => sleep(250)
   await ui.ev(`window.nemo.closeTab(${json(key)}).then(() => 'ok')`)
   await settle()
 
-  // --- 閉じているピン行のダブルクリックで、タブが増えずに編集だけが始まる ---
-  const before = (await state()).tabs.length
-  await ui.ev(
-    `(() => { window.__nemoVerify.doubleClick(document.querySelector('.row.pin')); return 'ok' })()`
-  )
-  await sleep(CLICK_DELAY_WAIT_MS)
-  {
-    const editing = await ui.ev(`Boolean(document.querySelector('.row.pin .rename'))`)
-    const after = (await state()).tabs.length
-    check('閉じているピン行のダブルクリックで編集に入る', editing === true)
-    check('そのときタブは増えない（単クリックの遅延が効いている）', after === before, `${before} -> ${after}`)
+  const pinId = flatten((await shared()).pinned).find((n) => n.kind === 'link').id
+  /** ピン留めのタブを閉じて、行を「閉じている」状態に戻す。 */
+  const closePinTab = async () => {
+    const tab = (await state()).tabs.find((t) => t.pinnedId === pinId)
+    if (tab) await ui.ev(`window.nemo.closeTab(${json(tab.key)}).then(() => 'ok')`)
+    await settle()
   }
 
-  // --- 入力欄に値を入れて Enter → 定義に反映される ---
+  // --- 閉じているピン行は、ダブルクリックしてもリネームに入らず開くだけ ---
+  // 導線は右クリックだけ。ダブルクリックしても `openPinned` が冪等なので、タブは 1 つしか増えない
+  {
+    const before = (await state()).tabs.length
+    await ui.ev(
+      `(() => { window.__nemoVerify.doubleClick(document.querySelector('.row.pin')); return 'ok' })()`
+    )
+    // 遅れて出てくる入力欄（退行）を見逃さない・タブ生成の反映前に数えないように、遅延ぶん待ってから読む
+    await sleep(CLICK_DELAY_WAIT_MS)
+    const editing = await ui.ev(`Boolean(document.querySelector('.row.pin .rename'))`)
+    const after = (await state()).tabs.length
+    check('閉じているピン行のダブルクリックでは編集に入らない', editing === false)
+    check(
+      'そのときタブはちょうど 1 つ増える（開くだけ。2 発目は選ぶだけ）',
+      after === before + 1,
+      `${before} -> ${after}`
+    )
+  }
+  await closePinTab()
+
+  // --- 閉じているピン行の単クリックは遅延しない（押した瞬間に開く） ---
+  // `settle()`（250ms）待ちだと遅延が残っていてもタブができていて PASS してしまうので、
+  // クリック直後から細かく待って**経過時間**で見る（旧実装なら 250ms 超で FAIL）
+  {
+    const before = (await state()).tabs.length
+    await ui.ev(
+      `(() => { window.__nemoVerify.fire(document.querySelector('.row.pin'), 'click', { detail: 1 }); return 'ok' })()`
+    )
+    const t0 = Date.now()
+    let elapsed = null
+    try {
+      await waitFor(ui, `window.nemo.getWindowState().then(s => s.tabs.length > ${before} ? 'ok' : '')`, {
+        timeoutMs: 3000,
+        interval: 30
+      })
+      elapsed = Date.now() - t0
+    } catch {
+      // 時間切れは check の FAIL に落とす（throw させるとスイートが止まり、修正前の FAIL を観測できない）
+    }
+    check(
+      '閉じているピン行の単クリックは遅延しない',
+      elapsed !== null && elapsed < CLICK_DELAY_MS,
+      elapsed === null ? '3 秒待ってもタブが増えなかった' : `${elapsed}ms（閾値 ${CLICK_DELAY_MS}ms）`
+    )
+  }
+  await closePinTab()
+
+  /** ピン行を右クリックしてメニューの項目名を返す。 */
+  const openPinMenu = async () => {
+    await ui.ev(`(() => {
+      const row = document.querySelector('.row.pin')
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 100 }))
+      return 'ok'
+    })()`)
+    await settle()
+    return ui
+      .ev(`JSON.stringify([...document.querySelectorAll('.row-menu button')].map((b) => b.textContent))`)
+      .then(JSON.parse)
+  }
+  const clickMenu = async (label) => {
+    await ui.ev(`(() => {
+      const item = [...document.querySelectorAll('.row-menu button')].find((b) => b.textContent === ${json(label)})
+      item.click()
+      return 'ok'
+    })()`)
+    await settle()
+  }
+
+  // --- 閉じているピン行のコンテキストメニューに「このページに更新」を出さない ---
+  {
+    const items = await openPinMenu()
+    check('右クリックでメニューが出る', items.length > 0, json(items))
+    check(
+      '閉じているピン行には「このページに更新」を出さない',
+      !items.includes('このページに更新'),
+      json(items)
+    )
+  }
+
+  // --- メニューの「名前を変更」で編集に入り、入力欄に値を入れて Enter → 定義に反映される ---
+  await clickMenu('名前を変更')
+  check(
+    'メニューの「名前を変更」で編集に入る',
+    (await ui.ev(`Boolean(document.querySelector('.row.pin .rename'))`)) === true
+  )
   await ui.ev(`(() => {
     const input = document.querySelector('.row.pin .rename')
     const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
@@ -873,38 +952,15 @@ const settle = () => sleep(250)
     check('サイドバーの表示も付けた名前になる', label === 'UI から付けた名前', label)
   }
 
-  // --- 閉じているピン行のコンテキストメニューに「このページに更新」を出さない ---
+  // --- Esc で取消（名前が変わらないこと） ---
+  await openPinMenu()
+  await clickMenu('名前を変更')
   await ui.ev(`(() => {
-    const row = document.querySelector('.row.pin')
-    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 100 }))
+    document.querySelector('.row.pin .rename').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     return 'ok'
   })()`)
   await settle()
   {
-    const items = await ui
-      .ev(`JSON.stringify([...document.querySelectorAll('.row-menu button')].map((b) => b.textContent))`)
-      .then(JSON.parse)
-    check('右クリックでメニューが出る', items.length > 0, json(items))
-    check(
-      '閉じているピン行には「このページに更新」を出さない',
-      !items.includes('このページに更新'),
-      json(items)
-    )
-    // メニューの「名前を変更」が編集を開始する
-    await ui.ev(`(() => {
-      const item = [...document.querySelectorAll('.row-menu button')].find((b) => b.textContent === '名前を変更')
-      item.click()
-      return 'ok'
-    })()`)
-    await settle()
-    const editing = await ui.ev(`Boolean(document.querySelector('.row.pin .rename'))`)
-    check('メニューの「名前を変更」で編集に入る', editing === true)
-    // Esc で取消（名前が変わらないこと）
-    await ui.ev(`(() => {
-      document.querySelector('.row.pin .rename').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-      return 'ok'
-    })()`)
-    await settle()
     const pin = flatten((await shared()).pinned).find((n) => n.kind === 'link')
     check(
       'Esc で取り消すと名前は変わらない',
@@ -930,6 +986,21 @@ const settle = () => sleep(250)
       `${s.activeTabKey?.slice(0, 6)} / ${pinTab?.key?.slice(0, 6)}`
     )
     await ui.ev(`window.nemo.closeTab(${json(other)}).then(() => 'ok')`)
+  }
+
+  // --- 解除も右クリックだけ（ホバー中の押し間違いで外れないよう、×は置かない） ---
+  {
+    const rows = await ui.ev(
+      `JSON.stringify({ pin: document.querySelectorAll('.row.pin').length, x: document.querySelectorAll('.row.pin .x').length })`
+    )
+    const { pin, x } = JSON.parse(rows)
+    check('ピン行には×ボタンが無い', pin === 1 && x === 0, rows)
+  }
+  await openPinMenu()
+  await clickMenu('ピン留めを解除')
+  {
+    const links = flatten((await shared()).pinned).filter((n) => n.kind === 'link')
+    check('ピン行は右クリックの「ピン留めを解除」で外せる', links.length === 0, `${links.length} 個`)
   }
 
   await resetDefinitions()

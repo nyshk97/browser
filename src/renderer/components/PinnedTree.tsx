@@ -2,7 +2,7 @@ import { Fragment, useCallback, useState } from 'react'
 import { DefinitionIcon } from './Sidebar.js'
 import { IconEdit } from './IconEdit.js'
 import { UrlEdit } from './UrlEdit.js'
-import { InlineRename, useDelayedClick } from './InlineRename.js'
+import { InlineRename } from './InlineRename.js'
 import { RowMenu, type RowMenuState } from './RowMenu.js'
 import { TAB_DRAG_TYPE, useDragEnd } from './TabRow.js'
 import type { PinnedNode, TabState } from '../../shared/types.js'
@@ -61,7 +61,6 @@ export function PinnedTree({
   const [iconEditingId, setIconEditingId] = useState<string | null>(null)
   const [urlEditingId, setUrlEditingId] = useState<string | null>(null)
   const [menu, setMenu] = useState<RowMenuState | null>(null)
-  const { schedule, cancel } = useDelayedClick()
 
   // タブ行を掴んだドラッグは、こちらの行では `dragend` を受け取れない
   useDragEnd(
@@ -102,7 +101,6 @@ export function PinnedTree({
   const openMenu = (event: React.MouseEvent, id: string, items: RowMenuState['items']): void => {
     event.preventDefault()
     event.stopPropagation()
-    cancel()
     setMenu({ id, x: event.clientX, y: event.clientY, items })
   }
 
@@ -154,17 +152,6 @@ export function PinnedTree({
         }
       }
 
-      /**
-       * ダブルクリックで編集に入る。**待たせておいた単クリックは捨てる**。
-       * **フォルダには付けない**（開閉と取り合いになるので、リネームは右クリックだけ）。
-       */
-      const onDoubleClick = (event: React.MouseEvent): void => {
-        event.preventDefault()
-        event.stopPropagation()
-        cancel()
-        setEditingId(node.id)
-      }
-
       if (node.kind === 'folder') {
         return (
           <div key={node.id}>
@@ -209,15 +196,13 @@ export function PinnedTree({
             // 自走検証がピン留め行を引くための手がかり（一時タブ行の `data-key` と同じ理由）。
             // ピン留め行はタブ key ではなく**定義の ID**で並ぶので、こちらを出す。
             data-pin={node.id}
+            // 閉じていても即 `openPinned`（無ければ開く / あれば選ぶ を main 側が吸収する）。
+            // ダブルクリックでリネームしない（名前の変更は右クリックだけ）ので、単クリックを遅らせる理由が無い。
+            // ダブルクリックしても 2 発目は選ぶだけで、タブは増えない
             onClick={() => {
               if (editing) return
-              // **閉じている行のクリックだけ**を遅らせる。ここを遅らせないと、
-              // リネームしようとしただけでタブが生まれて読み込みが走る。
-              // 既に開いている行の選択は即時（遅らせると通常操作が重くなるだけ）。
-              if (isOpen) void window.nemo.openPinned(node.id)
-              else schedule(() => void window.nemo.openPinned(node.id))
+              void window.nemo.openPinned(node.id)
             }}
-            onDoubleClick={onDoubleClick}
             onContextMenu={(event) =>
               openMenu(event, node.id, [
                 // 名前・アイコン・URL の編集は排他（複数開くとフォーカスを取り合う）
@@ -271,17 +256,7 @@ export function PinnedTree({
               onCancel={() => setEditingId(null)}
             />
             {tab?.audible ? <span className="mark">♪</span> : null}
-            <button
-              type="button"
-              className="x"
-              title="ピン留めを解除"
-              onClick={(event) => {
-                event.stopPropagation()
-                void window.nemo.unpin(node.id)
-              }}
-            >
-              ×
-            </button>
+            {/* ×ボタンは置かない。ホバー中の押し間違いで外さないよう、解除は右クリックの「ピン留めを解除」だけ */}
           </div>
           {/* アイコン編集は行内に収まらないので、対象行の直下に枠を出す */}
           {iconEditingId === node.id ? (

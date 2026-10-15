@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 /**
  * サイドバーの行をその場でリネームする。
@@ -6,54 +6,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
  * 確定は Enter と blur、取消は Esc。**空にして確定したら解除**（`null` を送る）で、
  * 表示は実タイトルに戻る。
  */
-
-/**
- * 単クリックを遅らせる時間。
- *
- * ブラウザは `click` → `click` → `dblclick` の順に撃つので、
- * 「編集を始めたらクリックを止める」だけでは間に合わない。
- * **1回目の click の時点で待つ**必要がある。
- */
-export const CLICK_DELAY_MS = 250
-
-/**
- * ダブルクリック待ちのために単クリックを遅らせる。
- *
- * 遅らせるのは「**閉じているピンを新しく読み込むクリック**」だけ。
- * ここを遅らせないと、リネームしようとしただけでタブが生まれて読み込みが走る
- * （＝遅延ロードの意味が消える）。
- * 逆に、既に開いている専用タブ・一時タブの選択やフォルダの開閉まで遅らせると、
- * 通常操作が常に重くなるだけなので即時のままにする。
- * Favorites のグリッドはダブルクリックでリネームしない（右クリックだけ）ので、
- * 閉じている枠でも遅らせず即時に開く。
- */
-export function useDelayedClick(): {
-  schedule: (run: () => void) => void
-  cancel: () => void
-} {
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const cancel = useCallback(() => {
-    if (timer.current === null) return
-    clearTimeout(timer.current)
-    timer.current = null
-  }, [])
-
-  const schedule = useCallback(
-    (run: () => void) => {
-      cancel()
-      timer.current = setTimeout(() => {
-        timer.current = null
-        run()
-      }, CLICK_DELAY_MS)
-    },
-    [cancel]
-  )
-
-  useEffect(() => cancel, [cancel])
-
-  return { schedule, cancel }
-}
 
 /**
  * 編集用の入力欄。
@@ -123,7 +75,7 @@ export function RenameInput({
 /**
  * 行の名前（表示 / 編集の切り替え）。
  *
- * 編集に入る操作（ダブルクリック・メニューの「名前を変更」）は行の側が持つ。
+ * 編集に入る操作（一時タブ行のダブルクリック・メニューの「名前を変更」）は行の側が持つ。
  * ここは `editing` を見て描き分けるだけにして、どの行でも同じ規則にする。
  */
 export function InlineRename({

@@ -133,6 +133,55 @@ function jevAnswer(body) {
 const UNLOAD = `<!doctype html><title>unload guard</title><body><input id="t" value="dirty">
 <script>addEventListener('beforeunload', (e) => { e.preventDefault(); e.returnValue = 'x' })</script></body>`
 
+/**
+ * ページのコピーボタン（計画 2026-10-16「ユーザーが押したコピーボタン」）。結果は `window.__copyLog` に残す
+ * （「クリップボードが変わらない」を、ボタンが走らなかったことと区別する）。
+ * 遅れて書くボタンは、`writeText` は実入力の窓（`COPY_USER_INPUT_MS`）を過ぎてから、`execCommand` は
+ * Chromium の activation（5 秒）が生きている間に走る
+ */
+const COPY_USER_INPUT_MS = 1500
+const COPY_LATER_WRITE_TEXT_MS = 2500
+const COPY_LATER_EXEC_MS = 1000
+const COPY = `<!doctype html><html><head><meta charset="utf-8"><title>copy</title></head><body style="font:14px sans-serif;margin:0">
+<button id="wt" style="position:absolute;left:20px;top:20px;width:220px;height:40px">Copy writeText</button>
+<button id="ec" style="position:absolute;left:20px;top:80px;width:220px;height:40px">Copy execCommand</button>
+<button id="wtLater" style="position:absolute;left:20px;top:140px;width:220px;height:40px">Copy writeText later</button>
+<button id="ecLater" style="position:absolute;left:20px;top:200px;width:220px;height:40px">Copy execCommand later</button>
+<button id="paste" style="position:absolute;left:20px;top:260px;width:220px;height:40px">Paste execCommand</button>
+<button id="wtKey" style="position:absolute;left:20px;top:320px;width:220px;height:40px">Copy writeText by key</button>
+<button id="ecKey" style="position:absolute;left:20px;top:380px;width:220px;height:40px">Copy execCommand by key</button>
+<script>
+window.__copyLog = []
+const n = new URLSearchParams(location.search).get('n') || '0'
+const rec = (entry) => window.__copyLog.push(Object.assign(entry, { focused: document.hasFocus() }))
+const value = (id) => 'agent-verify-copied-' + id + '-' + n
+const viaWriteText = (id) =>
+  navigator.clipboard.writeText(value(id)).then(
+    () => rec({ id, ok: true }),
+    (e) => rec({ id, ok: false, error: String(e && e.message) })
+  )
+const viaExec = (id) => {
+  const ta = document.createElement('textarea')
+  ta.value = value(id)
+  document.body.appendChild(ta)
+  ta.select()
+  const active = navigator.userActivation.isActive
+  const ok = document.execCommand('copy')
+  ta.remove()
+  rec({ id, ok, active })
+}
+document.getElementById('wt').onclick = () => viaWriteText('wt')
+document.getElementById('ec').onclick = () => viaExec('ec')
+document.getElementById('wtLater').onclick = () => setTimeout(() => viaWriteText('wtLater'), ${COPY_LATER_WRITE_TEXT_MS})
+document.getElementById('ecLater').onclick = () => setTimeout(() => viaExec('ecLater'), ${COPY_LATER_EXEC_MS})
+document.getElementById('paste').onclick = () => rec({ id: 'paste', ok: document.execCommand('paste') })
+document.getElementById('wtKey').onclick = () => viaWriteText('wtKey')
+document.getElementById('ecKey').onclick = () => viaExec('ecKey')
+// iframe の中では、CDP の合成クリックの座標が device px の倍率でずれて届く（2026-10-16 に実測。Retina で 2 倍）。どこを押しても当たるようにする
+if (new URLSearchParams(location.search).get('layout') === 'fill')
+  document.getElementById('ec').style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;z-index:10'
+</script></body></html>`
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://x')
   if (url.pathname === '/page') {
@@ -148,6 +197,15 @@ const server = http.createServer((req, res) => {
   } else if (url.pathname === '/next') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
     res.end(NEXT)
+  } else if (url.pathname === '/copy') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    res.end(COPY)
+  } else if (url.pathname === '/copy-frame') {
+    // 別サイト（localhost と 127.0.0.1）の iframe = 別プロセスの iframe に、同じコピーボタンを置く
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    res.end(
+      `<!doctype html><title>copy frame</title><body style="margin:0"><iframe src="http://localhost:${url.searchParams.get('port')}/copy?n=frame&layout=fill" style="position:absolute;left:0;top:0;width:400px;height:340px;border:0"></iframe></body>`
+    )
   } else if (url.pathname === '/unload') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
     res.end(UNLOAD)
@@ -319,7 +377,8 @@ try {
         NEMO_HTTP_AUTH_TEST_CRYPTO: 'memory',
         NEMO_KYPR_TEST_TOUCHID: 'ok',
         NEMO_KYPR_TEST_CLIPBOARD: 'memory',
-        NEMO_JEV_TEST_ENDPOINT: `${origin}/v1/systemone`
+        NEMO_JEV_TEST_ENDPOINT: `${origin}/v1/systemone`,
+        NEMO_AGENT_TEST_USER_INPUT_MS: String(COPY_USER_INPUT_MS)
       }
     })
     spawned.push(child)
@@ -1177,6 +1236,275 @@ try {
     onKypr === onOther && onKypr.startsWith('{'),
     `kypr=${onKypr.slice(0, 120)} / other=${onOther.slice(0, 120)}`
   )
+  /* ---- 9. ページのコピーボタン（計画 2026-10-16「ユーザーが押したコピーボタン」。issue #5） ---- */
+  // **実クリップボードを使う**（ページのコピーは Chromium がシステムのクリップボードに直接書くので、メモリに差し替えられない）。
+  // 先に形式ごと退避し、最後に戻す（中身がまだ検証の書いた値のときだけ）
+  const pageClip = (action, value) =>
+    aj(`window.nemo.pageClipboardForVerify(${JSON.stringify(action)}, ${JSON.stringify(value ?? null)})`)
+  let copyN = 0
+  /** Claude の navigate で開き、ページに CDP で繋ぐ（値の確かめ用。**マウスは撃たない**） */
+  const openCopy = async (pathname = '/copy') => {
+    copyN += 1
+    const query = pathname === '/copy' ? `?n=${copyN}` : `?port=${server.address().port}&n=${copyN}`
+    await bridge.call('navigate', { tabId, url: `${origin}${pathname}${query}` })
+    const session = await connectTo(app.cdp, `${pathname}${query}`, { type: 'page' })
+    await waitFor(session, "document.readyState === 'complete' ? 'ok' : ''")
+    return { session, key: await agentTabKey(`${pathname}${query}`) }
+  }
+  /** ボタンの結果（`window.__copyLog`）が出るのを待って返す */
+  const copyLog = async (session, id) => {
+    const want = JSON.stringify(id)
+    await waitFor(session, `window.__copyLog.some((e) => e.id === ${want}) ? 'ok' : ''`, {
+      timeoutMs: 8000
+    }).catch(() => '')
+    return JSON.parse(
+      await session.ev(`JSON.stringify(window.__copyLog.filter((e) => e.id === ${want}).pop() ?? null)`)
+    )
+  }
+  /**
+   * ユーザーの実クリック相当（`sendInputEvent`。Claude の送出中フラグが立たないので実マウスとして扱われる）。
+   * 検証では窓を本当に key にできない（前面を奪わない）ので、ユーザーが窓をクリックしてページにフォーカスがある状態を
+   * 検証側の CDP のフォーカスのエミュレーションで作る（`writeText` は document にフォーカスが無いと権限の要求まで届かない）
+   */
+  const userClick = async (page, id) => {
+    await page.session.send('Emulation.setFocusEmulationEnabled', { enabled: true })
+    const at = JSON.parse(
+      await page.session.ev(
+        `JSON.stringify((() => { const r = document.getElementById(${JSON.stringify(id)}).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })())`
+      )
+    )
+    return aj(`window.nemo.clickForVerify(${JSON.stringify(page.key)}, ${at.x}, ${at.y})`)
+  }
+  /** Claude のクリック（read_page の ref） */
+  const claudeClick = async (label) => {
+    const tree = await bridge.call('read_page', { tabId })
+    const line = tree.text.split('\n').find((l) => l.includes(`button "${label}" [`)) ?? ''
+    return bridge.call('computer', { tabId, action: 'left_click', ref: line.match(/\[(ref_\d+)\]/)?.[1] })
+  }
+  /** Claude の番に戻す（窓が key のままだと Claude の入力が断られる） */
+  const backToClaude = async () => {
+    await bridge.call('resume')
+    await aj('window.nemo.agentKeyForVerify(false)')
+    await ui.ev("window.nemo.focusForVerify('toolbar').then(String)")
+    await sleep(500)
+  }
+  /** 検証がクリップボードに書いた・書かせた値（戻すのは中身がこのどれかのときだけ） */
+  const pageClipWritten = []
+  /** ページのボタンがコピーする値（fixture の `value(id)`） */
+  const copiedValue = (id) => {
+    const value = `agent-verify-copied-${id}-${copyN}`
+    pageClipWritten.push(value)
+    return value
+  }
+  let sentinelN = 0
+  const setSentinel = async () => {
+    sentinelN += 1
+    const value = `agent-verify-sentinel-${sentinelN}`
+    pageClipWritten.push(value)
+    await pageClip('write', value)
+    return value
+  }
+  const clipboardPermissionLines = () =>
+    readLogLines(userData).filter(
+      (line) => line.includes('"event":"permission.request"') && line.includes('clipboard-sanitized-write')
+    )
+  const shortClip = (value, sentinel) => (value === sentinel ? '番兵のまま' : value)
+
+  await pageClip('backup')
+  try {
+    // ① Claude の番: Claude が押したコピーボタンでは変わらない（writeText は権限の要求まで届いて断られる。
+    //    execCommand は activation があっても断られる）
+    let cp = await openCopy()
+    let sentinel = await setSentinel()
+    let permBefore = clipboardPermissionLines().length
+    await claudeClick('Copy writeText')
+    await claudeClick('Copy execCommand')
+    const c1 = { wt: await copyLog(cp.session, 'wt'), ec: await copyLog(cp.session, 'ec') }
+    const c1clip = await pageClip('read')
+    const c1perm = clipboardPermissionLines().slice(permBefore)
+    check(
+      'コピー: Claude の番に Claude が押したコピーボタンでは、writeText も execCommand もクリップボードを変えない',
+      c1clip === sentinel &&
+        c1.wt?.ok === false &&
+        c1.ec?.ok === false &&
+        c1.ec?.active === true &&
+        c1perm.some((l) => l.includes('"reason":"user-absent"')),
+      JSON.stringify({ ...c1, clip: shortClip(c1clip, sentinel), perm: c1perm.length })
+    )
+    // ⑥ ガードを開ける知らせの名前はページから読めない（差し替えた execCommand の本体に書いていない）
+    const guardText = await cp.session.ev(
+      'String(document.execCommand) + String(Document.prototype.execCommand)'
+    )
+    check(
+      'コピー: ページが execCommand の toString() を読んでも、ガードを開ける知らせの名前は出てこない',
+      guardText.includes('copyUntil') && !/nemo-[0-9a-f]{24}/.test(guardText),
+      guardText.replace(/\s+/g, ' ').slice(0, 120)
+    )
+
+    // ② ユーザーの番に実クリックしたコピーボタンでは変わる。⑤ paste は断る。③ 窓を過ぎたタイマーの writeText は断る
+    cp = await openCopy()
+    await bridge.call('request_user_action', { tabId, message: 'コピーしてください' })
+    sentinel = await setSentinel()
+    await userClick(cp, 'wt')
+    const c2wt = await copyLog(cp.session, 'wt')
+    const c2wtClip = await pageClip('read')
+    check(
+      'コピー: ユーザーの番に実クリックしたコピーボタン（writeText）でクリップボードが変わる',
+      c2wt?.ok === true && c2wtClip === copiedValue('wt'),
+      JSON.stringify({ wt: c2wt, clip: shortClip(c2wtClip, sentinel) })
+    )
+    sentinel = await setSentinel()
+    await userClick(cp, 'ec')
+    const c2ec = await copyLog(cp.session, 'ec')
+    const c2ecClip = await pageClip('read')
+    check(
+      'コピー: ユーザーの番に実クリックしたコピーボタン（execCommand）でクリップボードが変わる',
+      c2ec?.ok === true && c2ecClip === copiedValue('ec'),
+      JSON.stringify({ ec: c2ec, clip: shortClip(c2ecClip, sentinel) })
+    )
+    // 実キー（フォーカスしたボタンを Enter）でも、同じキーの中で走るコピーに判定が間に合う
+    for (const id of ['wtKey', 'ecKey']) {
+      sentinel = await setSentinel()
+      await cp.session.send('Emulation.setFocusEmulationEnabled', { enabled: true })
+      await cp.session.ev(`document.getElementById(${JSON.stringify(id)}).focus(), 'ok'`)
+      await aj(`window.nemo.pressKeyForVerify(${JSON.stringify(cp.key)}, 'Enter')`)
+      const byKey = await copyLog(cp.session, id)
+      const byKeyClip = await pageClip('read')
+      check(
+        `コピー: ユーザーの番に実キー（Enter）で押したコピーボタン（${id === 'wtKey' ? 'writeText' : 'execCommand'}）でクリップボードが変わる`,
+        byKey?.ok === true && byKeyClip === copiedValue(id),
+        JSON.stringify({ [id]: byKey, clip: shortClip(byKeyClip, sentinel) })
+      )
+    }
+    await userClick(cp, 'paste')
+    const c2paste = await copyLog(cp.session, 'paste')
+    check(
+      'コピー: ユーザーの番でも execCommand("paste") は断る',
+      c2paste?.ok === false,
+      JSON.stringify(c2paste)
+    )
+    sentinel = await setSentinel()
+    permBefore = clipboardPermissionLines().length
+    await userClick(cp, 'wtLater')
+    const c3 = await copyLog(cp.session, 'wtLater')
+    const c3clip = await pageClip('read')
+    const c3perm = clipboardPermissionLines().slice(permBefore)
+    check(
+      `コピー: ユーザーの番でも、実入力から ${COPY_USER_INPUT_MS}ms を過ぎてページのタイマーが呼んだ writeText は断る`,
+      c3?.ok === false && c3clip === sentinel && c3perm.some((l) => l.includes('"reason":"no-recent-input"')),
+      JSON.stringify({ wtLater: c3, clip: shortClip(c3clip, sentinel), perm: c3perm.length })
+    )
+    await backToClaude()
+
+    // ② ユーザーの番でなくても、ユーザーが窓にいる（key。検証では forcedKey）ときの実クリックなら変わる
+    cp = await openCopy()
+    await aj('window.nemo.agentKeyForVerify(true)')
+    sentinel = await setSentinel()
+    await userClick(cp, 'wt')
+    const c2key = await copyLog(cp.session, 'wt')
+    const c2keyClip = await pageClip('read')
+    check(
+      'コピー: ユーザーが窓にいるとき（ユーザーの番でない）の実クリックでもクリップボードが変わる',
+      c2key?.ok === true && c2keyClip === copiedValue('wt'),
+      JSON.stringify({ wt: c2key, clip: shortClip(c2keyClip, sentinel) })
+    )
+    await backToClaude()
+
+    // ④ Claude が javascript_tool を実行した document では、ユーザーの番の実クリックでも変わらない
+    cp = await openCopy()
+    await bridge.call('javascript_tool', { tabId, text: '1' })
+    await bridge.call('request_user_action', { tabId, message: 'コピーしてください' })
+    sentinel = await setSentinel()
+    permBefore = clipboardPermissionLines().length
+    await userClick(cp, 'wt')
+    await userClick(cp, 'ec')
+    const c4 = { wt: await copyLog(cp.session, 'wt'), ec: await copyLog(cp.session, 'ec') }
+    const c4clip = await pageClip('read')
+    const c4perm = clipboardPermissionLines().slice(permBefore)
+    check(
+      'コピー: Claude が javascript_tool を実行したページでは、ユーザーの番の実クリックでもクリップボードを変えない',
+      c4clip === sentinel &&
+        c4.wt?.ok === false &&
+        c4.ec?.ok === false &&
+        c4.ec?.active === true &&
+        c4perm.some((l) => l.includes('"reason":"agent-script"')),
+      JSON.stringify({ ...c4, clip: shortClip(c4clip, sentinel), perm: c4perm.length })
+    )
+    await backToClaude()
+
+    // ③ Claude が押した直後にユーザーの番にしても、遅れて走るページの execCommand('copy') は断る
+    //    （Claude のクリックの activation は生きているが、ユーザーの実入力でガードが開いていない）
+    cp = await openCopy()
+    sentinel = await setSentinel()
+    await claudeClick('Copy execCommand later')
+    await bridge.call('request_user_action', { tabId, message: 'コピーしてください' })
+    const c3ec = await copyLog(cp.session, 'ecLater')
+    const c3ecClip = await pageClip('read')
+    check(
+      'コピー: Claude が押した直後にユーザーの番にしても、遅れて走るページの execCommand("copy") は断る',
+      c3ec?.ok === false && c3ec?.active === true && c3ecClip === sentinel,
+      JSON.stringify({ ecLater: c3ec, clip: shortClip(c3ecClip, sentinel) })
+    )
+    await backToClaude()
+
+    // ③ ユーザーの番を戻した直後（resume）は、ユーザーの実入力で開いたガードも閉じる
+    //    （遅れて走るページの execCommand('copy') を、番を戻した後に通さない）
+    cp = await openCopy()
+    await bridge.call('request_user_action', { tabId, message: 'コピーしてください' })
+    sentinel = await setSentinel()
+    await userClick(cp, 'ecLater')
+    await sleep(150)
+    await bridge.call('resume')
+    const cResume = await copyLog(cp.session, 'ecLater')
+    const cResumeClip = await pageClip('read')
+    check(
+      'コピー: ユーザーの番を戻した直後に、遅れて走るページの execCommand("copy") は断る（実入力で開いたガードも閉じる）',
+      cResume?.ok === false && cResume?.active === true && cResumeClip === sentinel,
+      JSON.stringify({ ecLater: cResume, clip: shortClip(cResumeClip, sentinel) })
+    )
+    await backToClaude()
+
+    // ① 別プロセスの iframe（別サイト）の中のコピーボタンも、Claude のクリックでは変わらない
+    const framePage = await openCopy('/copy-frame')
+    const frame = await connectTo(app.cdp, 'localhost', { type: 'iframe' }).catch(() => null)
+    if (frame) await waitFor(frame, "document.readyState === 'complete' ? 'ok' : ''")
+    // iframe のガードは読み込みの後に入る（did-frame-finish-load）。入るのを待ってから押す
+    const frameGuard = frame
+      ? await waitFor(frame, "window.__nemoAgentGuardInstalled === true ? 'installed' : ''", {
+          timeoutMs: 5000
+        }).catch(() => 'missing')
+      : 'no-target'
+    sentinel = await setSentinel()
+    // computer の座標はスクショの px（CSS px × 縮尺）
+    const frameShot = await bridge.call('computer', { tabId, action: 'screenshot' })
+    const shotWidth = frameShot.image
+      ? (jpegSize(Buffer.from(frameShot.image.data, 'base64'))?.width ?? 0)
+      : 0
+    const frameScale = shotWidth / Number((await framePage.session.ev('innerWidth')) || 1)
+    await bridge.call('computer', {
+      tabId,
+      action: 'left_click',
+      coordinate: [Math.round(130 * frameScale), Math.round(100 * frameScale)]
+    })
+    const cFrame = frame ? await copyLog(frame, 'ec') : null
+    const cFrameClip = await pageClip('read')
+    check(
+      'コピー: 別プロセスの iframe の中のコピーボタン（execCommand）も、Claude のクリックではクリップボードを変えない',
+      cFrameClip === sentinel && cFrame?.ok === false && cFrame?.active === true,
+      JSON.stringify({ guard: frameGuard, ec: cFrame, clip: shortClip(cFrameClip, sentinel) })
+    )
+    frame?.close()
+  } finally {
+    // 戻すのは中身がまだ検証の書いた値のときだけ（途中でユーザーがコピーしたものは上書きしない）
+    const restored = await pageClip('restore', pageClipWritten).catch(() => null)
+    check(
+      'コピー: 退避した実クリップボードを戻す（中身がまだ検証の書いた値のときだけ）',
+      restored === 'restored' || restored === 'skipped',
+      String(restored)
+    )
+  }
+  await backToClaude()
+
   agentUi2.close()
   await bridge.call('navigate', { tabId, url: `${origin}/page` })
 

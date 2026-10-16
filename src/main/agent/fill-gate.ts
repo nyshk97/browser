@@ -1,7 +1,12 @@
 import { webContents as webContentsModule, type WebContents } from 'electron'
 import { log, logError } from '../log.js'
 import { findTabByWebContents, type NemoWindow } from '../registry.js'
-import { isAgentContents, type AgentFillHooks, type AgentFillRefusal } from './contents.js'
+import {
+  isAgentContents,
+  type AgentClipboardRefusal,
+  type AgentFillHooks,
+  type AgentFillRefusal
+} from './contents.js'
 import { agentPageOf, isWindowKey } from './connection.js'
 import type { AgentPage } from './page.js'
 
@@ -97,7 +102,8 @@ function chainOf(wc: WebContents): WebContents[] {
 async function markPage(page: AgentPage | null, onlyIfClean = false): Promise<'ok' | 'tainted' | 'failed'> {
   if (!page) return 'failed'
   try {
-    const result = await page.page<{ ok?: boolean; reason?: string }>('markScriptRan', onlyIfClean)
+    // ユーザーの実入力で開いた execCommand('copy') のガードも、同じ world の中で閉じる（実行する JS に copy させない）
+    const result = await page.markScriptRan(onlyIfClean)
     if (result?.ok === true) return 'ok'
     return result?.reason === 'tainted' ? 'tainted' : 'failed'
   } catch {
@@ -178,6 +184,33 @@ async function rememberSecrets(wc: WebContents, values: string[]): Promise<Agent
   }
 }
 
+/**
+ * ページがクリップボードに書いてよいか（計画 2026-10-16「ユーザーが押したコピーボタン」の決定表の 4 条件）。
+ * 権限の要求（`security.ts`）と execCommand のガードの開け閉め（`page.ts`）が `contents.ts` の口から呼ぶ。
+ */
+async function clipboardRefusal(wc: WebContents): Promise<AgentClipboardRefusal | null> {
+  const now = clipboardRefusalNow(wc)
+  if (now) return now
+  // 4. Claude が javascript_tool を実行した document（と opener でつながったページ）ではない
+  return refusal(wc)
+}
+
+/**
+ * 4 条件のうち同期で判定できるもの（1〜3）。execCommand のガードを開ける知らせを送る**直前に**引き直す
+ * （条件 4 を待つ間にユーザーの番が終わる・窓から離れると、閉じた後に開く知らせが届きうる）。
+ */
+function clipboardRefusalNow(wc: WebContents): AgentClipboardRefusal | null {
+  const page = agentPageOf(wc)
+  if (!page) return 'agent-page'
+  // 1. ユーザーの番か、ユーザーが窓にいる（検証の forcedKey も含む）。タブに載っていない popup の子は断る
+  if (!page.userPresent() && !userAtWindow(wc)) return 'user-absent'
+  // 2. Claude の入力の最中ではない
+  if (page.agentInputInFlight()) return 'agent-input'
+  // 3. 直近にユーザーの実入力がある（ページのタイマーからのコピーを通さない）
+  if (!page.userInputRecent()) return 'no-recent-input'
+  return null
+}
+
 function userAtWindow(wc: WebContents): boolean {
   const found = findTabByWebContents(wc)
   if (!found || found.win.isDestroyed) return false
@@ -196,7 +229,14 @@ async function prepareDebugger(wc: WebContents): Promise<boolean> {
   }
 }
 
-export const agentFillHooks: AgentFillHooks = { refusal, rememberSecrets, userAtWindow, prepareDebugger }
+export const agentFillHooks: AgentFillHooks = {
+  refusal,
+  clipboardRefusal,
+  clipboardRefusalNow,
+  rememberSecrets,
+  userAtWindow,
+  prepareDebugger
+}
 
 /** 検証用（`NEMO_VERIFY_DIAGNOSTICS=1` の IPC からだけ）。 */
 export function setAgentKeyForVerify(win: NemoWindow, on: boolean): void {

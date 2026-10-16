@@ -419,6 +419,10 @@ export const AGENT_PAGE_SOURCE =
     }
     return { masked: masks.length }
   }
+  // main world のガードへの知らせ。**この world から送る**（ページが差し替えた dispatchEvent / Event を通らない）。名前は main が決めた乱数
+  const gateSignal = (type) => {
+    if (typeof type === 'string' && type) document.dispatchEvent(new Event(type))
+  }
   const unmaskSecrets = () => {
     for (const box of masks) box.remove()
     masks = []
@@ -426,8 +430,18 @@ export const AGENT_PAGE_SOURCE =
   }
 
   g.__nemoAgent = {
-    setActive: (value) => {
+    // closeType: Claude の入力に入るときは execCommand('copy') のガードも同じ world の中で閉じる（copyGate の open と排他）
+    setActive: (value, closeType) => {
       agentActive = value === true
+      if (agentActive) gateSignal(closeType)
+      return { ok: true }
+    },
+    // main world のガード（agentMainWorldGuard）に execCommand('copy') の開け閉めを知らせる。
+    // **開けるのは Claude の入力中でも javascript_tool を実行した document でもないときだけ**（main の判定を待つ間に
+    // setActive / markScriptRan が割り込んでも、開けた後に JS や Claude の入力が走らないように world の中で排他にする）
+    copyGate: (type, open) => {
+      if (open === true && (agentActive || scriptRan)) return { ok: false }
+      gateSignal(type)
       return { ok: true }
     },
     state: () => ({ tainted, scriptRan, secrets: secrets.size, url: location.href }),
@@ -445,9 +459,11 @@ export const AGENT_PAGE_SOURCE =
     // javascript_tool の実行前に main が呼ぶ（この document には kypr が値を入れない）。
     // 実行する document（onlyIfClean）では、ユーザーが秘密を入れていたら立てずに断る。
     // opener でつながったページには taint によらず立てる
-    markScriptRan: (onlyIfClean) => {
+    // closeType: 実行する JS に copy させないよう、execCommand('copy') のガードも同じ world の中で閉じる
+    markScriptRan: (onlyIfClean, closeType) => {
       if (onlyIfClean === true && tainted) return { ok: false, reason: 'tainted' }
       scriptRan = true
+      gateSignal(closeType)
       return { ok: true }
     },
     tree,
@@ -467,8 +483,20 @@ export const AGENT_PAGE_SOURCE =
  * main world に入れる**ガード**（`Page.addScriptToEvaluateOnNewDocument`）。
  * 閉じられないネイティブ UI（印刷パネル・`showPicker`）とクリップボードの上書き（`execCommand('copy')` は
  * permission handler を通らない。実測）を、エージェント窓のページでは起こさせない。
+ *
+ * `execCommand('copy' / 'cut')` は、main が isolated world から `gate.open` を送ってから `gate.windowMs` の間だけ通す
+ * （ユーザーの実入力のときに main が判定して送る。Claude の入力の前・javascript_tool の前には `gate.close` で閉じる）。
+ * `gate` が null なら常に断る（iframe 用。開ける知らせは main frame にしか送らない）。paste は常に断る。
+ *
+ * - 知らせの名前はプロセスごとの乱数で、**外側の関数にだけ書く**（差し替えた `execCommand` の本体に書くと `toString()` で読める）
+ * - shim の中では prototype や `call` / `apply` / `performance.now` を引き直さない（ページが後から差し替えると迂回・延長できる）。
+ *   起動時に手元に取っておいたものだけを使う
+ *
+ * @param {{ open: string, close: string, windowMs: number } | null} gate
  */
-export const AGENT_MAIN_WORLD_GUARD = String.raw`
+export function agentMainWorldGuard(gate) {
+  return (
+    String.raw`
 (() => {
   if (window.__nemoAgentGuardInstalled) return
   Object.defineProperty(window, '__nemoAgentGuardInstalled', { value: true })
@@ -481,12 +509,36 @@ export const AGENT_MAIN_WORLD_GUARD = String.raw`
     if (window.HTMLSelectElement && HTMLSelectElement.prototype.showPicker) HTMLSelectElement.prototype.showPicker = refuse
   } catch (e) {}
   try {
+    const apply = Reflect.apply
     const original = Document.prototype.execCommand
-    Document.prototype.execCommand = function (command) {
-      const name = String(command).toLowerCase()
-      if (name === 'copy' || name === 'cut' || name === 'paste') return false
-      return original.apply(this, arguments)
+    const lower = String.prototype.toLowerCase
+    const toText = String
+    const clock = Performance.prototype.now
+    const perf = performance
+    const now = () => apply(clock, perf, [])
+    let copyUntil = 0
+` +
+    (gate
+      ? String.raw`    const listen = EventTarget.prototype.addEventListener
+    apply(listen, document, [` +
+        JSON.stringify(gate.open) +
+        String.raw`, () => { copyUntil = now() + ` +
+        String(Math.max(0, Math.floor(gate.windowMs))) +
+        String.raw` }])
+    apply(listen, document, [` +
+        JSON.stringify(gate.close) +
+        String.raw`, () => { copyUntil = 0 }])
+`
+      : '') +
+    String.raw`    Document.prototype.execCommand = function execCommand(command, showUI, value) {
+      // 文字列にするのは 1 回だけ（toString を持つオブジェクトで、判定と実行に別の名前を返させない）
+      const name = apply(lower, toText(command), [])
+      if (name === 'paste') return false
+      if ((name === 'copy' || name === 'cut') && !(copyUntil > 0 && now() < copyUntil)) return false
+      return apply(original, this, [name, showUI, value])
     }
   } catch (e) {}
 })()
 `
+  )
+}

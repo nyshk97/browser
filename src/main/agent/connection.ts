@@ -320,6 +320,10 @@ export class AgentConnection {
     }
     // key になれない状態へ戻すのは「Nemo の通常窓が key になったとき」だけ（`setAgentWindowsKeyable`）。
     // blur のたびに戻すと、ターミナルからこの窓をクリックしたときに常用窓の Space へ飛ばされた（2026-10-04）
+    // ユーザーが窓から離れたら、実入力で開いた execCommand('copy') のガードを閉じる（ユーザーの番のタブは番が続くので残す）
+    win.baseWindow.on('blur', () => {
+      for (const tab of win.normalTabs) if (!this.isUserTurn(tab)) void pageFor(tab)?.closeCopyGate()
+    })
   }
 
   tokenFor(tab: NemoTab): string {
@@ -417,7 +421,11 @@ export class AgentConnection {
     for (const key of keys) {
       const tab = this.window?.findTab(key)
       const page = tab ? pageFor(tab) : null
-      if (page) void page.setFileChooserIntercept(true)
+      if (page) {
+        void page.setFileChooserIntercept(true)
+        // ユーザーの番が終わったら、実入力で開いた execCommand('copy') のガードを閉じる
+        void page.closeCopyGate()
+      }
     }
     this.syncWindowState()
     updateDockBadge()

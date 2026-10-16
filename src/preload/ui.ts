@@ -120,6 +120,12 @@ const api: NemoUiApi = {
     ipcRenderer.invoke('nemo:set-fake-displays-for-verify', count).catch(() => 0) as Promise<number>,
   screenAccessStatusForVerify: () =>
     ipcRenderer.invoke('nemo:screen-access-status-for-verify').catch(() => 'unknown') as Promise<string>,
+  clickForVerify: (key, x, y) =>
+    ipcRenderer.invoke('nemo:click-for-verify', key, x, y).catch(() => false) as Promise<boolean>,
+  pageClipboardForVerify: (action, value) =>
+    ipcRenderer.invoke('nemo:page-clipboard-for-verify', action, value ?? null).catch(() => null) as Promise<
+      string | boolean | null
+    >,
   focusForVerify: (target) =>
     ipcRenderer.invoke('nemo:focus-for-verify', target).catch(() => false) as Promise<boolean>,
   agentKeyForVerify: (on) =>

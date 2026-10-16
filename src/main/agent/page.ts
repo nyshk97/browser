@@ -1,6 +1,8 @@
-import { dialog, type BaseWindow, type WebContents } from 'electron'
+import { app, dialog, webFrameMain, type BaseWindow, type WebContents } from 'electron'
+import { randomBytes } from 'node:crypto'
 import { log, logError } from '../log.js'
-import { AGENT_MAIN_WORLD_GUARD, AGENT_PAGE_SOURCE, AGENT_WORLD_ID } from '../../shared/agent-page-source.js'
+import { AGENT_PAGE_SOURCE, AGENT_WORLD_ID, agentMainWorldGuard } from '../../shared/agent-page-source.js'
+import { agentClipboardRefusal, agentClipboardRefusalNow } from './contents.js'
 
 /**
  * エージェント窓のタブ 1 枚ぶんの操作口（ページの WebContents 1 つに 1 つ）。
@@ -76,6 +78,35 @@ const NETWORK_LIMIT = 1000
 /** スクショの長辺の上限（Claude Code は 2000px に縮めるが、1 メッセージ 16MiB で接続ごと切れるので Nemo 側で抑える）。 */
 const SCREENSHOT_LONG_EDGE = 1568
 
+/**
+ * ユーザーの実入力から何 ms の間、ページのコピーを通すか（Chromium の transient activation と同じ 5 秒）。
+ * 自走検証だけ env で縮める（パッケージ版では無視する）。
+ */
+const USER_INPUT_WINDOW_MS = (() => {
+  const override = Number(process.env['NEMO_AGENT_TEST_USER_INPUT_MS'])
+  if (!app.isPackaged && Number.isFinite(override) && override > 0) return override
+  return 5000
+})()
+
+/**
+ * `execCommand('copy')` のガード（main world）を開け閉めする知らせの名前。**プロセスごとの乱数**にして、
+ * ページが名前を当てて自分で開けられないようにする（`agentMainWorldGuard`）。
+ */
+const COPY_GATE = {
+  open: `nemo-${randomBytes(12).toString('hex')}`,
+  close: `nemo-${randomBytes(12).toString('hex')}`
+}
+
+/**
+ * iframe に入れるガード。**別プロセスの iframe には `Page.addScriptToEvaluateOnNewDocument` が届かない**
+ * （2026-10-16 に実測。Claude のクリックで iframe の中の `execCommand('copy')` がクリップボードを書き換えた）。
+ * iframe の `execCommand('copy')` はユーザーの番でも開けない（開ける知らせは main frame にしか送らない。
+ * `writeText` は権限の判定を通るので iframe でも使える）。
+ * **遷移・読み込みの後に入れるので、iframe のページ自身のスクリプトには先回りされうる**（ふつうのページのコピーボタンを
+ * Claude が押す経路を塞ぐもの。悪意のある iframe まで防ぐには document の開始時に入れる手段（`Target.setAutoAttach`）が要る）
+ */
+const SUBFRAME_GUARD = agentMainWorldGuard(null)
+
 export interface PageHost {
   /** この WebContents が載っている窓（無ければ null）。 */
   window(): BaseWindow | null
@@ -119,6 +150,8 @@ export class AgentPage {
   private dialogOverrideOk = false
   /** Claude が撃っている最中のマウス（`before-mouse-event` を実マウスと見分ける。ack より先に届く。実測）。 */
   private cdpMouseInFlight = 0
+  /** ユーザーの最後の実入力（実マウスの mouseDown・実キーの keyDown）の時刻。ページのコピーを通す判定に使う。 */
+  private lastUserInputAt = 0
   private activeRefs = 0
   /** 入力系のツールの入れ子の数（isolated world の「Claude の入力中」を立てている数）。 */
   private inputRefs = 0
@@ -159,8 +192,26 @@ export class AgentPage {
     })
     // 実マウスでユーザーが来たことを知る（CDP のマウスは送出中フラグで除く）
     wc.on('before-mouse-event', (_event, input) => {
-      if (input.type === 'mouseDown' && this.cdpMouseInFlight === 0) this.host.userMouseDown()
+      if (input.type !== 'mouseDown' || this.cdpMouseInFlight !== 0) return
+      this.host.userMouseDown()
+      this.noteUserInput()
     })
+    // 実キー（CDP の Input.dispatchKeyEvent は before-input-event を発火させない。実測）
+    wc.on('before-input-event', (_event, input) => {
+      if (input.type === 'keyDown') this.noteUserInput()
+    })
+    // iframe にもガードを入れる（遷移の確定時と読み込みの完了時。ガードは 2 回目以降は何もしない）
+    const guardFrame = (isMainFrame: boolean, processId: number, routingId: number): void => {
+      if (isMainFrame) return
+      const frame = webFrameMain.fromId(processId, routingId)
+      if (frame && !frame.isDestroyed()) void frame.executeJavaScript(SUBFRAME_GUARD).catch(() => {})
+    }
+    wc.on('did-frame-navigate', (_event, _url, _code, _status, isMainFrame, processId, routingId) =>
+      guardFrame(isMainFrame, processId, routingId)
+    )
+    wc.on('did-frame-finish-load', (_event, isMainFrame, processId, routingId) =>
+      guardFrame(isMainFrame, processId, routingId)
+    )
     // ブロックリストのホストへは、ページ起点（リンク・リダイレクト）でも移らせない（Claude の番のとき）
     const guard = (event: { preventDefault(): void }, url: string, isMainFrame: boolean): void => {
       if (!isMainFrame || !this.host.navigationBlocked(url)) return
@@ -187,6 +238,54 @@ export class AgentPage {
 
   get alive(): boolean {
     return !this.wc.isDestroyed()
+  }
+
+  /* ---------------- ページのコピー ---------------- */
+
+  /** ユーザーがこの窓にいる（窓が key）か、ユーザーの番か。 */
+  userPresent(): boolean {
+    return this.host.userPresent()
+  }
+
+  /** 直近（`USER_INPUT_WINDOW_MS` 以内）にユーザーの実入力があったか。 */
+  userInputRecent(): boolean {
+    return this.lastUserInputAt > 0 && Date.now() - this.lastUserInputAt <= USER_INPUT_WINDOW_MS
+  }
+
+  /** Claude のマウス・キーを送っている最中か。 */
+  agentInputInFlight(): boolean {
+    return this.cdpMouseInFlight > 0 || this.inputRefs > 0
+  }
+
+  /**
+   * 実入力があった。`execCommand('copy')` のガードを、判定（`agentClipboardRefusal`）が通れば開ける。
+   * 開いたガードは `USER_INPUT_WINDOW_MS` で自分で閉じる。`writeText` の側は権限の要求のときに同じ判定を引き直す
+   */
+  private noteUserInput(): void {
+    this.lastUserInputAt = Date.now()
+    void (async () => {
+      const refused = await agentClipboardRefusal(this.wc)
+      // 判定を待つ間にユーザーの番が終わった・窓から離れた・Claude の入力が始まったなら開けない
+      // （同期の条件を引き直す。javascript_tool・Claude の入力中は world の側でも断る）
+      if (refused === null && agentClipboardRefusalNow(this.wc) === null)
+        await this.page('copyGate', COPY_GATE.open, true)
+    })().catch(() => {})
+  }
+
+  /**
+   * `execCommand('copy')` のガードを閉じる（Claude の入力の前・ユーザーの番を戻したとき・窓から離れたとき）。
+   * ダイアログ待ちなどで届かなくても止めない。
+   */
+  async closeCopyGate(): Promise<void> {
+    await this.page('copyGate', COPY_GATE.close, false).catch(() => {})
+  }
+
+  /**
+   * この document に「Claude が javascript_tool を実行した」を付ける（`fill-gate.ts`）。
+   * 同じ world の中で execCommand('copy') のガードも閉じる（実行する JS に copy させない）。
+   */
+  markScriptRan(onlyIfClean: boolean): Promise<{ ok?: boolean; reason?: string }> {
+    return this.page('markScriptRan', onlyIfClean, COPY_GATE.close)
   }
 
   /* ---------------- JS ダイアログ ---------------- */
@@ -307,7 +406,7 @@ export class AgentPage {
       }
       await this.send('Page.enable')
       await this.send('Page.addScriptToEvaluateOnNewDocument', {
-        source: AGENT_MAIN_WORLD_GUARD,
+        source: agentMainWorldGuard({ ...COPY_GATE, windowMs: USER_INPUT_WINDOW_MS }),
         runImmediately: true
       })
       await this.setFileChooserIntercept(true)
@@ -464,9 +563,12 @@ export class AgentPage {
     if (markInput) this.inputRefs += 1
     // ダイアログを保留している間はレンダラが止まっていて、エミュレーションの切り替えも返らない（実測）
     if (!this.dialog) {
+      // ユーザーの実入力で開いたコピーのガードを、Claude の入力の前に閉じる（直後の Claude のクリックで copy させない）
+      if (options.input === true) await this.closeCopyGate()
       if (this.activeRefs === 1)
         await this.send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {})
-      if (markInput && this.inputRefs === 1) await this.page('setActive', true).catch(() => {})
+      if (markInput && this.inputRefs === 1)
+        await this.page('setActive', true, COPY_GATE.close).catch(() => {})
       const state = await this.page<{ secrets?: number; tainted?: boolean }>('state').catch(() => null)
       if (state) {
         this.pageHadSecrets = (state.secrets ?? 0) > 0 || state.tainted === true

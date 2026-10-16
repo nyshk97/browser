@@ -1662,9 +1662,24 @@ export interface NemoUiApi {
   /**
    * タブのページへ実キー相当の入力を送る（**本番では何もしない**）。
    * CDP の `Input.dispatchKeyEvent` はブラウザ側の前処理を飛ばして main の
-   * `before-input-event` に届かないので、Peek / 小窓の Esc はここで撃つ。送れるのは Esc だけ。
+   * `before-input-event` に届かないので、Peek / 小窓の Esc はここで撃つ。送れるのは Esc と Enter
+   * （フォーカスしたボタンを押す）だけ。
    */
-  pressKeyForVerify(key: string, keyName: 'Escape'): Promise<boolean>
+  pressKeyForVerify(key: string, keyName: 'Escape' | 'Enter'): Promise<boolean>
+  /**
+   * タブのページへ実クリック相当のマウスを送る（**本番では何もしない**）。`sendInputEvent` なので、
+   * Claude のウィンドウでは実マウスとして扱われる（窓が key になりうる。ページのコピーを通す判定の検証用）
+   */
+  clickForVerify(key: string, x: number, y: number): Promise<boolean>
+  /**
+   * 実クリップボード（ページからのコピーの確認用。**本番では何もしない**）。`read` は文字列、`write` は番兵を書く、
+   * `backup` は形式ごと退避、`restore` は中身がまだ `value`（検証の書いた値の配列）のどれかのときだけ戻す
+   * （`'restored'` / `'skipped'` / `'none'`）
+   */
+  pageClipboardForVerify(
+    action: 'read' | 'write' | 'backup' | 'restore',
+    value?: string | string[]
+  ): Promise<string | boolean | null>
   /**
    * タブのページで右クリックの「フォーム自動入力」と同じ処理を走らせる（**本番では何もしない**）。
    * ネイティブの右クリックメニューは CDP から押せないので、同じ関数を名指しで呼ぶ。
@@ -1676,7 +1691,7 @@ export interface NemoUiApi {
   focusForVerify(target: 'page' | 'toolbar'): Promise<boolean>
   /**
    * Claude のウィンドウを「ユーザーが操作している（key）」とみなす（**本番では何もしない**。Claude のウィンドウの UI からだけ）。
-   * kypr の入口（欄の下の候補・右クリック・⌘⇧L）の判定だけが変わる
+   * kypr の入口（欄の下の候補・右クリック・⌘⇧L）とページのコピーの判定（条件 1）だけが変わる
    */
   agentKeyForVerify(on: boolean): Promise<boolean>
   /** kypr のコピーの確認（`NEMO_KYPR_TEST_CLIPBOARD=memory` のときだけ値が返る）。 */

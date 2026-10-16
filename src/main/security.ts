@@ -19,7 +19,7 @@ import {
 import { ask } from './prompts.js'
 import { handleHttpAuthLogin } from './http-auth.js'
 import { getDecision, getSchemeDecision, rememberDecision, rememberScheme } from './store/permissions.js'
-import { isAgentContents } from './agent/contents.js'
+import { agentClipboardRefusal, isAgentContents } from './agent/contents.js'
 import {
   BLANK_URL,
   isLoadedExtensionUrl as isLoadedExtensionUrlWith,
@@ -144,13 +144,38 @@ export function applySessionSecurityDefaults(
   permissionScope: string | null = null
 ): void {
   /*
-   * エージェント用（Claude Code から操作する窓）も**全部拒否**する。
-   * - `AUTO_ALLOWED` の fullscreen は Space を切り替えて前面を奪い、clipboard-sanitized-write は
-   *   ユーザーのクリップボードを上書きした（実測）。keyboardLock / pointerLock も要らない
+   * エージェント用（Claude Code から操作する窓）は、**ユーザーが押したコピーボタンの書き込み以外を全部拒否**する。
+   * - `AUTO_ALLOWED` の fullscreen は Space を切り替えて前面を奪う（実測）。keyboardLock / pointerLock も要らない
+   * - clipboard-sanitized-write（`navigator.clipboard.writeText` / `write`）は Claude の操作でユーザーのクリップボードを
+   *   上書きした（実測）。ユーザーの番・ユーザーが窓にいるときの実入力の直後だけ通す（`agentClipboardRefusal`。
+   *   計画 2026-10-16「ユーザーが押したコピーボタン」）。確認ハンドラは false のまま（同期では判定しきれない）
    * - ASKABLE を聞くと背面の窓にダイアログが出るうえ、Claude には答えられない
    * - 画面共有（getDisplayMedia）もハンドラを置かず失敗させる
    */
-  if (label === 'ui' || label === 'agent') {
+  if (label === 'agent') {
+    session.setPermissionRequestHandler((wc, permission, callback) => {
+      if (permission !== 'clipboard-sanitized-write') {
+        log('permission.request', { partition: label, permission, allowed: false })
+        callback(false)
+        return
+      }
+      void agentClipboardRefusal(wc)
+        .catch(() => 'agent-page' as const)
+        .then((reason) => {
+          log('permission.request', {
+            partition: label,
+            permission,
+            allowed: reason === null,
+            ...(reason ? { reason } : {})
+          })
+          callback(reason === null)
+        })
+    })
+    session.setPermissionCheckHandler(() => false)
+    session.setDevicePermissionHandler(() => false)
+    return
+  }
+  if (label === 'ui') {
     session.setPermissionRequestHandler((_wc, permission, callback) => {
       log('permission.request', { partition: label, permission, allowed: false })
       callback(false)

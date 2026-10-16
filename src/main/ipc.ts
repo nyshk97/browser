@@ -1,4 +1,13 @@
-import { app, clipboard, ipcMain, Menu, session, shell, type IpcMainInvokeEvent } from 'electron'
+import {
+  app,
+  clipboard,
+  ClipboardItem,
+  ipcMain,
+  Menu,
+  session,
+  shell,
+  type IpcMainInvokeEvent
+} from 'electron'
 import { localPathToFileUrl } from './local-path.js'
 import { PAGE_PARTITION, userDataPath } from './paths.js'
 import { restartServiceWorkers, setExtensionEnabled } from './extensions.js'
@@ -317,6 +326,9 @@ function requireTab(event: IpcMainInvokeEvent, key: unknown): { win: NemoWindow;
   return { win, tab }
 }
 
+/** 検証で退避した実クリップボード（`nemo:page-clipboard-for-verify`。項目ごとに MIME type → 中身）。 */
+let pageClipboardBackup: Array<Record<string, Blob | Electron.ClipboardBookmark>> | null = null
+
 const HARD_RELOAD_LABEL =
   COMMANDS.find((entry) => entry.id === 'reload-ignoring-cache')?.label ?? 'ハード再読み込み'
 
@@ -513,17 +525,41 @@ export function registerIpcHandlers(): void {
      * ページの WebContents へ**実キー相当**の入力を送る（`sendInputEvent`）。
      * CDP の `Input.dispatchKeyEvent` はブラウザ側の前処理を飛ばすので
      * main の `before-input-event`（Peek / 小窓の Esc）に**届かない**（実測 0 件）。
-     * 送れるキーは列挙したものだけ（任意の入力を main から流し込めないようにする）
+     * 送れるキーは列挙したものだけ（任意の入力を main から流し込めないようにする）。
+     * Enter はフォーカスしたボタンを押すのに使う（Claude のウィンドウのページのコピーの検証。char も送る）
      */
     ipcMain.handle('nemo:press-key-for-verify', (event, key: unknown, keyName: unknown): boolean => {
       const { tab } = requireTab(event, key)
-      if (keyName !== 'Escape') return false
+      if (keyName !== 'Escape' && keyName !== 'Enter') return false
       const wc = tab.webContents
       if (!wc || wc.isDestroyed()) return false
       wc.sendInputEvent({ type: 'keyDown', keyCode: keyName })
+      if (keyName === 'Enter') wc.sendInputEvent({ type: 'char', keyCode: '\r' })
       wc.sendInputEvent({ type: 'keyUp', keyCode: keyName })
       return true
     })
+    /**
+     * ページの WebContents へ**実クリック相当**のマウスを送る（`sendInputEvent`。CDP と違い Claude の送出中フラグが立たないので、
+     * Claude のウィンドウでは実マウスとして扱われる）。押してから離すまでを実クリックと同じくらい空ける
+     * （mouseDown で開くコピーのガードが、同じクリックの copy に間に合うかを見るため）
+     */
+    ipcMain.handle(
+      'nemo:click-for-verify',
+      async (event, key: unknown, x: unknown, y: unknown): Promise<boolean> => {
+        const { tab } = requireTab(event, key)
+        if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y))
+          return false
+        const wc = tab.webContents
+        if (!wc || wc.isDestroyed()) return false
+        const at = { x: Math.round(x), y: Math.round(y) }
+        wc.sendInputEvent({ type: 'mouseMove', ...at })
+        wc.sendInputEvent({ type: 'mouseDown', ...at, button: 'left', clickCount: 1 })
+        await new Promise((resolve) => setTimeout(resolve, 80))
+        if (wc.isDestroyed()) return false
+        wc.sendInputEvent({ type: 'mouseUp', ...at, button: 'left', clickCount: 1 })
+        return true
+      }
+    )
     /** 右クリックの「フォーム自動入力」と同じ処理（ネイティブのメニューは CDP から押せない） */
     ipcMain.handle(
       'nemo:autofill-for-verify',
@@ -587,6 +623,48 @@ export function registerIpcHandlers(): void {
       setAgentKeyForVerify(win, on === true)
       return true
     })
+    /**
+     * ページからのコピーの確認（**実クリップボード**。ページの `writeText` / `execCommand('copy')` は Chromium が
+     * システムのクリップボードに直接書くので、kypr のようにメモリへ差し替えられない）。
+     * 検証の前に形式ごと退避し（`backup`）、後で戻す（`restore`）。**戻すのは中身がまだ検証の書いた値（`expected`）のとき
+     * だけ**（途中でユーザーがコピーしたものを上書きしない）。`clipboard.read()` が出さない形式は戻せない
+     */
+    ipcMain.handle(
+      'nemo:page-clipboard-for-verify',
+      async (event, action: unknown, value: unknown): Promise<string | boolean | null> => {
+        requireWindow(event)
+        if (action === 'read') return clipboard.readText()
+        if (action === 'write' && typeof value === 'string') {
+          await clipboard.writeText(value)
+          return true
+        }
+        if (action === 'backup') {
+          // 形式ごとに中身を取り出しておく（read() の項目は取り出した時点の中身を指すとは限らない）
+          const items: Array<Record<string, Blob | Electron.ClipboardBookmark>> = []
+          for (const item of await clipboard.read()) {
+            const entry: Record<string, Blob | Electron.ClipboardBookmark> = {}
+            for (const type of item.types) {
+              const data = await item.getType(type).catch(() => null)
+              if (data) entry[type] = data
+            }
+            if (Object.keys(entry).length > 0) items.push(entry)
+          }
+          pageClipboardBackup = items
+          return true
+        }
+        if (action === 'restore') {
+          const backup = pageClipboardBackup
+          if (!backup) return 'none'
+          pageClipboardBackup = null
+          const expected = Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
+          if (!expected.includes(await clipboard.readText())) return 'skipped'
+          if (backup.length > 0) await clipboard.write(backup.map((entry) => new ClipboardItem(entry)))
+          else clipboard.clear()
+          return 'restored'
+        }
+        return null
+      }
+    )
     // kypr のコピーの確認（検証ではメモリ上のクリップボードに差し替えている。実物は読まない）
     ipcMain.handle('nemo:kypr-clipboard-for-verify', (event): string | null => {
       requireWindow(event)

@@ -1478,7 +1478,7 @@ node --test scripts/agent-sensitive-pages.test.mjs   # Claude に操作させな
 Nemo 側の socket の差し替え（`NEMO_AGENT_SOCKET`）は未パッケージのときだけ効く。
 unix socket のパスは 104 バイトまでなので、使い捨ての置き場は `os.tmpdir()` 直下の短い名前にする。
 
-自走検証が見るもの（94 件。2026-09-30 時点）:
+自走検証が見るもの（111 件。2026-10-16 時点）:
 
 - ブリッジだけで initialize / tools/list が返り、定義の正本（`src/shared/agent-tools.js`）と一致する。未知のメソッドは -32601
 - 最初のツール呼び出しでエージェント窓が開く（`agent=1` の UI）・窓の名前はプロジェクト名
@@ -1507,8 +1507,24 @@ unix socket のパスは 104 バイトまでなので、使い捨ての置き場
   kypr の Web 版の Touch ID（内蔵の認証器）は Claude のウィンドウでは入らない。
   伏せ字と JS 判定を外すと 5 件、key の判定を外すと 2 件、生まれた時点の opener の記録を外すと 2 件 FAIL することを確認済み（2026-09-30）。
   **窓を実クリックで key にはできない**（合成マウスはユーザーの操作を奪う）ので、key の側は `window.nemo.agentKeyForVerify(true)`
-  （`NEMO_VERIFY_DIAGNOSTICS=1` のときだけ。kypr の入口の判定だけを差し替える）で見る。**ページへの CDP のマウスは撃たない**
+  （`NEMO_VERIFY_DIAGNOSTICS=1` のときだけ。kypr の入口とページのコピーの判定だけを差し替える）で見る。**ページへの CDP のマウスは撃たない**
   （実マウス扱いで窓が本当に key になり、後の検査が Claude の入力を断られて崩れる）
+- **ページのコピーボタン**（計画 `docs/plans/2026-10-16-1756-agent-window-user-copy.md`。issue #5）: Claudeの番にClaudeが押した
+  `writeText` / `execCommand('copy')`ではクリップボードが変わらない（`writeText`は権限の要求まで届いて`user-absent`で断られる。
+  `execCommand`はactivationがあっても断られる）・ユーザーの番の実クリックと実キー（フォーカスしたボタンをEnter。`pressKeyForVerify`）では両方とも変わる・ウィンドウにいるとき（`agentKeyForVerify`）も変わる・
+  pasteは断る・実入力から窓（`NEMO_AGENT_TEST_USER_INPUT_MS`で1.5秒に縮める）を過ぎたページのタイマーの`writeText`は断る・
+  Claudeが押した直後に`request_user_action`しても、ユーザーの番を戻した（`resume`）直後でも、遅れて走る`execCommand('copy')`は断る・javascript_toolを実行したページはユーザーの番でも断る・
+  別プロセスのiframe（`localhost`と`127.0.0.1`）の中の`execCommand('copy')`もClaudeのクリックで断る・`execCommand.toString()`に
+  ガードを開ける知らせの名前が出ない（iframeの検査はガードが入るのを待ってから押す。別プロセスのiframeのガードは読み込み後に入るので、
+  iframeのページ自身のスクリプトによる先回りは範囲外）。修正前のコードで②の3件とiframeの1件が、判定の条件3・4を外すと③④が、権限とガードを常に開けると①③が、
+  `resume`でガードを閉じる処理を外すと`resume`直後の検査がFAILすることを確認済み（2026-10-16）
+  - **実クリップボードを使う**（ページのコピーはChromiumがシステムのクリップボードに直接書くので、kyprのようにメモリへ差し替えられない）。
+    `window.nemo.pageClipboardForVerify('backup')`で形式ごと退避し、最後に`'restore'`で戻す。**戻すのは中身がまだ検証の書いた値のときだけ**
+    （途中で自分がコピーしたものは上書きしない）。killやクラッシュで止まると番兵（`agent-verify-…`）が残る
+  - ユーザーの実クリックは`window.nemo.clickForVerify(tabKey, x, y)`（`sendInputEvent`。Claudeの送出中フラグが立たないので実マウス扱い）。
+    検証ではウィンドウを本当にkeyにできないので、押す前に**検証側のCDPで`Emulation.setFocusEmulationEnabled`**を入れてページにフォーカスがある
+    状態を作る（無いと`writeText`が「Document is not focused」で権限の要求まで届かず、ユーザーの番の`sendInputEvent`のクリックは届きもしなかった。実測）
+  - **CDPの合成クリックは、別プロセスのiframeの中では座標がdevice pxの倍率でずれて届く**（Retinaで2倍。実測）。iframeのボタンはiframeいっぱいに広げてある
 
 **パッケージ版の通し**は、dist の `Nemo.app` を使い捨ての `NEMO_USER_DATA_DIR`（`settings.json` で `agentEnabled: true`・
 Live Folder OFF）と `--use-mock-keychain` で起動し、`Contents/Resources/nemo-mcp-bridge.mjs` を `NEMO_AGENT_SOCKET=<userData>/agent.sock` で
@@ -1532,6 +1548,8 @@ Live Folder OFF）と `--use-mock-keychain` で起動し、`Contents/Resources/n
   （`.optionAll` は手前からの順ではない。これで判定して常用 Nemo の Claude の窓をクリックした事故あり）
 - Claude Code を 2 セッション同時に使い、窓が別々に出てそれぞれ終了時に閉じる
 - 右クリックの「Claude のウィンドウで開く」と小窓の「Claude」ボタン
+- **ページのコピーボタンを実物で**: Claudeにページを開かせて`request_user_action`でユーザーの番にし、GitHubのコードブロックのコピーボタン等を押して
+  ターミナルに貼れる。ユーザーの番でなく、ウィンドウを自分でクリックして操作しているときも効く（本物のkey）。文字列を選んで⌘Cでもコピーできる
 - **kypr を実物で**: Claude に実サイトのログインを頼む → 引き継ぎで Claude のウィンドウのツールバーの kypr（か欄の下の候補）から入れる →
   done → Claude が続けられ、返答・read_page にパスワードが出ていない。Claude の番のあと**最初の実クリックで**欄の下に候補が出る・
   右クリックで「フォーム自動入力」が出る（key の判定が間に合う）

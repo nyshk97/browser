@@ -25,8 +25,20 @@ export function isAgentContents(contents: WebContents): boolean {
  */
 export type AgentFillRefusal = 'agent-script' | 'agent-page'
 
+/**
+ * ページからのクリップボードへの書き込み（`writeText` / `execCommand('copy')`）を断る理由（計画 2026-10-16「ユーザーが押したコピーボタン」）。
+ *
+ * - `user-absent`: ユーザーの番でも、ユーザーがウィンドウにいるのでもない（タブに載っていない popup の子もここ）
+ * - `agent-input`: Claude のマウス・キーを送っている最中
+ * - `no-recent-input`: 直近にそのページへの実入力（実マウスの mouseDown・実キーの keyDown）が無い（ページのタイマー等）
+ * - `agent-script` / `agent-page`: `AgentFillRefusal` と同じ（Claude が javascript_tool を実行した document 等）
+ */
+export type AgentClipboardRefusal = AgentFillRefusal | 'user-absent' | 'agent-input' | 'no-recent-input'
+
 export interface AgentFillHooks {
   refusal(wc: WebContents): Promise<AgentFillRefusal | null>
+  clipboardRefusal(wc: WebContents): Promise<AgentClipboardRefusal | null>
+  clipboardRefusalNow(wc: WebContents): AgentClipboardRefusal | null
   rememberSecrets(wc: WebContents, values: string[]): Promise<AgentFillRefusal | null>
   userAtWindow(wc: WebContents): boolean
   prepareDebugger(wc: WebContents): Promise<boolean>
@@ -42,6 +54,20 @@ export function setAgentFillHooks(next: AgentFillHooks): void {
 export async function agentFillRefusal(wc: WebContents): Promise<AgentFillRefusal | null> {
   if (!isAgentContents(wc)) return null
   return hooks ? hooks.refusal(wc) : 'agent-page'
+}
+
+/**
+ * ページがクリップボードに書いてよいか（エージェント窓のページのとき）。null なら書いてよい。
+ * 権限の要求（`writeText`）と `execCommand('copy')` のガードの開け閉めが**同じ判定**を使う。
+ * フックが差し込まれていなければ断る（fail-closed）。
+ */
+export async function agentClipboardRefusal(wc: WebContents): Promise<AgentClipboardRefusal | null> {
+  return hooks ? hooks.clipboardRefusal(wc) : 'agent-page'
+}
+
+/** `agentClipboardRefusal` のうち同期で判定できる条件だけ（ガードを開ける知らせを送る直前に引き直す）。 */
+export function agentClipboardRefusalNow(wc: WebContents): AgentClipboardRefusal | null {
+  return hooks ? hooks.clipboardRefusalNow(wc) : 'agent-page'
 }
 
 /**

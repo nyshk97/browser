@@ -251,7 +251,12 @@ async function openParent(site) {
   const url = `${PAGES}/peek.html?site=${site}`
   const key = await ui.ev(`window.nemo.createTab(${JSON.stringify(url)})`)
   const page = await connectPage(url)
-  await waitFor(page, "document.readyState === 'complete' ? 'ok' : ''")
+  // `/json/list` の url は**ナビゲーション先（pending）**で出るので、繋いだ直後の document はまだ about:blank のことがある
+  // （その readyState も 'complete'）。URL が切り替わってから見る（peek を先頭に回すと毎回 `#post-form` が null になった）
+  await waitFor(
+    page,
+    `location.href === ${JSON.stringify(url)} && document.readyState === 'complete' ? 'ok' : ''`
+  )
   return { key, url, page }
 }
 

@@ -2,8 +2,9 @@
  * main で「前面を奪いうる呼び出し」を `src/main/foreground.ts` 以外に書いていないことの検査。
  *
  * `webContents.focus()` / `baseWindow.focus()` / `baseWindow.show()` / `app.focus({ steal: true })` は、
- * macOS では Nemo をアクティブにして打鍵を吸う（自走検証の背面モードで実測）。
- * 直接呼ぶ代わりに `focusContents` / `focusWindow` / `bringToFront` を通す（CLAUDE.md「自走検証を足すとき」）。
+ * macOS では Nemo をアクティブにして打鍵を吸う（自走検証の背面モードで実測）。`baseWindow.showInactive()` は奪わないが、
+ * 背面モードで窓を画面の外に置く経路（`presentInBackground`）を外れる。
+ * 直接呼ぶ代わりに `focusContents` / `focusWindow` / `bringToFront` / `showWindowInactive` を通す（CLAUDE.md「自走検証を足すとき」）。
  *
  * `mise run verify` の「アクティブ化 N 回」でも同じ逸脱は見つかるが、フルを回すまで 10 分かかる。
  * ここで数秒で落とす。コメント中の言及は除く（規約の説明に書かれる）。
@@ -37,7 +38,15 @@ function stripComments(source) {
 
 const FORBIDDEN = [
   { re: /\.focus\(\)/, what: '.focus()（focusContents / focusWindow を通す）' },
-  { re: /\.show\(\)/, what: '.show()（bringToFront を通す。背面で出すなら showInactive）' },
+  { re: /\.show\(\)/, what: '.show()（bringToFront を通す。背面で出すなら showWindowInactive）' },
+  {
+    re: /\.showInactive\(\)/,
+    what: '.showInactive()（showWindowInactive を通す。背面モードで画面の外に置くため）'
+  },
+  {
+    re: /\.blur\(\)/,
+    what: '.blur()（showWindowAtBack を通す。orderBack は画面の外に置いた窓を画面内へ戻す）'
+  },
   { re: /app\.focus\(/, what: 'app.focus(（bringToFront を通す）' }
 ]
 
@@ -60,5 +69,7 @@ test('foreground.ts 自身は 3 つの呼び出しを持っている（検査の
   const source = stripComments(fs.readFileSync(ALLOWED, 'utf8'))
   assert.match(source, /\.focus\(\)/)
   assert.match(source, /\.show\(\)/)
+  assert.match(source, /\.showInactive\(\)/)
+  assert.match(source, /\.blur\(\)/)
   assert.match(source, /app\.focus\(\{ steal: true \}\)/)
 })

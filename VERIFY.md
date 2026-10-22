@@ -30,16 +30,28 @@ mise run verify:packaged    # パッケージした .app を起動して smoke t
 **ふだんの往復は `mise run verify:changed`、コミット前に 1 回だけ `mise run verify`**。
 
 **検証用に起動した Nemo は背面で動き、前面もキー入力も奪わない**（`NEMO_VERIFY_BACKGROUND=1`。verify-all が既定で立てる。
-アプリ側は `src/main/foreground.ts`。Dock にも出ず、通常ウィンドウは画面の右下の外に置かれて左上の角だけ見える）。
+アプリ側は `src/main/foreground.ts`。Dock にも出ず、ウィンドウは小窓・会議の小窓・Claude のウィンドウも含めて画面の右下の外に
+置かれ、左上の角 40×116px だけ見える）。
 回している間に別のウィンドウで作業してよい。**実マウスを検証ウィンドウの上に置かない**（`ignoresMouseEvents` でもホバーは
 届き、コマンドバーの候補行などマウスで選択が動く UI の検査が狂う。窓を画面外へ置いているのはそのため）。
 最後に `背面モード: アクティブ化 N 回` と出て、**1 回でもあれば FAIL**（打鍵を吸った可能性がある。
-原因は main で `webContents.focus()` / `baseWindow.focus()` / `show()` を直接呼ぶコードで、`foreground.ts` の関数を通していないもの）。
+原因は main で `webContents.focus()` / `baseWindow.focus()` / `show()` / `showInactive()` / `blur()` を直接呼ぶコードで、`foreground.ts` の
+関数を通していないもの）。
 前面・key が本質的に要る検査は `SKIP ... 前面が要る` と名前を出して飛ばされる（2026-10-22 時点で 2 つ:
 会議の小窓の「出る / 出ない」（`window.isFocused()` で「会議タブを見ているか」を判定する機能なので背面では成立しない）と、
 ローカルファイルの「open-file（Finder / `open <path>`）で小窓が開く」（LaunchServices の配送がアプリをアクティブにする。`open -g` でも止まらない））。
 それらは `mise run verify:foreground` で回る（リリース前に 1 回）。1 本だけ前面で回すなら
 `node scripts/verify-all.mjs --foreground --only call`。
+**検証用の窓が本当に見えていないかは CGWindowList で測れる**（`scripts/list-windows.swift`。今いる Space の窓を所有プロセス名で絞り、
+ディスプレイ内に見えている面積と alpha を出す）。`xcrun swiftc -O -o /tmp/list-windows scripts/list-windows.swift` で 1 回ビルドし、
+`mise run verify` と並行して `while true; do /tmp/list-windows Electron; sleep 0.2; done >> windows.log` で記録する。背面モードの期待値は
+`exposed=40x116`（通常窓・小窓・Claude のウィンドウ）と `40x60`（会議の小窓）で `alpha=1.0` の行だけ。それより大きい露出は
+`alpha=0.0` の行（`blur()` の orderOut のフェードを不透明度 0 で隠したもの）しか出ない（2026-10-22 のフル: 7,439 サンプルで、角より大きく
+alpha > 0.01 の行は 0）。alpha 1 で全部見えている行が出たら、`foreground.ts` を通っていない `showInactive()` / `blur()` か、
+`presentInBackground` の順序（不透明度 0 → 出す → 最背面 → park → 不透明度 1）が崩れている。
+`verify:only agent` では kypr の検査のあと **About パネル**（284×204）が 12 秒ほど画面中央に出る。Claude の `computer` の `key` が
+修飾キー付きの文字を `rawKeyDown`（text 無し）で送ると AppKit のメニュー照合が About に合ってしまう既存のバグで、背面モードとは無関係
+（2026-10-22 に発見。計画 `docs/plans/2026-10-22-1120-verify-background.md` のログに再現手順）。
 フルは 12 本すべてを回すので 1 回 6 分ほどかかる（実測 372 秒）。
 `verify:changed` は作業ツリーの差分（未 commit + staged + untracked）から回すものを
 自動で選ぶ（例: `SplitRow.tsx` だけ → `split` + `restart` の 50 秒ほど）。

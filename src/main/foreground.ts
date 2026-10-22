@@ -5,8 +5,8 @@ import { log } from './log.js'
  * 自走検証を**背面で**回すモード（`NEMO_VERIFY_BACKGROUND=1`。`mise run verify` が既定で立てる）。
  *
  * 検証用に起動した Nemo が前面に来ると、その数分間ユーザーの打鍵が検証ウィンドウに吸われる。
- * このモードでは起動時に自動でアクティブ化されず（accessory）、ウィンドウは `showInactive()` で
- * 「見える位置にあるが key でも前面でもない」状態に留める。スクショ（`screencapture -l`）は遮蔽されていても撮れる。
+ * このモードでは起動時に自動でアクティブ化されず（accessory）、ウィンドウは種別を問わず `showInactive()` で出して
+ * 最背面・画面の外に置く（`presentInBackground`）。スクショ（`screencapture -l`）は遮蔽・画面外でも撮れる。
  *
  * 裏口なので **`!app.isPackaged`** で塞ぐ（`NEMO_VERIFY_DIAGNOSTICS` / `NEMO_VERIFY_TIMINGS` と同じ流儀）。
  */
@@ -43,19 +43,30 @@ export function installVerifyBackgroundMode(): void {
  *   `onMouseEnter` で選択が動くので、実マウスが乗っただけで上下移動の検査が狂った
  * - `showInactive()`: 前面アプリも key も動かさない（出していない窓だけ）
  * - `blur()`（= orderBack）: 最背面へ。`showInactive()` のままだと他アプリの窓の上に被る
- * - `park`: 全ディスプレイの右下の外へ押し出す。AppKit は**左上の 40×116px だけ画面内に残して**押し戻す（素の Electron で実測。
- *   hiddenInset / frameless / movable:false でも同じ）ので「ほぼ画面外」になり、実ポインタが乗ることがなくなる。
- *   画面外でも `visibilityState` は visible・rAF は回る・`capturePage` と `screencapture -l` も撮れる
- *   （遮蔽の throttling は `installVerifyBackgroundMode` で切ってある）。通常窓だけ。小窓は位置の検査があるので動かさない
+ * - `parkOffscreen`: 全ディスプレイの右下の外へ押し出す。AppKit は**左上の 40×116px だけ画面内に残して**押し戻す（素の Electron で
+ *   実測。hiddenInset / frameless / movable:false / NSPanel（小窓・会議の小窓）でも同じ）ので「ほぼ画面外」になり、
+ *   実ポインタが乗ることがなくなる。画面外でも `visibilityState` は visible・rAF は回る・`capturePage` と `screencapture -l` も撮れる
+ *   （遮蔽の throttling は `installVerifyBackgroundMode` で切ってある）。通常窓・小窓・エージェント窓・会議の小窓のすべて。
+ *   小窓の位置は保存しない（`miniWindowBounds` は枚数で決まる）し、会議の小窓は背面モードでは `moved` を保存しない
+ *   （`call-window.ts`）ので、位置の検査（`verify-call --position-read`）には響かない
  *
  * CDP の `Input.*` と `sendInputEvent` は RenderWidgetHost に直接届くので、どれにも影響しない。
  */
-export function presentInBackground(win: BaseWindow, options: { park?: boolean } = {}): void {
+export function presentInBackground(win: BaseWindow): void {
   if (win.isDestroyed()) return
+  const before = win.getBounds()
+  const wasVisible = win.isVisible()
   win.setIgnoreMouseEvents(true)
-  if (!win.isVisible()) win.showInactive()
+  // `blur()` の orderOut は窓を**元の位置で約 0.2 秒フェードアウト**させる（CGWindowList で alpha が 0.42 → 0.0007 と減るのを実測。
+  // 「検証中に窓が一瞬出る」の正体）。不透明度 0 で出して、置き終わってから戻すと、そのフェードは alpha 0 のまま見えない（実測）
+  win.setOpacity(0)
+  if (!wasVisible) win.showInactive()
   win.blur()
-  if (options.park) parkOffscreen(win)
+  // park は**最後**。orderBack（`blur()`）は窓を「画面内に全部収める」クランプで戻すので、先に置くと出した瞬間に全部見える（実測）
+  parkOffscreen(win)
+  win.setOpacity(1)
+  // 置いた結果を残す（検証ログで「画面に出ていた窓」の正体を追えるように。窓の露出の記録と突き合わせる）
+  log('foreground.parked', { windowId: win.id, wasVisible, before, after: win.getBounds() })
 }
 
 /** 全ディスプレイの右下の外へ。AppKit の押し戻しで左上の角だけが画面の右下に残る。 */
@@ -68,13 +79,30 @@ function parkOffscreen(win: BaseWindow): void {
 }
 
 /**
- * `baseWindow.showInactive()` の代わり（背面で復元する通常窓・小窓・エージェント窓の出し方）。
+ * `baseWindow.showInactive()` の代わり（背面で復元する通常窓・小窓・エージェント窓・会議の小窓の出し方）。
  * 通常はそのまま `showInactive()`。背面モードでは `presentInBackground`。
+ * main で `showInactive()` を直接呼ぶのはこのファイルだけ（`scripts/foreground.test.mjs` が見る）。
  */
-export function showWindowInactive(win: BaseWindow, options: { park?: boolean } = {}): void {
+export function showWindowInactive(win: BaseWindow): void {
   if (win.isDestroyed()) return
-  if (isVerifyBackground()) presentInBackground(win, options)
+  if (isVerifyBackground()) presentInBackground(win)
   else win.showInactive()
+}
+
+/**
+ * `showInactive()` + `blur()`（出して最背面へ。エージェント窓の出し方）。
+ * 背面モードでは `presentInBackground` が blur も park も行うので、呼び出し側で `blur()` を重ねない。
+ * **orderBack（`blur()`）は窓を「画面内に全部収める」クランプで戻す**ので、park した窓のあとに撃つと全部見える
+ * （エージェント窓が 23 秒間 1280×860 で画面の中央に出ていた実測）。main で `blur()` を直接呼ぶのはこのファイルだけ。
+ */
+export function showWindowAtBack(win: BaseWindow): void {
+  if (win.isDestroyed()) return
+  if (isVerifyBackground()) {
+    presentInBackground(win)
+    return
+  }
+  win.showInactive()
+  win.blur()
 }
 
 /**

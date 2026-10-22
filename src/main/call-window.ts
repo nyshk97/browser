@@ -2,6 +2,7 @@ import { BaseWindow, screen, type WebContents, type WebContentsView } from 'elec
 import { createUiView, disposeUiView } from './ui-view.js'
 import { getCallWindowPosition, saveCallWindowPosition } from './store/call-window.js'
 import { log } from './log.js'
+import { isVerifyBackground, showWindowInactive } from './foreground.js'
 import { fitsAnyWorkArea } from '../shared/settings-schema.js'
 import type { CallState } from '../shared/types.js'
 
@@ -117,6 +118,8 @@ export function ensureCallWindow(nearBounds: Electron.Rectangle | null): CallWin
   // 位置は**ドラッグの終了時**にだけ書く（ドラッグ中に書き続けない）。
   baseWindow.on('moved', () => {
     if (baseWindow.isDestroyed()) return
+    // 自走検証の背面モードでは画面の外に置かれる（`presentInBackground`）。その座標を保存位置にしない
+    if (isVerifyBackground()) return
     const bounds = baseWindow.getBounds()
     const display = screen.getDisplayMatching(bounds)
     saveCallWindowPosition({ x: bounds.x, y: bounds.y, displayId: display.id })
@@ -142,7 +145,7 @@ export function showCallWindow(): void {
   const handle = current
   if (!handle || handle.baseWindow.isDestroyed()) return
   if (handle.baseWindow.isVisible()) return
-  handle.baseWindow.showInactive()
+  showWindowInactive(handle.baseWindow)
   log('call.window_shown', {})
 }
 

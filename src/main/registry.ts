@@ -32,6 +32,7 @@ import {
   focusWindow,
   focusedContentsForDiagnostics,
   isVerifyBackground,
+  showWindowAtBack,
   showWindowInactive
 } from './foreground.js'
 import { startMetricsSampling, stopMetricsSampling } from './metrics.js'
@@ -388,8 +389,7 @@ export function presentAgentWindow(win: NemoWindow): void {
   const otherKey = previous && previous !== win.baseWindow && !previous.isDestroyed() ? previous : null
   // 別の窓（小窓や会議の小窓など、key になっても Nemo を前面にしない窓も）が key なら、出す瞬間に key を奪わせない
   if (otherKey && win.baseWindow.isFocusable()) win.baseWindow.setFocusable(false)
-  win.baseWindow.showInactive()
-  win.baseWindow.blur()
+  showWindowAtBack(win.baseWindow)
   if (otherKey && win.baseWindow.isFocused()) {
     focusWindow(otherKey)
     log('agent.window_key_restored', { windowId: win.id })
@@ -3698,8 +3698,8 @@ export function createWindow(initialUrl?: string, options: CreateWindowOptions =
     // 背面で復元したぶんはここで出す。**`show()` ではなく `showInactive()`**
     // （`show()` は前面に出てフォーカスと Space を奪う）。
     if (hidden && win.kind === 'normal' && !win.baseWindow.isDestroyed()) {
-      // 背面モードでは通常窓を画面の外へ置く（実マウスのホバーが届かないように。`presentInBackground` 参照）
-      showWindowInactive(win.baseWindow, { park: true })
+      // 背面モードでは最背面・画面の外に置かれる（実マウスのホバーが届かないように。`presentInBackground` 参照）
+      showWindowInactive(win.baseWindow)
     }
     // エージェント窓は必ず前面を奪わずに出す（`show: false` で作ってある）
     if (win.isAgent) presentAgentWindow(win)

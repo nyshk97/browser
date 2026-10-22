@@ -159,6 +159,19 @@ fork は Nemo から一方向に merge する運用なので、Nemo 側で直せ
 - 2026-10-22 5 回目（通常窓を右下の外へ park）: **すべて PASS**（1925 行）、アクティブ化 0 回、Tab 検査は `before=0 after=1 hover=-1`
   （実マウスは (1172, 287)、窓は (1670, 991) に押し戻されていた）。フル 8 分。SKIP は call 本体と open-file の 2 つ。
   前面モード（`mise run verify:foreground`）のフルはまだ回していない（回すと 8 分間打鍵を吸うので、ユーザーの手が空いたときに 1 回）
+- 2026-10-22 6 回目（全種の窓を park・不透明度 0 で出す・peek の待ちを直した版）: **すべて PASS**（1925 行）、アクティブ化 0 回、
+  窓の露出の記録（`scripts/list-windows.swift`、0.2 秒刻み）7,439 サンプルで角（40×116 / 40×60）より大きく alpha > 0.01 の行は 0。
+  `verify:only agent` も全 PASS（711 行）だが、エージェント窓が 23 秒間 1280×860 で画面中央に見えていた → `presentAgentWindow` が
+  `showWindowInactive` の直後に撃つ `blur()`（orderBack）が park を「画面内に全部収める」クランプで戻していた。`showWindowAtBack` に寄せて
+  `.blur()` の直呼びも `foreground.test.mjs` で落とす。直した版の `verify:only agent` は全 PASS・エージェント窓の露出 0
+- 2026-10-22 `verify:only agent` に残る見える窓: 284×204 の無題の窓が約 12 秒、画面中央に出る。`screencapture -l` で撮ったら
+  **About パネル**（「Nemo Dev バージョン 44.5.1」）だった。kypr の検査が Claude の `computer` の `key` で `cmd+shift+l` を送った直後に出る。
+  素の Electron で再現（scratchpad `about-key-one.cjs`）: CDP の `Input.dispatchKeyEvent` を **`rawKeyDown` で text 無し**で送ると
+  （Nemo の `agent/tools.ts` の `key` と同じ）、cmd+shift+l でも cmd+a でもアクセラレータに合わず About が開く（AppKit の
+  `performKeyEquivalent:` が `charactersIgnoringModifiers` の空の NSEvent を、キー等価が空の先頭項目 = About に合わせる）。
+  `keyDown` + `text` / `unmodifiedText` を付けると（`nativeVirtualKeyCode` は 76 のまま）アクセラレータが動き、About は開かず、
+  入力欄にも文字は入らない。**背面モードとは無関係の既存のバグ**（常用でも Claude が cmd+shift+〈文字〉を送ると About が出るはず）なので、
+  この計画では直さず別件にする（直すなら `keys.ts` の「text は修飾なしのときだけ」を見直し、agent スイートに「About が開かない」を足す）
 
 ### 方針変更
 
@@ -168,3 +181,18 @@ fork は Nemo から一方向に merge する運用なので、Nemo 側で直せ
   「最初の検査が落ちたら以降は全部意味を成さない」として打ち切る設計で、検査単位に割る意味が無いため。位置の検査は回す
 - 2026-10-22: アクティブ化の件数は userData のログだけでなく、**子プロセスの stdout を中継しながら数える**ことにした
   （各スイートが自分で起動した Nemo も 1 つの数字に入る。スイートごとに `countLogEvents` を足す改修を 13 本に入れなくて済む）
+- 2026-10-22: 画面外へ置く（park）のを通常窓だけでなく**小窓・エージェント窓・会議の小窓にも広げた**（`presentInBackground` は常に park。
+  `park` オプションは消した）。5 回目のフルでアクティブ化 0 回でも、小窓 12 枚が `showInactive()` で画面上に出ていて
+  「前面で回っている」ように見えたため。「小窓は位置の検査があるので動かさない」は誤りで、位置の検査（`--position-plant/read`）は
+  **会議の小窓**（`call-window.ts`）のもので、しかも `call.window_created` のログの x/y（生成前に計算した位置）を見るので park に響かない。
+  小窓（`kind: mini`）の位置は `miniWindowBounds()` が枚数で決めるだけで保存もしない。会議の小窓は背面モードでは `moved` の保存を
+  しない（park の座標を保存位置に書かないため）。NSPanel も AppKit の押し戻しは同じ 40×116px（`clamp-panel-experiment.cjs`）。
+  `showInactive()` の直呼びも `scripts/foreground.test.mjs` で落とす（`showWindowInactive` を通す）
+- 2026-10-22: 「検証中に窓が一瞬出る」の正体は **`blur()`（orderOut + orderBack）の orderOut が元の位置で約 0.2 秒フェードアウトさせる**
+  こと（0.2 秒刻みの窓の露出の記録 — scratchpad `tools/list-windows.swift`、CGWindowList で Electron の窓の画面内の面積と alpha を出す —
+  に起動直後の通常窓が 1 回ずつ写り、素の Electron で alpha が 0.42 → 0.0007 と減るのを実測。`show-order-experiment.cjs`）。
+  park を show より前に動かすと**悪化**した（hidden の窓の `setBounds` と orderBack は「画面内に全部収める」クランプで、出した瞬間に
+  全部見える。710 件 PASS だが露出 1280×860 が 335 サンプル）。対策は**不透明度 0 で出して、最後に park してから 1 に戻す**
+  （フェードが alpha 0 のまま進む。実測）。
+  `--only peek` の FAIL（R1 の `#post-form` が null）は HEAD の版でも同じで park とは無関係。`/json/list` の url が pending 先で出るため
+  about:blank の `readyState === 'complete'` を拾う競合で、`openParent` を `location.href === url` でも待つようにした

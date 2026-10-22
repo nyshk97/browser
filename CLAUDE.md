@@ -91,6 +91,11 @@ target ができた直後に繋がり、popup.js のトップレベル（リス�
 1 周無駄にした実例あり）。`waitFor(popup, "document.getElementById('messaging')?.textContent ? 'ready' : ''")`
 を `check` にして置く。
 
+**`createTab` した直後に繋いだ page target の document は、まだ about:blank のことがある。** `/json/list` の `url` は
+ナビゲーション先（pending）で出るので URL では見分けられず、about:blank の `readyState` も `'complete'`。
+`document.readyState === 'complete'` だけで待つと、冷えた起動直後（`verify:only peek` のように最初のスイートになったとき）は
+毎回素通りして要素が null になる（フルでは前のスイートで温まっていて通る。2026-10-22 に実例）。`location.href === url` も条件に入れる。
+
 **履歴に載るのを待つときは `queryHistory` で行の存在を見る。`suggest()` の候補で待たない。**
 `suggest()` は開いているタブも同じ URL で候補に出すので、履歴行を待つつもりの `waitFor` が
 **開いているタブの候補**で即満たされ、`recordVisit`（did-navigate 契機）より前に `closeTab` して
@@ -102,8 +107,9 @@ target ができた直後に繋がり、popup.js のトップレベル（リス�
 `window.nemo.pressKeyForVerify(tabKey, 'Escape')`（`sendInputEvent`。`NEMO_VERIFY_DIAGNOSTICS=1` のときだけ生える）で撃つ。
 UI View（React）の `keydown` には CDP のキーで届くので、そちらは `Input.dispatchKeyEvent` でよい。
 
-**main で `webContents.focus()` / `baseWindow.focus()` / `baseWindow.show()` / `app.focus({ steal: true })` を直接呼ばない。
-`src/main/foreground.ts` の `focusContents` / `focusWindow` / `bringToFront` を通す。** `mise run verify` は検証用の Nemo を
+**main で `webContents.focus()` / `baseWindow.focus()` / `baseWindow.show()` / `baseWindow.showInactive()` / `baseWindow.blur()` /
+`app.focus({ steal: true })` を直接呼ばない。`src/main/foreground.ts` の `focusContents` / `focusWindow` / `bringToFront` /
+`showWindowInactive` / `showWindowAtBack` を通す。** `mise run verify` は検証用の Nemo を
 背面で回し（`NEMO_VERIFY_BACKGROUND=1`）、アプリがアクティブになった回数（`app.did_become_active`）が 1 以上なら FAIL にする。
 Electron の `WebContents.focus()` は macOS では所属する窓の `Focus(true)` を伴い、`tab.select` / `peek.open` のたびに
 Nemo がアクティブになって打鍵を吸った（2026-10-22 の実測 6 回）。直接呼ぶと `scripts/foreground.test.mjs` が落ちる。

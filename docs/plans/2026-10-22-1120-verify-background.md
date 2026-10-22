@@ -172,6 +172,10 @@ fork は Nemo から一方向に merge する運用なので、Nemo 側で直せ
   `keyDown` + `text` / `unmodifiedText` を付けると（`nativeVirtualKeyCode` は 76 のまま）アクセラレータが動き、About は開かず、
   入力欄にも文字は入らない。**背面モードとは無関係の既存のバグ**（常用でも Claude が cmd+shift+〈文字〉を送ると About が出るはず）なので、
   この計画では直さず別件にする（直すなら `keys.ts` の「text は修飾なしのときだけ」を見直し、agent スイートに「About が開かない」を足す）
+- 2026-10-22 前面モードのフル（`mise run verify:foreground`）: 9 分 34 秒、PASS 1939 行。背面では飛ばしていた会議の小窓の本体と
+  open-file の 2 つも PASS。落ちたのは Phase 1 の画面共有まわりの 5 件（「1 枚のときはディスプレイ選択が出ない」等）だけで、
+  これは VERIFY.md に既知と書いてある「ディスプレイが 2 枚つながっていると落ちる」もの（Studio Display 接続中）。同じ 2 枚の状態で
+  背面モードの `verify:only phase1` も同じ 5 件が落ちるので、前面モードとは無関係
 
 ### 方針変更
 

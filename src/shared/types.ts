@@ -1790,6 +1790,15 @@ export interface SplitDiagnostics {
   /** 実キーが届く先（first responder の WebContents）。どれにも無ければ `null`。 */
   focusedWebContentsId: number | null
   focusedUrl: string | null
+  /**
+   * 空状態（タブが 0 本のときの画面）の View が見えているか。View を作っていなければ `null`。
+   * renderer の `document.visibilityState` は遮蔽や検証の背面モード（throttling 停止）で当てにならないので、main の実状態を出す
+   */
+  emptyViewVisible: boolean | null
+  /** ウィンドウの画面上の位置（screen 座標）。`cursorScreenPoint` と合わせて「実マウスが窓の上にあるか」を見る。 */
+  windowBounds: DiagRect
+  /** 実マウスの位置（screen 座標。`screen.getCursorScreenPoint()`）。候補行のホバー等、実マウス起因の揺れの切り分けに使う。 */
+  cursorScreenPoint: { x: number; y: number }
 }
 
 export type PromptAnswer =

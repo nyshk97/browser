@@ -23,9 +23,11 @@ import {
   assertNemoNotRunning,
   findUncaughtExceptions,
   getFreePort,
+  isBackgroundVerify,
   isChildAlive,
   projectRoot,
   readLogLines,
+  skipNeedsForeground,
   stopChildren,
   waitForHttp
 } from './lib/harness.mjs'
@@ -250,6 +252,11 @@ try {
     const name = 'open-file（Finder / open <path>）で小窓が開く'
     if (process.platform !== 'darwin' || !appBundle.endsWith('.app')) {
       skip(name, `open -a を使えない環境（${process.platform} / ${appBundle}）。人間の確認に落とす`)
+    } else if (isBackgroundVerify()) {
+      // LaunchServices の配送（`open <path>` / Finder）は配送先のアプリをアクティブにする。`-g` / `-j` / `-b` でも
+      // 止まらなかった（2026-10-22 の実測。4 通りすべてで did_become_active が 1 回）。argv → second-instance の
+      // 経路は同じ `accept()` に乗るので上で見ている。LS の配線（`app.on('open-file')`）だけ前面モードに回す
+      skipNeedsForeground(name, 'LaunchServices の配送でアプリがアクティブになる（open -g でも止まらない）')
     } else {
       const beforeMini = await miniCount()
       const beforeHandled = countOpenFile()

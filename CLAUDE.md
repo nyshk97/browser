@@ -102,6 +102,14 @@ target ができた直後に繋がり、popup.js のトップレベル（リス�
 `window.nemo.pressKeyForVerify(tabKey, 'Escape')`（`sendInputEvent`。`NEMO_VERIFY_DIAGNOSTICS=1` のときだけ生える）で撃つ。
 UI View（React）の `keydown` には CDP のキーで届くので、そちらは `Input.dispatchKeyEvent` でよい。
 
+**main で `webContents.focus()` / `baseWindow.focus()` / `baseWindow.show()` / `app.focus({ steal: true })` を直接呼ばない。
+`src/main/foreground.ts` の `focusContents` / `focusWindow` / `bringToFront` を通す。** `mise run verify` は検証用の Nemo を
+背面で回し（`NEMO_VERIFY_BACKGROUND=1`）、アプリがアクティブになった回数（`app.did_become_active`）が 1 以上なら FAIL にする。
+Electron の `WebContents.focus()` は macOS では所属する窓の `Focus(true)` を伴い、`tab.select` / `peek.open` のたびに
+Nemo がアクティブになって打鍵を吸った（2026-10-22 の実測 6 回）。直接呼ぶと `scripts/foreground.test.mjs` が落ちる。
+前面・key が**本質的に**要る検査（`window.isFocused()` を機能の定義に使っているもの）は、黙って落とさず
+`skipNeedsForeground(name, why)`（`scripts/lib/harness.mjs`）で名前を出して飛ばし、`mise run verify:foreground` で回す。
+
 ## `log()` に新しいイベントを足すとき
 
 **detail は `sanitizeDetail`（`src/shared/log-redact.js`）を通ってから書かれる。** 型は合っていても

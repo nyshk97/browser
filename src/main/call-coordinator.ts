@@ -1,4 +1,3 @@
-import { app } from 'electron'
 import { log } from './log.js'
 import { selectTab, setCallWatcher, windowsById, type NemoTab } from './registry.js'
 import { PROBE_SOURCE, isMeetUrl, meetDisplayHost, parseProbe, type CallProbe } from './meet-adapter.js'
@@ -12,6 +11,7 @@ import {
   showCallWindow
 } from './call-window.js'
 import type { CallState } from '../shared/types.js'
+import { bringToFront } from './foreground.js'
 
 /**
  * 会議の小窓の状態機械。
@@ -442,9 +442,7 @@ export function focusCallTarget(): void {
   const win = target.tab.window
   if (win.isDestroyed || win.baseWindow.isDestroyed()) return
   // ここでは Space が切り替わってよい（「会議タブへ戻る」と言っている操作なので）
-  if (!win.baseWindow.isVisible()) win.baseWindow.show()
-  win.baseWindow.focus()
-  app.focus({ steal: true })
+  bringToFront(win.baseWindow, 'call.focus_tab')
   selectTab(win, target.tab.key)
   log('call.focus_tab', { key: target.tab.key, windowId: win.id })
   refreshCallCoordinator()

@@ -727,8 +727,25 @@ await ui.ev(`window.nemo.closeTab(${JSON.stringify(bgKey)}).then(() => 'ok')`)
     check('自分の入力の行で Tab を押しても値は変わらない', after.value === 'cursor', after.value)
     check('自分の入力の行でも Tab の既定動作は止める（フォーカスが逃げない）', prevented === true)
   }
+  const cursorBeforeDown = await cursor()
   await press('n', true)
-  check('Tab の検査のため 1 つ下の候補へ降りた', (await cursor()) === 1, String(await cursor()))
+  {
+    // 候補行は `onMouseEnter` でも選択が動く。落ちたときに「実マウスが窓のどこにあるか」まで出す（切り分け用）
+    const hover = await overlay.ev(
+      `JSON.stringify((() => {
+        const rows = [...document.querySelectorAll('.cmd .sug')]
+        const on = document.querySelector('.cmd .sug:hover')
+        const r = on?.getBoundingClientRect()
+        return { items: rows.length, hover: on ? rows.indexOf(on) : -1, hoverRect: r ? [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)] : null }
+      })())`
+    )
+    const diag = JSON.parse(await overlay.ev('window.nemo.splitDiagnostics().then((d) => JSON.stringify(d))'))
+    check(
+      'Tab の検査のため 1 つ下の候補へ降りた',
+      (await cursor()) === 1,
+      `before=${cursorBeforeDown} after=${await cursor()} ${hover} cursor=${JSON.stringify(diag.cursorScreenPoint)} win=${JSON.stringify(diag.windowBounds)}`
+    )
+  }
   {
     const prevented = await pressTab(true)
     await sleep(200)
@@ -1872,12 +1889,22 @@ if (process.env.NEMO_VERIFY_UNLOAD_CHOICE !== 'leave' || !process.env.NEMO_USER_
       )
       check('空状態に押せるものは置かない', dom.clickable === 0, `${dom.clickable} 個ある`)
       check('下地はページ領域と同じ色', dom.bg === 'rgb(14, 14, 17)', dom.bg)
-      check('タブが無い間は見えている', dom.vis === 'visible', dom.vis)
+      // 見えているかは main の実状態（View の `getVisible()`）で見る。renderer の `document.visibilityState` は
+      // 窓の遮蔽で hidden になり、背面モード（throttling 停止）では逆に hidden にならない（CLAUDE.md「自走検証を足すとき」）
+      const emptyVisible = () =>
+        side.ev('window.nemo.splitDiagnostics().then((d) => String(d.emptyViewVisible))')
+      check(
+        'タブが無い間は見えている',
+        (await emptyVisible()) === 'true',
+        `main=${await emptyVisible()} vis=${dom.vis}`
+      )
 
       await side.ev(`window.nemo.createTab('${PAGES}/index.html').then(() => 'ok')`)
-      const hidden = await waitFor(empty, "document.visibilityState === 'hidden' ? 'hidden' : ''", {
-        timeoutMs: 5000
-      }).catch(() => 'visible のまま')
+      const hidden = await waitFor(
+        side,
+        "window.nemo.splitDiagnostics().then((d) => (d.emptyViewVisible === false ? 'hidden' : ''))",
+        { timeoutMs: 5000 }
+      ).catch(() => 'visible のまま')
       check('タブができたら隠す', hidden === 'hidden', hidden)
       empty.close()
     }

@@ -72,9 +72,12 @@ import { initKypr, onKyprChange } from './kypr/index.js'
 import { installKyprInline } from './kypr/inline.js'
 import { installKyprPasskey } from './kypr/passkey-authenticator.js'
 import { installKyprWebAuthn } from './kypr/web-authenticator.js'
+import { installVerifyBackgroundMode } from './foreground.js'
 
 applyUserDataDir()
 app.setAppUserModelId(APP_ID)
+// 自走検証の背面モード（accessory + アクティブ化の記録）。ready より前でないと起動時のアクティブ化を防げない
+installVerifyBackgroundMode()
 
 /**
  * main プロセスの例外でブラウザごと止めない。

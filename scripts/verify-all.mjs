@@ -40,10 +40,13 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   assertNemoNotRunning,
+  countLogEvents,
   findUncaughtExceptions,
   getFreePort,
+  isBackgroundVerify,
   isChildAlive,
   projectRoot,
+  skipNeedsForeground,
   stopChildren,
   waitForHttp
 } from './lib/harness.mjs'
@@ -54,6 +57,18 @@ const electronPath = require('electron')
 
 const onlyAt = process.argv.indexOf('--only')
 const useChanged = process.argv.includes('--changed')
+/**
+ * 検証用に起動した Nemo を**背面で**回す（既定）。`--foreground` で従来どおり前面に出す。
+ *
+ * 背面モードはアプリ側の `NEMO_VERIFY_BACKGROUND=1`（`src/main/foreground.ts`）で、
+ * accessory（Dock に出ない・起動時にアクティブ化されない）+ 通常ウィンドウを `showInactive()` で出す。
+ * **ここで `process.env` に載せる**ので、`startApp` も `runVerify` も、自分でアプリを起動する
+ * スイート（kypr / agent / autofill …）も `...process.env` 経由で同じモードになる。
+ * 前面が本当に要る検査は `skipNeedsForeground` で印を付けて skip され、`--foreground` のときだけ回る。
+ */
+const foreground = process.argv.includes('--foreground')
+if (!foreground) process.env.NEMO_VERIFY_BACKGROUND = '1'
+else delete process.env.NEMO_VERIFY_BACKGROUND
 const only = new Set(
   onlyAt === -1 ? [] : process.argv.slice(onlyAt + 1).filter((arg) => !arg.startsWith('--'))
 )
@@ -212,16 +227,46 @@ const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nemo-verify-dl-'))
  */
 const spawned = []
 
+/**
+ * 背面モードで「前面を奪った」回数。**各スイートが自分で起動した Nemo も含めて**数えるため、
+ * 子プロセスの stdout / stderr はパイプで受けてそのまま流しつつ `app.did_become_active` の行を数える
+ * （アプリは診断ログを `[nemo] {...}` として stdout にも出す。入れ子の子の出力も同じパイプに乗る）。
+ * 本体ぶんは userData のログからも読んで突き合わせる（パイプの取りこぼしの保険）。
+ */
+let activations = 0
+const ACTIVATED_MARK = '"event":"app.did_become_active"'
+function relayAndScan(stream, out) {
+  let rest = ''
+  stream.on('data', (chunk) => {
+    out.write(chunk)
+    const lines = (rest + chunk.toString()).split('\n')
+    rest = lines.pop() ?? ''
+    for (const line of lines) if (line.includes(ACTIVATED_MARK)) activations += 1
+  })
+  stream.on('end', () => {
+    if (rest.includes(ACTIVATED_MARK)) activations += 1
+  })
+}
+
+/** 子を起こし、出力を中継しながら数える。`options.stdio` を渡せば従来どおり（ページサーバは `ignore`）。 */
+function spawnRelayed(command, args, options = {}) {
+  const child = spawn(command, args, { cwd: projectRoot, stdio: ['inherit', 'pipe', 'pipe'], ...options })
+  if (child.stdout) relayAndScan(child.stdout, process.stdout)
+  if (child.stderr) relayAndScan(child.stderr, process.stderr)
+  return child
+}
+
 function start(command, args, options = {}) {
-  const child = spawn(command, args, { cwd: projectRoot, stdio: 'inherit', ...options })
+  const child = spawnRelayed(command, args, options)
   spawned.push(child)
   return child
 }
 
 function runToCompletion(command, args, options = {}) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd: projectRoot, stdio: 'inherit', ...options })
-    child.on('exit', (code) => resolve(code ?? 1))
+    const child = spawnRelayed(command, args, options)
+    // `exit` でなく `close`（stdio を閉じ切ってから）。中継した出力を数え終える前に次へ進まない
+    child.on('close', (code) => resolve(code ?? 1))
     child.on('error', () => resolve(1))
   })
 }
@@ -326,6 +371,8 @@ const vimScroll = (args) => runVerify('scripts/verify-vim-scroll.mjs', args)
 let exitCode = 0
 /** 0 以外で終わったスイート。FAIL の行を出さずに落ちる（例外・起動失敗）ものもあるので、最後に名前と終了コードを出す */
 const failedSuites = []
+/** 背面モードで「前面が要る」ので飛ばしたスイート（最後に名前を出す。黙って飛ばさない） */
+const skippedSuites = []
 function noteFailure(name, code) {
   failedSuites.push(`${name}=${code}`)
   return code
@@ -407,8 +454,19 @@ try {
 
   if (want('call')) {
     console.log('\n=== 自走検証（会議の小窓）')
-    const callCode = await call([])
-    if (callCode !== 0) exitCode = noteFailure('call', callCode)
+    if (isBackgroundVerify()) {
+      // 「会議タブを見ているか」は `window.isFocused()` で判定する機能なので、背面モードでは最初の検査で
+      // 打ち切られる（verify-call 自身がそう設計している。他アプリ作業中に小窓を出すための機能）。
+      // 位置の検査（`--position-plant` / `--position-read`）は key に依らないのでそのまま回す
+      skipNeedsForeground(
+        '会議の小窓（出る / 出ない・⌘O 昇格・会議タブへ戻る）',
+        '「会議タブを見ているか」を window.isFocused() で判定する機能'
+      )
+      skippedSuites.push('call')
+    } else {
+      const callCode = await call([])
+      if (callCode !== 0) exitCode = noteFailure('call', callCode)
+    }
   }
 
   if (want('live-folder')) {
@@ -628,6 +686,26 @@ try {
   if (uncaught.length > 0) {
     exitCode = 1
     console.error(`\n[verify] main プロセスの例外がログに残っている:\n  ${uncaught.join('\n  ')}`)
+  }
+
+  // 背面モードで「前面を奪っていない」ことは目視では分からないので、アプリが残した
+  // `app.did_become_active`（アクティブになった回数）で判定する。1 回でもあれば FAIL。
+  // `foreground.suppressed` は「奪う操作を抑止した回数」（参考値。0 でもよい）
+  if (!foreground) {
+    const mainActivated = countLogEvents(userDataDir, 'app.did_become_active')
+    const suppressed = countLogEvents(userDataDir, 'foreground.suppressed')
+    const activated = Math.max(activations, mainActivated)
+    console.log(
+      `\n[verify] 背面モード: アクティブ化 ${activated} 回（本体のログ ${mainActivated} 回 / 各スイートの Nemo を含む stdout ${activations} 回）` +
+        ` / 前面化の抑止 ${suppressed} 回` +
+        (skippedSuites.length > 0
+          ? ` / 前面が要るので飛ばした: ${skippedSuites.join(' ')}（mise run verify:foreground で回る）`
+          : '')
+    )
+    if (activated > 0) {
+      exitCode = 1
+      console.error('[verify] 背面モードなのにアプリがアクティブになった（打鍵を吸った可能性がある）')
+    }
   }
 
   // 消してよいかは「生き残りがいないこと」だけで判断する。

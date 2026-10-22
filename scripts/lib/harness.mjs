@@ -329,3 +329,23 @@ export function findUncaughtExceptions(userDataDir) {
   }
   return found
 }
+
+/**
+ * 自走検証が**背面モード**で回っているか（`NEMO_VERIFY_BACKGROUND=1`。verify-all が既定で立てる）。
+ * アプリ側は `src/main/foreground.ts`。前面・key が本質的に要る検査は `skipNeedsForeground` で飛ばす。
+ */
+export function isBackgroundVerify() {
+  return process.env.NEMO_VERIFY_BACKGROUND === '1'
+}
+
+/**
+ * 前面・key が本質的に要る検査を**名前を出して**飛ばす（黙って飛ばさない）。
+ * 飛ばした検査は `mise run verify:foreground` で回る。戻り値は常に true（`if (isBackgroundVerify()) skipNeedsForeground(...) else check(...)` の形で使う）。
+ *
+ * @param {string} name 検査名（check と同じ書き方）
+ * @param {string} why なぜ前面が要るか（`window.isFocused()` で判定する機能、など）
+ */
+export function skipNeedsForeground(name, why) {
+  console.log(`SKIP  ${name} — 前面が要る（${why}）。mise run verify:foreground で回る`)
+  return true
+}

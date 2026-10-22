@@ -26,6 +26,14 @@ import { watchPageExtensionConsole } from './extension-console.js'
 import { registerKyprPagePreload, registerPageShim } from './page-shim.js'
 import { kyprBadge } from './kypr/index.js'
 import { log, logError } from './log.js'
+import {
+  bringToFront,
+  focusContents,
+  focusWindow,
+  focusedContentsForDiagnostics,
+  isVerifyBackground,
+  showWindowInactive
+} from './foreground.js'
 import { startMetricsSampling, stopMetricsSampling } from './metrics.js'
 import { createUiView, disposeUiView, type UiViewKind } from './ui-view.js'
 import { buildSwipeInjection } from '../shared/swipe-gesture.js'
@@ -383,7 +391,7 @@ export function presentAgentWindow(win: NemoWindow): void {
   win.baseWindow.showInactive()
   win.baseWindow.blur()
   if (otherKey && win.baseWindow.isFocused()) {
-    otherKey.focus()
+    focusWindow(otherKey)
     log('agent.window_key_restored', { windowId: win.id })
   }
   // 出す瞬間だけ塞いだ分を、今の key に合わせて戻す。作った時点の focusable:false や一時的に塞いだまま残すと、
@@ -2184,8 +2192,11 @@ export class NemoWindow {
       peek: peekTab?.view?.getVisible() ? peekTab.view.getBounds() : null,
       peekScrim: scrim?.getVisible() ? scrim.getBounds() : null,
       overlay: this.overlayView.getVisible() ? this.overlayView.getBounds() : null,
-      focusedWebContentsId: webContentsModule.getFocusedWebContents()?.id ?? null,
-      focusedUrl: webContentsModule.getFocusedWebContents()?.getURL() ?? null
+      focusedWebContentsId: focusedContentsForDiagnostics()?.id ?? null,
+      focusedUrl: focusedContentsForDiagnostics()?.getURL() ?? null,
+      emptyViewVisible: this.emptyView?.getVisible() ?? null,
+      windowBounds: this.baseWindow.getBounds(),
+      cursorScreenPoint: screen.getCursorScreenPoint()
     }
   }
 
@@ -2265,10 +2276,10 @@ export class NemoWindow {
     // 背面のエージェント窓がユーザーの作業を奪わないようにする
     if (this.isAgent && !this.baseWindow.isFocused()) {
       // 何もしない
-    } else if (kind) this.overlayWebContents.focus()
+    } else if (kind) focusContents(this.overlayWebContents)
     // Peek が出ているならフォーカスは Peek へ返す（⌘L → Esc で裏の親ページに
     // キー入力が入るのを防ぐ）
-    else if (options.refocus !== false) this.getForegroundTab()?.webContents?.focus()
+    else if (options.refocus !== false) focusContents(this.getForegroundTab()?.webContents)
     this.overlayWebContents.send('nemo:overlay', kind)
     this.pushState()
     overlayChangeListener?.(this, kind)
@@ -3242,7 +3253,7 @@ function focusForegroundPage(win: NemoWindow): void {
   if (win.isDestroyed || win.baseWindow.isDestroyed() || win.overlay !== null) return
   // エージェント窓はユーザーが操作していないなら触らない（`webContents.focus()` は前面を奪いうる）
   if (win.isAgent && !win.baseWindow.isFocused()) return
-  win.getForegroundTab()?.webContents?.focus()
+  focusContents(win.getForegroundTab()?.webContents)
 }
 
 function openPeek(parent: NemoTab, url: string, adopt: WebContents): NemoTab | null {
@@ -3321,9 +3332,7 @@ export function promoteForegroundView(win: NemoWindow): void {
       return
     }
     // ここでは Space が切り替わってよい（「腰を据えて読む」と言っている操作なので）
-    target.baseWindow.show()
-    target.baseWindow.focus()
-    app.focus({ steal: true })
+    bringToFront(target.baseWindow, 'mini.promote')
     // 中身は移した後なので、閉じても ⌘⇧T には積まない
     removeWindow(win)
     log('mini.promoted', { from: win.id, to: target.id })
@@ -3664,11 +3673,15 @@ export interface CreateWindowOptions {
 }
 
 export function createWindow(initialUrl?: string, options: CreateWindowOptions = {}): NemoWindow {
+  const kind = options.kind ?? 'normal'
+  // 自走検証の背面モードでは通常ウィンドウを**背面で**出す（`show: false` → `showInactive()`）。
+  // 外部 URL で叩き起こされたときの背面復元と同じ経路に乗せる（小窓・エージェント窓は元から `show: false`）
+  const hidden = options.hidden === true || (kind === 'normal' && isVerifyBackground())
   const win = new NemoWindow(
     options.bounds,
     options.isPrivate === true,
-    options.kind ?? 'normal',
-    options.hidden === true,
+    kind,
+    hidden,
     options.agentLabel ?? null
   )
   windowsById.set(win.id, win)
@@ -3676,7 +3689,7 @@ export function createWindow(initialUrl?: string, options: CreateWindowOptions =
     windowId: win.id,
     private: win.isPrivate,
     kind: win.kind,
-    hidden: options.hidden === true
+    hidden
   })
 
   win.whenUiReady(() => {
@@ -3684,8 +3697,9 @@ export function createWindow(initialUrl?: string, options: CreateWindowOptions =
     win.layout()
     // 背面で復元したぶんはここで出す。**`show()` ではなく `showInactive()`**
     // （`show()` は前面に出てフォーカスと Space を奪う）。
-    if (options.hidden === true && win.kind === 'normal' && !win.baseWindow.isDestroyed()) {
-      win.baseWindow.showInactive()
+    if (hidden && win.kind === 'normal' && !win.baseWindow.isDestroyed()) {
+      // 背面モードでは通常窓を画面の外へ置く（実マウスのホバーが届かないように。`presentInBackground` 参照）
+      showWindowInactive(win.baseWindow, { park: true })
     }
     // エージェント窓は必ず前面を奪わずに出す（`show: false` で作ってある）
     if (win.isAgent) presentAgentWindow(win)
@@ -3871,11 +3885,11 @@ function fillMiniWindow(win: NemoWindow, url: string, adopt: WebContents | undef
  */
 function presentMiniWindow(win: NemoWindow): void {
   if (win.isDestroyed || win.baseWindow.isDestroyed()) return
-  win.baseWindow.showInactive()
-  win.baseWindow.focus()
+  showWindowInactive(win.baseWindow)
+  focusWindow(win.baseWindow)
   // ウィンドウが key になっても、中の WebContents に入れないと
   // `document.hasFocus()` が false のままでスクロールもキーも効かない。
-  win.tabs[0]?.webContents?.focus()
+  focusContents(win.tabs[0]?.webContents)
 }
 
 /* ------------------------------------------------------------------ *
@@ -4385,9 +4399,7 @@ function findJoinedEphemeralInstance(defId: string): { win: NemoWindow; tab: Nem
 function focusEphemeralInstance(target: { win: NemoWindow; tab: NemoTab }): void {
   const { win, tab } = target
   if (win.isDestroyed || win.baseWindow.isDestroyed()) return
-  if (!win.baseWindow.isVisible()) win.baseWindow.show()
-  win.baseWindow.focus()
-  app.focus({ steal: true })
+  bringToFront(win.baseWindow, 'call.focus_instance')
   selectTab(win, tab.key)
 }
 

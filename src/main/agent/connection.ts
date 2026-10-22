@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type net from 'node:net'
 import { log, logError } from '../log.js'
+import { focusWindow } from '../foreground.js'
 import {
   findTabByWebContents,
   openAgentWindow,
@@ -108,7 +109,7 @@ export function makeWindowFocusable(win: NemoWindow): void {
   if (win.isDestroyed || win.baseWindow.isDestroyed()) return
   if (!win.baseWindow.isFocusable()) {
     win.baseWindow.setFocusable(true)
-    win.baseWindow.focus()
+    focusWindow(win.baseWindow)
     log('agent.window_user_focus', { windowId: win.id })
   }
   // Claude の番に出て保留していたダイアログも、ユーザーが来たら見せる（ページが固まって見えないように）

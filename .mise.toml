@@ -60,8 +60,12 @@ description = "コミット前の一括チェック（lint → typecheck → ユ
 depends = ["lint", "typecheck", "test"]
 
 [tasks.verify]
-description = "自走検証を通す（ユニットテスト→ビルド→アプリ起動→CDP で検証→後片付け）"
+description = "自走検証を通す（ユニットテスト→ビルド→アプリ起動→CDP で検証→後片付け）。検証用の Nemo は背面で動き前面を奪わない"
 run = "node scripts/verify-all.mjs"
+
+[tasks."verify:foreground"]
+description = "自走検証を前面モードで全部回す（前面・key が要る検査も含む。リリース前に 1 回。回している間は打鍵が検証ウィンドウに入る）"
+run = "node scripts/verify-all.mjs --foreground"
 
 [tasks."verify:only"]
 description = "自走検証のうち指定したものだけ回す（例: mise run verify:only phase1 pins）"
@@ -85,10 +89,12 @@ run = "node scripts/verify-all.mjs --changed"
 
 [tasks."verify:migration"]
 description = "旧版（セッション v2 / pins v1）のデータから起動して移行が壊れていないか確かめる"
+env = { NEMO_VERIFY_BACKGROUND = "1" }
 run = "node scripts/verify-session-migration.mjs"
 
 [tasks."verify:db-migration"]
 description = "旧スキーマの履歴 DB から起動して favicon_url 列の追加が壊れていないか確かめる"
+env = { NEMO_VERIFY_BACKGROUND = "1" }
 run = "node scripts/verify-db-migration.mjs"
 
 [tasks."verify:split"]
@@ -101,10 +107,12 @@ run = "node scripts/verify-switcher.mjs"
 
 [tasks."verify:ext"]
 description = "拡張互換の smoke test（自作テスト拡張・資格情報なし・CI の必須チェック）"
+env = { NEMO_VERIFY_BACKGROUND = "1" }
 run = "node scripts/verify-ext-smoke.mjs"
 
 [tasks."verify:ext-idle"]
 description = "拡張互換の smoke test に service worker の idle 停止をまたぐ確認を足す（遅い）"
+env = { NEMO_VERIFY_BACKGROUND = "1" }
 run = "node scripts/verify-ext-smoke.mjs --sw-idle"
 
 [tasks."verify:packaged"]

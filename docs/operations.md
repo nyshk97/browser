@@ -349,6 +349,13 @@ Dock にバッジが付く。その間 Claude の入力は断られる。終わ�
 `NEMO_USER_DATA_DIR` でデータディレクトリを上書きできる。
 **CDP を開ける検証は必ず使い捨てのディレクトリで回す**（`mise run verify` は自動でそうしている）。
 
+`NEMO_VERIFY_BACKGROUND=1`（未パッケージのときだけ効く）で**背面モード**になる: Dock に出ず（accessory）、
+通常ウィンドウは `showInactive()` → 最背面 → **全ディスプレイの右下の外**に置く（AppKit の押し戻しで左上の角だけ画面内に残る。
+実マウスのホバーが届かないようにするため）。前面に出す操作（小窓の ⌘O 昇格・会議タブへ戻る）と `webContents.focus()` /
+`baseWindow.focus()` は撃たず、全 WebContents の background throttling を切る（遮蔽・画面外でも描画と Page Visibility を止めない）。
+アクティブになった回数は `app.did_become_active` として診断ログに残る。`mise run verify` が既定で立てる
+（`src/main/foreground.ts`）。常用版では無視される。
+
 保存するもの:
 
 | ファイル | 内容 |

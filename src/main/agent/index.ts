@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { app, dialog, session } from 'electron'
 import { log } from '../log.js'
+import { bringToFront } from '../foreground.js'
 import { AGENT_PARTITION } from '../paths.js'
 import { forgetSessionCookies } from '../store/session-cookies.js'
 import {
@@ -159,8 +160,7 @@ export function showAgentWindow(windowId?: number): void {
   clearAgentPresentationDeferral(target)
   if (target.baseWindow.isMinimized()) presentAgentWindow(target)
   makeWindowFocusable(target)
-  target.baseWindow.show()
-  target.baseWindow.focus()
+  bringToFront(target.baseWindow, 'agent.reveal')
 }
 
 export { allConnections }

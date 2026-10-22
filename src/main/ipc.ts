@@ -13,6 +13,7 @@ import { PAGE_PARTITION, userDataPath } from './paths.js'
 import { restartServiceWorkers, setExtensionEnabled } from './extensions.js'
 import { getLoadedExtensions } from './extension-state.js'
 import { log, logError } from './log.js'
+import { focusContents, isVerifyBackground } from './foreground.js'
 import {
   addFavoriteFromTab,
   applySlot,
@@ -610,7 +611,10 @@ export function registerIpcHandlers(): void {
             ? (win.toolbarView ?? win.chromeView).webContents
             : null
       if (!wc || wc.isDestroyed()) return false
-      wc.focus()
+      focusContents(wc)
+      // 背面モードでは窓が key にならず WebContents の `focus` イベントが来ないので、
+      // そのイベントが呼ぶ経路（`onViewFocused`。kypr のポップアップを外のクリックで閉じる）を直接呼ぶ
+      if (isVerifyBackground()) win.onViewFocused(wc)
       return true
     })
     /**

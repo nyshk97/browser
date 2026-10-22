@@ -16,7 +16,8 @@ mise run dev       # 開発版 Nemo を起動（HMR あり）
 
 ```bash
 mise run check              # lint → typecheck → ユニットテスト（Electron 不要・数秒）
-mise run verify             # 自走検証（ビルド→起動→CDP で検証→後片付け）。終了コードが合否
+mise run verify             # 自走検証（ビルド→起動→CDP で検証→後片付け）。終了コードが合否。検証用の Nemo は背面で動く
+mise run verify:foreground  # 同じものを前面モードで（前面・key が要る検査も回る。リリース前に 1 回。打鍵が検証ウィンドウに入る）
 mise run verify:only phase1 pins  # そのうち指定したものだけ回す（1回あたり数十秒）
 mise run verify:changed     # 作業ツリーの変更から回すものを自動で選ぶ（ふだんの往復はこれ）
 mise run verify:switcher    # タブスイッチャー（⌃M）だけを個別に回す
@@ -27,6 +28,18 @@ mise run verify:packaged    # パッケージした .app を起動して smoke t
 ```
 
 **ふだんの往復は `mise run verify:changed`、コミット前に 1 回だけ `mise run verify`**。
+
+**検証用に起動した Nemo は背面で動き、前面もキー入力も奪わない**（`NEMO_VERIFY_BACKGROUND=1`。verify-all が既定で立てる。
+アプリ側は `src/main/foreground.ts`。Dock にも出ず、通常ウィンドウは画面の右下の外に置かれて左上の角だけ見える）。
+回している間に別のウィンドウで作業してよい。**実マウスを検証ウィンドウの上に置かない**（`ignoresMouseEvents` でもホバーは
+届き、コマンドバーの候補行などマウスで選択が動く UI の検査が狂う。窓を画面外へ置いているのはそのため）。
+最後に `背面モード: アクティブ化 N 回` と出て、**1 回でもあれば FAIL**（打鍵を吸った可能性がある。
+原因は main で `webContents.focus()` / `baseWindow.focus()` / `show()` を直接呼ぶコードで、`foreground.ts` の関数を通していないもの）。
+前面・key が本質的に要る検査は `SKIP ... 前面が要る` と名前を出して飛ばされる（2026-10-22 時点で 2 つ:
+会議の小窓の「出る / 出ない」（`window.isFocused()` で「会議タブを見ているか」を判定する機能なので背面では成立しない）と、
+ローカルファイルの「open-file（Finder / `open <path>`）で小窓が開く」（LaunchServices の配送がアプリをアクティブにする。`open -g` でも止まらない））。
+それらは `mise run verify:foreground` で回る（リリース前に 1 回）。1 本だけ前面で回すなら
+`node scripts/verify-all.mjs --foreground --only call`。
 フルは 12 本すべてを回すので 1 回 6 分ほどかかる（実測 372 秒）。
 `verify:changed` は作業ツリーの差分（未 commit + staged + untracked）から回すものを
 自動で選ぶ（例: `SplitRow.tsx` だけ → `split` + `restart` の 50 秒ほど）。

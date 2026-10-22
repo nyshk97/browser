@@ -176,6 +176,12 @@ fork は Nemo から一方向に merge する運用なので、Nemo 側で直せ
   open-file の 2 つも PASS。落ちたのは Phase 1 の画面共有まわりの 5 件（「1 枚のときはディスプレイ選択が出ない」等）だけで、
   これは VERIFY.md に既知と書いてある「ディスプレイが 2 枚つながっていると落ちる」もの（Studio Display 接続中）。同じ 2 枚の状態で
   背面モードの `verify:only phase1` も同じ 5 件が落ちるので、前面モードとは無関係
+- 2026-10-22 fork（`~/workbench`。nyshk97/workbench）でも同じ検証を回した: dev 版のパッケージ検査は全 PASS（`Workbench Dev.app` /
+  `local.nyshk97.workbench.dev` / 更新 feed 無し）。フルは Studio Display 2 枚つなぎのため phase1（Issue #9）と、それに巻き込まれた
+  http-auth（phase1 が止まると権限ダイアログが残る。Nemo 側でも `verify:only phase1 http-auth` で再現。#9 に追記）だけ落ち、
+  `verify:only http-auth` 単体は全 PASS。`verify:only agent` は 1 回目だけアクティブ化 1 回（ユーザーの番に `sendInputEvent` で
+  コピーボタンを押した直後の `app.did_become_active`。検査は全 PASS）で、続けて 2 回回したら 0 回、Nemo 側の 2 枚つなぎでも 0 回。
+  再現しないので原因は未特定（まれな 1 回。出たら `agent.handoff` → `permission.request clipboard` の直後を疑う）
 
 ### 方針変更
 

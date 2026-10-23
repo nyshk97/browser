@@ -5,14 +5,14 @@
     {
       "id": "neebplgakaahbhdphmkckjjcegoiijjo",
       "name": "Keepa - Amazon Price Tracker",
-      "version": "5.64",
+      "version": "5.72",
       "source": {
         "type": "chrome-web-store",
         "url": "https://chromewebstore.google.com/detail/neebplgakaahbhdphmkckjjcegoiijjo"
       },
-      "sha256": "35a3c6253cd0afce33004781cb7a0cf418d729b0576ebfff92920c8f1dbdead0",
+      "sha256": "176de5ce763107ed0a40a785f3ea4506ec2226fa0b4564c6ae09581a698e5d5b",
       "manifestKey": "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDD1oAEkEvui5bB9DFRUZX/gxvpP6iHPPl6rcOuEfG0RGaJe3zbNhjVrX2cCRiCMwVI5utJxQ20+Nzsy0QlHWv4XLe2UWI7p1Yt+2jQuIFM4GhXpqofqem7Nlzm5bq9E7BKRQeg5N+ngwSIaZNHVOhB3CgEtrGXYOC9HuS8PV0XcQIDAQAB",
-      "treeSha256": "812f6d0befcc66d336c806f6de25525ddedcbcfcc9a40df326d13677148a2424"
+      "treeSha256": "d335daaf568636913e247005a7adc5393401c9373c008110fe06be23df69f906"
     },
     {
       "id": "ndlbedplllcgconngcnfmkadhokfaaln",
